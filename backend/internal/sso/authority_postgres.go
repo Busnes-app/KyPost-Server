@@ -117,10 +117,13 @@ func init() {
 // the live store of a Postgres install. Restore staging and snapshots are SQLite files.
 func onPostgres(path string) (bool, error) { return dbbackend.Held(path) }
 
-// authorityExists is os.Lstat of the database: a held schema or a file.
+// authorityExists is os.Lstat of the database: a catalogued schema where Held says
+// Postgres, else a file.
 func authorityExists(path string) (bool, error) {
-	if pg, err := onPostgres(path); err != nil || pg {
-		return pg, err
+	if pg, err := onPostgres(path); err != nil {
+		return false, err
+	} else if pg {
+		return dbbackend.Exists(path)
 	}
 	_, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {

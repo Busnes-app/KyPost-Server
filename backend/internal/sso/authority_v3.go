@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // NativeAuthorityFile is the v3 authority database (format D in
@@ -561,12 +563,27 @@ func jsonStub(path string, want map[string]any) (bool, error) {
 func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments, int, error) {
 	dir := filepath.Dir(s.path)
 	path := filepath.Join(dir, NativeAuthorityFile)
+	noDatabase := func() (lifecycleFile, nativeAssignments, int, error) {
+		s := s.staged()
+		lifecycle, err := s.load()
+		if err != nil {
+			return lifecycle, nativeAssignments{}, 0, err
+		}
+		f, version, err := s.readNativeLedger(lifecycle, true)
+		return lifecycle, f, version, err
+	}
 	pg, err := onPostgres(path)
 	if err != nil {
 		return lifecycleFile{}, nativeAssignments{}, 0, err
 	}
 	if pg {
-		// A Postgres install's own store, read as the runtime reads it.
+		// A Postgres install's own store, read as the runtime reads it; never a file.
+		if held, err := dbbackend.Exists(path); err != nil || !held {
+			if err != nil {
+				return lifecycleFile{}, nativeAssignments{}, 0, err
+			}
+			return noDatabase()
+		}
 		life, l, err := readAuthorityFile(context.Background(), path)
 		if err != nil || l == nil {
 			return life, nativeAssignments{Accounts: map[string]NativeAssignment{}}, 0, err
@@ -575,13 +592,7 @@ func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments
 		return life, f, 3, err
 	}
 	if _, err := os.Lstat(filepath.Join(dir, NativeAuthorityFile)); errors.Is(err, os.ErrNotExist) {
-		s := s.staged()
-		lifecycle, err := s.load()
-		if err != nil {
-			return lifecycle, nativeAssignments{}, 0, err
-		}
-		f, version, err := s.readNativeLedger(lifecycle, true)
-		return lifecycle, f, version, err
+		return noDatabase()
 	}
 	for path, stub := range map[string]map[string]any{s.path: lifecycleStubV3, s.nativePath(): ledgerStubV3} {
 		if ok, err := jsonStub(path, stub); err != nil || !ok {
