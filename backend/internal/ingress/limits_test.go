@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
@@ -67,6 +68,7 @@ func TestHoldingLimitsRaiseOnly(t *testing.T) {
 // Growth that would leave less than the drive reserve free is a temporary
 // capacity refusal; exact replays still answer.
 func TestDriveReserveRefusesGrowth(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "measures the local drive; on Postgres the server holds the data")
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "holding"), proofLimits)
 	if err != nil {

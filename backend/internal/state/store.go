@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
@@ -402,6 +403,9 @@ func (s *Store) LastCleanup() string {
 // contributes zero rather than failing — the -wal and -shm files exist only
 // while the database is open.
 func (s *Store) DiskUsageBytes() int64 {
+	if dbbackend.Postgres() {
+		return dbbackend.SchemaBytes(s.db) // zero when unreadable, as a missing file is
+	}
 	var total int64
 	base := filepath.Join(s.baseDir, "state.db")
 	for _, name := range []string{base, base + "-wal", base + "-shm"} {

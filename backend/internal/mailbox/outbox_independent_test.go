@@ -64,7 +64,7 @@ func TestNativeOutboxIndependentRecipientRestartAndSent(t *testing.T) {
 		t.Fatal("independent outcomes lost", statuses)
 	}
 	relay := mailmsg.DomainRelay{Mode: "direct", Generation: outboxGeneration, Domains: []string{"example.test"}, Issuer: testOwner.Issuer, Host: "mail.example.test"}
-	present, err := ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay)
+	present, err := ValidateOutboundSnapshot(ctx, snapshotFile(t, filepath.Join(dir, "mailbox.db")), outboxMaster, relay)
 	must(t, err)
 	if !present {
 		t.Fatal("snapshot missed independent queue")

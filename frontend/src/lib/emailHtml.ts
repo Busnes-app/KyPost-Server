@@ -198,13 +198,19 @@ export function processEmailHtml(html: string, showImages: boolean, inlineImages
   const doc = parser.parseFromString(html, "text/html");
   const root = doc.body;
 
-  root.querySelectorAll("a[href]").forEach((anchor) => {
+  // Every element a click navigates: <a> (HTML, and SVG's, whose link may be
+  // xlink:href) and image-map <area>. Each gets target and rel overwritten: a
+  // sender's rel="opener" or named target would hand the opened page a
+  // window.opener, which COOP no longer severs while KyDrive is paired
+  // (security_headers.go).
+  root.querySelectorAll("a, area").forEach((anchor) => {
+    const href = anchor.getAttribute("href") ?? anchor.getAttribute("xlink:href");
+    if (href === null) return;
     // Sanitizing alone strips the href and leaves the anchor: styled like a
     // link, indistinguishable from one, silently doing nothing when clicked. A
     // user who just read "Confirm your account" learns nothing from that and
     // goes looking for another way to comply. Replace it with a visible
     // refusal, as [Image Blocked] does below.
-    const href = anchor.getAttribute("href") ?? "";
     if (!isAllowedUri(href)) {
       const scheme = href.replace(attrWhitespace, "").match(leadingScheme)?.[1]?.toLowerCase();
       anchor.replaceWith(doc.createTextNode(`[Blocked link: ${scheme ? `${scheme}:` : "unrecognized address"}]`));

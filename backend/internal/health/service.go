@@ -4,6 +4,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 type Status struct {
@@ -13,6 +15,8 @@ type Status struct {
 	FailureReason        []string `json:"failureReason"`
 	AICreditsExhausted   bool     `json:"aiCreditsExhausted"`
 	AICreditsExhaustedAt string   `json:"aiCreditsExhaustedAt,omitempty"`
+	// "sqlite" or "postgres"; never the database's address or credentials.
+	DatabaseBackend string `json:"databaseBackend"`
 
 	// Native (mobile/FCM) push relay health. Independent of the overall Healthy
 	// flag on purpose: a relay/key outage must not flip Healthy (which drives
@@ -136,6 +140,7 @@ func (s *Service) GetStatus() Status {
 	st.LastCheckUTC = time.Now().UTC().Format(time.RFC3339)
 	st.AICreditsExhausted = s.aiCreditsExhausted
 	st.AICreditsExhaustedAt = s.aiCreditsExhaustedAt
+	st.DatabaseBackend = dbbackend.Name()
 	st.NativePushFailing = s.nativePushFailing
 	st.NativePushLastError = s.nativePushLastError
 	st.NativePushFailingAt = s.nativePushFailingAt

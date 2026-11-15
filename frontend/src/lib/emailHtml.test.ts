@@ -134,6 +134,33 @@ describe("processEmailHtml", () => {
     expect(out).toContain("noopener");
   });
 
+  // A sender's rel="opener" or named target hands the opened page a
+  // window.opener; while KyDrive is paired COOP does not sever it.
+  it.each([
+    ["area rel=opener", '<img usemap="#m"><map name="m"><area href="https://evil.example/" target="_blank" rel="opener"></map>'],
+    ["area named target", '<img usemap="#m"><map name="m"><area href="https://evil.example/" target="w1"></map>'],
+    ["a rel=opener", '<a href="https://evil.example/" target="_blank" rel="opener">x</a>'],
+    ["svg a href rel=opener", '<svg><a href="https://evil.example/" target="w2" rel="opener"><rect></rect></a></svg>'],
+    ["svg a xlink:href rel=opener", '<svg><a xlink:href="https://evil.example/" target="w3" rel="opener"><rect></rect></a></svg>']
+  ])("opens %s with no opener", (_, html) => {
+    const link = new DOMParser().parseFromString(processEmailHtml(html, true), "text/html").querySelector("a, area");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it.each([
+    ["area", '<map name="m"><area href="javascript:alert(1)"></map>'],
+    ["svg a xlink:href", '<svg><a xlink:href="kypost://native-pair?srv=https://evil.example"><rect></rect></a></svg>']
+  ])("refuses a dangerous scheme on %s", (_, html) => {
+    const out = processEmailHtml(html, true);
+    expect(out).toContain("[Blocked link:");
+    expect(out).not.toMatch(/javascript:alert|kypost:\/\/native/);
+  });
+
+  it("leaves an <a> without a link alone", () => {
+    expect(processEmailHtml('<a name="top">x</a>', true)).not.toContain("target");
+  });
+
   it("unwraps a full HTML document to its body", () => {
     const out = processEmailHtml("<html><head><title>t</title></head><body><p>hi</p></body></html>", true);
     expect(out).toContain("<p>hi</p>");

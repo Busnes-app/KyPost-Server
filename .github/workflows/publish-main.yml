@@ -76,7 +76,7 @@ jobs:
           fi
           echo "tested commit: $sha"
 
-          required="ci-backend-api ci-backend-other ci-frontend ci-relay ci-scripts ci-docker"
+          required="ci-backend-api ci-backend-other ci-backend-postgres ci-frontend ci-relay ci-scripts ci-docker"
 
           # filter=latest asks the API for the most recent run per check name,
           # so a re-run supersedes what it replaced.

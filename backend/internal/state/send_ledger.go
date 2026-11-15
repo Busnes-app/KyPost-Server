@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 const (
@@ -26,10 +28,14 @@ func (s *Store) AdmitSend(ctx context.Context, id, userID string, recipients, me
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM send_ledger WHERE user_id=? AND at<=?`, userID, now-sendDay); err != nil {
 		return 0, err
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO send_ledger(id,user_id,at,recipients)
+	res, err := s.db.ExecContext(ctx, dbbackend.SQL(`INSERT INTO send_ledger(id,user_id,at,recipients)
 		SELECT ?1,?2,?3,?4 FROM (SELECT coalesce(sum(at>?3-?7),0) AS n, coalesce(sum(recipients),0) AS r
 			FROM send_ledger WHERE user_id=?2 AND at>?3-?8)
 		WHERE n < ?5 AND r + ?4 <= ?6 AND NOT EXISTS (SELECT 1 FROM send_ledger WHERE id=?1)`,
+		`INSERT INTO send_ledger(id,user_id,at,recipients)
+		SELECT ?1::text,?2::text,?3::bigint,?4::bigint FROM (SELECT coalesce(sum((at>?3::bigint-?7::bigint)::int),0) AS n, coalesce(sum(recipients),0) AS r
+			FROM send_ledger WHERE user_id=?2 AND at>?3::bigint-?8::bigint) q
+		WHERE n < ?5 AND r + ?4::bigint <= ?6 AND NOT EXISTS (SELECT 1 FROM send_ledger WHERE id=?1)`),
 		id, userID, now, recipients, messagesPerHour, recipientsPerDay, sendHour, sendDay)
 	if err != nil {
 		return 0, err

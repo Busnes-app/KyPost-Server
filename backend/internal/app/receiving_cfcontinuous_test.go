@@ -31,6 +31,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -729,6 +730,7 @@ func copyFiles(t *testing.T, from, to string, names ...string) {
 
 // Restore starts fenced; only a confirmed takeover moves receiving.
 func TestCloudflareContinuousRestoreFencedAndTakeover(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "copies ingress.db as a file")
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))

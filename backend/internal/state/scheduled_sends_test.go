@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func newScheduledStore(t *testing.T) *Store {
@@ -149,6 +151,7 @@ func TestScheduledPendingCapIsPerUser(t *testing.T) {
 }
 
 func TestFenceRestoredScheduledSends(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "restore fences run on the SQLite files of restore staging")
 	if err := FenceRestoredScheduledSends(t.TempDir()); err != nil {
 		t.Fatal("a capsule without state.db refused", err)
 	}

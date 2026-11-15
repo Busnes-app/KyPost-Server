@@ -14,6 +14,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -21,6 +22,7 @@ import (
 
 // Exercise the collector and sealed restore while committed rows exist only in WAL.
 func TestNativeDatabasesSurviveSealedRestore(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "writes a probe table into the SQLite files")
 	s, u := nativeService(t)
 	key := pinTestKey(t, s)
 	paths := []string{"users/" + u.ID + "/mailbox/mailbox.db", "receiving/ingress.db"}
@@ -135,6 +137,7 @@ func TestNativeDatabasesSurviveSealedRestore(t *testing.T) {
 }
 
 func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens an extracted capsule's SQLite files as live stores; restore into Postgres is TestPostgresCapsuleRoundTrips")
 	ctx := context.Background()
 	s, u := nativeService(t)
 	key := pinTestKey(t, s)
@@ -256,6 +259,7 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 // The standalone main file can fit the cap while committed WAL rows do not.
 // Synthetic probe rows measure database capacity, not accepted mail throughput.
 func TestNativeBackupRefusesOversizedWALSnapshot(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "grows the SQLite WAL")
 	for _, name := range []string{"mailbox.db", "ingress.db"} {
 		t.Run(name, func(t *testing.T) {
 			s, u := nativeService(t)

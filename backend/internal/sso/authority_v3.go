@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // NativeAuthorityFile is the v3 authority database (format D in
@@ -449,6 +451,9 @@ var referenceSchemaV3 = sync.OnceValues(func() ([]string, error) {
 // foreign_key_check pass,
 // all before any row is read (findings S2, S3).
 func readAuthorityV3Historical(ctx context.Context, path string) (authorityRows, error) {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNativeMigration, err)
+	}
 	info, err := privateRegular(path)
 	if err != nil {
 		return nil, err
@@ -533,6 +538,11 @@ func queryRows(ctx context.Context, db queryer, name, query string, r authorityR
 		if err := rows.Scan(dst...); err != nil {
 			return err
 		}
+		for i, v := range values {
+			if b, ok := v.([]byte); ok {
+				values[i] = string(b) // a Postgres BYTEA key (pgBytesKey); no table has a BLOB
+			}
+		}
 		r.add(name, values...)
 	}
 	return rows.Err()
@@ -555,7 +565,8 @@ func jsonStub(path string, want map[string]any) (bool, error) {
 // absent; 3 for an initialized v3 database).
 func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments, int, error) {
 	dir := filepath.Dir(s.path)
-	if _, err := os.Lstat(filepath.Join(dir, NativeAuthorityFile)); errors.Is(err, os.ErrNotExist) {
+	path := filepath.Join(dir, NativeAuthorityFile)
+	noDatabase := func() (lifecycleFile, nativeAssignments, int, error) {
 		s := s.staged()
 		lifecycle, err := s.load()
 		if err != nil {
@@ -564,15 +575,35 @@ func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments
 		f, version, err := s.readNativeLedger(lifecycle, true)
 		return lifecycle, f, version, err
 	}
+	pg, err := onPostgres(path)
+	if err != nil {
+		return lifecycleFile{}, nativeAssignments{}, 0, err
+	}
+	if pg {
+		// A Postgres install's own store, read as the runtime reads it; never a file.
+		if held, err := dbbackend.Exists(path); err != nil || !held {
+			if err != nil {
+				return lifecycleFile{}, nativeAssignments{}, 0, err
+			}
+			return noDatabase()
+		}
+		life, l, err := readAuthorityFile(context.Background(), path)
+		if err != nil || l == nil {
+			return life, nativeAssignments{Accounts: map[string]NativeAssignment{}}, 0, err
+		}
+		f, _, err := validateNativeLedger(*l)
+		return life, f, 3, err
+	}
+	if _, err := os.Lstat(filepath.Join(dir, NativeAuthorityFile)); errors.Is(err, os.ErrNotExist) {
+		return noDatabase()
+	}
 	for path, stub := range map[string]map[string]any{s.path: lifecycleStubV3, s.nativePath(): ledgerStubV3} {
 		if ok, err := jsonStub(path, stub); err != nil || !ok {
 			return lifecycleFile{}, nativeAssignments{}, 0, ErrNativeMigration
 		}
 	}
-	path := filepath.Join(dir, NativeAuthorityFile)
 	var life lifecycleFile
 	var l *nativeLedger
-	var err error
 	if wal, walErr := os.Lstat(path + "-wal"); walErr == nil && wal.Size() > 0 {
 		// A written store (live, or staging mid-write): its WAL holds rows
 		// the immutable opener would not see. Read it as the runtime does.

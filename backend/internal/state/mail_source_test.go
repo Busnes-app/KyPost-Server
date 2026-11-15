@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func TestMailSourceAdmission(t *testing.T) {
@@ -39,7 +41,7 @@ func TestMailSourceAdmission(t *testing.T) {
 	if err = st.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Remove(filepath.Join(dir, "state.db")); err != nil {
+	if err = removeDatabase(filepath.Join(dir, "state.db")); err != nil {
 		t.Fatal(err)
 	}
 	st, err = New(dir)
@@ -148,6 +150,7 @@ func TestOpenNativeNeverCreatesOrAdoptsState(t *testing.T) {
 }
 
 func TestNativeStateDatabaseURIPaths(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "SQLite file URIs")
 	source := "native:" + strings.Repeat("a", 64)
 	for _, name := range []string{"state#old", "state?mode=rwc", "state%20space"} {
 		t.Run(name, func(t *testing.T) {
@@ -182,4 +185,12 @@ func TestNativeStateDatabaseURIPaths(t *testing.T) {
 			}
 		})
 	}
+}
+
+// removeDatabase deletes a store's database on either backend.
+func removeDatabase(path string) error {
+	if dbbackend.Postgres() {
+		return dbbackend.RemoveFileForTest(path)
+	}
+	return os.Remove(path)
 }

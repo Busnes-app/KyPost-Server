@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -63,6 +64,7 @@ func startCloudflareTestScanner(t *testing.T, before func()) *httptest.Server {
 }
 
 func TestCloudflarePickupPermanentReceiptReplayAndNamespace(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads mailbox.db as a SQLite file")
 	r, created := receivingFixture(t)
 	r.gateway = cloudflareGateway
 	m, raw := cloudflareFixtureMessage(t, r)

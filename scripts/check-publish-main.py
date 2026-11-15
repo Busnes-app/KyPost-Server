@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory() as directory:
     bin_dir = root / 'bin'
     bin_dir.mkdir()
     gh = bin_dir / 'gh'
-    gh.write_text('#!/bin/sh\nfor job in ci-backend-api ci-backend-other ci-frontend ci-relay ci-scripts ci-docker; do\n  printf "%s\\tcompleted\\t%s\\n" "$job" "${CHECK_RESULT:-success}"\ndone\n')
+    gh.write_text('#!/bin/sh\nfor job in ci-backend-api ci-backend-other ci-backend-postgres ci-frontend ci-relay ci-scripts ci-docker; do\n  printf "%s\\tcompleted\\t%s\\n" "$job" "${CHECK_RESULT:-success}"\ndone\n')
     gh.chmod(0o755)
     output = root / 'output'
     env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],

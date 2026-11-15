@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func TestAgentTokenStore(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "restore fences run on the SQLite files of restore staging")
 	dir := t.TempDir()
 	s, err := New(dir)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -20,6 +21,7 @@ import (
 // stores nothing; others still receive. Growth inside the drive reserve exits
 // 10 (452 4.3.1) from both commands. Both are temporary: senders retry.
 func TestNativeReceivingQuotaAndDriveReserve(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "measures the local drive; on Postgres the server holds the data")
 	r, created := receivingFixture(t)
 	ctx := context.Background()
 	for _, address := range []string{"one@example.test", "two@example.test"} {
@@ -77,6 +79,7 @@ func TestNativeReceivingQuotaAndDriveReserve(t *testing.T) {
 // Hosted pickup: mail for a full mailbox waits in R2 (neither imported nor
 // quarantined) while others' mail flows; inside the drive reserve fetching stops.
 func TestCloudflareContinuousQuotaAndDriveReserve(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "measures the local drive; on Postgres the server holds the data")
 	e := cfFixture(t)
 	ctx := context.Background()
 	e.cycle(t)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -331,6 +332,7 @@ func TestNativeAddressGenerationSeeding(t *testing.T) {
 
 // Restore validates routes and bindings against the address history.
 func TestNativeRestoreValidatesAddressHistory(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	ctx := context.Background()
 	f := newAddressFixture(t, "one", "two")
 	one, two := f.ids["one"], f.ids["two"]

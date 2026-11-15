@@ -116,8 +116,9 @@ const permissionsPolicy = "accelerometer=(), autoplay=(), camera=(), display-cap
 // KyDrive picker is a popup that answers through window.opener.postMessage
 // (docs/KYDRIVE.md "Picker"), which same-origin severs. Being opened by
 // another origin still severs, and the links this app opens carry noopener
-// (emailHtml.ts stamps rel="noopener noreferrer"; step-up nulls its popup's
-// opener), so only the picker keeps a handle on this window.
+// (emailHtml.ts overwrites target and rel on every <a> and <area>, SVG's
+// included; step-up nulls its popup's opener), so only the picker keeps a
+// handle on this window.
 func withSecurityHeaders(next http.Handler, policy func() string, driveOrigin func() string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()

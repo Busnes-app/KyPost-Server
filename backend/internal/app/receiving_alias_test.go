@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -118,6 +119,7 @@ func TestNativeReceivingAliasLandsOnceInOwningMailbox(t *testing.T) {
 // reaches the new mailbox, and reassigning back to the original mailbox gets a
 // new generation that older frozen mail does not match either.
 func TestNativeReceivingReleaseReassignNeverDeliversOldGeneration(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads receiving databases as SQLite files")
 	r, created := receivingFixture(t)
 	ctx := context.Background()
 	one, two := created[0], created[1]
@@ -196,6 +198,7 @@ func TestNativeReceivingReassignToSameMailboxFencesFrozenMail(t *testing.T) {
 // Deactivation and reactivation both land inside ApplyDirectory, so mail
 // accepted before is fenced even when no worker ran in between.
 func TestNativeReceivingDeactivateReactivateFencesAcceptedMail(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads receiving databases as SQLite files")
 	r, _ := receivingFixture(t)
 	ctx := context.Background()
 	receive(t, r, "accepted-before-deactivation", "one@example.test")
@@ -247,6 +250,7 @@ func receivingMailbox(t *testing.T, r *receivingRuntime, mailboxID string) []str
 // Mail to an extra mailbox's address lands there, not in the owner's primary;
 // a delivery to both mailboxes produces one copy in each.
 func TestNativeReceivingExtraMailbox(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads receiving databases as SQLite files")
 	r, created := receivingFixture(t)
 	ctx := context.Background()
 	m, err := r.life.CreateNativeMailbox(ctx, r.stateDir, created[0].ID, "sales@example.test")
