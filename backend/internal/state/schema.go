@@ -279,7 +279,14 @@ CREATE INDEX IF NOT EXISTS agent_tokens_user ON agent_tokens(user_id);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {
-	if existingSource != "" && !dbbackend.Held(path) || existingSource == "" && !dbbackend.Postgres() {
+	pg := dbbackend.Postgres()
+	if existingSource != "" {
+		var err error
+		if pg, err = dbbackend.Held(path); err != nil {
+			return nil, fmt.Errorf("open state db: %w", err)
+		}
+	}
+	if !pg {
 		return openSQLiteDB(path, existingSource)
 	}
 	db, err := dbbackend.Open(path, dbbackend.Options{Kind: Kind, DDL: pgSchema, Create: existingSource == ""})
@@ -483,7 +490,11 @@ func OpenReadOnly(baseDir string) (*Store, error) {
 	path := filepath.Join(baseDir, "state.db")
 	var db *sql.DB
 	var err error
-	if dbbackend.Held(path) {
+	pg, err := dbbackend.Held(path)
+	if err != nil {
+		return nil, errors.New("existing instance state unavailable")
+	}
+	if pg {
 		if db, err = dbbackend.Open(path, dbbackend.Options{Kind: Kind, ReadOnly: true}); err != nil {
 			return nil, errors.New("existing instance state unavailable")
 		}

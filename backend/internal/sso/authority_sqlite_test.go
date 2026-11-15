@@ -35,7 +35,7 @@ func rewriteAuthorityForTest(t *testing.T, s *LifecycleStore, schema string, edi
 	t.Helper()
 	dir := filepath.Dir(s.path)
 	path := filepath.Join(dir, NativeAuthorityFile)
-	if onPostgres(path) {
+	if pg, _ := onPostgres(path); pg {
 		rewriteAuthorityPostgresForTest(t, s, schema, edit)
 		return
 	}

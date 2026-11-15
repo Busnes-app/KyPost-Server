@@ -151,6 +151,17 @@ func TestPostgresCapsuleRoundTrips(t *testing.T) {
 	if len(onSQLite.members) == 0 || !slices.Equal(onSQLite.members, onPostgres.members) {
 		t.Fatalf("capsule members differ:\nSQLite   %v\nPostgres %v", onSQLite.members, onPostgres.members)
 	}
+	// As a server runs: every fixture path under STATE_DIR, so Held routes them all to
+	// Postgres and only backup scratch stays SQLite.
+	t.Run("seal on Postgres with live names", func(t *testing.T) {
+		dbbackend.FreshDatabaseForTest(t)
+		root := filepath.Dir(t.TempDir())
+		t.Setenv("STATE_DIR", root)
+		t.Setenv("CONFIG_DIR", root)
+		if live := sealFixture(t); !slices.Equal(onSQLite.members, live.members) {
+			t.Fatalf("capsule members differ:\nSQLite %v\nlive   %v", onSQLite.members, live.members)
+		}
+	})
 	t.Run("Postgres capsule drills and restores onto SQLite", func(t *testing.T) {
 		dbbackend.SetURLForTest(t, "")
 		dir, m := restoreStaging(t, onPostgres)

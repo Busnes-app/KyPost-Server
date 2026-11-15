@@ -467,7 +467,10 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 func openHeld(path string) (*heldDB, os.FileInfo, error) {
 	var info os.FileInfo
 	var err error
-	pg := dbbackend.Held(path)
+	pg, err := dbbackend.Held(path)
+	if err != nil {
+		return nil, nil, err
+	}
 	if !pg {
 		if info, err = os.Lstat(path); err != nil {
 			return nil, nil, ErrPreparation
@@ -483,7 +486,9 @@ func openHeld(path string) (*heldDB, os.FileInfo, error) {
 // openSQLite opens an existing regular database file, never creating one.
 // A path the Postgres catalog holds opens its schema instead, read-only for mode=ro.
 func openSQLite(path, query string) (*sql.DB, error) {
-	if dbbackend.Held(path) {
+	if pg, err := dbbackend.Held(path); err != nil {
+		return nil, err
+	} else if pg {
 		db, err := dbbackend.Open(path, dbbackend.Options{ReadOnly: strings.Contains(query, "mode=ro")})
 		if err != nil {
 			return nil, ErrPreparation

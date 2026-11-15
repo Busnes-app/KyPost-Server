@@ -28,7 +28,7 @@ import (
 )
 
 const ErrMailExcluded = "IMAP mail and the rebuildable mail cache are excluded; local mailbox/receiving databases and encrypted pickup messages awaiting collection are included"
-const scratchDirName = "backup-scratch"
+const scratchDirName = dbbackend.ScratchDir
 
 var required = []string{"config/config.yaml", "config/users.json", "private/totp-secret.key", "state/state.db"}
 
@@ -179,8 +179,12 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 				if d.IsDir() || r.prefix == "state" && rel == ingressRel {
 					return nil
 				}
-				if snapshotDatabase(d.Name()) && dbbackend.Held(full) {
-					return nil // the SQLite source left after a move to Postgres; its schema is added below
+				if snapshotDatabase(d.Name()) {
+					if pg, err := dbbackend.Held(full); err != nil {
+						return err
+					} else if pg {
+						return nil // the SQLite source left after a move to Postgres; its schema is added below
+					}
 				}
 				if !d.Type().IsRegular() {
 					return fmt.Errorf("cannot back up non-regular file %s/%s", r.prefix, rel)

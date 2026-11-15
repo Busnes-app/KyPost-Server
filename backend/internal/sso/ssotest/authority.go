@@ -64,7 +64,9 @@ func AuthorityContent(configDir string) ([]byte, error) {
 	}
 	defer db.Close()
 	query := "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name"
-	if dbbackend.Held(path) {
+	if pg, err := dbbackend.Held(path); err != nil {
+		return nil, err
+	} else if pg {
 		query = "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename"
 	}
 	tables, err := db.Query(query)
@@ -117,7 +119,9 @@ func DamageAuthority(configDir, query string, args ...any) error {
 	if err != nil {
 		return err
 	}
-	if dbbackend.Held(path) {
+	if pg, err := dbbackend.Held(path); err != nil {
+		return err
+	} else if pg {
 		// Postgres lifts every trigger (and foreign key) for the transaction instead.
 		db, err := dbbackend.OpenFile(path, "")
 		if err != nil {

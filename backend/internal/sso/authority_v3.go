@@ -560,7 +560,12 @@ func jsonStub(path string, want map[string]any) (bool, error) {
 // absent; 3 for an initialized v3 database).
 func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments, int, error) {
 	dir := filepath.Dir(s.path)
-	if path := filepath.Join(dir, NativeAuthorityFile); onPostgres(path) {
+	path := filepath.Join(dir, NativeAuthorityFile)
+	pg, err := onPostgres(path)
+	if err != nil {
+		return lifecycleFile{}, nativeAssignments{}, 0, err
+	}
+	if pg {
 		// A Postgres install's own store, read as the runtime reads it.
 		life, l, err := readAuthorityFile(context.Background(), path)
 		if err != nil || l == nil {
@@ -583,10 +588,8 @@ func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments
 			return lifecycleFile{}, nativeAssignments{}, 0, ErrNativeMigration
 		}
 	}
-	path := filepath.Join(dir, NativeAuthorityFile)
 	var life lifecycleFile
 	var l *nativeLedger
-	var err error
 	if wal, walErr := os.Lstat(path + "-wal"); walErr == nil && wal.Size() > 0 {
 		// A written store (live, or staging mid-write): its WAL holds rows
 		// the immutable opener would not see. Read it as the runtime does.

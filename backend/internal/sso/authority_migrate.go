@@ -117,7 +117,9 @@ func verifyAuthorityFile(ctx context.Context, path string, check func(lifecycleF
 // readAuthorityFile decodes a whole database through a verified handle: the schema when
 // the catalog holds path (a Postgres install's own store), else the file.
 func readAuthorityFile(ctx context.Context, path string) (lifecycleFile, *nativeLedger, error) {
-	if onPostgres(path) {
+	if pg, err := onPostgres(path); err != nil {
+		return lifecycleFile{}, nil, err
+	} else if pg {
 		return readAuthorityPostgres(ctx, path)
 	}
 	var life lifecycleFile

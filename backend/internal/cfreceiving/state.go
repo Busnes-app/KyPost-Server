@@ -390,8 +390,11 @@ func (d *DB) SaveStatus(ctx context.Context, s Status) error {
 func ReadStatus(ctx context.Context, dir string) (Status, error) {
 	s := Status{State: "not-started", Ledger: map[string]int{}}
 	var db *sql.DB
-	var err error
-	if dbbackend.Held(filepath.Join(dir, DBFile)) {
+	pg, err := dbbackend.Held(filepath.Join(dir, DBFile))
+	if err != nil {
+		return s, err
+	}
+	if pg {
 		if db, err = dbbackend.Open(filepath.Join(dir, DBFile), dbbackend.Options{Kind: Kind, ReadOnly: true}); errors.Is(err, os.ErrNotExist) {
 			return s, nil
 		} else if err != nil {

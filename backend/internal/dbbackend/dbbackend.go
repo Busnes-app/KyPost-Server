@@ -584,10 +584,13 @@ func dropTx(ctx context.Context, tx *sql.Tx, schema, rel string) error {
 }
 
 // OpenFile opens an existing database for a helper that opens the file directly rather
-// than through its store: a held schema (read-only when query has mode=ro), else the
-// SQLite file at path with the URI query. A missing database is an os.ErrNotExist.
+// than through its store: a Postgres schema where Held says so (read-only when query has
+// mode=ro), else the SQLite file at path with the URI query. A missing database is an
+// os.ErrNotExist.
 func OpenFile(path, query string) (*sql.DB, error) {
-	if !Held(path) {
+	if pg, err := Held(path); err != nil {
+		return nil, err
+	} else if !pg {
 		return OpenSQLiteFile(path, query)
 	}
 	ro := false
@@ -643,25 +646,41 @@ func KindBytes(ctx context.Context, kinds ...string) (int64, error) {
 	return n, err
 }
 
-// Held reports whether the catalog holds the database for path: the rule for every open
-// of an existing database. A held path is read from Postgres; any other path is a SQLite
-// file (restore staging, capsule members, snapshots), on either backend. Opens that may
-// create a database go to Postgres whenever it is configured.
-//
-// ponytail: an unreachable catalog reads as not held, so the open falls to a SQLite file
-// that is not there and fails; startup's Check is what reports the outage itself.
-func Held(path string) bool {
+// ScratchDir is backup's scratch directory under STATE_DIR: the SQLite copies a backup
+// exports and validates live there.
+const ScratchDir = "backup-scratch"
+
+// Held reports whether the database at path lives in Postgres: the rule for every open
+// of an existing database. On a Postgres install every path under STATE_DIR and
+// CONFIG_DIR is Postgres, catalogued or not, so no live database is ever read from a
+// SQLite file left beside it; paths outside them (restore staging, capsule members,
+// snapshots) are SQLite files. A test schema path is Postgres when catalogued. Any
+// catalog or configuration error is returned: callers fail closed, never fall back.
+func Held(path string) (bool, error) {
 	if !Postgres() {
-		return false
+		return false, nil
 	}
-	held, err := Exists(path)
-	return err == nil && held
+	if s := current(); s.err != nil {
+		return false, s.err
+	}
+	_, rel, err := SchemaName(path)
+	switch {
+	case err != nil, strings.Contains("/"+rel+"/", "/"+ScratchDir+"/"):
+		return false, nil // outside the data roots, or backup scratch: SQLite files
+	case strings.HasPrefix(rel, "state/") || strings.HasPrefix(rel, "config/"):
+		return true, nil
+	}
+	return Exists(path)
 }
 
-// Present reports whether the database at path exists: a held schema, or a regular file.
+// Present reports whether the database at path exists: a catalogued schema, or a regular
+// file where Held says SQLite. An error reads as absent.
 func Present(path string) bool {
-	if Held(path) {
-		return true
+	if pg, err := Held(path); err != nil {
+		return false
+	} else if pg {
+		held, err := Exists(path)
+		return err == nil && held
 	}
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()

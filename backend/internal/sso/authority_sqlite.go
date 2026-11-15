@@ -106,7 +106,11 @@ type storeAuthority struct{ s *LifecycleStore }
 func (a storeAuthority) backend(ctx context.Context, write bool) (authorityStore, error) {
 	dir := filepath.Dir(a.s.path)
 	db := filepath.Join(dir, NativeAuthorityFile)
-	if a.s.offline && !onPostgres(db) {
+	pg, err := onPostgres(db)
+	if err != nil {
+		return nil, err
+	}
+	if a.s.offline && !pg {
 		// Staging and migration hold whatever format they were given; the
 		// historical readers and v2NativeFormat judge the files themselves.
 		if _, err := os.Lstat(db); errors.Is(err, os.ErrNotExist) {
@@ -514,7 +518,9 @@ func (a sqliteAuthority) Update(ctx context.Context, fn func(authorityWriter) er
 
 // run reads one subject's rows with meta when pre is set (read only).
 func (a sqliteAuthority) run(ctx context.Context, write bool, pre *subjectRows, fn func(*sqliteTx) error) (*sqliteTx, error) {
-	if onPostgres(a.path) {
+	if pg, err := onPostgres(a.path); err != nil {
+		return nil, authorityErr(err)
+	} else if pg {
 		return a.runPostgres(ctx, write, pre, fn)
 	}
 	h, err := acquireAuthority(a.path)

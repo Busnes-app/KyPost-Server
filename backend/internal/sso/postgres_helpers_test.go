@@ -79,7 +79,7 @@ func rewriteAuthorityPostgresForTest(t *testing.T, s *LifecycleStore, schema str
 // removeAuthorityForTest deletes the authority database on either backend.
 func removeAuthorityForTest(t *testing.T, path string) {
 	t.Helper()
-	if onPostgres(path) {
+	if pg, _ := onPostgres(path); pg {
 		dropPGAuthorityPool(path)
 		if err := dbbackend.RemoveFileForTest(path); err != nil {
 			t.Fatal(err)

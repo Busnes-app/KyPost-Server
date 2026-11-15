@@ -154,7 +154,11 @@ func OpenExisting(dir string, owner Owner, limits Limits, source string) (*Store
 	if !strings.HasPrefix(source, "native:") {
 		return nil, ErrPreparation
 	}
-	return open(dir, owner, limits, source, dbbackend.Held(filepath.Join(dir, "mailbox.db")))
+	pg, err := dbbackend.Held(filepath.Join(dir, "mailbox.db"))
+	if err != nil {
+		return nil, err
+	}
+	return open(dir, owner, limits, source, pg)
 }
 
 func open(dir string, owner Owner, limits Limits, source string, pg bool) (*Store, error) {
