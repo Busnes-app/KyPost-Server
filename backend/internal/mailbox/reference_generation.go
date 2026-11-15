@@ -13,11 +13,22 @@ import (
 
 const referenceGenerationSchema = `CREATE TABLE reference_generation (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT NOT NULL)`
 
-// Shared by writable initialization and read-only preparation validation.
+// Shared by writable initialization and read-only preparation validation, on a SQLite
+// handle.
 func messageReferenceGeneration(q interface{ QueryRow(string, ...any) *sql.Row }) (string, error) {
+	return referenceGenerationOn(q, false)
+}
+
+// pg says q is a Postgres schema, where the table always exists and an empty one is an
+// older mailbox's absence.
+func referenceGenerationOn(q interface{ QueryRow(string, ...any) *sql.Row }, pg bool) (string, error) {
 	var exists int
 	var kind string
-	if err := q.QueryRow("SELECT count(*),coalesce(min(type),'') FROM sqlite_schema WHERE name='reference_generation'").Scan(&exists, &kind); err != nil {
+	query := "SELECT count(*),coalesce(min(type),'') FROM sqlite_schema WHERE name='reference_generation'"
+	if pg {
+		query = "SELECT count(*),'table' FROM (SELECT 1 FROM reference_generation LIMIT 1) r"
+	}
+	if err := q.QueryRow(query).Scan(&exists, &kind); err != nil {
 		return "", err
 	}
 	if exists == 0 {

@@ -14,9 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhillyerd/enmime/v2"
+
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
-	"github.com/jhillyerd/enmime/v2"
 )
 
 // Client implements the existing mail interface over a permanent store.

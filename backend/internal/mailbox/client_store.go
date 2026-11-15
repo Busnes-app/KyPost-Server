@@ -5,10 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 const metadataColumns = "id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels"
@@ -79,7 +80,8 @@ func (s *Store) ensureLabel(ctx context.Context, label string) error {
 func (s *Store) labels(ctx context.Context) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	rows, err := s.db.QueryContext(ctx, "SELECT name COLLATE NOCASE FROM labels UNION SELECT value COLLATE NOCASE FROM messages,json_each(messages.labels) WHERE messages.raw IS NOT NULL ORDER BY 1 LIMIT 1001")
+	rows, err := s.db.QueryContext(ctx, pick(s.postgres, "SELECT name COLLATE NOCASE FROM labels UNION SELECT value COLLATE NOCASE FROM messages,json_each(messages.labels) WHERE messages.raw IS NOT NULL ORDER BY 1 LIMIT 1001",
+		"SELECT name FROM labels UNION SELECT value::citext FROM messages,jsonb_array_elements_text(messages.labels::jsonb) WHERE messages.raw IS NOT NULL ORDER BY 1 LIMIT 1001"))
 	if err != nil {
 		return nil, err
 	}

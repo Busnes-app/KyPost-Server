@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // ErrNotFound is what Setting returns for a key never written or deleted. A key
@@ -107,7 +108,13 @@ func SnapshotDB(ctx context.Context, path, scratchDir string) ([]byte, error) {
 // buffered in memory. It opens a fresh handle because the collector runs in
 // whichever process was asked (api or daemon) and neither holds every user's
 // store; WAL locking is what makes a third reader safe.
+//
+// On Postgres it exports the store's schema into dest instead, a SQLite file with the same
+// schema and rows, so a capsule's members are the same on both backends.
 func SnapshotDBToFile(ctx context.Context, path, dest string) error {
+	if dbbackend.Postgres() {
+		return dbbackend.ExportSQLite(ctx, path, dest)
+	}
 	if _, err := os.Stat(path); err != nil {
 		return err
 	}

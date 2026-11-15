@@ -15,6 +15,7 @@ import (
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
@@ -124,6 +125,7 @@ func TestNativeIncomingReplacementAtomicRecovery(t *testing.T) {
 }
 
 func TestNativeIncomingFencesAndRollback(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "injects a failure with a SQLite trigger")
 	ctx := context.Background()
 	s, c := newTestClient(t)
 	uid := importClient(t, s, "one", testRaw)

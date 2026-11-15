@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // SQLite replaces the JSON files this package used to keep.
@@ -278,6 +280,31 @@ CREATE INDEX IF NOT EXISTS agent_tokens_user ON agent_tokens(user_id);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {
+	if !dbbackend.Postgres() {
+		return openSQLiteDB(path, existingSource)
+	}
+	db, err := dbbackend.Open(path, dbbackend.Options{Kind: Kind, DDL: pgSchema, Create: existingSource == ""})
+	if err != nil {
+		if errors.Is(err, dbbackend.ErrNotFound) {
+			return nil, fmt.Errorf("existing native state unavailable; restore acknowledged storage: %w", err)
+		}
+		return nil, fmt.Errorf("open state db: %w", err)
+	}
+	if existingSource != "" {
+		var source string
+		if err := db.QueryRow("SELECT value FROM meta WHERE key='mail_source'").Scan(&source); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("existing native state unavailable; restore acknowledged storage: %w", err)
+		}
+		if source != existingSource {
+			_ = db.Close()
+			return nil, ErrMailSource
+		}
+	}
+	return db, nil
+}
+
+func openSQLiteDB(path, existingSource string) (*sql.DB, error) {
 	uri, err := dsn(path)
 	if err != nil {
 		return nil, err
@@ -455,16 +482,23 @@ const (
 // existing live WAL shared-memory companions, as for other advisory inspectors.
 func OpenReadOnly(baseDir string) (*Store, error) {
 	path := filepath.Join(baseDir, "state.db")
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, errors.New("existing instance state unavailable")
+	var db *sql.DB
+	var err error
+	if dbbackend.Postgres() {
+		if db, err = dbbackend.Open(path, dbbackend.Options{Kind: Kind, ReadOnly: true}); err != nil {
+			return nil, errors.New("existing instance state unavailable")
+		}
+	} else {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, errors.New("existing instance state unavailable")
+		}
+		uri := (&url.URL{Scheme: "file", Path: path}).String() + "?mode=ro&_pragma=query_only(ON)&_pragma=busy_timeout(5000)"
+		if db, err = sql.Open("sqlite", uri); err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(1)
 	}
-	uri := (&url.URL{Scheme: "file", Path: path}).String() + "?mode=ro&_pragma=query_only(ON)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", uri)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
 	var source string
 	if err = db.QueryRow("SELECT value FROM meta WHERE key='mail_source'").Scan(&source); err == nil {
 		rows, e := db.Query("SELECT id,action FROM backup_audit LIMIT 0")

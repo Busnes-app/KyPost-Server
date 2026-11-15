@@ -5,11 +5,12 @@ package mailbox
 import (
 	"context"
 	"errors"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 func TestPrepareAccountContextContendedCancellation(t *testing.T) {

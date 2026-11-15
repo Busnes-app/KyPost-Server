@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // Scheduled send states. scheduled, sending and returning are pending; the rest
@@ -37,10 +39,14 @@ func scheduledFinal(status string) bool {
 // pending rows or maxBytes of pending sealed data; the checks and the insert
 // are one statement.
 func (s *Store) AddScheduledSend(ctx context.Context, r ScheduledSend, limit int, maxBytes int64) error {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO scheduled_sends(id,user_id,mailbox,send_at,status,sealed,summary,created_at)
+	res, err := s.db.ExecContext(ctx, dbbackend.SQL(`INSERT INTO scheduled_sends(id,user_id,mailbox,send_at,status,sealed,summary,created_at)
 		SELECT ?1,?2,?3,?4,'scheduled',?5,?6,?7 FROM (SELECT count(*) AS n, coalesce(sum(length(sealed)),0) AS bytes
 			FROM scheduled_sends WHERE user_id=?2 AND status IN ('scheduled','sending','returning'))
 		WHERE n < ?8 AND bytes + coalesce(length(?5),0) <= ?9`,
+		`INSERT INTO scheduled_sends(id,user_id,mailbox,send_at,status,sealed,summary,created_at)
+		SELECT ?1::text,?2::text,?3::text,?4::bigint,'scheduled',?5::bytea,?6::bytea,?7::bigint FROM (SELECT count(*) AS n, coalesce(sum(length(sealed)),0) AS bytes
+			FROM scheduled_sends WHERE user_id=?2 AND status IN ('scheduled','sending','returning')) q
+		WHERE n < ?8 AND bytes + coalesce(length(?5::bytea),0) <= ?9`),
 		r.ID, r.UserID, r.Mailbox, r.SendAt, r.Sealed, r.Summary, r.CreatedAt, limit, maxBytes)
 	if err != nil {
 		return err

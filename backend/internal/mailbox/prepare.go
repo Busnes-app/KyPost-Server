@@ -10,9 +10,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -69,6 +71,12 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 	}
 	defer release()
 	if _, err = os.Lstat(target); err == nil {
+		if dbbackend.Postgres() {
+			// A published directory is complete: settle what a crash left pending.
+			if err = dbbackend.Settle(ctx, filepath.Join(target, "state.db"), filepath.Join(target, "mailbox", "mailbox.db")); err != nil {
+				return "", err
+			}
+		}
 		return preparedSource(target, owner, address, limits)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -80,6 +88,10 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 		return "", err
 	}
 	defer func() { _ = os.RemoveAll(stage) }()
+	if dbbackend.Postgres() {
+		// The stage's schemas, unless published under the target's names.
+		defer func() { _ = dbbackend.Remove(stage) }()
+	}
 	store, err := Open(filepath.Join(stage, "mailbox"), owner, limits)
 	if err != nil {
 		return "", err
@@ -105,6 +117,9 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 		return "", err
 	}
 	for _, path := range []string{filepath.Join(account, "state.db"), filepath.Join(account, "mailbox", "mailbox.db")} {
+		if dbbackend.Postgres() {
+			break
+		}
 		file, e := os.Open(path)
 		if e != nil {
 			return "", e
@@ -127,7 +142,28 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 	if err = ctx.Err(); err != nil {
 		return "", err
 	}
-	if err = publish(account, target); err != nil {
+	if dbbackend.Postgres() {
+		// The schemas move to the target's names, pending, in one transaction; the
+		// directory is published; then they settle. A crash before publication leaves
+		// pending schemas the next attempt replaces, one after it a published directory
+		// whose retry settles them (preparedSource), as a published SQLite directory is
+		// complete.
+		targets := []string{filepath.Join(target, "state.db"), filepath.Join(target, "mailbox", "mailbox.db")}
+		err = dbbackend.Stage(ctx, map[string]string{
+			filepath.Join(stage, "account", "state.db"):   targets[0],
+			filepath.Join(stage, "mailbox", "mailbox.db"): targets[1],
+		}, publishSchemasStep)
+		if err == nil {
+			if err = publish(account, target); err != nil {
+				err = errors.Join(err, dbbackend.Unstage(context.WithoutCancel(ctx), targets...))
+			} else {
+				err = dbbackend.Settle(context.WithoutCancel(ctx), targets...)
+			}
+		}
+	} else {
+		err = publish(account, target)
+	}
+	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrPreparation, err)
 	}
 	if err = fsutil.SyncDir(root); err != nil {
@@ -135,6 +171,9 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 	}
 	return source, nil
 }
+
+// publishSchemasStep runs before the Postgres publication commits; tests fail it.
+var publishSchemasStep = func() error { return nil }
 
 // ValidatePreparedAccount checks published preparation without recreating any
 // missing state. A provisioner with an acknowledged source must use this on
@@ -381,7 +420,8 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 		}
 	}
 	var tables int
-	if e := p.state.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')").Scan(&tables); e != nil || tables != 10 {
+	if e := p.state.QueryRow(dbbackend.SQL("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')",
+		"SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')")).Scan(&tables); e != nil || tables != 10 {
 		return "", ErrPreparation
 	}
 	var source string
@@ -389,7 +429,8 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 		return "", ErrPreparation
 	}
 	db := p.mail
-	if err = db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')").Scan(&tables); err != nil || tables != 9 {
+	if err = db.QueryRow(dbbackend.SQL("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')",
+		"SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')")).Scan(&tables); err != nil || tables != 9 {
 		return "", ErrPreparation
 	}
 	var storedOwner Owner
@@ -401,7 +442,7 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 	if err = db.QueryRow("SELECT token FROM namespace WHERE id=1").Scan(&namespace); err != nil || namespace == "" {
 		return "", ErrPreparation
 	}
-	if _, err = messageReferenceGeneration(db); err != nil {
+	if _, err = referenceGenerationOn(db, dbbackend.Postgres()); err != nil {
 		return "", ErrPreparation
 	}
 	client := &Client{store: &Store{owner: storedOwner, namespace: namespace}}
@@ -412,6 +453,9 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 		path string
 		info os.FileInfo
 	}{{statePath, p.stateFile}, {mailPath, p.mailFile}} {
+		if dbbackend.Postgres() {
+			break // no files; the schemas are found by path on every open
+		}
 		if info, err = os.Lstat(f.path); err != nil || !os.SameFile(info, f.info) {
 			return "", ErrPreparation
 		}
@@ -420,9 +464,12 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 }
 
 func openHeld(path string) (*heldDB, os.FileInfo, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, nil, ErrPreparation
+	var info os.FileInfo
+	var err error
+	if !dbbackend.Postgres() {
+		if info, err = os.Lstat(path); err != nil {
+			return nil, nil, ErrPreparation
+		}
 	}
 	db, err := openReadOnly(path)
 	if err != nil {
@@ -432,7 +479,15 @@ func openHeld(path string) (*heldDB, os.FileInfo, error) {
 }
 
 // openSQLite opens an existing regular database file, never creating one.
+// On Postgres it opens the schema for path instead, read-only for a mode=ro query.
 func openSQLite(path, query string) (*sql.DB, error) {
+	if dbbackend.Postgres() {
+		db, err := dbbackend.Open(path, dbbackend.Options{ReadOnly: strings.Contains(query, "mode=ro")})
+		if err != nil {
+			return nil, ErrPreparation
+		}
+		return db, nil
+	}
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return nil, ErrPreparation

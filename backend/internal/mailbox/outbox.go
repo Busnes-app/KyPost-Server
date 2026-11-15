@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
@@ -476,12 +477,7 @@ func (s *Store) FileOutboundSent(ctx context.Context, master []byte, id string) 
 	if err != nil {
 		return 0, ErrOutbound
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,draft) VALUES('Sent',?,?,?,?,?,?,?,?,1,0)`, job.Sent, hashIncoming(job.Sent), headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339))
-	if err != nil {
-		return 0, err
-	}
-	sent, err = result.LastInsertId()
-	if err != nil {
+	if err = tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,draft) VALUES('Sent',?,?,?,?,?,?,?,?,1,0) RETURNING id`, job.Sent, hashIncoming(job.Sent), headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339)).Scan(&sent); err != nil {
 		return 0, err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE outbox SET sent_id=?,sent_bytes=0,sent_reserved=0 WHERE id=?", sent, id); err != nil {
@@ -659,11 +655,22 @@ func HasPendingOutbound(ctx context.Context, dir string) (bool, error) {
 		return false, err
 	}
 	path := filepath.Join(dir, "mailbox.db")
+	now := time.Now()
+	if dbbackend.Postgres() {
+		// No file to mark idle: the query is the answer.
+		db, err := openReadOnly(path)
+		if err != nil {
+			return false, err
+		}
+		defer func() { _ = db.Close() }()
+		var pending bool
+		err = db.QueryRowContext(ctx, "SELECT EXISTS ("+pendingOutboundSQL+")", now.Unix(), 1).Scan(&pending)
+		return pending, err
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return false, err
 	}
-	now := time.Now()
 	if idleMarked(dir, info, now) {
 		return false, nil
 	}
