@@ -191,7 +191,8 @@ only while it is paired, so the browser can PUT to the ticket. The picker
 needs no CSP source (a popup and `postMessage` are not CSP-governed), but
 `Cross-Origin-Opener-Policy: same-origin` would sever its `window.opener`, so
 while paired KyPost sends `same-origin-allow-popups` instead. Being opened by
-another origin still severs; links KyPost opens carry `noopener`.
+another origin still severs; every link in a message (`<a>`, SVG `<a>`, image-map
+`<area>`) opens with `noopener`, whatever `target` or `rel` the sender wrote.
 
 ## Web client
 

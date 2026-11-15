@@ -74,6 +74,12 @@ non-prerelease version.
   `MaxBytesReader` header race in `net/http` (GO-2026-6859). The API server
   is reachable from the affected code.
 
+- Security: an image-map `<area>` or SVG `<a xlink:href>` in a message kept the
+  sender's `rel="opener"` or named `target`, so the page it opened held a
+  `window.opener` into KyPost, which COOP no longer severs while KyDrive is
+  paired. Every link in a message now opens with `noopener noreferrer` in a new
+  tab, and those elements get the same `[Blocked link]` scheme check as `<a>`.
+
 - Show an actionable invalid-recipient explanation for external-account sends when SMTP reports a missing mailbox, unknown domain or invalid address. Return HTTP 422 JSON so proxies preserve it, name the rejected recipient, and retain compose for correction; plain and client-encrypted sends share the behavior.
 
 ### Performance
