@@ -665,7 +665,7 @@ func Held(path string) (bool, error) {
 	}
 	_, rel, err := SchemaName(path)
 	switch {
-	case err != nil, strings.Contains("/"+rel+"/", "/"+ScratchDir+"/"):
+	case err != nil, rel == "state/"+ScratchDir || strings.HasPrefix(rel, "state/"+ScratchDir+"/"):
 		return false, nil // outside the data roots, or backup scratch: SQLite files
 	case strings.HasPrefix(rel, "state/") || strings.HasPrefix(rel, "config/"):
 		return true, nil

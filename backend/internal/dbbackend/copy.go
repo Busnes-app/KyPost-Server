@@ -885,3 +885,29 @@ func Undo(ctx context.Context, rels []string, before map[string]map[string]int64
 	}
 	return tx.Commit()
 }
+
+// StoresUnder lists the live paths of the published (not pending) databases of a kind
+// under any of dirs.
+func StoresUnder(ctx context.Context, kind string, dirs ...string) ([]string, error) {
+	stores, err := Stores(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, st := range stores {
+		if st.Kind != kind {
+			continue
+		}
+		live, err := filepath.Abs(st.LivePath())
+		if err != nil {
+			return nil, err
+		}
+		for _, dir := range dirs {
+			if abs, err := filepath.Abs(dir); err == nil && strings.HasPrefix(live, abs+string(filepath.Separator)) {
+				out = append(out, live)
+				break
+			}
+		}
+	}
+	return out, nil
+}

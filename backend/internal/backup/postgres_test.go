@@ -5,11 +5,14 @@ package backup
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoverykey"
@@ -151,15 +154,21 @@ func TestPostgresCapsuleRoundTrips(t *testing.T) {
 	if len(onSQLite.members) == 0 || !slices.Equal(onSQLite.members, onPostgres.members) {
 		t.Fatalf("capsule members differ:\nSQLite   %v\nPostgres %v", onSQLite.members, onPostgres.members)
 	}
-	// As a server runs: every fixture path under STATE_DIR, so Held routes them all to
-	// Postgres and only backup scratch stays SQLite.
+	// As a server runs: the fixture's dirs are STATE_DIR and CONFIG_DIR, so Held routes
+	// every live path to Postgres and only state/backup-scratch stays SQLite.
 	t.Run("seal on Postgres with live names", func(t *testing.T) {
 		dbbackend.FreshDatabaseForTest(t)
+		// fixtureDirs takes the test's next temp dirs for config, then state.
 		root := filepath.Dir(t.TempDir())
-		t.Setenv("STATE_DIR", root)
-		t.Setenv("CONFIG_DIR", root)
-		if live := sealFixture(t); !slices.Equal(onSQLite.members, live.members) {
+		t.Setenv("CONFIG_DIR", filepath.Join(root, "002"))
+		t.Setenv("STATE_DIR", filepath.Join(root, "003"))
+		live := sealFixture(t)
+		if !slices.Equal(onSQLite.members, live.members) {
 			t.Fatalf("capsule members differ:\nSQLite %v\nlive   %v", onSQLite.members, live.members)
+		}
+		stores, err := dbbackend.Stores(context.Background())
+		if err != nil || !slices.ContainsFunc(stores, func(s dbbackend.Store) bool { return s.Path == "state/state.db" }) || !slices.ContainsFunc(stores, func(s dbbackend.Store) bool { return s.Path == "config/native-authority.db" }) {
+			t.Fatalf("the fixture did not run under live names: %+v %v", stores, err)
 		}
 	})
 	t.Run("Postgres capsule drills and restores onto SQLite", func(t *testing.T) {
@@ -171,6 +180,9 @@ func TestPostgresCapsuleRoundTrips(t *testing.T) {
 			}
 		}
 		checkRestored(t, onPostgres, dir)
+		if p3, err := releaseP3(t, dir); err != nil || !p3.OK {
+			t.Fatalf("restore qualification on SQLite: %+v %v", p3, err)
+		}
 	})
 	t.Run("SQLite capsule restores into Postgres", func(t *testing.T) {
 		dbbackend.FreshDatabaseForTest(t)
@@ -189,6 +201,35 @@ func TestPostgresCapsuleRoundTrips(t *testing.T) {
 			t.Fatal(err)
 		}
 		checkRestored(t, onSQLite, dir)
+		// The release gate reads the Postgres mailboxes, and finds their sendable work.
+		if p3, err := releaseP3(t, dir); err != nil || !p3.OK {
+			t.Fatalf("restore qualification on Postgres: %+v %v", p3, err)
+		}
+		mail, err := dbbackend.OpenFile(filepath.Join(dir, "state", "users", onSQLite.user.ID, "mailbox", "mailbox.db"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = mail.Exec(`INSERT INTO outbox(id,ciphertext,sent_bytes,sent_reserved) VALUES ('job-1', '\x00ff'::bytea, 0, 0); INSERT INTO outbox_deliveries(job,sequence,state) VALUES ('job-1', 0, 'queued')`)
+		_ = mail.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		p3, err := releaseP3(t, dir)
+		if p3.OK || err == nil || !strings.Contains(strings.Join(p3.Reasons, " "), "queued or retryable outbound deliveries") {
+			t.Fatalf("a queued Postgres outbox passed the release gate: %+v %v", p3, err)
+		}
+		if _, err := mail.Exec(`SELECT 1`); err == nil {
+			t.Fatal("closed pool still usable")
+		}
+		cleanup, err := dbbackend.OpenFile(filepath.Join(dir, "state", "users", onSQLite.user.ID, "mailbox", "mailbox.db"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = cleanup.Exec(`DELETE FROM outbox_deliveries; DELETE FROM outbox`)
+		_ = cleanup.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		before, err := dbbackend.RowCounts(context.Background())
 		if err != nil {
@@ -204,6 +245,32 @@ func TestPostgresCapsuleRoundTrips(t *testing.T) {
 			t.Fatalf("a refused restore changed the database: %v", err)
 		}
 	})
+}
+
+// releaseP3 is the release gate's restore-qualification precondition on a restored
+// tree, and CheckNativeRestoreQualification's own answer.
+func releaseP3(t *testing.T, data string) (sso.NativeRestoreReleaseCheck, error) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(data, "config", "users.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Users []users.User `json:"users"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	life := sso.NewLifecycleStore(filepath.Join(data, "config"))
+	_, qualErr := life.CheckNativeRestoreQualification(filepath.Join(data, "state"))
+	st := life.NativeRestoreReleaseStatus(filepath.Join(data, "state"), t.TempDir(), sso.NewStore(filepath.Join(data, "config")).Load(), make([]byte, 32), doc.Users, time.Now().UTC())
+	for _, c := range st.Preconditions {
+		if c.ID == "P3" {
+			return c, qualErr
+		}
+	}
+	t.Fatalf("release status has no P3: %+v", st)
+	return sso.NativeRestoreReleaseCheck{}, nil
 }
 
 func sameCounts(a, b map[string]map[string]int64) bool {
