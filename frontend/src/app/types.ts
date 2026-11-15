@@ -61,8 +61,10 @@ export type DraftComposePayload = {
   attachments?: ComposeAttachment[];
   /** The mailbox the draft was opened from ("" is the primary). */
   mailbox?: string;
-  /** Set for a reply or forward, which may get a signature; absent for a saved draft. */
-  intent?: "reply" | "forward";
+  /** Set for a new message (the compose deep link), reply or forward, which may get a signature; absent for a saved draft. */
+  intent?: "new" | "reply" | "forward";
+  /** An earlier unsent draft is stored: keep it, and do not autosave this one over it. */
+  keepSnapshot?: boolean;
 };
 
 // ComposeAttachment mirrors the backend's attachment wire shape
