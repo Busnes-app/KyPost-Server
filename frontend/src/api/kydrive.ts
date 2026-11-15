@@ -4,6 +4,7 @@
 // logged or put anywhere but that request.
 
 import { getJSON, HttpError, postJSON } from "./client";
+import type { ComposeAttachment } from "../app/types";
 
 export type DriveStatus = { available: boolean; freeBytes?: number; maxFileBytes?: number; appUrl?: string; origin?: string };
 
@@ -134,4 +135,81 @@ export async function checkOutsideRecipients(addresses: string[]): Promise<strin
   const answer = await postJSON<{ outside?: unknown }>("/api/kydrive/recipients", { addresses });
   if (!Array.isArray(answer.outside)) throw new Error("bad answer");
   return answer.outside.filter((a): a is string => typeof a === "string");
+}
+
+/** A file picked in KyDrive's picker ("Share a link"): an organisation link KyDrive made. */
+export type PickedLink = { name: string; size: number; url: string; expires: string };
+/** A file picked for "Attach a copy": KyPost fetches it server-side. */
+export type PickedCopy = { name: string; size: number; fileId: string };
+export type PickMode = "link" | "copy";
+
+const MAX_PICKED = 50;
+
+function pickedName(v: unknown): string {
+  if (typeof v !== "string") return "";
+  const name = v.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return name.length <= 255 ? name : "";
+}
+
+/**
+ * The files of a picker message. Every field is untrusted text from another
+ * origin: an entry with a bad name, size, link or ID is dropped.
+ */
+export function parsePicked(data: unknown, mode: PickMode, origin: string): PickedLink[] | PickedCopy[] | null {
+  const msg = data as { type?: unknown; files?: unknown } | null;
+  if (typeof msg !== "object" || msg === null || msg.type !== "kydrive.picked" || !Array.isArray(msg.files)) return null;
+  const out: (PickedLink | PickedCopy)[] = [];
+  for (const raw of msg.files.slice(0, MAX_PICKED)) {
+    const f = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+    const name = pickedName(f.name);
+    const size = typeof f.size === "number" && Number.isSafeInteger(f.size) && f.size >= 0 ? f.size : -1;
+    if (!name || size < 0) continue;
+    if (mode === "link") {
+      const url = typeof f.url === "string" && isDriveLink(f.url, origin) ? new URL(f.url).href : "";
+      const expires = typeof f.expires === "string" && !Number.isNaN(Date.parse(f.expires)) ? f.expires : "";
+      if (url) out.push({ name, size, url, expires });
+    } else if (typeof f.file_id === "string" && /^[\x21-\x7e]{1,128}$/.test(f.file_id)) {
+      out.push({ name, size, fileId: f.file_id });
+    }
+  }
+  return out as PickedLink[] | PickedCopy[];
+}
+
+/**
+ * Opens KyDrive's picker (contract I) and resolves with what the user picked,
+ * or [] when they close it. Call it straight from a click so the popup is
+ * allowed. Only a "kydrive.picked" message from exactly that popup on exactly
+ * the paired origin counts; anything else is ignored.
+ */
+export function pickFromDrive(origin: string, mode: PickMode): Promise<PickedLink[] | PickedCopy[]> {
+  const url = new URL("/pick", origin);
+  url.searchParams.set("origin", window.location.origin);
+  url.searchParams.set("mode", mode);
+  const popup = window.open(url.href, "kydrive-picker", "popup,width=760,height=640");
+  if (!popup) return Promise.reject(new Error("Allow the KyDrive window to open, then try again."));
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (files: PickedLink[] | PickedCopy[]) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("message", onMessage);
+      window.clearInterval(timer);
+      resolve(files);
+    };
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== origin || e.source !== popup) return;
+      const files = parsePicked(e.data, mode, origin);
+      if (files) done(files);
+    };
+    window.addEventListener("message", onMessage);
+    // The picker posts, then closes: give a message already on its way a moment.
+    const timer = window.setInterval(() => { if (popup.closed) window.setTimeout(() => done([]), 500); }, 500);
+  });
+}
+
+/** Fetches a picked file through KyPost (contract I2) as a compose attachment. */
+export async function copyFromDrive(fileId: string): Promise<ComposeAttachment> {
+  const a = await postJSON<Record<string, unknown>>("/api/kydrive/copies", { fileId });
+  if (typeof a.name !== "string" || typeof a.dataBase64 !== "string" || typeof a.size !== "number") throw new Error("KyDrive gave an unusable file.");
+  return { name: a.name, mimeType: typeof a.mimeType === "string" ? a.mimeType : "application/octet-stream", dataBase64: a.dataBase64, size: a.size };
 }
