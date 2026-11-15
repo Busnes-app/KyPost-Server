@@ -332,4 +332,3 @@ func authorityCopies(configDir string) (lifecycleFile, *nativeLedger, error) {
 	l.AddressGenerations = true
 	return life, &l, nil
 }
-
