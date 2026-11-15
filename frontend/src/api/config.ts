@@ -6,6 +6,8 @@ export type AppConfig = {
   scan: { intervalSeconds: number };
   rateLimits: { perMinute: number; perHour: number };
   sendQuota: SendQuota;
+  /** Users may send their out-of-office reply to senders outside the organisation. */
+  outOfOfficeRemote: boolean;
   labels: { allowlist: string[]; keywordMappings: Record<string, string[]> };
   classifier: { baseUrl: string; apiKey: string; classifyPath: string; apiKeySet: boolean };
 };
@@ -89,6 +91,7 @@ export function normalizeConfig(input: unknown): AppConfig {
       messagesPerHour: num(sendQuota.messagesPerHour, 60),
       recipientsPerDay: num(sendQuota.recipientsPerDay, 1000)
     },
+    outOfOfficeRemote: source.outOfOfficeRemote === true,
     labels: {
       allowlist: strArray(labels.allowlist),
       keywordMappings: normalizeKeywordMappings(labels.keywordMappings)

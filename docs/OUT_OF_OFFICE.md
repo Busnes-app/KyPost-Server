@@ -67,7 +67,7 @@ be abused in these ways:
   the user's state store. The claim and the sender check are one transaction, so a retry,
   a deferral or a second worker cannot send twice. If sending then fails, the claim
   stands: missing one reply is better than risking two.
-- **Remote is opt-in twice.** An administrator switch (Server → Mail, "Allow
+- **Remote is opt-in twice.** An administrator switch (Admin → Application, "Allow
   out-of-office replies to outside senders") is off by default. While it is off, the
   remote reply is never sent and the web hides it. The user's remote setting itself
   defaults to `off`.

@@ -7,6 +7,7 @@ import { MailStorage } from "../../settings/sections/MailStorage";
 import { KyCalendar } from "../../settings/sections/KyCalendar";
 import { ReadingPane } from "../../settings/sections/ReadingPane";
 import { Signatures } from "../../settings/sections/Signatures";
+import { OutOfOffice } from "../../settings/sections/OutOfOffice";
 
 /**
  * Everything about getting mail in and out: the server it comes from, the
@@ -23,7 +24,7 @@ export function MailPanel() {
     <section className="panel">
       <div className="config-header">
         <h2 className="visually-hidden">Mail</h2>
-        <p>Your mail server, where messages open, mailbox storage, the addresses you send as and their signatures, KyCalendar invitations, contact sync and mailbox rules.</p>
+        <p>Your mail server, where messages open, mailbox storage, the addresses you send as and their signatures, your out-of-office reply, KyCalendar invitations, contact sync and mailbox rules.</p>
       </div>
       <PanelTabs
         ariaLabel="Mail sections"
@@ -33,6 +34,7 @@ export function MailPanel() {
           { id: "storage", label: "Storage", body: <MailStorage /> },
           { id: "send-as", label: "Send-as addresses", body: <SendAs /> },
           { id: "signatures", label: "Signatures", body: <Signatures /> },
+          { id: "out-of-office", label: "Out of office", body: <OutOfOffice /> },
           { id: "kycalendar", label: "KyCalendar", body: <KyCalendar /> },
           { id: "carddav-client", label: "CardDAV client", body: <CardDavClient /> },
           { id: "rules", label: "Mailbox rules", body: <Filters /> }

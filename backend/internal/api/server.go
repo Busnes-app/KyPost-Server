@@ -776,6 +776,8 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mail/send-as/{id}/confirm", s.withAuth(s.handleSendAsConfirm))
 	mux.HandleFunc("GET /api/mail/signatures", s.withMailAuth(s.handleSignatures))
 	mux.HandleFunc("PUT /api/mail/signatures", s.withAuth(s.handleSignatures))
+	mux.HandleFunc("GET /api/mail/out-of-office", s.withMailAuth(s.handleOutOfOffice))
+	mux.HandleFunc("PUT /api/mail/out-of-office", s.withAuth(s.handleOutOfOffice))
 	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.withMailbox(s.handleMailAttachmentList)))
 	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.withMailbox(s.handleMailAttachmentDownload)))
 }

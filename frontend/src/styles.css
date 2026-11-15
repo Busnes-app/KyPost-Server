@@ -1086,6 +1086,14 @@ pre {
   background: rgba(232, 221, 245, 0.15);
 }
 
+.ooo-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
 .log-line { color: var(--ink); }
 .log-error { color: color-mix(in srgb, #d32f2f 78%, var(--ink-strong)); }
 .log-warn  { color: color-mix(in srgb, #b26a00 80%, var(--ink-strong)); }

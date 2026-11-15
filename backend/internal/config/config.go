@@ -152,6 +152,10 @@ type Config struct {
 
 	SendQuota SendQuota `yaml:"sendQuota" json:"sendQuota"`
 
+	// OutOfOfficeRemote lets users send their out-of-office reply to senders
+	// outside the organisation. Off by default (docs/OUT_OF_OFFICE.md).
+	OutOfOfficeRemote bool `yaml:"outOfOfficeRemote" json:"outOfOfficeRemote"`
+
 	Redaction struct {
 		Patterns []Pattern `yaml:"patterns" json:"patterns"`
 	} `yaml:"redaction" json:"redaction"`
@@ -185,6 +189,8 @@ type UserSettings struct {
 	Labels        UserLabelSettings        `yaml:"labels" json:"labels"`
 	// Signatures is served only by /api/mail/signatures.
 	Signatures UserSignatureSettings `yaml:"signatures" json:"-"`
+	// OutOfOffice is served only by /api/mail/out-of-office.
+	OutOfOffice OutOfOffice `yaml:"outOfOffice,omitempty" json:"-"`
 }
 
 // KyCalendarOn reports whether the paired KyCalendar may send invitations from

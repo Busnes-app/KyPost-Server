@@ -60,6 +60,9 @@ type Message struct {
 	// CalendarMethod (REQUEST, CANCEL or REPLY; empty is REPLY) as its method.
 	Calendar       []byte
 	CalendarMethod string
+	// AutoReplied marks an automatic reply: "Auto-Submitted: auto-replied"
+	// (RFC 3834).
+	AutoReplied bool
 }
 
 // Stamp fills an empty Date and Message-ID. The Message-ID domain is the From
@@ -255,6 +258,9 @@ func (m Message) Build() []byte {
 	if refs := capReferences(MessageIDs(strings.Join(m.References, " "))); len(refs) > 0 {
 		// One msg-id per folded line keeps every line far under 998 octets.
 		msg.WriteString("References: " + strings.Join(refs, "\r\n ") + "\r\n")
+	}
+	if m.AutoReplied {
+		msg.WriteString("Auto-Submitted: auto-replied\r\n")
 	}
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	if m.Autocrypt != "" {

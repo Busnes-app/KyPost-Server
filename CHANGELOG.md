@@ -20,6 +20,18 @@ non-prerelease version.
 
 ### Added
 
+- Out-of-office reply (Settings → Mail → Out of office), Outlook style: one
+  text for people in the organisation (KyIdentity suite members and the native
+  mail domains) and one for everyone else, which an administrator must allow
+  first (`outOfOfficeRemote`, off by default) and the user can limit to their
+  contacts. Optional start and end. RFC 3834: never to lists, bulk, automated
+  or junk mail, or a sender whose DKIM does not align with From; once per
+  sender per four days or per period; `Auto-Submitted: auto-replied`, threaded,
+  body never quoted, charged to the send quota and saved in Sent. An inbox bar
+  turns it off in one click. MCP agents can read it and, with the organize
+  level, change the in-organisation reply but never the outside one.
+  Contract: `docs/OUT_OF_OFFICE.md`.
+
 - Postgres backend, one instance per database. `KYPOST_DATABASE_URL` or
   `KYPOST_DATABASE_URL_FILE` keeps every store in one Postgres 16+ database
   (UTF8, C locale), one schema per SQLite file; unset keeps SQLite unchanged.

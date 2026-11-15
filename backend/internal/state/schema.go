@@ -276,6 +276,19 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
 	last_used_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS agent_tokens_user ON agent_tokens(user_id);
+
+-- Out-of-office replies: one row per original message answered (key is a
+-- hash of the mailbox and Message-ID) and per sender last answered. See
+-- out_of_office.go.
+CREATE TABLE IF NOT EXISTS ooo_messages (
+	message_key TEXT PRIMARY KEY,
+	at          INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ooo_senders (
+	sender TEXT PRIMARY KEY,
+	period TEXT NOT NULL,
+	at     INTEGER NOT NULL
+);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {

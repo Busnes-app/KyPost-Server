@@ -168,6 +168,8 @@ type userCtx struct {
 	// kycalSub and kycalIssuer name the user to KyCalendar; empty when
 	// invitations are not forwarded for them (kyCalendarIdentity).
 	kycalSub, kycalIssuer string
+	// ooo is the user's out-of-office reply; zero for an extra mailbox.
+	ooo config.OutOfOffice
 }
 
 var errIncomingEncryptionExtraMailbox = errors.New("incoming encryption is on for the owner of an extra mailbox; disable it or the mailbox")
@@ -933,6 +935,9 @@ func (p *Poller) mailboxTickContext(u users.User, mailboxID string, imapConfigMo
 		guesses:          map[string]sortGuess{},
 	}
 	uc.kycalSub, uc.kycalIssuer = p.kyCalendarIdentity(u, settings)
+	if !uc.extraMailbox() {
+		uc.ooo = settings.OutOfOffice
+	}
 
 	boundCache, err := p.mailboxCacheStore(u.ID, a)
 	if err != nil {
@@ -1115,13 +1120,17 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 		// not be rationed by the rate limit, nor skipped by a rule that moves,
 		// deletes or stops, or by a classifier failure. Flagging first also means
 		// the keyword travels with the message if a rule moves it.
-		if p.flagAppImpersonation(ctx, uc, msg, ownAddress) {
+		phish := p.flagAppImpersonation(ctx, uc, msg, ownAddress)
+		if phish {
 			p.mirrorPhishKeyword(mailCache, msg)
 		}
 		if harvestEnabled {
 			p.harvestAutocrypt(ctx, uc, msg, harvestSuppressed)
 		}
 		p.forwardInvitation(ctx, uc, msg)
+		if !phish {
+			p.outOfOfficeReply(ctx, uc, msg, ownAddress)
+		}
 		if headersErr != nil {
 			res.deferredIDs = append(res.deferredIDs, msg.ID)
 			if res.ledgerErr == nil {

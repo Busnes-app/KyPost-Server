@@ -101,6 +101,7 @@ Less common variables:
 
 Notes:
 
+- Out-of-office replies to senders outside the organisation are off until an admin ticks "Allow out-of-office replies to outside senders" under Admin → Application (`outOfOfficeRemote` in `config.yaml`, default `false`). Replies to people in the organisation need no switch. See [OUT_OF_OFFICE.md](OUT_OF_OFFICE.md).
 - The sending quota is not an environment variable. Admins set it under Admin → Application (`sendQuota` in `config.yaml`, 60 messages an hour and 1000 recipients a day by default; both must be at least 1) and per account under Admin → Users. A zero in a hand-edited `config.yaml` falls back to the default, never to no limit.
 
 - The classifier model defaults to `nemotron-3-nano:4b` everywhere — `Dockerfile`,

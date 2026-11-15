@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, label TEXT NOT NULL, hash TEXT NOT NULL, scope TEXT NOT NULL,
  created_at BIGINT NOT NULL, last_used_at BIGINT NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS agent_tokens_user ON agent_tokens(user_id);
+CREATE TABLE IF NOT EXISTS ooo_messages (message_key TEXT PRIMARY KEY, at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS ooo_senders (sender TEXT PRIMARY KEY, period TEXT NOT NULL, at BIGINT NOT NULL);
 `
 
 // Kind is the catalog kind of a state.db.

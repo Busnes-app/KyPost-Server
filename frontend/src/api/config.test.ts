@@ -54,6 +54,7 @@ describe("normalizeConfig rejects wrongly-typed fields instead of passing them t
       scan: { intervalSeconds: 30 },
       rateLimits: { perMinute: 5, perHour: 50 },
       sendQuota: { messagesPerHour: 7, recipientsPerDay: 70 },
+      outOfOfficeRemote: false,
       labels: { allowlist: ["work"], keywordMappings: { work: ["invoice"] } },
       classifier: { baseUrl: "http://ollama:11434", apiKey: "", classifyPath: "/api/generate", apiKeySet: true }
     });

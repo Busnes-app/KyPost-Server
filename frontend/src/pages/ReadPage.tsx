@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type TouchEvent } from "react";
+import { OutOfOfficeBar } from "../components/OutOfOfficeBar";
 import { Link, useSearchParams } from "react-router";
 import { escapeHtmlText, processEmailHtml, resolveBodyMode } from "../lib/emailHtml";
 import { EmailBodyFrame, FRAME_SANDBOX } from "./read/EmailBodyFrame";
@@ -1592,6 +1593,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
         </div>
       </header>
 
+      {isInboxMailbox ? <OutOfOfficeBar /> : null}
       {error ? <p className="notice notice-error">Failed to load inbox: {error}</p> : null}
       {actionError ? <p className="notice notice-error">Inbox action failed: {actionError}</p> : null}
 

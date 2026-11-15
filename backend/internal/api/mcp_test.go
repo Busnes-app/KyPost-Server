@@ -360,6 +360,8 @@ func TestMCPAccessLevelMatrix(t *testing.T) {
 		{"create_draft", true, map[string]any{"to": []string{"friend@outside.test"}, "subject": "Hi", "body": "Draft"}},
 		{"move_messages", true, map[string]any{"message_ids": "<ids>", "target": "Projects"}},
 		{"archive_messages", true, map[string]any{"message_ids": "<ids>"}},
+		{"get_out_of_office", false, map[string]any{}},
+		{"set_out_of_office", true, map[string]any{"enabled": false}},
 	}
 	for _, scope := range []string{state.AgentScopeRead, state.AgentScopeOrganize} {
 		// One message per write tool: a move or archive takes it out of INBOX.
@@ -877,7 +879,7 @@ func TestAgentSkillMatchesTheTools(t *testing.T) {
 			t.Errorf("skill names %s, which is not a tool", m[1])
 		}
 	}
-	for _, msg := range []string{msgReadOnly, msgNoMessage, msgRefusedTarget, msgUnknownLabel, msgClientCustody, msgMailNotSetUp, msgMailUnavailable, msgSlowDown} {
+	for _, msg := range []string{msgReadOnly, msgNoMessage, msgRefusedTarget, msgUnknownLabel, msgClientCustody, msgMailNotSetUp, msgMailUnavailable, msgSlowDown, msgRemoteOOO} {
 		if !strings.Contains(skill, msg) {
 			t.Errorf("skill error table lacks %q", msg)
 		}
@@ -1424,5 +1426,43 @@ func TestMCPApplyLabelWritesTheRequestedLabel(t *testing.T) {
 		if len(out.Message.Labels) != 1 || out.Message.Labels[0] != "KeyD" {
 			t.Fatalf("apply_label KeyD left labels %v", out.Message.Labels)
 		}
+	}
+}
+
+// An agent sets the reply for the organisation but never the one to outside
+// senders, and cannot turn the reply on while that one is set.
+func TestMCPOutOfOffice(t *testing.T) {
+	w := newMCPWorld(t)
+	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeOrganize, time.Now())
+	cs := agent(t, w.srv, tok, nil)
+	var got oooAgentView
+	if msg := callTool(t, cs, "set_out_of_office", map[string]any{"enabled": true, "local_message": "Away until Monday.", "end": "2099-01-01T00:00:00Z"}, &got); msg != "" || !got.Enabled || got.LocalMessage != "Away until Monday." || got.Remote != config.RemoteOff {
+		t.Fatalf("set: %q %+v", msg, got)
+	}
+	if msg := callTool(t, cs, "set_out_of_office", map[string]any{"enabled": true, "local_message": strings.Repeat("x", config.MaxOutOfOfficeRunes+1)}, nil); msg == "" {
+		t.Error("oversize text accepted")
+	}
+	if msg := callTool(t, cs, "set_out_of_office", map[string]any{"enabled": true, "remote": "on"}, nil); msg == "" {
+		t.Error("an unknown remote field was accepted")
+	}
+	if _, err := w.srv.saveOutOfOffice(w.user.ID, func(o config.OutOfOffice) (config.OutOfOffice, error) {
+		o.Enabled, o.Remote, o.RemoteMessage = false, config.RemoteContacts, "Away."
+		return o, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if msg := callTool(t, cs, "set_out_of_office", map[string]any{"enabled": true}, nil); msg != msgRemoteOOO {
+		t.Errorf("enable with remote set: %q", msg)
+	}
+	if msg := callTool(t, cs, "set_out_of_office", map[string]any{"enabled": false}, &got); msg != "" || got.Enabled {
+		t.Errorf("turn off: %q %+v", msg, got)
+	}
+	o, _ := w.srv.loadOutOfOffice(w.user.ID)
+	if o.Remote != config.RemoteContacts || o.RemoteMessage != "Away." {
+		t.Errorf("agent changed the remote reply: %+v", o)
+	}
+	_, ro := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeRead, time.Now())
+	if msg := callTool(t, agent(t, w.srv, ro, nil), "set_out_of_office", map[string]any{"enabled": false}, nil); msg != msgReadOnly {
+		t.Errorf("read token: %q", msg)
 	}
 }
