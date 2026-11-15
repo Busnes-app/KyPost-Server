@@ -94,6 +94,10 @@ func ImportDatabases(ctx context.Context, roots []Root, scratch string) (Counts,
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Reading a large SQLite table between inserts must not trip the pool's 30 s idle limit.
+	if _, err := tx.ExecContext(ctx, `SET LOCAL idle_in_transaction_session_timeout = 0`); err != nil {
+		return nil, err
+	}
 	copied := Counts{}
 	for i, s := range sources {
 		n, err := dbbackend.ImportSQLite(ctx, tx, s.rel, s.kind, opened[i])
