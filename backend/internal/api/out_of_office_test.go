@@ -65,7 +65,7 @@ func TestOutOfOfficeIsValidated(t *testing.T) {
 		"local zone":          `{"timeZone":"Local"}`,
 		"long local":          `{"localMessage":"` + strings.Repeat("é", config.MaxOutOfOfficeRunes+1) + `"}`,
 		"control in remote":   `{"remoteMessage":"a\u0007b"}`,
-		"bidi in local":       `{"localMessage":"a‮b"}`,
+		"bidi in local":       `{"localMessage":"a\u202eb"}`,
 		"on without text":     `{"enabled":true}`,
 		"remote without text": `{"enabled":true,"localMessage":"x","remote":"on"}`,
 		"not json":            `{`,
