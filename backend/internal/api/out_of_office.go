@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -109,6 +108,6 @@ func (s *Server) handleOutOfOffice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to save out-of-office settings", http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("out-of-office settings saved", "user_id", ac.UserID, "enabled", strconv.FormatBool(saved.Enabled))
+	s.logger.Info("out-of-office settings saved", "user_id", ac.UserID)
 	writeJSON(w, http.StatusOK, s.oooView(saved))
 }

@@ -155,7 +155,7 @@ func oooOn() config.OutOfOffice {
 func TestOutOfOfficeReplyLocal(t *testing.T) {
 	h := newOOOHarness(t)
 	h.member = true
-	uc := h.ctx(t, oooOn(), []byte(oooBase+"\r\nprivate body\r\n"), []byte(strings.Replace(oooBase, "<m1@", "<m2@", 1)+"\r\nagain\r\n"),
+	uc := h.ctx(t, oooOn(), []byte("Date: "+time.Now().Format(time.RFC1123Z)+"\r\n"+oooBase+"\r\nprivate body\r\n"), []byte(strings.Replace(oooBase, "<m1@", "<m2@", 1)+"\r\nagain\r\n"),
 		[]byte(strings.Replace(oooBase, "<m1@", "<m3@", 1)+"\r\nlater\r\n"))
 	h.p.outOfOfficeReply(t.Context(), uc, imapadapter.Message{ID: "1", Subject: "Lunch?\r\nBcc: x@evil.test"}, "bob@x.test")
 	if len(h.sent) != 1 || len(h.saved) != 1 {
@@ -247,6 +247,9 @@ func TestOutOfOfficeReplyNotSent(t *testing.T) {
 		},
 		"unauthenticated": func(_ *oooHarness, uc *userCtx) {
 			uc.mail = oooMailClient{&noopMailClient{}, map[int][]byte{1: []byte(strings.ReplaceAll(oooBase, "alice@example.com", "mallory@example.com") + "\r\nhi\r\n")}, new([][]byte)}
+		},
+		"old mail": func(_ *oooHarness, uc *userCtx) {
+			uc.mail = oooMailClient{&noopMailClient{}, map[int][]byte{1: []byte("Date: Mon, 2 Jan 2006 15:04:05 -0700\r\n" + oooBase + "\r\nhi\r\n")}, new([][]byte)}
 		},
 		"rule marks spam": func(_ *oooHarness, uc *userCtx) {
 			uc.rules = []rules.Rule{{ID: "r", Enabled: true, Match: rules.MatchGroup{Op: "allof", Conditions: []rules.Condition{{Field: "from", Comparator: "contains", Value: "alice"}}}, Actions: []rules.Action{{Type: "spam"}}}}

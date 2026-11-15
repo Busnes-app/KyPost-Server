@@ -19,6 +19,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -198,6 +199,10 @@ func (p *Poller) outOfOfficeReply(ctx context.Context, uc userCtx, msg imapadapt
 		return
 	}
 	orig, reason := oooEligible(parsed.Header, p.ownAddresses(uc, account))
+	// A UID reset re-offers old mail as new; never answer it.
+	if sent, err := parsed.Header.Date(); reason == "" && err == nil && now.Sub(sent) > time.Duration(state.OOOSenderWindow)*time.Second {
+		reason = "old"
+	}
 	if reason == "" && ruledJunk(ctx, uc, msg, uid) {
 		reason = "junk"
 	}
