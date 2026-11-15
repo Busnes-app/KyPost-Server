@@ -10,7 +10,9 @@ import {
   loadDriveStatus,
   pickFromDrive,
   requestUploadTicket,
+  toGuestLinks,
   uploadToTicket,
+  type DriveLink,
   type DriveStatus,
   type PickedCopy,
   type PickedLink,
@@ -22,7 +24,12 @@ import type { ComposeAttachment } from "../app/types";
 /** An upload to KyDrive, or (loaded undefined) a copy being fetched from it. */
 export type DriveUpload = { id: number; name: string; loaded?: number; size: number };
 /** Recipients who cannot open the message's KyDrive links. unverified: the check itself failed. */
-export type DriveOutside = { addresses: string[]; unverified: boolean; canAttach: boolean; sendAt?: Date };
+export type DriveOutside = { addresses: string[]; unverified: boolean; canAttach: boolean; canGuest: boolean; sendAt?: Date };
+/** A guest-link send waiting for the user to confirm it is them. */
+export type DriveGuestStepUp = { days: number; sendAt?: Date; snapshot: string };
+/** The draft's recipients and subject as one string, read fresh each call. */
+export type DraftKey = () => string;
+const CHANGED = "The message changed while KyPost was making the guest links. Check it and send again.";
 
 /** KyDrive in compose (docs/KYDRIVE.md "KyPost side"): offer, upload, link, and the send-time check. */
 export function useComposeDrive({
@@ -38,12 +45,18 @@ export function useComposeDrive({
   const [driveOffer, setDriveOffer] = useState<File[]>([]);
   const [driveUploads, setDriveUploads] = useState<DriveUpload[]>([]);
   const [driveOutside, setDriveOutside] = useState<DriveOutside | null>(null);
+  const [driveGuestStepUp, setDriveGuestStepUp] = useState<DriveGuestStepUp | null>(null);
   const aborts = useRef(new Map<number, AbortController>());
   // Link URL -> the file behind it, for "attach instead"; this window only.
   const files = useRef(new Map<string, File>());
+  // Link URL -> its KyDrive file, for guest links; this window only.
+  const fileIds = useRef(new Map<string, string>());
   const seq = useRef(0);
   // Bumped by resetDrive: work started for an earlier compose never touches the next one.
   const generation = useRef(0);
+  // Bumped by each guest-link send and by cancelGuest: a cancelled or
+  // superseded send stops at its next await.
+  const guestOp = useRef(0);
 
   useEffect(() => {
     if (!composeOpen) return;
@@ -57,9 +70,11 @@ export function useComposeDrive({
     for (const c of aborts.current.values()) c.abort();
     aborts.current.clear();
     files.current.clear();
+    fileIds.current.clear();
     setDriveOffer([]);
     setDriveUploads([]);
     setDriveOutside(null);
+    setDriveGuestStepUp(null);
   }
 
   /** Inserts "name" linked to url, then size and expiry as text, at the cursor. */
@@ -90,6 +105,7 @@ export function useComposeDrive({
       if (stale()) return false;
       insertLink(saved.name || file.name, link.url, file.size, link.expires);
       files.current.set(link.url, file);
+      fileIds.current.set(link.url, saved.file_id);
       return true;
     } catch (e) {
       if (!abort.signal.aborted && gen === generation.current) setError(`Upload to KyDrive failed: ${driveMessage(e)}`);
@@ -199,7 +215,11 @@ export function useComposeDrive({
     if (outside.length === 0) return true;
     const held = links.map((l) => files.current.get(l));
     const total = attachments.reduce((s, a) => s + a.size, 0) + held.reduce((s, f) => s + (f?.size ?? 0), 0);
-    setDriveOutside({ addresses: outside, unverified, sendAt, canAttach: held.every(Boolean) && total <= MAX_ATTACHMENT_BYTES });
+    setDriveOutside({
+      addresses: outside, unverified, sendAt,
+      canAttach: held.every(Boolean) && total <= MAX_ATTACHMENT_BYTES,
+      canGuest: driveStatus.guestLinks === true && links.every((l) => fileIds.current.has(l))
+    });
     return false;
   }
 
@@ -223,7 +243,79 @@ export function useComposeDrive({
     }
   }
 
+  /**
+   * "Send a guest link instead" (contract K): makes one guest link per file,
+   * now, and points the body's links at them. KyPost asks for a step-up within
+   * the last 10 minutes; when the server wants one, this holds the send in
+   * driveGuestStepUp and returns false. A reset compose makes nothing more.
+   * Returns true when the body is ready to send.
+   */
+  async function sendWithGuestLinks(days: number, sendAt: Date | undefined, draftKey: DraftKey, gen = generation.current, snapshot?: string, op = ++guestOp.current): Promise<boolean> {
+    const q = quill.current;
+    const live = () => gen === generation.current && op === guestOp.current;
+    if (!q || !live()) return false;
+    // Recipients, subject and body as the user confirmed them: any edit while
+    // links are made (or the step-up runs) cancels the send.
+    const now = () => draftKey() + "\u0000" + q.root.innerHTML;
+    const before = snapshot ?? now();
+    if (now() !== before) {
+      setError(CHANGED);
+      return false;
+    }
+    const hrefs = [...new Set(Array.from(q.root.querySelectorAll("a[href]")).map((a) => a.getAttribute("href") ?? ""))].filter((h) => fileIds.current.has(h));
+    const made = new Map<string, DriveLink>();
+    try {
+      for (const href of hrefs) {
+        made.set(href, await createDriveLink(fileIds.current.get(href) as string, days, "guest"));
+        if (!live()) return false;
+      }
+    } catch (e) {
+      if (!live()) return false;
+      if (driveErrorCode(e) === "step_up_required") {
+        setDriveOutside(null);
+        setDriveGuestStepUp({ days, sendAt, snapshot: before });
+      } else {
+        setError(`Guest links failed: ${driveMessage(e)}`);
+      }
+      return false;
+    }
+    if (now() !== before) {
+      setDriveOutside(null);
+      setError(CHANGED);
+      return false;
+    }
+    toGuestLinks(q.root, made);
+    q.update("user");
+    for (const [href, link] of made) {
+      fileIds.current.set(link.url, fileIds.current.get(href) as string);
+      const f = files.current.get(href);
+      if (f) files.current.set(link.url, f);
+    }
+    setDriveOutside(null);
+    return true;
+  }
+
+  /** Runs the step-up (reauth throws on failure), then the held guest-link send. */
+  async function confirmGuestStepUp(reauth: () => Promise<void>, draftKey: DraftKey): Promise<DriveGuestStepUp | null> {
+    const held = driveGuestStepUp;
+    const gen = generation.current;
+    const op = ++guestOp.current;
+    if (!held) return null;
+    await reauth();
+    if (gen !== generation.current || op !== guestOp.current) return null;
+    setDriveGuestStepUp(null);
+    return (await sendWithGuestLinks(held.days, held.sendAt, draftKey, gen, held.snapshot, op)) ? held : null;
+  }
+
+  /** Cancel on the warning or the step-up: a guest-link send in flight makes nothing more and sends nothing. */
+  function cancelGuest() {
+    guestOp.current += 1;
+    setDriveGuestStepUp(null);
+    setDriveOutside(null);
+  }
+
   return {
+    driveGuestStepUp, sendWithGuestLinks, confirmGuestStepUp, cancelGuest,
     driveStatus, driveOffer, setDriveOffer, acceptDriveOffer, attachFromDrive, driveUploads, cancelDriveUpload, offerDrive,
     attachmentToDrive, driveOutside, setDriveOutside, driveRecipientsOk, attachDriveFilesInstead, resetDrive
   };
@@ -236,7 +328,8 @@ const driveMessages: Record<string, string> = {
   sharing_off: "KyPost is not allowed to save to your KyDrive. Turn it on in KyDrive settings.",
   kydrive_off: "KyDrive is not available for your account.",
   bad_body: "KyDrive refused that file name.",
-  not_found: "that file is no longer in your KyDrive, or you cannot read it."
+  not_found: "that file is no longer in your KyDrive, or you cannot read it.",
+  guest_links_off: "KyDrive does not allow guest links for you now. Check KyDrive settings."
 };
 
 function driveMessage(e: unknown): string {

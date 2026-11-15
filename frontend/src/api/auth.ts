@@ -64,10 +64,11 @@ export async function deriveNewCredential(
  * `code` is a TOTP code, or a one-time recovery code in its place, and is
  * ignored by the server for an account without TOTP.
  *
- * This authorises nothing on its own. It answers "is the person at this
- * keyboard the account owner, right now", which is what a screen full of key
- * material wants to know before it draws itself; the operations behind that
- * screen re-verify for themselves regardless.
+ * It answers "is the person at this keyboard the account owner, right now",
+ * which is what a screen full of key material wants to know before it draws
+ * itself; the operations behind that screen re-verify for themselves. The one
+ * thing a success authorises server-side is KyDrive guest links for the next
+ * 10 minutes (docs/KYDRIVE.md "Guest links").
  */
 export async function reauthenticate(password: string, code: string): Promise<void> {
   const credential = await deriveCredential("", password);

@@ -2,8 +2,8 @@
 
 Contract between KyPost and KyDrive: wave 1 of the suite integrations
 (section C of `ky-redesign/integrations/suite-integrations-contracts.md`) and
-wave 2's picker and fetch (sections I and I2 of
-`suite-integrations-wave2.md`), copied here on 2026-11-14; this file is now
+wave 2's picker and fetch (sections I and I2) and guest links (section K) of
+`suite-integrations-wave2.md`, copied here on 2026-11-14; this file is now
 the durable copy. KyPost sends
 large files as KyDrive links and saves received attachments to KyDrive.
 KyDrive is the resource owner. Change both sides together.
@@ -82,7 +82,25 @@ else 404 `not_found`.
 
 ### Status
 
-`{"sub":"…","issuer":"…"}` → 200 `{"enabled":true,"free_bytes":123,"max_file_bytes":123}`.
+`{"sub":"…","issuer":"…"}` → 200 `{"enabled":true,"free_bytes":123,"max_file_bytes":123,"guest_links":true,"guest_max_days":30}`.
+`guest_links` and `guest_max_days` are wave 2 (K); an older KyDrive omits them.
+
+### Guest links (K)
+
+The link request gains an optional `"audience":"guest"` (absent means
+`"organisation"`).
+
+- Allowed only when KyDrive's administrator guest-link policy is on, the
+  user's second KyDrive switch "Let KyPost create guest links for people
+  outside the organisation" is on (default off, shown only while the policy is
+  on), and `days` is 1 to the policy's `max_days`, never 0. Otherwise 409
+  `guest_links_off` or 400 `bad_body`.
+- The link is a KyDrive guest link (`https://drive.example/g/#<token>`) with
+  the same rights as one made in KyDrive (view and download, no upload),
+  listed with the file's other links so the owner can revoke it, and audited
+  as made through KyPost.
+- An old KyDrive ignores `audience` and would make an organisation link, so
+  KyPost sends `audience` only when the status carried `guest_links:true`.
 
 ### Fetch (I2)
 
@@ -122,9 +140,9 @@ means: hide the KyDrive options.
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET /api/kydrive/status` | | 200 `{available, freeBytes?, maxFileBytes?, appUrl?, origin?}` |
+| `GET /api/kydrive/status` | | 200 `{available, freeBytes?, maxFileBytes?, appUrl?, origin?, guestLinks?, guestMaxDays?}` |
 | `POST /api/kydrive/upload-tickets` | `{name, size}` | 201 `{uploadUrl, expires, maxChunk}` |
-| `POST /api/kydrive/links` | `{fileId, days?}` (default 30) | 201 `{url, expires}` |
+| `POST /api/kydrive/links` | `{fileId, days?, audience?}` (default 30; `audience` `"organisation"` or `"guest"`) | 201 `{url, expires}` |
 | `POST /api/kydrive/copies` | `{fileId}` (from the picker) | 200 `{name, mimeType, size, dataBase64}` |
 | `POST /api/kydrive/save-attachment` | `{messageId, mailbox?, index}` | 201 `{fileId, name, size, folder, appUrl}` |
 | `POST /api/kydrive/recipients` | `{addresses}` (1 to 500 bare addresses) | 200 `{outside}` |
@@ -145,6 +163,18 @@ means: hide the KyDrive options.
 - Save to KyDrive reads the part server-side (the mail parser already holds
   it, within the 25 MiB inbound cap), asks for a ticket and PUTs that same
   copy in `max_chunk` pieces; no second buffer, ten-minute budget.
+- `guestLinks`/`guestMaxDays` appear only when KyDrive's status carried
+  `guest_links:true` with `guest_max_days` ≥ 1 (capped at 365). A guest
+  `links` request is refused here, before KyDrive is asked: 409
+  `guest_links_off` when the status does not offer them, 400 when `days` is
+  not 1 to `guestMaxDays`, 403 `step_up_required` unless this session passed
+  `POST /api/auth/step-up` in the last 10 minutes (`Session.SteppedUpAt`; a
+  paired device has no session and never qualifies). Only then is
+  `audience:"guest"` sent, and the answer must be a `/g/#…` link on the paired
+  origin (an `/l/` answer, from a KyDrive that ignored `audience`, is 502).
+  Organisation links never carry `audience`. KyDrive's `guest_links_off`
+  passes through and drops the cached status. Each guest link is logged with
+  the user and file IDs.
 - `copies` signs `kypost.drive.fetch` with `max_bytes` set to the attachment
   limit (two-minute budget) and answers the file as a compose attachment.
   KyDrive's `too_large` is 413 `too_large`; an answer that is not
@@ -161,7 +191,8 @@ only while it is paired, so the browser can PUT to the ticket. The picker
 needs no CSP source (a popup and `postMessage` are not CSP-governed), but
 `Cross-Origin-Opener-Policy: same-origin` would sever its `window.opener`, so
 while paired KyPost sends `same-origin-allow-popups` instead. Being opened by
-another origin still severs; links KyPost opens carry `noopener`.
+another origin still severs; every link in a message (`<a>`, SVG `<a>`, image-map
+`<area>`) opens with `noopener`, whatever `target` or `rel` the sender wrote.
 
 ## Web client
 
@@ -180,6 +211,25 @@ another origin still severs; links KyPost opens carry `noopener`.
   (only when every linked file was uploaded in this window and all of them
   fit the attachment limit; their link lines are removed), or Cancel. A
   failed check holds the send the same way, naming every recipient.
+- Guest links: when `guestLinks` is on and every KyDrive link in the body is
+  a file uploaded in this window, the outside-recipient warning also offers
+  **Send a guest link instead**, with an expiry choice (1, 7, 14, 30, 60, 90,
+  180, 365 days up to `guestMaxDays`, and `guestMaxDays` itself; default 7)
+  and a line saying anyone with the link can view and download the file
+  until it expires. Choosing it makes one guest link per file at that moment,
+  points each body link at it and replaces its note with `(size, KyDrive
+  guest link, expires <date>)`, then sends. A `step_up_required` answer holds
+  the send behind a "Confirm it is you" form (password and two-factor code,
+  or KySignOn for a KySignOn session); confirming makes the links and sends.
+  A compose reset during the step-up or between links makes no further link
+  and changes nothing in the next draft. The recipients, subject and body
+  are fixed when the user chooses guest links: if any of them changes before
+  the links are made (during the step-up or while KyDrive answers), nothing
+  is rewritten or sent and the user is told to check the message and send
+  again; the send that follows uses the compose as it is then. Cancel (on
+  the warning or the step-up form) stops a guest-link send in flight: a
+  confirmation that succeeds afterwards makes no link and sends nothing. Links already made stay in KyDrive,
+  where the owner can revoke them.
 - Compose: **Attach from KyDrive** (a ky-ui menu) offers **Share a link**
   (`mode=link`; each link is inserted as above, and counts for the
   outside-recipient check) and **Attach a copy** (`mode=copy`; each file is
