@@ -81,7 +81,7 @@ func removeAuthorityForTest(t *testing.T, path string) {
 	t.Helper()
 	if onPostgres(path) {
 		dropPGAuthorityPool(path)
-		if err := dbbackend.RemoveFile(path); err != nil {
+		if err := dbbackend.RemoveFileForTest(path); err != nil {
 			t.Fatal(err)
 		}
 	}

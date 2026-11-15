@@ -347,7 +347,7 @@ func WriteNativeV1ForTest(configDir, relayKeyPath string) error {
 	db := filepath.Join(configDir, NativeAuthorityFile)
 	dropAuthorityHandle(db)
 	if dbbackend.Postgres() {
-		if err := dbbackend.RemoveFile(db); err != nil {
+		if err := dbbackend.RemoveFileForTest(db); err != nil {
 			return err
 		}
 	}

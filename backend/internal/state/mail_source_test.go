@@ -190,7 +190,7 @@ func TestNativeStateDatabaseURIPaths(t *testing.T) {
 // removeDatabase deletes a store's database on either backend.
 func removeDatabase(path string) error {
 	if dbbackend.Postgres() {
-		return dbbackend.RemoveFile(path)
+		return dbbackend.RemoveFileForTest(path)
 	}
 	return os.Remove(path)
 }

@@ -150,7 +150,7 @@ func root(ctx context.Context) (*sql.DB, error) {
 		}
 	}
 	ready = true
-	slog.Info("database: Postgres", "server", where)
+	slog.Info("database: Postgres", "action", "connect", "target", where)
 	return catalog, nil
 }
 
@@ -465,21 +465,6 @@ func SQL(sqlite, postgres string) string {
 		return postgres
 	}
 	return sqlite
-}
-
-// RemoveFile drops the one database at path: deleting the file on Postgres.
-func RemoveFile(path string) error {
-	ctx := context.Background()
-	cat, err := root(ctx)
-	if err != nil {
-		return err
-	}
-	schema, rel, err := SchemaName(path)
-	if err != nil {
-		return err
-	}
-	_, err = cat.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+QuoteIdent(schema)+` CASCADE; DELETE FROM kypost_catalog.stores WHERE path='`+strings.ReplaceAll(rel, "'", "''")+`'`)
-	return err
 }
 
 // Preparing a directory of new databases (mailbox preparation) on Postgres: Stage moves

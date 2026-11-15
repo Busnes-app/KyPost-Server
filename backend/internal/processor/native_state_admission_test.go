@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -19,6 +20,7 @@ import (
 )
 
 func TestNativePollerStateAdmissionBeforeCache(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	config, root := t.TempDir(), t.TempDir()
 	accounts, err := users.LoadOrMigrate(context.Background(), config, filepath.Join(config, "admin.env"))
 	if err != nil {

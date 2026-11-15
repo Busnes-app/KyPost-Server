@@ -245,6 +245,9 @@ func RemoveDatabaseFiles(roots []Root) error {
 // what its recount sees (recount), until the test ends.
 func SetImportHooksForTest(t testing.TB, beforeCommit func() error, recount func(Counts) Counts) {
 	t.Helper()
+	if !testing.Testing() {
+		panic("backup: test hook called outside a test binary")
+	}
 	oldStep, oldRecount := importStep, recountStep
 	if beforeCommit != nil {
 		importStep = beforeCommit

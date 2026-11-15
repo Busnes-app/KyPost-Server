@@ -15,9 +15,9 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
-const migrateUsage = "usage: kypost-server migrate-to-postgres -from <state dir> [-config <config dir>]\n" +
-	"Copies a stopped SQLite install into the empty Postgres database KYPOST_DATABASE_URL or\n" +
-	"KYPOST_DATABASE_URL_FILE names, in one transaction. The SQLite files are never changed."
+// migrateUsage: the command copies a stopped SQLite install into the empty Postgres
+// database the variable names, in one transaction, and never changes the SQLite files.
+const migrateUsage = "usage: KYPOST_DATABASE_URL_FILE=<file> kypost-server migrate-to-postgres -from <state dir> [-config <config dir>]"
 
 // runMigrateToPostgres moves a stopped install's databases into Postgres: every
 // database under the state dir and the config dir, one transaction, each table's rows
@@ -32,7 +32,7 @@ func runMigrateToPostgres(args []string, stdout io.Writer) error {
 		return errors.New(migrateUsage)
 	}
 	if !dbbackend.Postgres() {
-		return errors.New("set KYPOST_DATABASE_URL or KYPOST_DATABASE_URL_FILE to the target database\n" + migrateUsage)
+		return errors.New("set KYPOST_DATABASE_URL or KYPOST_DATABASE_URL_FILE to the target database; " + migrateUsage)
 	}
 	ctx := context.Background()
 	if err := dbbackend.Check(ctx); err != nil {

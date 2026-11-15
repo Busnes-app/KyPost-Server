@@ -51,6 +51,9 @@ func RequirePostgres(t testing.TB) {
 // using it must not run in parallel with other store tests of the same binary.
 func FreshDatabaseForTest(t testing.TB) string {
 	t.Helper()
+	if !testing.Testing() {
+		panic("dbbackend: test hook called outside a test binary")
+	}
 	RequirePostgres(t)
 	base := current().url
 	admin, err := sql.Open("pgx", base)
@@ -86,6 +89,9 @@ func FreshDatabaseForTest(t testing.TB) string {
 // SetURLForTest points the process at rawURL ("" for SQLite) until the test ends.
 func SetURLForTest(t testing.TB, rawURL string) {
 	t.Helper()
+	if !testing.Testing() {
+		panic("dbbackend: test hook called outside a test binary")
+	}
 	swap := func(s *selection) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -108,6 +114,9 @@ func SetURLForTest(t testing.TB, rawURL string) {
 // ReloadForTest rereads the environment, for tests of the configuration itself.
 func ReloadForTest(t testing.TB) {
 	t.Helper()
+	if !testing.Testing() {
+		panic("dbbackend: test hook called outside a test binary")
+	}
 	mu.Lock()
 	old := selected
 	mu.Unlock()
@@ -168,4 +177,22 @@ func CatalogUnderForTest(t testing.TB, dir string) (rows, schemas int) {
 		t.Fatal(err)
 	}
 	return rows, schemas
+}
+
+// RemoveFileForTest drops the one database at path: deleting the file on Postgres.
+func RemoveFileForTest(path string) error {
+	if !testing.Testing() {
+		panic("dbbackend: test hook called outside a test binary")
+	}
+	ctx := context.Background()
+	cat, err := root(ctx)
+	if err != nil {
+		return err
+	}
+	schema, rel, err := SchemaName(path)
+	if err != nil {
+		return err
+	}
+	_, err = cat.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+QuoteIdent(schema)+` CASCADE; DELETE FROM kypost_catalog.stores WHERE path='`+strings.ReplaceAll(rel, "'", "''")+`'`)
+	return err
 }
