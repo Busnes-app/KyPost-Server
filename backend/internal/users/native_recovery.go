@@ -32,7 +32,7 @@ func (s *Store) RepairNativeAccounts(ctx context.Context, issuer string, repairs
 		return err
 	}
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	release, err := fsutil.LockFileGated(ctx, s.path)
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (s *Store) DeactivateForRestoreRelease(ctx context.Context, prepare func(cu
 		return err
 	}
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	release, err := fsutil.LockFileGated(ctx, s.path)
 	if err != nil {
 		return err
 	}

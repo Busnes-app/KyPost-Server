@@ -205,7 +205,7 @@ func (r *receivingRuntime) cloudflareRoute(ctx context.Context, recipient string
 	if err != nil || !found {
 		return claim, ingress.ErrRoute
 	}
-	err = r.withAuthority(ctx, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
+	err = r.withAuthority(ctx, false, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
 		x, err := r.activeAddress(recipient)
 		if err != nil {

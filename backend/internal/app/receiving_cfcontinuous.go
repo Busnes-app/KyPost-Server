@@ -388,7 +388,7 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 		}
 		added := map[string]bool{}
 		if len(fresh) > 0 {
-			_ = r.withAuthority(ctx, []string{id}, fresh, freshProofs, func(current map[string]sso.NativeAssignment) error {
+			_ = r.withAuthority(ctx, false, []string{id}, fresh, freshProofs, func(current map[string]sso.NativeAssignment) error {
 				a := current[id]
 				if err := l.hit("routes-admitted"); err != nil {
 					return err

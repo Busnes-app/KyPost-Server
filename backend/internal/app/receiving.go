@@ -314,7 +314,9 @@ func (r *receivingRuntime) verifyDomains(ctx context.Context, addresses []string
 // withAuthority fences only the recipients' domains: each must still be an
 // established member of the set, and every supplied proof still current.
 // Import supplies none, since accepted bytes are owed without fresh DNS.
-func (r *receivingRuntime) withAuthority(ctx context.Context, ids, addresses []string, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+// holdingOnly says the action writes only the holding store, so the directory
+// fence is shared (sso.WithNativeHoldingAccess); an import writes a mailbox.
+func (r *receivingRuntime) withAuthority(ctx context.Context, holdingOnly bool, ids, addresses []string, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	// Match allocator lock order. DNS and stdin work happen before this fence.
 	// It only reads the domain set, so deliveries share it and exclude writers.
 	release, err := fsutil.LockFileShared(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
@@ -337,7 +339,11 @@ func (r *receivingRuntime) withAuthority(ctx context.Context, ids, addresses []s
 			return sso.ErrNativeDomain
 		}
 	}
-	return r.life.WithNativeMailAccess(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
+	access := r.life.WithNativeMailAccess
+	if holdingOnly {
+		access = r.life.WithNativeHoldingAccess
+	}
+	return access(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
 }
 
 // errInvalidSender is a sender shape neither profile accepts.
@@ -387,7 +393,7 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	if _, err := r.activeAddress(recipient); err != nil {
 		return err
 	}
-	return r.withAuthority(ctx, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
+	return r.withAuthority(ctx, true, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
 		x, err := r.activeAddress(recipient)
 		if err != nil {
@@ -436,12 +442,12 @@ func (r *receivingRuntime) refreshRoute(ctx context.Context, a sso.NativeAssignm
 	return r.holding.SetRoute(ctx, route)
 }
 
-func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delivery, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+func (r *receivingRuntime) frozenAuthority(ctx context.Context, holdingOnly bool, d ingress.Delivery, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	ids := make([]string, 0, len(d.Bindings))
 	for _, b := range d.Bindings {
 		ids = append(ids, b.Mailbox)
 	}
-	return r.withAuthority(ctx, ids, bindingAddresses(d), proofs, func(current map[string]sso.NativeAssignment) error {
+	return r.withAuthority(ctx, holdingOnly, ids, bindingAddresses(d), proofs, func(current map[string]sso.NativeAssignment) error {
 		quarantine := func() error {
 			if d.State == "pending" {
 				if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
@@ -551,7 +557,7 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 // commitAccept stores scanned bytes for a staged delivery under its frozen
 // owners' current authority and their per-message limits.
 func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery, sender string, raw []byte, proofs []sso.NativeDomain) error {
-	return r.frozenAuthority(ctx, d, proofs, func(current map[string]sso.NativeAssignment) error {
+	return r.frozenAuthority(ctx, true, d, proofs, func(current map[string]sso.NativeAssignment) error {
 		for _, a := range current {
 			if int64(len(raw)) > a.Limits.MessageBytes {
 				return errMailboxMessageLimit
@@ -667,7 +673,7 @@ func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery,
 	}
 	// Import authority does not require fresh DNS: already accepted bytes are
 	// owed to the frozen owner. Refresh authorized TTLs before Claim sees them.
-	return r.frozenAuthority(ctx, d, nil, func(current map[string]sso.NativeAssignment) error {
+	return r.frozenAuthority(ctx, false, d, nil, func(current map[string]sso.NativeAssignment) error {
 		for _, a := range current {
 			if sources[a.Owner] != a.Source {
 				return sso.ErrNativeProvisioning

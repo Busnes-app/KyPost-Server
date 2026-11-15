@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // Admission only reads, so it shares the directory fence with other
@@ -50,4 +51,35 @@ func TestNativeAdmissionSharesTheDirectoryFence(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// A receiving bind or accept writes only the holding store, so it shares the
+// directory fence like admission; mail access for an import stays exclusive.
+func TestNativeHoldingAccessSharesTheDirectoryFence(t *testing.T) {
+	f := newAddressFixture(t, "one")
+	id := f.ids["one"]
+	access := func(with func(context.Context, string, string, *users.Store, []string, func(map[string]NativeAssignment) error) error, d time.Duration) error {
+		ctx, cancel := context.WithTimeout(context.Background(), d)
+		defer cancel()
+		return with(ctx, f.root, nativeIssuer, f.accounts, []string{id}, func(map[string]NativeAssignment) error { return nil })
+	}
+	reader, err := f.life.lockDirectoryShared(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access(f.life.WithNativeHoldingAccess, time.Second); err != nil {
+		t.Fatal("holding access waited for a reader:", err)
+	}
+	if err := access(f.life.WithNativeMailAccess, 50*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("mail access did not wait for a reader:", err)
+	}
+	reader()
+	writer, err := f.life.LockDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer()
+	if err := access(f.life.WithNativeHoldingAccess, 50*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("holding access did not wait for a writer:", err)
+	}
 }

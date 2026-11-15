@@ -186,7 +186,7 @@ func TestNativeReceivingAuthorityFencesLocalDeactivation(t *testing.T) {
 	}()
 	finished := make(chan error, 1)
 	go func() {
-		finished <- r.withAuthority(ctx, []string{created[0].ID}, []string{"one@example.test"}, nil, func(map[string]sso.NativeAssignment) error {
+		finished <- r.withAuthority(ctx, false, []string{created[0].ID}, []string{"one@example.test"}, nil, func(map[string]sso.NativeAssignment) error {
 			close(entered)
 			select {
 			case <-release:
@@ -203,12 +203,12 @@ func TestNativeReceivingAuthorityFencesLocalDeactivation(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	// A second process/store must contend on the disk fence too.
-	openingCtx, cancelOpening := context.WithTimeout(ctx, 50*time.Millisecond)
+	// Opening only reads, so it shares the users fence with the commit; the
+	// deactivation below writes and must wait.
+	openingCtx, cancelOpening := context.WithTimeout(ctx, time.Second)
 	defer cancelOpening()
-	opened, err := users.OpenExisting(openingCtx, r.configDir)
-	if err == nil || opened != nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("existing authority opener bypassed in-flight commit: %v", err)
+	if _, err := users.OpenExisting(openingCtx, r.configDir); err != nil {
+		t.Fatalf("existing authority opener waited for a reader: %v", err)
 	}
 	deactivated := make(chan error, 1)
 	go func() { _, err := other.Deactivate(created[0].ID); deactivated <- err }()
@@ -225,7 +225,7 @@ func TestNativeReceivingAuthorityFencesLocalDeactivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	err = r.withAuthority(context.Background(), []string{created[0].ID}, []string{"one@example.test"}, nil, func(map[string]sso.NativeAssignment) error { called = true; return nil })
+	err = r.withAuthority(context.Background(), false, []string{created[0].ID}, []string{"one@example.test"}, nil, func(map[string]sso.NativeAssignment) error { called = true; return nil })
 	if err == nil || called {
 		t.Fatal("revoked local authority entered receive commit")
 	}
