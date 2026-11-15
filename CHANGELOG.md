@@ -66,6 +66,10 @@ non-prerelease version.
 
 ### Fixed
 
+- An invitation card answer from someone with no KyCalendar account no longer
+  ends in "KyCalendar could not record the answer; try again" with no way out:
+  KyCalendar's `no_user` now answers 409 `kycalendar_off`, so web and native
+  clients mail the answer after the usual confirmation.
 - Built with Go 1.27.4, which fixes an HTTP/1 server crash from a
   `MaxBytesReader` header race in `net/http` (GO-2026-6859). The API server
   is reachable from the affected code.
