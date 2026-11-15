@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/Busnes-app/ky-primitives/syncauth"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,6 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/syncauth"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -114,6 +116,7 @@ func TestNativeRecoveryRepairPlanUsesUnchangedRevisionAuthority(t *testing.T) {
 }
 
 func TestNativeRecoveryRepairPlanRechecksReceiptAndStorage(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "removes database files")
 	for _, damage := range []string{"key", "epoch", "account", "missing-state", "tamper", "expiry-witness", "no-receipt", "cancel"} {
 		t.Run(damage, func(t *testing.T) {
 			life, root, settings, key, accounts, u := publishedRecoveryFixture(t, false)

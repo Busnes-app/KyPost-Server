@@ -8,15 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Busnes-app/ky-primitives/syncauth"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
-	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
-	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func recoveryFixture(t *testing.T) (*LifecycleStore, string, SSOSettings, []byte, NativeRecoveryChallenge) {

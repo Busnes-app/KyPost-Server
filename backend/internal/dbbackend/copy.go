@@ -252,6 +252,9 @@ func toSQLite(v any, decl string) (any, error) {
 		if s, ok := v.(string); ok {
 			return s, nil
 		}
+		if b, ok := v.([]byte); ok { // a Postgres BYTEA kept for text SQLite holds with NUL
+			return string(b), nil
+		}
 	case d == "BLOB":
 		if b, ok := v.([]byte); ok {
 			return append([]byte{}, b...), nil // never nil: that would be NULL
@@ -754,4 +757,60 @@ func RowCounts(ctx context.Context) (map[string]map[string]int64, error) {
 		}
 	}
 	return out, nil
+}
+
+// fingerprintSQL describes the current schema without its name: columns with type, null
+// rule and default, constraints, indexes, triggers and function bodies.
+const fingerprintSQL = `SELECT replace(line, current_schema() || '.', '') FROM (
+SELECT 'col ' || c.relname || ' ' || a.attname || ' ' || format_type(a.atttypid, a.atttypmod) || ' ' || a.attnotnull::text || ' ' || COALESCE(pg_get_expr(d.adbin, d.adrelid), '') || ' ' || a.attidentity::text AS line
+ FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+ LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+ WHERE c.relnamespace = current_schema()::regnamespace AND c.relkind = 'r'
+UNION ALL SELECT 'con ' || k.conrelid::regclass::text || ' ' || k.conname || ' ' || pg_get_constraintdef(k.oid)
+ FROM pg_constraint k WHERE k.connamespace = current_schema()::regnamespace
+UNION ALL SELECT 'idx ' || pg_get_indexdef(i.indexrelid)
+ FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relnamespace = current_schema()::regnamespace
+UNION ALL SELECT 'trg ' || pg_get_triggerdef(t.oid)
+ FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE c.relnamespace = current_schema()::regnamespace AND NOT t.tgisinternal
+UNION ALL SELECT 'fn ' || p.proname || ' ' || md5(p.prosrc)
+ FROM pg_proc p WHERE p.pronamespace = current_schema()::regnamespace) f
+ORDER BY 1`
+
+// Fingerprint describes the schema q's search_path is on, for an exact-schema check.
+func Fingerprint(ctx context.Context, q querier) ([]string, error) {
+	rows, err := q.QueryContext(ctx, fingerprintSQL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// DDLFingerprint is the Fingerprint of a schema built from ddl alone, in a scratch schema
+// that is rolled back.
+func DDLFingerprint(ctx context.Context, ddl string) ([]string, error) {
+	cat, err := root(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := cat.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `CREATE SCHEMA kypost_probe; SET LOCAL search_path TO kypost_probe, public`); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, ddl); err != nil {
+		return nil, err
+	}
+	return Fingerprint(ctx, tx)
 }

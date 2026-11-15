@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/oidcverify"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // v3Fixture is a v2 install with every ledger shape: two primaries, an alias
@@ -73,6 +74,7 @@ func canonical(t *testing.T, v any) string {
 // the historical opener: the lifecycle, the ledger and the recovery digest
 // are unchanged, and the stubs make the runtime (JSON backend) refuse.
 func TestAuthorityV3RoundTrip(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	f := v3Fixture(t)
 	settings := SSOSettings{Enabled: true, IssuerURL: nativeIssuer, ClientID: "kypost"}
 	key := []byte(strings.Repeat("k", 32))
@@ -178,6 +180,7 @@ func fixtureRows(t *testing.T) authorityRows {
 // opener: the right tables and user_version but a dropped key, index or
 // any trigger, an extra object, a wrong version or a corrupt page is refused.
 func TestAuthoritySchemaMismatchRefuses(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "rewrites the SQLite schema")
 	rows := fixtureRows(t)
 	refuses := func(t *testing.T, config string) {
 		t.Helper()
@@ -277,6 +280,7 @@ func TestAuthoritySchemaMismatchRefuses(t *testing.T) {
 // TestAuthorityV3MixedFormatsRefuse: the database needs both exact stubs, and
 // a stub never stands without the database.
 func TestAuthorityV3MixedFormatsRefuse(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens, replaces or damages the SQLite file itself")
 	f := v3Fixture(t)
 	accounts, err := f.accounts.List()
 	if err != nil {

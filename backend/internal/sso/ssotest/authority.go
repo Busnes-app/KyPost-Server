@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // Native authority (the directory lifecycle and the native ledger) is stored
@@ -55,15 +57,15 @@ func AuthorityContent(configDir string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+	db, err := dbbackend.OpenFile(path, "mode=ro")
+	if errors.Is(err, os.ErrNotExist) {
 		return []byte(strings.Join(out, "\n")), nil
-	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
-	if err != nil {
+	} else if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	tables, err := db.Query("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
+	tables, err := db.Query(dbbackend.SQL("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+		"SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename"))
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +114,26 @@ func DamageAuthority(configDir, query string, args ...any) error {
 	path, err := filepath.Abs(AuthorityPath(configDir))
 	if err != nil {
 		return err
+	}
+	if dbbackend.Postgres() {
+		// Postgres lifts every trigger (and foreign key) for the transaction instead.
+		db, err := dbbackend.OpenFile(path, "")
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.Exec("SET LOCAL session_replication_role = replica"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(query, args...); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=rw&_txlock=immediate")
 	if err != nil {
@@ -162,7 +184,7 @@ func LifecycleRecord(configDir, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
+	db, err := dbbackend.OpenFile(path, "mode=ro")
 	if err != nil {
 		return nil, err
 	}

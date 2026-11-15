@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	_ "modernc.org/sqlite"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 const (
@@ -192,6 +194,17 @@ func Open(dir string) (*DB, error) {
 	}
 	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("cloudflare receiving state requires the owner-only receiving directory")
+	}
+	return openDB(dir, dbbackend.Postgres())
+}
+
+func openDB(dir string, pg bool) (*DB, error) {
+	if pg {
+		db, err := dbbackend.Open(filepath.Join(dir, DBFile), dbbackend.Options{Kind: Kind, DDL: pgSchema, Create: true})
+		if err != nil {
+			return nil, err
+		}
+		return &DB{db: db}, nil
 	}
 	source, err := dsn(dir, false)
 	if err != nil {
@@ -377,16 +390,25 @@ func (d *DB) SaveStatus(ctx context.Context, s Status) error {
 // creating anything; a profile that never ran reports "not-started".
 func ReadStatus(ctx context.Context, dir string) (Status, error) {
 	s := Status{State: "not-started", Ledger: map[string]int{}}
-	if _, err := os.Lstat(filepath.Join(dir, DBFile)); errors.Is(err, os.ErrNotExist) {
-		return s, nil
-	}
-	source, err := dsn(dir, true)
-	if err != nil {
-		return s, err
-	}
-	db, err := sql.Open("sqlite", source)
-	if err != nil {
-		return s, err
+	var db *sql.DB
+	var err error
+	if dbbackend.Postgres() {
+		if db, err = dbbackend.Open(filepath.Join(dir, DBFile), dbbackend.Options{Kind: Kind, ReadOnly: true}); errors.Is(err, os.ErrNotExist) {
+			return s, nil
+		} else if err != nil {
+			return s, err
+		}
+	} else {
+		if _, err := os.Lstat(filepath.Join(dir, DBFile)); errors.Is(err, os.ErrNotExist) {
+			return s, nil
+		}
+		source, err := dsn(dir, true)
+		if err != nil {
+			return s, err
+		}
+		if db, err = sql.Open("sqlite", source); err != nil {
+			return s, err
+		}
 	}
 	defer db.Close()
 	var doc string

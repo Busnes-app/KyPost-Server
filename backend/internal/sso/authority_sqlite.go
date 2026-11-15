@@ -20,6 +20,7 @@ import (
 
 	"modernc.org/sqlite"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 )
@@ -65,11 +66,10 @@ func detectAuthority(dir string) (authorityFormat, error) {
 	if err != nil || data {
 		return 0, ErrNativeMigration
 	}
-	_, err = os.Lstat(filepath.Join(dir, NativeAuthorityFile))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	db, err := authorityExists(filepath.Join(dir, NativeAuthorityFile))
+	if err != nil {
 		return 0, ErrNativeMigration
 	}
-	db := err == nil
 	l, err := stubFile(filepath.Join(dir, nativeLifecycleFile), lifecycleStubV3)
 	if err != nil {
 		return 0, err
@@ -107,7 +107,7 @@ type storeAuthority struct{ s *LifecycleStore }
 func (a storeAuthority) backend(ctx context.Context, write bool) (authorityStore, error) {
 	dir := filepath.Dir(a.s.path)
 	db := filepath.Join(dir, NativeAuthorityFile)
-	if a.s.offline {
+	if a.s.offline && !onPostgres(db) {
 		// Staging and migration hold whatever format they were given; the
 		// historical readers and v2NativeFormat judge the files themselves.
 		if _, err := os.Lstat(db); errors.Is(err, os.ErrNotExist) {
@@ -480,6 +480,7 @@ func closeIdleAuthorityLocked(h *authorityHandle) {
 // dropAuthorityHandle closes this process's handle on path, so the file can
 // be replaced (migration) or removed (tests) without a stale pool.
 func dropAuthorityHandle(path string) {
+	dropPGAuthorityPool(path)
 	authorityHandles.Lock()
 	defer authorityHandles.Unlock()
 	if h := authorityHandles.m[path]; h != nil {
@@ -514,6 +515,9 @@ func (a sqliteAuthority) Update(ctx context.Context, fn func(authorityWriter) er
 
 // run reads one subject's rows with meta when pre is set (read only).
 func (a sqliteAuthority) run(ctx context.Context, write bool, pre *subjectRows, fn func(*sqliteTx) error) (*sqliteTx, error) {
+	if dbbackend.Postgres() && !a.offline {
+		return a.runPostgres(ctx, write, pre, fn)
+	}
 	h, err := acquireAuthority(a.path)
 	if err != nil {
 		return nil, err
@@ -604,10 +608,11 @@ func (a sqliteAuthority) flushRoutes(ctx context.Context) error {
 // sqliteTx is one transaction. Point reads always query; the whole lifecycle
 // and ledger are read at most once, for the cold paths and the write diff.
 type sqliteTx struct {
-	ctx  context.Context
-	c    *sql.Conn
-	meta authorityRows
-	pre  *subjectRows
+	ctx      context.Context
+	c        authorityConn
+	postgres bool
+	meta     authorityRows
+	pre      *subjectRows
 
 	life   *lifecycleFile
 	ledger *nativeLedger
@@ -620,6 +625,13 @@ type sqliteTx struct {
 	mailboxes map[string]nativeLedgerMailbox
 	addresses map[string]nativeLedgerAddress
 	routes    bool
+}
+
+// authorityConn is the connection (SQLite) or transaction (Postgres) a sqliteTx runs on.
+type authorityConn interface {
+	queryer
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
 }
 
 func (t *sqliteTx) readMeta() error {
@@ -704,6 +716,11 @@ const subjectQuery = `SELECT (SELECT json_group_array(json_array(key, value)) FR
 FROM (SELECT 1) LEFT JOIN directory d ON d.issuer = ?1 AND d.subject = ?2
 LEFT JOIN accounts a ON a.issuer = ?1 AND a.subject = ?2 LEFT JOIN mailboxes m ON m.id = a.primary_mailbox`
 
+// subjectQueryPG is subjectQuery with Postgres's JSON functions.
+const subjectQueryPG = `SELECT (SELECT COALESCE(json_agg(json_build_array(key, value)), '[]')::text FROM meta), d.*, ` + accountColumns + `
+FROM (SELECT 1) one LEFT JOIN directory d ON d.issuer = ?1 AND d.subject = ?2
+LEFT JOIN accounts a ON a.issuer = ?1 AND a.subject = ?2 LEFT JOIN mailboxes m ON m.id = a.primary_mailbox`
+
 // subjectRows holds one transaction's subjectQuery row; a nil row is absent.
 type subjectRows struct {
 	issuer, subject string
@@ -716,7 +733,11 @@ func (p *subjectRows) has(issuer, subject string) bool {
 }
 
 func (t *sqliteTx) readSubject() error {
-	row, ok, err := t.row(subjectQuery, t.pre.issuer, t.pre.subject)
+	query := subjectQuery
+	if t.postgres {
+		query = subjectQueryPG
+	}
+	row, ok, err := t.row(query, t.pre.issuer, t.pre.subject)
 	if err != nil || !ok || len(row) != 25 {
 		return cmp.Or(err, ErrNativeProvisioning)
 	}
@@ -905,7 +926,13 @@ func (t *sqliteTx) Snapshot() (nativeAssignments, map[string]DirectoryState, err
 
 // Check is the whole-store validation: quick_check, foreign keys, and every
 // row decoded and validated.
+//
+// On Postgres the server enforces the keys and there are no pages to check.
 func (t *sqliteTx) Check() error {
+	if t.postgres {
+		_, _, err := t.Snapshot()
+		return err
+	}
 	r := authorityRows{}
 	if err := queryRows(t.ctx, t.c, "quick", "PRAGMA quick_check", r); err != nil || len(r["quick"]) != 1 || r["quick"][0][0] != "ok" {
 		return cmp.Or(authorityErr(err), ErrNativeProvisioning)
@@ -1117,7 +1144,7 @@ func (t *sqliteTx) writeDiff(old, new authorityRows, tables []string) (map[strin
 		}
 		where := strings.Join(columns[:keys], " = ? AND ") + " = ?"
 		for _, row := range deleted {
-			if _, err := t.c.ExecContext(t.ctx, "DELETE FROM "+table+" WHERE "+where, row[:keys]...); err != nil {
+			if _, err := t.c.ExecContext(t.ctx, "DELETE FROM "+table+" WHERE "+where, pgRow(t.postgres, table, row)[:keys]...); err != nil {
 				return nil, err
 			}
 			changed[table] = append(changed[table], nil)
@@ -1139,7 +1166,7 @@ func (t *sqliteTx) writeDiff(old, new authorityRows, tables []string) (map[strin
 			return nil, err
 		}
 		for _, row := range upserts {
-			if _, err := insert.ExecContext(t.ctx, row...); err != nil {
+			if _, err := insert.ExecContext(t.ctx, pgRow(t.postgres, table, row)...); err != nil {
 				_ = insert.Close()
 				return nil, fmt.Errorf("%s: %w", table, err)
 			}

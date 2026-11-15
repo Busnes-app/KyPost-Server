@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
@@ -25,6 +26,9 @@ var authorityMigrationStep = func(int) error { return nil }
 // renames it over native-authority.db, then fsyncs the directory.
 func buildAuthority(ctx context.Context, dir string, rows authorityRows, check func(lifecycleFile, *nativeLedger) error) error {
 	path := filepath.Join(dir, NativeAuthorityFile)
+	if dbbackend.Postgres() {
+		return buildAuthorityPostgres(ctx, path, rows, check)
+	}
 	tmp := path + ".tmp"
 	for _, p := range []string{tmp, tmp + "-wal", tmp + "-shm", tmp + "-journal"} {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -110,8 +114,12 @@ func verifyAuthorityFile(ctx context.Context, path string, check func(lifecycleF
 	return nil
 }
 
-// readAuthorityFile decodes a whole database through a verified handle.
+// readAuthorityFile decodes a whole database through a verified handle: the schema when
+// the catalog holds path (a Postgres install's own store), else the file.
 func readAuthorityFile(ctx context.Context, path string) (lifecycleFile, *nativeLedger, error) {
+	if onPostgres(path) {
+		return readAuthorityPostgres(ctx, path)
+	}
 	var life lifecycleFile
 	var l *nativeLedger
 	err := verifyAuthorityFile(ctx, path, func(gotLife lifecycleFile, gotLedger *nativeLedger) error {
@@ -165,7 +173,12 @@ func sameAuthority(configDir string, a lifecycleFile, al *nativeLedger, b lifecy
 // copies) are refused, never adopted. It grants no authority and leaves a
 // restore hold in place.
 func MigrateAuthority(ctx context.Context, configDir string) (bool, error) {
-	if !anyExists(configDir, []string{nativeLifecycleFile, nativeProvisioningFile, NativeAuthorityFile, nativeLifecycleFile + NativeAuthorityCopySuffix, nativeProvisioningFile + NativeAuthorityCopySuffix}) {
+	dbPath := filepath.Join(configDir, NativeAuthorityFile)
+	db, dbErr := authorityExists(dbPath)
+	if dbErr != nil {
+		return false, dbErr
+	}
+	if !db && !anyExists(configDir, []string{nativeLifecycleFile, nativeProvisioningFile, nativeLifecycleFile + NativeAuthorityCopySuffix, nativeProvisioningFile + NativeAuthorityCopySuffix}) {
 		return false, nil // fresh install: the first write creates v3
 	}
 	for _, lock := range []string{NativeDomainsFile, nativeLifecycleFile, "users.json"} {
@@ -179,7 +192,6 @@ func MigrateAuthority(ctx context.Context, configDir string) (bool, error) {
 		return false, errors.Join(err, errors.New("native-domain.json still holds version-1 data; the version-1 migration must finish first"))
 	}
 	lifePath, ledgerPath := filepath.Join(configDir, nativeLifecycleFile), filepath.Join(configDir, nativeProvisioningFile)
-	dbPath := filepath.Join(configDir, NativeAuthorityFile)
 	l, err := stubFile(lifePath, lifecycleStubV3)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", nativeLifecycleFile, err)
@@ -188,11 +200,6 @@ func MigrateAuthority(ctx context.Context, configDir string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", nativeProvisioningFile, err)
 	}
-	_, dbErr := os.Lstat(dbPath)
-	if dbErr != nil && !errors.Is(dbErr, os.ErrNotExist) {
-		return false, dbErr
-	}
-	db := dbErr == nil
 	switch {
 	case db && l != fileData && p != fileData:
 		if p == fileStub && l != fileStub {
@@ -325,3 +332,4 @@ func authorityCopies(configDir string) (lifecycleFile, *nativeLedger, error) {
 	l.AddressGenerations = true
 	return life, &l, nil
 }
+

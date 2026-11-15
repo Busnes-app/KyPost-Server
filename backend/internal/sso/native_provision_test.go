@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -327,6 +328,7 @@ func TestNativeProvisioningKilledReservationAndLostAcknowledgement(t *testing.T)
 }
 
 func TestNativeProvisioningRefusesMissingLedgerAndRestoredDirectory(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens, replaces or damages the SQLite file itself")
 	config, root := t.TempDir(), t.TempDir()
 	s := NewLifecycleStore(config)
 	nativeDesired(t, s, "one", "one@example.test", 1, true)

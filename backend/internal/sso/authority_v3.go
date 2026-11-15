@@ -533,6 +533,11 @@ func queryRows(ctx context.Context, db queryer, name, query string, r authorityR
 		if err := rows.Scan(dst...); err != nil {
 			return err
 		}
+		for i, v := range values {
+			if b, ok := v.([]byte); ok {
+				values[i] = string(b) // a Postgres BYTEA key (pgBytesKey); no table has a BLOB
+			}
+		}
 		r.add(name, values...)
 	}
 	return rows.Err()
@@ -555,6 +560,15 @@ func jsonStub(path string, want map[string]any) (bool, error) {
 // absent; 3 for an initialized v3 database).
 func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments, int, error) {
 	dir := filepath.Dir(s.path)
+	if path := filepath.Join(dir, NativeAuthorityFile); onPostgres(path) {
+		// A Postgres install's own store, read as the runtime reads it.
+		life, l, err := readAuthorityFile(context.Background(), path)
+		if err != nil || l == nil {
+			return life, nativeAssignments{Accounts: map[string]NativeAssignment{}}, 0, err
+		}
+		f, _, err := validateNativeLedger(*l)
+		return life, f, 3, err
+	}
 	if _, err := os.Lstat(filepath.Join(dir, NativeAuthorityFile)); errors.Is(err, os.ErrNotExist) {
 		s := s.staged()
 		lifecycle, err := s.load()

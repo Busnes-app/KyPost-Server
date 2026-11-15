@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -345,6 +346,11 @@ func WriteNativeV1ForTest(configDir, relayKeyPath string) error {
 	}
 	db := filepath.Join(configDir, NativeAuthorityFile)
 	dropAuthorityHandle(db)
+	if dbbackend.Postgres() {
+		if err := dbbackend.RemoveFile(db); err != nil {
+			return err
+		}
+	}
 	for _, path := range []string{db, db + "-wal", db + "-shm", life.nativePath()} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

@@ -335,7 +335,9 @@ func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
 
 type sqliteBool bool
 
-func (b sqliteBool) BoolValue() (pgtype.Bool, error) { return pgtype.Bool{Bool: bool(b), Valid: true}, nil }
+func (b sqliteBool) BoolValue() (pgtype.Bool, error) {
+	return pgtype.Bool{Bool: bool(b), Valid: true}, nil
+}
 
 func (b sqliteBool) Int64Value() (pgtype.Int8, error) {
 	if b {

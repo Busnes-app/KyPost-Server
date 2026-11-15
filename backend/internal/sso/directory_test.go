@@ -3,11 +3,13 @@ package sso
 import (
 	"encoding/json"
 	"errors"
-	"github.com/Busnes-app/ky-primitives/syncauth"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func TestHasAdminRole(t *testing.T) {
@@ -71,6 +73,7 @@ func TestDirectoryUserRevision(t *testing.T) {
 }
 
 func TestDirectoryDesiredResourceSurvivesRetryAndFailure(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens, replaces or damages the SQLite file itself")
 	dir := t.TempDir()
 	store := NewLifecycleStore(dir)
 	active := true

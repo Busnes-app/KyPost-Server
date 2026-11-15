@@ -33,9 +33,11 @@ const (
 )
 
 var (
-	ErrBoth     = errors.New("set KYPOST_DATABASE_URL or KYPOST_DATABASE_URL_FILE, not both")
-	ErrURLFile  = errors.New("KYPOST_DATABASE_URL_FILE cannot be read or is empty")
-	ErrNotFound = errors.New("database not found in the Postgres catalog")
+	ErrBoth    = errors.New("set KYPOST_DATABASE_URL or KYPOST_DATABASE_URL_FILE, not both")
+	ErrURLFile = errors.New("KYPOST_DATABASE_URL_FILE cannot be read or is empty")
+	// ErrNotFound is a missing database on Postgres; it is an os.ErrNotExist, as a
+	// missing file is.
+	ErrNotFound = fmt.Errorf("database not found in the Postgres catalog: %w", os.ErrNotExist)
 )
 
 type selection struct {
@@ -588,4 +590,37 @@ func dropTx(ctx context.Context, tx *sql.Tx, schema, rel string) error {
 	}
 	_, err := tx.ExecContext(ctx, `DELETE FROM kypost_catalog.stores WHERE path=?`, rel)
 	return err
+}
+
+// OpenFile opens an existing database for a helper that opens the file directly rather
+// than through its store: on SQLite the file at path with the URI query, on Postgres its
+// schema, read-only when query has mode=ro. A missing database is an os.ErrNotExist on
+// both.
+func OpenFile(path, query string) (*sql.DB, error) {
+	if !Postgres() {
+		return OpenSQLiteFile(path, query)
+	}
+	ro := false
+	if q, err := url.ParseQuery(query); err == nil {
+		ro = q.Get("mode") == "ro"
+	}
+	return Open(path, Options{ReadOnly: ro})
+}
+
+// OpenSQLiteFile opens the existing SQLite file at path with the URI query, on either
+// backend: restore staging, capsule members and the copies' SQLite side.
+func OpenSQLiteFile(path, query string) (*sql.DB, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(abs); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: abs, RawQuery: query}).String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
 }
