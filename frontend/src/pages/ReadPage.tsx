@@ -11,6 +11,7 @@ import { inviteAttachment } from "./read/invite";
 import { displayBody } from "./read/body";
 import { firstAddressFromText, listAddressesFromText } from "../lib/addressText";
 import { openNewMeeting } from "../lib/meetingLink";
+import { ChatButton } from "../components/ChatButton";
 import { isFlaggedPhishing } from "../lib/phishing";
 import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";
@@ -83,7 +84,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin = "" }: ReadPageProps) {
+export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin = "", chatOrigin = "" }: ReadPageProps) {
   const readerActionsId = useId();
   const searchScopeName = useId();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -2091,7 +2092,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                 );
               })()}
               <div className="email-reader-facts email-reader-from">
-                <p><strong>Sender</strong><span className="email-reader-sender">{selected.sender || "-"}</span></p>
+                <p><strong>Sender</strong><span className="email-reader-sender">{selected.sender || "-"}</span>
+                  <ChatButton address={firstAddressFromText(selected.sender || "")} origin={chatOrigin} /></p>
                 <time dateTime={selected.atUtc}>{formatReaderTime(selected.atUtc)}</time>
               </div>
               <details className="email-reader-details">

@@ -11,7 +11,7 @@ import { formatBytes } from "../app/compose";
 import { CloseIcon } from "../pages/read/icons";
 import type { UserMailbox } from "../app/mailboxes";
 import { openNewMeeting } from "../lib/meetingLink";
-import { ComposeDrive } from "./ComposeDrive";
+import { ComposeDrive, DriveAttachMenu } from "./ComposeDrive";
 
 /** The compose dialog. All state lives in useCompose, which App owns so pages can open it. */
 export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { compose: Compose; mailboxes: UserMailbox[]; calendarOrigin?: string }) {
@@ -267,6 +267,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
                 <button type="button" className="compose-save-draft" onClick={() => setScheduleOpen(true)} disabled={composeSending || composeSavingDraft || uploading}>Schedule…</button>
                 <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
                 <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>Attach</button>
+                {drive.driveStatus.available ? <DriveAttachMenu onPick={(mode) => void drive.attachFromDrive(mode)} disabled={composeSending || composeSavingDraft} /> : null}
                 <button type="button" className="compose-attach" onClick={() => setContactPickerOpen(true)} disabled={composeSending || composeSavingDraft}>Contacts</button>
                 {calendarOrigin ? (
                   <button type="button" className="compose-attach" onClick={() => openNewMeeting(calendarOrigin, {

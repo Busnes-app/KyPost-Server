@@ -25,7 +25,8 @@ Native direct outbound delivery is available as an explicit protected-API profil
 - Browser push, and native push for the mobile apps through the [push relays](docs/CLIENTS-AND-PUSH.md#push-relays-cloudflare-workers).
 - Opt-in native mailboxes: KyIdentity provisioning across several domains, quotas, receiving through Cloudflare Email Routing or an operator-supplied receiver (both still in qualification), operator-owned relay sending, sender blocks, quarantine, and mail import and export.
 - Optional KyCalendar pairing: KyCalendar sends invitations, cancellations and replies from a user's own mailbox, and receives the DKIM-verified invitations that arrive there; paired automatically through KyIdentity or by environment. See [docs/KYCALENDAR.md](docs/KYCALENDAR.md).
-- Optional KyDrive pairing: send large files as organisation-only KyDrive links and save received attachments to KyDrive. See [docs/KYDRIVE.md](docs/KYDRIVE.md).
+- Optional KyDrive pairing: send large files as organisation-only KyDrive links, attach or link files already in KyDrive, and save received attachments to KyDrive. See [docs/KYDRIVE.md](docs/KYDRIVE.md).
+- Optional KyMessages pairing: **Chat** beside a sender or a contact who is in the organisation opens a direct chat in KyMessages. See [docs/KYMESSAGES.md](docs/KYMESSAGES.md).
 - AI agent access over MCP: an agent such as OpenClaw, Hermes Agent or Claude Code searches, reads and organizes your mail and saves drafts, with a token you create and can revoke. It never sees encrypted mail and cannot send or delete. See [Connect an AI agent](#connect-an-ai-agent).
 - Sealed configuration and state backups to KyRecovery or a local directory, with restic for mail databases.
 - Single Docker container managed by supervisord, with shared JSON logs.

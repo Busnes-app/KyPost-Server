@@ -4,6 +4,7 @@ import { deleteJSON, getJSON, onMailboxGone, postJSON, putJSON, selectedMailboxI
 import { AuthContext, type AuthState } from "./auth";
 import { AppRail, loadSuiteApps, type SuiteApp } from "./components/AppRail";
 import { calendarOrigin } from "./lib/meetingLink";
+import { chatOrigin } from "./api/kymessage";
 import { ComposeWindow } from "./components/ComposeWindow";
 import { useCompose } from "./hooks/useCompose";
 import { useDialogOpen } from "./hooks/useDialogOpen";
@@ -64,6 +65,7 @@ export function App() {
   const [mailboxNotice, setMailboxNotice] = useState("");
   const [suiteApps, setSuiteApps] = useState<SuiteApp[]>([]);
   const meetingOrigin = calendarOrigin(suiteApps);
+  const elementOrigin = chatOrigin(suiteApps);
   const compose = useCompose({ userId: auth?.userId, mailboxes });
   // Folder URLs name their mailbox, so one replayed after a switch is recognised (ReadPage).
   const boxQuery = selectedMailbox ? `&box=${selectedMailbox}` : "";
@@ -868,7 +870,7 @@ export function App() {
             <Route path="/" element={<Navigate to={auth.authenticated ? "/read" : "/login"} replace />} />
           <Route path="/login" element={<LoginPage auth={auth} onAuthChanged={refreshAuth} />} />
           <Route path="/password" element={protect(<LoginPage auth={auth} onAuthChanged={refreshAuth} mode="password" />)} />
-              <Route path="/read" element={protect(<ReadPage key={selectedMailbox} onOpenDraft={compose.openDraftInCompose} onCompose={compose.openComposeWindow} folders={mailboxFolders} calendarOrigin={meetingOrigin} />)} />
+              <Route path="/read" element={protect(<ReadPage key={selectedMailbox} onOpenDraft={compose.openDraftInCompose} onCompose={compose.openComposeWindow} folders={mailboxFolders} calendarOrigin={meetingOrigin} chatOrigin={elementOrigin} />)} />
           {/* Retired settings paths. They redirect rather than 404: they appear
               in docs and bookmarks, and in service workers cached inside
               installed PWAs, which can send a notification tap here long after
@@ -907,7 +909,7 @@ export function App() {
               </ReauthGate>
             ))}
           />
-          <Route path="/contacts" element={protect(<ContactsPage calendarOrigin={meetingOrigin} />)} />
+          <Route path="/contacts" element={protect(<ContactsPage calendarOrigin={meetingOrigin} chatOrigin={elementOrigin} />)} />
           <Route path="/scheduled" element={protect(<ScheduledPage key={selectedMailbox} />)} />
           {/* The admin panels. protect(..., true) redirects non-admins to
               /read; the server enforces every one of these regardless. */}

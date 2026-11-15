@@ -2,8 +2,9 @@
 
 Contract between KyPost and KyDrive: wave 1 of the suite integrations
 (section C of `ky-redesign/integrations/suite-integrations-contracts.md`) and
-wave 2's guest links (section K of `suite-integrations-wave2.md`), copied here
-on 2026-11-14; this file is now the durable copy. KyPost sends
+wave 2's picker and fetch (sections I and I2) and guest links (section K) of
+`suite-integrations-wave2.md`, copied here on 2026-11-14; this file is now
+the durable copy. KyPost sends
 large files as KyDrive links and saves received attachments to KyDrive.
 KyDrive is the resource owner. Change both sides together.
 
@@ -45,6 +46,7 @@ re-resolve the pairing (at most once a minute). Unpaired KyDrive answers 404
 | `kypost.drive.ticket` | `POST /api/suite/kypost/upload-tickets` |
 | `kypost.drive.link` | `POST /api/suite/kypost/links` |
 | `kypost.drive.status` | `POST /api/suite/kypost/status` |
+| `kypost.drive.fetch` | `POST /api/suite/kypost/fetch` |
 
 Files go into the user's personal workspace, folder `Mail attachments`
 (created on first use, an ordinary folder; a deleted one is recreated). A
@@ -100,6 +102,33 @@ The link request gains an optional `"audience":"guest"` (absent means
 - An old KyDrive ignores `audience` and would make an organisation link, so
   KyPost sends `audience` only when the status carried `guest_links:true`.
 
+### Fetch (I2)
+
+`{"sub","issuer","file_id","max_bytes"}` → 200 with the raw bytes,
+`Content-Type: application/octet-stream`, `Content-Disposition` carrying the
+name. The file must be one the user may read, else 404 `not_found`. Larger
+than `max_bytes` (required; KyPost sends its attachment limit, 18 MiB): 413
+`too_large`. The per-user switch applies (409 `sharing_off`).
+
+## Picker (I)
+
+`https://<kydrive-origin>/pick?origin=<caller origin>&mode=link|copy`, opened
+as a popup on a user click.
+
+- KyDrive serves it only to a signed-in everyday user, and only when `origin`
+  is exactly the `https://` origin of an app in that user's suite app list.
+  Otherwise it shows a plain refusal and sends nothing.
+- The user picks files they may share and confirms; only that click sends.
+- `mode=link` (default): KyDrive makes an organisation link per file (role
+  reader, contract C's expiry choice), then
+  `window.opener.postMessage({type:"kydrive.picked", files:[{name,size,url,expires}]}, origin)`
+  and closes. Never `*`.
+- `mode=copy`, only when `origin` is the paired KyPost: `files:[{name,size,file_id}]`,
+  no link made; KyPost fetches the bytes (I2).
+- The picker keeps `frame-ancestors 'none'`.
+- Callers listen for exactly `kydrive.picked` from exactly the KyDrive origin
+  and treat every field as untrusted text.
+
 ## KyPost's routes
 
 Session (or paired device) routes, CSRF as for mail routes, per-user rate
@@ -114,6 +143,7 @@ means: hide the KyDrive options.
 | `GET /api/kydrive/status` | | 200 `{available, freeBytes?, maxFileBytes?, appUrl?, origin?, guestLinks?, guestMaxDays?}` |
 | `POST /api/kydrive/upload-tickets` | `{name, size}` | 201 `{uploadUrl, expires, maxChunk}` |
 | `POST /api/kydrive/links` | `{fileId, days?, audience?}` (default 30; `audience` `"organisation"` or `"guest"`) | 201 `{url, expires}` |
+| `POST /api/kydrive/copies` | `{fileId}` (from the picker) | 200 `{name, mimeType, size, dataBase64}` |
 | `POST /api/kydrive/save-attachment` | `{messageId, mailbox?, index}` | 201 `{fileId, name, size, folder, appUrl}` |
 | `POST /api/kydrive/recipients` | `{addresses}` (1 to 500 bare addresses) | 200 `{outside}` |
 
@@ -145,13 +175,23 @@ means: hide the KyDrive options.
   Organisation links never carry `audience`. KyDrive's `guest_links_off`
   passes through and drops the cached status. Each guest link is logged with
   the user and file IDs.
+- `copies` signs `kypost.drive.fetch` with `max_bytes` set to the attachment
+  limit (two-minute budget) and answers the file as a compose attachment.
+  KyDrive's `too_large` is 413 `too_large`; an answer that is not
+  `application/octet-stream` or is over the limit is 502. The name comes from
+  KyDrive's `Content-Disposition` (header-sanitized, `validDriveName`, else
+  `attachment`), the type from its extension.
 - `recipients` resolves the addresses with `suitedir.Resolve` (KyIdentity
   `GET /api/suite/people?sub=&email=…`, 100 per call) under the session's
   subject and answers the ones that are not people in the organisation. 503
   `unavailable` when KyIdentity cannot answer.
 
 The Content-Security-Policy's `connect-src` names the paired KyDrive origin
-only while it is paired, so the browser can PUT to the ticket.
+only while it is paired, so the browser can PUT to the ticket. The picker
+needs no CSP source (a popup and `postMessage` are not CSP-governed), but
+`Cross-Origin-Opener-Policy: same-origin` would sever its `window.opener`, so
+while paired KyPost sends `same-origin-allow-popups` instead. Being opened by
+another origin still severs; links KyPost opens carry `noopener`.
 
 ## Web client
 
@@ -187,5 +227,16 @@ only while it is paired, so the browser can PUT to the ticket.
   is rewritten or sent and the user is told to check the message and send
   again; the send that follows uses the compose as it is then. Links already made stay in KyDrive,
   where the owner can revoke them.
+- Compose: **Attach from KyDrive** (a ky-ui menu) offers **Share a link**
+  (`mode=link`; each link is inserted as above, and counts for the
+  outside-recipient check) and **Attach a copy** (`mode=copy`; each file is
+  fetched through `copies` and attached, a file that would take the
+  attachments over the limit is refused naming it). The listener takes only a
+  `kydrive.picked` message whose `origin` is the paired KyDrive and whose
+  `source` is the popup; names lose control characters and must be 1 to 255
+  characters, sizes are non-negative integers, links must be `/l/#…` on the
+  paired origin, IDs printable ASCII ≤ 128; anything else is dropped, at most
+  50 files. Closing the picker changes nothing. A compose reset while the
+  picker or a fetch is open drops its result.
 - Reading: each attachment has **Save to KyDrive**; success shows the folder
   and name it got and an **Open KyDrive** link to the app's suite URL.

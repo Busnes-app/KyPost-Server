@@ -1,5 +1,7 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Compose } from "../hooks/useCompose";
+import type { PickMode } from "../api/kydrive";
+import { initMenuButton } from "../ky-ui/menu";
 import { formatBytes, MAX_ATTACHMENT_BYTES } from "../app/compose";
 import { guestDayChoices } from "../api/kydrive";
 import { reauthenticate, reauthenticateWithSSO } from "../api/auth";
@@ -48,8 +50,17 @@ export function ComposeDrive({ compose }: { compose: Compose }) {
       {driveUploads.map((u) => (
         <div key={u.id} className="compose-drive-upload" role="status">
           <span className="compose-attachment-name">{u.name}</span>
-          <progress max={u.size || 1} value={u.loaded} aria-label={`Uploading ${u.name} to KyDrive`} />
-          <span className="compose-attachment-size">{formatBytes(u.loaded)} of {formatBytes(u.size)}</span>
+          {u.loaded === undefined ? (
+            <>
+              <progress aria-label={`Copying ${u.name} from KyDrive`} />
+              <span className="compose-attachment-size">Copying from KyDrive</span>
+            </>
+          ) : (
+            <>
+              <progress max={u.size || 1} value={u.loaded} aria-label={`Uploading ${u.name} to KyDrive`} />
+              <span className="compose-attachment-size">{formatBytes(u.loaded)} of {formatBytes(u.size)}</span>
+            </>
+          )}
           <button type="button" className="btn-ghost" onClick={() => drive.cancelDriveUpload(u.id)}>Cancel</button>
         </div>
       ))}
@@ -153,6 +164,26 @@ function GuestStepUp({ compose }: { compose: Compose }) {
         </form>
       )}
       {error ? <p className="notice notice-error">{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * "Attach from KyDrive" (contract I): ky-ui's menu button with "Share a link"
+ * and "Attach a copy". The choice's click opens KyDrive's picker popup.
+ */
+export function DriveAttachMenu({ onPick, disabled }: { onPick: (mode: PickMode) => void; disabled: boolean }) {
+  const button = useRef<HTMLButtonElement>(null);
+  useEffect(() => initMenuButton(button.current!), []);
+  return (
+    <div className="ky-menu compose-drive-menu">
+      <button ref={button} type="button" className="compose-attach" aria-haspopup="menu" aria-expanded="false" aria-controls="compose-drive-menu" disabled={disabled}>
+        Attach from KyDrive
+      </button>
+      <div className="ky-menu-list" id="compose-drive-menu" role="menu" aria-label="Attach from KyDrive" hidden>
+        <button type="button" role="menuitem" tabIndex={-1} onClick={() => onPick("link")}>Share a link</button>
+        <button type="button" role="menuitem" tabIndex={-1} onClick={() => onPick("copy")}>Attach a copy</button>
+      </div>
     </div>
   );
 }

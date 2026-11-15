@@ -3,20 +3,26 @@ import type Quill from "quill";
 import { toErrorMessage } from "../api/client";
 import {
   checkOutsideRecipients,
+  copyFromDrive,
   createDriveLink,
   driveErrorCode,
   driveLinksIn,
   loadDriveStatus,
+  pickFromDrive,
   requestUploadTicket,
   toGuestLinks,
   uploadToTicket,
   type DriveLink,
-  type DriveStatus
+  type DriveStatus,
+  type PickedCopy,
+  type PickedLink,
+  type PickMode
 } from "../api/kydrive";
 import { formatBytes, MAX_ATTACHMENT_BYTES, readFileAsAttachment } from "../app/compose";
 import type { ComposeAttachment } from "../app/types";
 
-export type DriveUpload = { id: number; name: string; loaded: number; size: number };
+/** An upload to KyDrive, or (loaded undefined) a copy being fetched from it. */
+export type DriveUpload = { id: number; name: string; loaded?: number; size: number };
 /** Recipients who cannot open the message's KyDrive links. unverified: the check itself failed. */
 export type DriveOutside = { addresses: string[]; unverified: boolean; canAttach: boolean; canGuest: boolean; sendAt?: Date };
 /** A guest-link send waiting for the user to confirm it is them. */
@@ -109,6 +115,52 @@ export function useComposeDrive({
 
   function cancelDriveUpload(id: number) {
     aborts.current.get(id)?.abort();
+  }
+
+  /**
+   * "Attach from KyDrive": opens the picker (call from the click), then links
+   * the picked files or fetches copies of them as attachments. A compose
+   * reset while the picker or a fetch is open drops the result.
+   */
+  async function attachFromDrive(mode: PickMode) {
+    const origin = driveStatus.origin ?? "";
+    if (!driveStatus.available || !origin) return;
+    const gen = generation.current;
+    let picked: PickedLink[] | PickedCopy[];
+    try {
+      picked = await pickFromDrive(origin, mode);
+    } catch (e) {
+      setError(toErrorMessage(e, "KyDrive could not be opened."));
+      return;
+    }
+    if (gen !== generation.current) return;
+    if (mode === "link") {
+      for (const f of picked as PickedLink[]) insertLink(f.name, f.url, f.size, f.expires);
+      return;
+    }
+    let total = attachments.reduce((sum, a) => sum + a.size, 0);
+    for (const f of picked as PickedCopy[]) {
+      if (gen !== generation.current) return;
+      if (total + f.size > MAX_ATTACHMENT_BYTES) {
+        setError(`${f.name} does not fit the ${formatBytes(MAX_ATTACHMENT_BYTES)} attachment limit; share a link instead.`);
+        continue;
+      }
+      const id = ++seq.current;
+      const abort = new AbortController();
+      aborts.current.set(id, abort);
+      setDriveUploads((u) => [...u, { id, name: f.name, size: f.size }]);
+      try {
+        const a = await copyFromDrive(f.fileId);
+        if (abort.signal.aborted || gen !== generation.current) continue;
+        total += a.size;
+        setAttachments((current) => [...current, a]);
+      } catch (e) {
+        if (!abort.signal.aborted && gen === generation.current) setError(`Copy from KyDrive failed: ${driveErrorCode(e) === "too_large" ? "the file is over the attachment limit; share a link instead." : driveMessage(e)}`);
+      } finally {
+        aborts.current.delete(id);
+        setDriveUploads((u) => u.filter((x) => x.id !== id));
+      }
+    }
   }
 
   /** Picked files over the attachment limit: offer KyDrive when it is there. */
@@ -252,7 +304,7 @@ export function useComposeDrive({
 
   return {
     driveGuestStepUp, setDriveGuestStepUp, sendWithGuestLinks, confirmGuestStepUp,
-    driveStatus, driveOffer, setDriveOffer, acceptDriveOffer, driveUploads, cancelDriveUpload, offerDrive,
+    driveStatus, driveOffer, setDriveOffer, acceptDriveOffer, attachFromDrive, driveUploads, cancelDriveUpload, offerDrive,
     attachmentToDrive, driveOutside, setDriveOutside, driveRecipientsOk, attachDriveFilesInstead, resetDrive
   };
 }
@@ -264,6 +316,7 @@ const driveMessages: Record<string, string> = {
   sharing_off: "KyPost is not allowed to save to your KyDrive. Turn it on in KyDrive settings.",
   kydrive_off: "KyDrive is not available for your account.",
   bad_body: "KyDrive refused that file name.",
+  not_found: "that file is no longer in your KyDrive, or you cannot read it.",
   guest_links_off: "KyDrive does not allow guest links for you now. Check KyDrive settings."
 };
 
