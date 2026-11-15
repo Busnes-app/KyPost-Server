@@ -180,7 +180,9 @@ func (s *Server) ssoProvider(r *http.Request, settings sso.SSOSettings) (*sso.Pr
 // middleware in front of either. sso.NewProvider caches discovery, so a flood
 // no longer reflects one request per request received, but a cold cache, a
 // settings change or an IdP that is down all put the fetch back on the request
-// path. A real sign-in spends one token per leg.
+// path. A sign-in started at the login route spends one token there; its
+// callback redeems the issued state (ssoStates) instead of a second token, so
+// a contended start cannot drain the budget its own callback needs.
 //
 // An allowlisted office network skips it while the office budget it shares
 // with login-params lasts (officeDraw); ssoMetered does not.
@@ -195,9 +197,11 @@ func (s *Server) ssoMetered(w http.ResponseWriter, r *http.Request) bool {
 	if s.loginParamsLimiter == nil {
 		return false
 	}
-	if ok, _ := s.loginParamsLimiter.allow(lockoutKeyForIP(clientIP(r))); ok {
+	ok, wait := s.loginParamsLimiter.allow(lockoutKeyForIP(clientIP(r)))
+	if ok {
 		return false
 	}
+	w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 	http.Error(w, "too many sign-in attempts right now, try again shortly", http.StatusTooManyRequests)
 	return true
 }
@@ -226,10 +230,11 @@ func (s *Server) handleSSOLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authorizeURL, _, ok := s.startSSOFlow(w, r, settings, "", false)
+	authorizeURL, state, ok := s.startSSOFlow(w, r, settings, "", false)
 	if !ok {
 		return // startSSOFlow wrote the response
 	}
+	s.ssoStates.add(state, time.Now())
 	http.Redirect(w, r, authorizeURL, http.StatusFound)
 }
 
@@ -438,8 +443,9 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Spent here only once the request is well-formed enough to be worth an
 	// outbound call: the checks above cost nothing, and charging junk for them
-	// would be a way to deny a NAT its own sign-ins.
-	if s.ssoRateLimited(w, r) {
+	// would be a way to deny a NAT its own sign-ins. A state the login route
+	// issued was paid for there.
+	if !s.ssoStates.take(state, time.Now()) && s.ssoRateLimited(w, r) {
 		return
 	}
 
