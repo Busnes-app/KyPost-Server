@@ -17,7 +17,7 @@ import (
 
 // migrateUsage: the command copies a stopped SQLite install into the empty Postgres
 // database the variable names, in one transaction, and never changes the SQLite files.
-const migrateUsage = "usage: KYPOST_DATABASE_URL_FILE=<file> kypost-server migrate-to-postgres -from <state dir> [-config <config dir>]"
+const migrateUsage = "usage: KYPOST_DATABASE_URL_FILE=<file> kypost-server migrate-to-postgres -from <state dir> [-config <config dir>] (-from is required; -config defaults to CONFIG_DIR)"
 
 // runMigrateToPostgres moves a stopped install's databases into Postgres: every
 // database under the state dir and the config dir, one transaction, each table's rows
@@ -58,6 +58,6 @@ func runMigrateToPostgres(args []string, stdout io.Writer) error {
 		return fmt.Errorf("migrate-to-postgres: no KyPost databases under %s or %s", *from, *configDir)
 	}
 	fmt.Fprintf(stdout, "copied %d rows from %d databases to Postgres at %s; every count matched after the commit.\n", rows, len(counts), dbbackend.Describe())
-	fmt.Fprintln(stdout, "Start KyPost with the same database variable. Keep the SQLite files until you have checked it; there is no command back (restore a capsule with the variable unset).")
+	fmt.Fprintln(stdout, "Start KyPost with the same database variable; it no longer reads the SQLite files. Once it checks out, move the .db files out of the volumes. There is no command back (restore a capsule with the variable unset).")
 	return nil
 }

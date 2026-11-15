@@ -274,6 +274,16 @@ jobs:
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install github.com/restic/restic/cmd/restic@v0.18.1
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Every open store holds a small pool and two packages run at once: the stock 100
+      # connections is too tight. A service takes no server flags, so set it and restart.
+      - name: raise max_connections
+        env:
+          PG: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$PG" psql -U postgres -c 'ALTER SYSTEM SET max_connections = 400'
+          docker restart "$PG"
+          timeout 60 sh -c "until docker exec $PG pg_isready -U postgres; do sleep 1; done"
+          test "$(docker exec "$PG" psql -U postgres -Atc 'SHOW max_connections')" = 400
       - name: go test -race on Postgres
         env:
           KYPOST_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable

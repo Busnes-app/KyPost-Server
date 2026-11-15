@@ -10,7 +10,7 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ## Local Contracts
 
-- Every store keeps its SQLite path as its name; on Postgres `dbbackend` maps it to a schema. Opens that may create a database go to Postgres whenever it is configured; opens of an existing one (`OpenExisting`, read-only and helper opens) follow `dbbackend.Held`: a path the catalog holds is Postgres, any other a SQLite file (restore staging, capsule members, snapshots). Restore staging, the drill and capsule validation stay SQLite on both backends. SQL that differs gets a per-backend text at the call site; the translator only takes rules true token by token.
+- Every store keeps its SQLite path as its name; on Postgres `dbbackend` maps it to a schema. Opens that may create a database go to Postgres whenever it is configured; opens of an existing one (`OpenExisting`, read-only and helper opens) follow `dbbackend.Held`: on Postgres every path under STATE_DIR/CONFIG_DIR is Postgres (catalogued or not, and a catalog error fails the open, never falls back), and only paths outside them and `backup-scratch` are SQLite files (restore staging, capsule members, snapshots). Restore staging, the drill and capsule validation stay SQLite on both backends. SQL that differs gets a per-backend text at the call site; the translator only takes rules true token by token.
 
 - Invalid-recipient SMTP RCPT refusals use `mailmsg.SMTPInvalidRecipientError`; immediate external-account send/send-pgp return the `422 invalid_recipient` JSON contract in [API](../docs/API.md). Keep the underlying SMTP code available to retry classification; `Error()` stays free of correspondence, and `UserMessage()` is only for the sending user.
 

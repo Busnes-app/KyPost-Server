@@ -164,11 +164,13 @@ either backend.
    non-empty `-wal` beside it, which a running or uncleanly stopped server leaves; start and
    stop it once if so.
 2. Create the database as above. Nothing else may have written to it.
-3. Copy the data as the data owner, with the volumes and the URL file mounted (the image
-   has no ENTRYPOINT, so name the executable):
+3. Copy the data as the data owner, with the volumes mounted. Put the URL in a file only
+   the data owner can read (`chmod 600 kypost-db-url`) and bind-mount it read-only; the
+   image has no ENTRYPOINT, so name the executable. `-from` is required:
 
    ```bash
    docker compose run --rm --no-deps --user kypost \
+     -v "$PWD/kypost-db-url:/run/secrets/kypost-db-url:ro" \
      -e KYPOST_DATABASE_URL_FILE=/run/secrets/kypost-db-url \
      kypost-server /usr/local/bin/kypost-server migrate-to-postgres -from /kypost/state
    ```
@@ -180,8 +182,24 @@ either backend.
    (one from an older release is brought up to date on a private copy first). It never
    modifies the SQLite files and exits non-zero on any failure; a failure before the
    commit leaves Postgres as it was.
-4. Set the variable on the service and start it. Keep the SQLite files until you have
-   checked the install; KyPost on Postgres never reads a file whose path its catalog holds.
+4. Give the service the same file and variable, and start it. In `docker-compose.yml`,
+   under `kypost-server`:
+
+   ```yaml
+       environment:
+         KYPOST_DATABASE_URL_FILE: /run/secrets/kypost-db-url
+       secrets:
+         - kypost-db-url
+   secrets:
+     kypost-db-url:
+       file: ./kypost-db-url
+   ```
+
+   (or set `KYPOST_DATABASE_URL_FILE` in `.env`, which the compose file passes through, and
+   mount the file yourself). With either variable set, KyPost never reads a SQLite file
+   under `STATE_DIR` or `CONFIG_DIR`, even while Postgres is unreachable: it refuses
+   instead. Once the install checks out, move the old `.db` files out of the volumes so
+   nothing can mistake them for current data.
 
 The copy is one transaction over every account's tables, so it holds a lock per table: a
 large install needs `max_locks_per_transaction` raised for the copy (roughly 40 × the

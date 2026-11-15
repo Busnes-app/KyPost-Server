@@ -10,7 +10,7 @@ All files in this package. The contract is [continuous receiving](../../../docs/
 
 ## Local Contracts
 
-- On Postgres `cloudflare.db` is the `kypost_cloudflare` schema (`pg_schema.go`); `ReadStatus` reads it only when the catalog holds it.
+- On Postgres `cloudflare.db` is the `kypost_cloudflare` schema (`pg_schema.go`); `ReadStatus` reads it there, and a missing schema is "not-started".
 
 - Signed documents are `{"<field>": "<payload json>", "signature": "<b64>"}`; the signature covers exactly `UTF-8(context) || UTF-8(payload)`. Owners never reach the Worker; routes carry address, generation and maxBytes only, addresses lowercase ASCII (A-label domains). `ValidSender` is the sender rule both profiles enforce (Worker `senderOk`); `ValidBlock` is the Worker's block rule (a `LowerASCII` accepted sender or its domain; `until` Unix ms or null) and `SignTable` refuses anything else. `FitBlocks` returns the prefix of blocks that fits beside the routes, so blocks never stop route publication.
 - `CredentialsFile` (SECRET_DIR, 0600) is sealed in backups. `HostFile` (SECRET_DIR, 0600) is the live marker and in-flight rotation and must stay excluded from backups (`backup.skip`): its absence is what makes a restore start fenced and never replay pending material. Pending equal to current means an interrupted promotion and counts as live. `Fence` drops pending.

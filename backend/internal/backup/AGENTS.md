@@ -10,7 +10,7 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Local Contracts
 
-- On Postgres, collection exports each catalogued database into a SQLite member at the path a SQLite install uses (`collectPostgres`), skipping SQLite files whose path the catalog holds. Restore runs every hold and revocation on the staged SQLite files, then `ImportDatabases` loads them into the empty database in one transaction and recounts; the published tree holds no database file. `ImportDatabases` is also `migrate-to-postgres`.
+- On Postgres, collection exports each catalogued database into a SQLite member at the path a SQLite install uses (`collectPostgres`), skipping the SQLite files left at live paths (`dbbackend.Held`). Restore runs every hold and revocation on the staged SQLite files, then `ImportDatabases` loads them into the empty database in one transaction and recounts; the published tree holds no database file. `ImportDatabases` is also `migrate-to-postgres`.
 
 - Each offline native quarantine invocation first persists an empty-epoch version-1 hold, then generates and persists a fresh UUID-v4 `epoch` before validation. Retries and failed validation rotate it; fatal random generation or a returned error leaves staging held and unpublished. Existence-only runtime refusal remains unchanged. Future reconciliation must reject absent/invalid epochs and bind evidence under its durable fence; an epoch grants no authority or hold release.
 
