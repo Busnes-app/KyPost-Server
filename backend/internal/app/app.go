@@ -31,6 +31,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sorter"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/suitepair"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
 )
@@ -112,6 +113,10 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
+	chat, err := suitepair.FromEnv(api.KyMessagePeer)
+	if err != nil {
+		return err
+	}
 	proxies, err := config.LoadTrustedProxies()
 	if err != nil {
 		return err
@@ -190,6 +195,7 @@ func Run(args []string) error {
 		aiSortingDisabled: aiSortingDisabled,
 		kycal:             kycal,
 		kydrive:           drive,
+		kymessage:         chat,
 		cfg:               cfg,
 		configPath:        paths.ConfigFile,
 		configDir:         configDir,
@@ -213,6 +219,7 @@ func Run(args []string) error {
 	if *mode != "daemon" {
 		dir := kyIdentityDirectory(configDir)
 		go drive.Run(ctx, func() kydrive.Directory { return kydrive.Directory(dir()) }, logger)
+		go chat.Run(ctx, func() suitepair.Directory { return suitepair.Directory(dir()) }, logger)
 	}
 
 	if nativeMail {
@@ -237,6 +244,7 @@ type runDeps struct {
 	aiSortingDisabled bool
 	kycal             *kycalendar.Client
 	kydrive           *kydrive.Client
+	kymessage         *suitepair.Client
 	cfg               config.Config
 	configPath        string
 	configDir         string
@@ -398,6 +406,7 @@ func runServer(ctx context.Context, d runDeps) error {
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, nil, d.wkdStore)
 	srv.SetKyCalendar(d.kycal)
 	srv.SetKyDrive(d.kydrive)
+	srv.SetKyMessage(d.kymessage)
 	if d.nativeMail {
 		srv.EnableNativeMail()
 	}
@@ -474,6 +483,7 @@ func runAll(ctx context.Context, d runDeps) error {
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, poller.UpdateConfig, d.wkdStore)
 	srv.SetKyCalendar(d.kycal)
 	srv.SetKyDrive(d.kydrive)
+	srv.SetKyMessage(d.kymessage)
 	poller.SetKyCalendar(d.kycal)
 	if d.nativeMail {
 		poller.EnableNativeMail()
