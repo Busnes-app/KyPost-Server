@@ -64,6 +64,9 @@ func (s *Store) MessageReferenceGeneration() string { return s.referenceGenerati
 // has passed whole-snapshot validation. Never call against a running mailbox.
 // Bind to the acknowledged source before mutation; preserve namespace and mail.
 func RotateRestoredMessageReferences(path, source string) (err error) {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return err
+	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return err

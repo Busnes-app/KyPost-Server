@@ -494,6 +494,9 @@ func (s *Store) FileOutboundSent(ctx context.Context, master []byte, id string) 
 // It checks historical ciphertext/owner/receipt/quota consistency only. It never
 // claims a job or converts restored evidence into current sending permission.
 func ValidateOutboundSnapshot(ctx context.Context, path string, master []byte, relay mailmsg.DomainRelay) (bool, error) {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return false, err
+	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return false, err

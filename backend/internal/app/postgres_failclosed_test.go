@@ -12,6 +12,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -63,6 +64,23 @@ func TestUnreachablePostgresNeverReadsLiveSQLiteFiles(t *testing.T) {
 		},
 		"state.SnapshotDBToFile": func() error {
 			return state.SnapshotDBToFile(ctx, filepath.Join(stateDir, "state.db"), filepath.Join(t.TempDir(), "snap.db"))
+		},
+		"state.FenceRestoredScheduledSends": func() error { return state.FenceRestoredScheduledSends(stateDir) },
+		"state.FenceRestoredAgentTokens":    func() error { return state.FenceRestoredAgentTokens(stateDir) },
+		"mailbox.RotateRestoredMessageReferences": func() error {
+			return mailbox.RotateRestoredMessageReferences(filepath.Join(account, "mailbox", "mailbox.db"), source)
+		},
+		"mailbox.ValidateOutboundSnapshot": func() error {
+			_, err := mailbox.ValidateOutboundSnapshot(ctx, filepath.Join(account, "mailbox", "mailbox.db"), nil, mailmsg.DomainRelay{})
+			return err
+		},
+		"mailbox.InspectRestored": func() error {
+			_, _, err := mailbox.InspectRestored(filepath.Join(account, "mailbox", "mailbox.db"))
+			return err
+		},
+		"sso restore qualification": func() error {
+			_, err := sso.NewLifecycleStore(configDir).CheckNativeRestoreQualification(stateDir)
+			return err
 		},
 		"dbbackend.OpenFile": func() error {
 			db, err := dbbackend.OpenFile(filepath.Join(account, "state.db"), "mode=rw")

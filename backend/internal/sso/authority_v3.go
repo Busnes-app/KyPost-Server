@@ -451,6 +451,9 @@ var referenceSchemaV3 = sync.OnceValues(func() ([]string, error) {
 // foreign_key_check pass,
 // all before any row is read (findings S2, S3).
 func readAuthorityV3Historical(ctx context.Context, path string) (authorityRows, error) {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNativeMigration, err)
+	}
 	info, err := privateRegular(path)
 	if err != nil {
 		return nil, err

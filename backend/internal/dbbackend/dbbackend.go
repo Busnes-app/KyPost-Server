@@ -685,3 +685,20 @@ func Present(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
 }
+
+// ErrLiveDatabase refuses a staging-only SQLite helper pointed at a live Postgres store.
+var ErrLiveDatabase = errors.New("this check runs on restore staging or a capsule's SQLite files, not on the live Postgres database")
+
+// SQLiteOnly is the guard of the helpers that open restore staging and capsule members
+// as SQLite files directly: a path Held says is Postgres, or an error deciding it, is
+// refused, so none of them can answer from a file left at a live path.
+func SQLiteOnly(path string) error {
+	pg, err := Held(path)
+	if err != nil {
+		return err
+	}
+	if pg {
+		return ErrLiveDatabase
+	}
+	return nil
+}

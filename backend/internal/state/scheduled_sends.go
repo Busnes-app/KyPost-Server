@@ -159,6 +159,9 @@ const ScheduledRestored = "restored from a backup; review it and send again"
 // server may already have sent what the backup still lists as waiting, so
 // waiting rows return to Drafts and interrupted ones become uncertain.
 func FenceRestoredScheduledSends(stateDir string) (err error) {
+	if err := dbbackend.SQLiteOnly(filepath.Join(stateDir, "state.db")); err != nil {
+		return err
+	}
 	absolute, err := filepath.Abs(filepath.Join(stateDir, "state.db"))
 	if err != nil {
 		return err
