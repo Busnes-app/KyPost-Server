@@ -4,6 +4,7 @@ import { deleteJSON, getJSON, onMailboxGone, postJSON, putJSON, selectedMailboxI
 import { AuthContext, type AuthState } from "./auth";
 import { AppRail, loadSuiteApps, type SuiteApp } from "./components/AppRail";
 import { calendarOrigin } from "./lib/meetingLink";
+import { chatOrigin } from "./api/kymessage";
 import { ComposeWindow } from "./components/ComposeWindow";
 import { useCompose } from "./hooks/useCompose";
 import { useDialogOpen } from "./hooks/useDialogOpen";
@@ -27,7 +28,8 @@ import type {
   MoveInboxActionResponse,
   DragMessagePayload
 } from "./app/types";
-import { clearDraftSnapshot } from "./app/draftAutosave";
+import { bodyHtml, holdComposeLink, parseComposeLink, takeComposeLink } from "./lib/composeLink";
+import { clearDraftSnapshot, hasDraftSnapshot } from "./app/draftAutosave";
 import { mailboxLabel, standardMailboxKind, standardMailboxPath, type StandardMailboxKind } from "./app/mailboxKind";
 import {
   AppMark, ArchiveIcon, ChevronIcon, ClockIcon, ContactsIcon, DraftIcon, FolderIcon, InboxIcon, LogoutIcon, PlusIcon, SendIcon, SettingsIcon, TrashIcon, WarningIcon
@@ -53,6 +55,12 @@ const AutomationPanel = lazy(() => import("./pages/settings/AutomationPanel").th
 const ServerPanel = lazy(() => import("./pages/admin/ServerPanel").then((m) => ({ default: m.ServerPanel })));
 const DiagnosticsPanel = lazy(() => import("./pages/admin/DiagnosticsPanel").then((m) => ({ default: m.DiagnosticsPanel })));
 
+/** /compose?to=&subject=&body=: keeps the link for the signed-in app, then signs in or reads. */
+function composeLinkRoute(search: string, authenticated: boolean) {
+  holdComposeLink(parseComposeLink(search));
+  return <Navigate to={authenticated ? "/read" : "/login"} replace />;
+}
+
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -64,7 +72,20 @@ export function App() {
   const [mailboxNotice, setMailboxNotice] = useState("");
   const [suiteApps, setSuiteApps] = useState<SuiteApp[]>([]);
   const meetingOrigin = calendarOrigin(suiteApps);
+  const elementOrigin = chatOrigin(suiteApps);
   const compose = useCompose({ userId: auth?.userId, mailboxes });
+  // The compose deep link (lib/composeLink.ts): /compose holds it, and the first
+  // signed-in page opens it as a new draft.
+  // A link never autosaves over the tab's earlier unsent draft (it opens with autosave off instead).
+  const openHeldComposeLink = useEffectEvent(() => {
+    const link = takeComposeLink();
+    if (!link) return;
+    const keepSnapshot = hasDraftSnapshot(auth?.userId ?? "");
+    compose.openDraftInCompose({ sentTo: link.to.join(", "), subject: link.subject, body: bodyHtml(link.body), intent: "new", keepSnapshot });
+  });
+  useEffect(() => {
+    if (auth?.authenticated && !auth.mustChangePassword && location.pathname !== "/compose") openHeldComposeLink();
+  }, [auth?.authenticated, auth?.mustChangePassword, location.pathname]);
   // Folder URLs name their mailbox, so one replayed after a switch is recognised (ReadPage).
   const boxQuery = selectedMailbox ? `&box=${selectedMailbox}` : "";
   const mailboxFolderList = useFolderList("/api/inbox/folders");
@@ -867,8 +888,9 @@ export function App() {
         <Routes>
             <Route path="/" element={<Navigate to={auth.authenticated ? "/read" : "/login"} replace />} />
           <Route path="/login" element={<LoginPage auth={auth} onAuthChanged={refreshAuth} />} />
+          <Route path="/compose" element={composeLinkRoute(location.search, auth.authenticated)} />
           <Route path="/password" element={protect(<LoginPage auth={auth} onAuthChanged={refreshAuth} mode="password" />)} />
-              <Route path="/read" element={protect(<ReadPage key={selectedMailbox} onOpenDraft={compose.openDraftInCompose} onCompose={compose.openComposeWindow} folders={mailboxFolders} calendarOrigin={meetingOrigin} />)} />
+              <Route path="/read" element={protect(<ReadPage key={selectedMailbox} onOpenDraft={compose.openDraftInCompose} onCompose={compose.openComposeWindow} folders={mailboxFolders} calendarOrigin={meetingOrigin} chatOrigin={elementOrigin} />)} />
           {/* Retired settings paths. They redirect rather than 404: they appear
               in docs and bookmarks, and in service workers cached inside
               installed PWAs, which can send a notification tap here long after
@@ -907,7 +929,7 @@ export function App() {
               </ReauthGate>
             ))}
           />
-          <Route path="/contacts" element={protect(<ContactsPage calendarOrigin={meetingOrigin} />)} />
+          <Route path="/contacts" element={protect(<ContactsPage calendarOrigin={meetingOrigin} chatOrigin={elementOrigin} />)} />
           <Route path="/scheduled" element={protect(<ScheduledPage key={selectedMailbox} />)} />
           {/* The admin panels. protect(..., true) redirects non-admins to
               /read; the server enforces every one of these regardless. */}

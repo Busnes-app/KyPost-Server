@@ -2,11 +2,14 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,6 +46,14 @@ type fakeDrive struct {
 	maxChunk int64
 	maxFile  int64
 	linkURL  string // overrides the link answer when set
+	// guestMax is a new KyDrive's guest policy (status carries guest_links,
+	// links honour audience); nil is an old KyDrive that knows neither.
+	guestMax *int
+	// audiences records the audience of every link request ("-" for none).
+	audiences []string
+	// guestOff makes a new KyDrive refuse guest links (policy or switch off).
+	guestOff bool
+	fetchCT  string // overrides the fetch answer's Content-Type when set
 }
 
 type driveTicketState struct {
@@ -59,7 +70,8 @@ type driveFile struct {
 func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 	d := &fakeDrive{issuer: issuer, enabled: map[string]bool{}, seen: map[string]bool{}, tickets: map[string]*driveTicketState{},
 		files: map[string]driveFile{}, calls: map[string]int{}, maxChunk: 64 << 20, maxFile: 100 << 20}
-	routes := map[string]string{kydrive.PathTicket: kydrive.EventTicket, kydrive.PathLink: kydrive.EventLink, kydrive.PathStatus: kydrive.EventStatus}
+	routes := map[string]string{kydrive.PathTicket: kydrive.EventTicket, kydrive.PathLink: kydrive.EventLink, kydrive.PathStatus: kydrive.EventStatus,
+		kydrive.PathFetch: kydrive.EventFetch}
 	d.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -97,6 +109,8 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 			FileIDSnake       string `json:"file_id"`
 			Size              int64
 			Days              *int
+			Audience          *string
+			MaxBytes          *int64 `json:"max_bytes"`
 		}
 		if json.Unmarshal(body, &req) != nil {
 			refuse(http.StatusBadRequest, "bad_body")
@@ -113,7 +127,11 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 		}
 		switch eventType {
 		case kydrive.EventStatus:
-			fmt.Fprintf(w, `{"enabled":true,"free_bytes":%d,"max_file_bytes":%d}`, 1<<30, d.maxFile)
+			guest := ""
+			if d.guestMax != nil {
+				guest = fmt.Sprintf(`,"guest_links":true,"guest_max_days":%d`, *d.guestMax)
+			}
+			fmt.Fprintf(w, `{"enabled":true,"free_bytes":%d,"max_file_bytes":%d%s}`, 1<<30, d.maxFile, guest)
 		case kydrive.EventTicket:
 			live := 0
 			for _, tk := range d.tickets {
@@ -138,7 +156,10 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 			}
 		case kydrive.EventLink:
 			f, ok := d.files[req.FileIDSnake]
-			if req.Days == nil || (*req.Days != 0 && *req.Days != 1 && *req.Days != 7 && *req.Days != 30) {
+			d.audiences = append(d.audiences, cmpOr(req.Audience, "-"))
+			guest := d.guestMax != nil && req.Audience != nil && *req.Audience == "guest"
+			if req.Days == nil || (!guest && *req.Days != 0 && *req.Days != 1 && *req.Days != 7 && *req.Days != 30) ||
+				(guest && (*req.Days < 1 || *req.Days > *d.guestMax)) {
 				refuse(http.StatusBadRequest, "bad_body")
 				return
 			}
@@ -146,12 +167,33 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 				refuse(http.StatusNotFound, "not_found")
 				return
 			}
+			if guest && d.guestOff {
+				refuse(http.StatusConflict, "guest_links_off")
+				return
+			}
 			u := d.URL + "/l/#tok-" + req.FileIDSnake
+			if guest {
+				u = d.URL + "/g/#gtok-" + req.FileIDSnake
+			}
 			if d.linkURL != "" {
 				u = d.linkURL
 			}
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprintf(w, `{"url":%q,"expires":"2026-12-14T00:00:00Z"}`, u)
+		case kydrive.EventFetch:
+			f, ok := d.files[req.FileIDSnake]
+			switch {
+			case req.MaxBytes == nil || *req.MaxBytes <= 0:
+				refuse(http.StatusBadRequest, "bad_body")
+			case !ok || f.owner != req.Sub:
+				refuse(http.StatusNotFound, "not_found")
+			case int64(len(f.data)) > *req.MaxBytes:
+				refuse(http.StatusRequestEntityTooLarge, "too_large")
+			default:
+				w.Header().Set("Content-Type", cmp.Or(d.fetchCT, "application/octet-stream"))
+				w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": f.name}))
+				_, _ = w.Write(f.data)
+			}
 		}
 	}))
 	t.Cleanup(d.Close)
@@ -435,6 +477,58 @@ func TestKyDriveSaveAttachment(t *testing.T) {
 	}
 }
 
+// Attach a copy (contract I2): the file the user picked comes back as an
+// attachment, signed as kypost.drive.fetch with the attachment limit as
+// max_bytes; KyDrive's refusals and an odd answer never reach compose as a file.
+func TestKyDriveCopy(t *testing.T) {
+	f := newDriveFixture(t)
+	f.drive.files["file-1"] = driveFile{owner: "sub-ann", name: "Résumé été.pdf", data: []byte("%PDF-1.7 hello")}
+	f.drive.files["file-2"] = driveFile{owner: "sub-bob", name: "bob.pdf", data: []byte("x")}
+	f.drive.files["file-3"] = driveFile{owner: "sub-ann", name: "big.bin", data: make([]byte, maxMailAttachmentBytes+1)}
+	f.drive.files["file-4"] = driveFile{owner: "sub-ann", name: "a\u0007b", data: []byte("y")}
+	code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-1"}`)
+	if code != 200 || out["name"] != "Résumé été.pdf" || out["mimeType"] != "application/pdf" || out["size"] != float64(14) ||
+		out["dataBase64"] != base64.StdEncoding.EncodeToString([]byte("%PDF-1.7 hello")) {
+		t.Fatalf("copy %d %v", code, out)
+	}
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-4"}`); code != 200 || out["name"] != "attachment" {
+		t.Fatalf("unsafe name: %d %v", code, out["name"])
+	}
+	for name, tc := range map[string]struct {
+		body   string
+		status int
+		code   string
+	}{
+		"no file id":     {`{}`, 400, "bad_request"},
+		"space in id":    {`{"fileId":"a b"}`, 400, "bad_request"},
+		"long id":        {`{"fileId":"` + strings.Repeat("a", 129) + `"}`, 400, "bad_request"},
+		"someone else's": {`{"fileId":"file-2"}`, 404, "not_found"},
+		"missing":        {`{"fileId":"file-9"}`, 404, "not_found"},
+		"over the limit": {`{"fileId":"file-3"}`, 413, "too_large"},
+	} {
+		if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", tc.body); code != tc.status || out["code"] != tc.code || out["dataBase64"] != nil {
+			t.Errorf("%s: %d %v", name, code, out["code"])
+		}
+	}
+	f.drive.fetchCT = "text/html"
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-1"}`); code != 502 || out["dataBase64"] != nil {
+		t.Fatalf("wrong content type: %d %v", code, out["code"])
+	}
+	f.drive.fetchCT = ""
+	if logs := f.logs.String(); strings.Contains(logs, "Résumé") || strings.Contains(logs, "sub-ann") || strings.Contains(logs, "hello") {
+		t.Fatalf("logs carry a name, subject or content: %s", logs)
+	}
+	// Switch off in KyDrive passes through; unpaired hides the option.
+	f.drive.enabled["sub-ann"] = false
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-1"}`); code != 409 || out["code"] != "sharing_off" {
+		t.Fatalf("sharing off: %d %v", code, out)
+	}
+	f.srv.SetKyDrive(nil)
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-1"}`); code != 409 || out["code"] != "kydrive_off" {
+		t.Fatalf("unpaired: %d %v", code, out)
+	}
+}
+
 func TestKyDriveRateLimit(t *testing.T) {
 	f := newDriveFixture(t)
 	f.srv.kydriveLimiter = newKeyedLimiter(1, 0)
@@ -490,6 +584,24 @@ func TestCSPConnectsToKyDriveOnlyWhilePaired(t *testing.T) {
 	}
 }
 
+// The KyDrive picker answers through window.opener, so COOP lets popups keep
+// it while paired and is same-origin otherwise.
+func TestCOOPAllowsPopupsOnlyWhileKyDrivePaired(t *testing.T) {
+	f := newDriveFixture(t)
+	coop := func() string {
+		w := httptest.NewRecorder()
+		f.srv.routes().ServeHTTP(w, httptest.NewRequest("GET", "/api/health", nil))
+		return w.Header().Get("Cross-Origin-Opener-Policy")
+	}
+	if got := coop(); got != "same-origin-allow-popups" {
+		t.Fatalf("paired COOP %q", got)
+	}
+	f.srv.SetKyDrive(nil)
+	if got := coop(); got != "same-origin" {
+		t.Fatalf("unpaired COOP %q", got)
+	}
+}
+
 func TestKyDriveRecipients(t *testing.T) {
 	f := newDriveFixture(t)
 	many := make([]string, 0, 150)
@@ -521,5 +633,132 @@ func TestKyDriveRecipients(t *testing.T) {
 	}
 	if logs := f.logs.String(); strings.Contains(logs, "bob@example.net") || strings.Contains(logs, "down@example.com") {
 		t.Fatalf("logs carry an address: %s", logs)
+	}
+}
+
+func cmpOr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+// stepUp marks ann's test session as having stepped up at t.
+func (f *driveFixture) stepUp(at time.Time) {
+	f.srv.sessMu.Lock()
+	defer f.srv.sessMu.Unlock()
+	tok := "session-token-" + f.ann.ID
+	sess := f.srv.sessions[tok]
+	sess.SteppedUpAt = at
+	f.srv.sessions[tok] = sess
+}
+
+// Guest links (contract K): only when KyDrive's status offers them, within its
+// maximum days, after a step-up in the last ten minutes; the answer must be a
+// /g/ link on the paired origin.
+func TestKyDriveGuestLinks(t *testing.T) {
+	f := newDriveFixture(t)
+	maxDays := 14
+	f.drive.guestMax = &maxDays
+	f.drive.files["file-1"] = driveFile{owner: "sub-ann", name: "plan.pdf", data: []byte("x")}
+	if code, st := f.call(t, f.ann, "GET", "/api/kydrive/status", ""); code != 200 || st["guestLinks"] != true || st["guestMaxDays"] != float64(14) {
+		t.Fatalf("status %d %v", code, st)
+	}
+	guest := func(days int) (int, map[string]any) {
+		return f.call(t, f.ann, "POST", "/api/kydrive/links", fmt.Sprintf(`{"fileId":"file-1","days":%d,"audience":"guest"}`, days))
+	}
+	// No step-up, then a lapsed one: refused before KyDrive is asked.
+	if code, out := guest(7); code != 403 || out["code"] != "step_up_required" {
+		t.Fatalf("no step-up: %d %v", code, out)
+	}
+	f.stepUp(time.Now().Add(-guestStepUpWindow - time.Second))
+	if code, out := guest(7); code != 403 || out["code"] != "step_up_required" {
+		t.Fatalf("lapsed step-up: %d %v", code, out)
+	}
+	if len(f.drive.audiences) != 0 {
+		t.Fatalf("KyDrive was asked without a step-up: %v", f.drive.audiences)
+	}
+	f.stepUp(time.Now().Add(-9 * time.Minute))
+	code, out := guest(7)
+	if code != 201 || out["url"] != f.drive.URL+"/g/#gtok-file-1" {
+		t.Fatalf("guest link %d %v", code, out)
+	}
+	for name, tc := range map[string]struct {
+		body string
+		code string
+	}{
+		"zero days":    {`{"fileId":"file-1","days":0,"audience":"guest"}`, "bad_request"},
+		"over the max": {`{"fileId":"file-1","days":15,"audience":"guest"}`, "bad_request"},
+		"bad audience": {`{"fileId":"file-1","days":7,"audience":"public"}`, "bad_request"},
+	} {
+		if code, out := f.call(t, f.ann, "POST", "/api/kydrive/links", tc.body); code != 400 || out["code"] != tc.code {
+			t.Errorf("%s: %d %v", name, code, out)
+		}
+	}
+	// An organisation link answered to a guest request never reaches the browser.
+	f.drive.linkURL = f.drive.URL + "/l/#tok-file-1"
+	if code, out := guest(7); code != 502 || out["url"] != nil {
+		t.Fatalf("org link for a guest request: %d %v", code, out)
+	}
+	f.drive.linkURL = ""
+	// Organisation links still send no audience, and refuse a guest-only day count.
+	if code, _ := f.call(t, f.ann, "POST", "/api/kydrive/links", `{"fileId":"file-1","days":30}`); code != 201 {
+		t.Fatalf("organisation link %d", code)
+	}
+	if code, _ := f.call(t, f.ann, "POST", "/api/kydrive/links", `{"fileId":"file-1","days":14}`); code != 400 {
+		t.Fatalf("organisation link with 14 days: %d", code)
+	}
+	if want := []string{"guest", "guest", "-"}; strings.Join(f.drive.audiences, ",") != strings.Join(want, ",") {
+		t.Fatalf("KyDrive saw audiences %v, want %v", f.drive.audiences, want)
+	}
+	if logs := f.logs.String(); strings.Contains(logs, "gtok-") || strings.Contains(logs, "plan.pdf") {
+		t.Fatalf("logs carry a link or name: %s", logs)
+	}
+	// The policy or the user's switch turned off in KyDrive: passed through,
+	// and the cached status is dropped so the option goes.
+	f.drive.guestOff = true
+	if code, out := guest(7); code != 409 || out["code"] != "guest_links_off" {
+		t.Fatalf("guest links off in KyDrive: %d %v", code, out)
+	}
+	f.drive.guestOff = false
+	f.drive.guestMax = nil
+	if _, st := f.call(t, f.ann, "GET", "/api/kydrive/status", ""); st["guestLinks"] != nil {
+		t.Fatalf("status still offers guest links: %v", st)
+	}
+	// KyDrive downgraded while a status still said yes: its organisation link is refused.
+	f.drive.guestMax = &maxDays
+	f.srv.driveStatuses.Clear()
+	f.call(t, f.ann, "GET", "/api/kydrive/status", "")
+	f.drive.guestMax = nil
+	if code, out := guest(7); code != 502 || out["url"] != nil {
+		t.Fatalf("downgraded KyDrive: %d %v", code, out)
+	}
+}
+
+// An old KyDrive, whose status has no guest_links, never gets an audience:
+// a guest request is refused here, as is any other user's or an unpaired one.
+func TestKyDriveGuestLinksNeedANewKyDrive(t *testing.T) {
+	f := newDriveFixture(t)
+	f.drive.files["file-1"] = driveFile{owner: "sub-ann", name: "plan.pdf", data: []byte("x")}
+	f.stepUp(time.Now())
+	if _, st := f.call(t, f.ann, "GET", "/api/kydrive/status", ""); st["guestLinks"] != nil || st["guestMaxDays"] != nil {
+		t.Fatalf("old KyDrive status offers guest links: %v", st)
+	}
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/links", `{"fileId":"file-1","days":7,"audience":"guest"}`); code != 409 || out["code"] != "guest_links_off" {
+		t.Fatalf("guest link from an old KyDrive: %d %v", code, out)
+	}
+	if len(f.drive.audiences) != 0 {
+		t.Fatalf("an old KyDrive was sent a link request: %v", f.drive.audiences)
+	}
+	// guest_links:false, or a nonsense max, reads the same.
+	zero := 0
+	f.drive.guestMax = &zero
+	f.srv.driveStatuses.Clear()
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/links", `{"fileId":"file-1","days":1,"audience":"guest"}`); code != 409 || out["code"] != "guest_links_off" {
+		t.Fatalf("guest_max_days 0: %d %v", code, out)
+	}
+	f.srv.SetKyDrive(nil)
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/links", `{"fileId":"file-1","days":1,"audience":"guest"}`); code != 409 || out["code"] != "kydrive_off" {
+		t.Fatalf("unpaired: %d %v", code, out)
 	}
 }

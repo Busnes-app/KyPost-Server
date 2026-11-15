@@ -38,7 +38,7 @@ Content-Type: application/json
 |---|---|
 | 200 `{"outcome":"answered"}` | Done. Send no mail. |
 | 200 with any other body | Not confirmed: say so and let the user try again. Send no mail. |
-| 409 `kycalendar_off` | Fall back to mail (2), with the confirmation. |
+| 409 `kycalendar_off` | Fall back to mail (2), with the confirmation. Also the answer when the user has no KyCalendar account. |
 | 404 `no_event` | Fall back to mail (2), with the confirmation. KyCalendar never received this invitation (not DKIM-aligned, encrypted, or older than pairing). |
 | 409 `conflict` | "The event changed since this invitation." Reload the attachment and answer again. |
 | anything else (400 `bad_request`/`bad_partstat`, 404 `not_found`, 422 `not_invitation`/`not_invited`, 502 `kycalendar_unavailable`, 507 `quota`, network error) | Show the server's `error` text, or "KyCalendar could not be reached; try again." Re-enable the buttons. Send no mail. |

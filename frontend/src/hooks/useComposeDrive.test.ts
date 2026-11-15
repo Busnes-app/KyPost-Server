@@ -3,13 +3,16 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import type Quill from "quill";
 import type { ComposeAttachment } from "../app/types";
+import { HttpError } from "../api/client";
 
 const api = vi.hoisted(() => ({
   status: { available: true, origin: "https://drive.example.com", appUrl: "https://drive.example.com/" } as Record<string, unknown>,
   ticket: vi.fn(async () => ({ uploadUrl: "https://drive.example.com/api/suite/upload/t", expires: "", maxChunk: 64 })),
   upload: vi.fn(async (_t: unknown, blob: Blob, onProgress: (n: number) => void, _signal: AbortSignal): Promise<{ file_id: string; name: string; size: number }> => { onProgress(blob.size); return { file_id: "f1", name: "big.bin", size: blob.size }; }),
   link: vi.fn(async () => ({ url: "https://drive.example.com/l/#tok", expires: "2026-12-14T00:00:00Z" })),
-  outside: vi.fn(async (_a: string[]): Promise<string[]> => [])
+  outside: vi.fn(async (_a: string[]): Promise<string[]> => []),
+  pick: vi.fn(async (_o: string, _m: string): Promise<unknown[]> => []),
+  copy: vi.fn(async (id: string) => ({ name: `${id}.pdf`, mimeType: "application/pdf", dataBase64: "AAAA", size: 3 }))
 }));
 vi.mock("../api/kydrive", async (importActual) => ({
   ...(await importActual<typeof import("../api/kydrive")>()),
@@ -17,7 +20,9 @@ vi.mock("../api/kydrive", async (importActual) => ({
   requestUploadTicket: api.ticket,
   uploadToTicket: api.upload,
   createDriveLink: api.link,
-  checkOutsideRecipients: (a: string[]) => api.outside(a)
+  checkOutsideRecipients: (a: string[]) => api.outside(a),
+  pickFromDrive: api.pick,
+  copyFromDrive: api.copy
 }));
 
 import { useComposeDrive } from "./useComposeDrive";
@@ -119,7 +124,7 @@ it("holds a send with KyDrive links to people outside the organisation", async (
   await act(async () => { ok = await view.result.current.drive.driveRecipientsOk(body, ["ann@example.com", "bob@example.net"]); });
   expect(ok).toBe(false);
   expect(api.outside).toHaveBeenLastCalledWith(["ann@example.com", "bob@example.net"]);
-  expect(view.result.current.drive.driveOutside).toEqual({ addresses: ["bob@example.net"], unverified: false, canAttach: true, sendAt: undefined });
+  expect(view.result.current.drive.driveOutside).toEqual({ addresses: ["bob@example.net"], unverified: false, canAttach: true, canGuest: false, sendAt: undefined });
 
   // "Attach instead": the link line goes and the file is attached.
   await act(() => view.result.current.drive.attachDriveFilesInstead());
@@ -189,4 +194,193 @@ it("leaves the next draft alone when attach-instead or the recipient check finis
   await act(async () => { await ok; });
   expect(view.result.current.drive.driveOutside).toBeNull();
   expect(setError).not.toHaveBeenCalled();
+});
+
+// The draft's recipients and subject as the component reads them; tests change it to edit the draft.
+let recipients = "dana@partner.example";
+const draftKey = () => recipients;
+
+const guestStatus = { available: true, origin: "https://drive.example.com", appUrl: "https://drive.example.com/", guestLinks: true, guestMaxDays: 14 };
+const stepUpRequired = () => Object.assign(new HttpError("step up", 403, { code: "step_up_required" }));
+
+/** Uploads big.bin (file f1) and holds a send to an outsider. */
+async function heldForOutsider(status: Record<string, unknown> = guestStatus) {
+  api.status = status;
+  const t = setup();
+  await waitFor(() => expect(t.view.result.current.drive.driveStatus.available).toBe(true));
+  act(() => { t.view.result.current.drive.offerDrive([file("big.bin", 10)]); });
+  await act(() => t.view.result.current.drive.acceptDriveOffer());
+  api.outside.mockResolvedValueOnce(["dana@partner.example"]);
+  await act(async () => { await t.view.result.current.drive.driveRecipientsOk(t.quill.root.innerHTML, ["dana@partner.example"]); });
+  api.status = { available: true, origin: "https://drive.example.com", appUrl: "https://drive.example.com/" };
+  return t;
+}
+
+it("offers guest links only when KyDrive's status carries them", async () => {
+  expect((await heldForOutsider()).view.result.current.drive.driveOutside?.canGuest).toBe(true);
+  const old = await heldForOutsider({ available: true, origin: "https://drive.example.com", appUrl: "https://drive.example.com/" });
+  expect(old.view.result.current.drive.driveOutside?.canGuest).toBe(false);
+});
+
+it("makes guest links at send time and says they expire", async () => {
+  const { quill, view } = await heldForOutsider();
+  api.link.mockResolvedValueOnce({ url: "https://drive.example.com/g/#guest", expires: "2026-11-21T00:00:00Z" });
+  let ok = false;
+  await act(async () => { ok = await view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  expect(ok).toBe(true);
+  expect(api.link).toHaveBeenLastCalledWith("f1", 7, "guest");
+  const a = quill.root.querySelector("a") as HTMLAnchorElement;
+  expect(a.getAttribute("href")).toBe("https://drive.example.com/g/#guest");
+  // The fake editor drops insertLink's note, so a new one is added (toGuestLinks's own test covers replacing it).
+  expect(a.nextSibling?.textContent).toMatch(/^ \(KyDrive guest link, expires .+\)$/);
+  expect(view.result.current.drive.driveOutside).toBeNull();
+});
+
+it("holds the send for a step-up, then makes the links once confirmed", async () => {
+  const { quill, view } = await heldForOutsider();
+  api.link.mockRejectedValueOnce(stepUpRequired());
+  let ok = true;
+  await act(async () => { ok = await view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  expect(ok).toBe(false);
+  expect(view.result.current.drive.driveGuestStepUp).toMatchObject({ days: 7, sendAt: undefined });
+  expect(quill.root.querySelector("a")?.getAttribute("href")).toBe("https://drive.example.com/l/#tok");
+
+  // A failed confirmation (wrong password, or a step-up the server says lapsed) makes nothing.
+  await expect(act(() => view.result.current.drive.confirmGuestStepUp(async () => { throw new Error("wrong password"); }, draftKey))).rejects.toThrow("wrong password");
+  expect(api.link).toHaveBeenCalledTimes(2);
+  api.link.mockResolvedValueOnce({ url: "https://drive.example.com/g/#guest", expires: "" });
+  let held: unknown = null;
+  await act(async () => { held = await view.result.current.drive.confirmGuestStepUp(async () => {}, draftKey); });
+  expect(held).toMatchObject({ days: 7, sendAt: undefined });
+  expect(quill.root.querySelector("a")?.getAttribute("href")).toBe("https://drive.example.com/g/#guest");
+});
+
+it("never makes guest links for the next draft after compose is reset", async () => {
+  // Reset while the step-up is being confirmed.
+  const first = await heldForOutsider();
+  api.link.mockRejectedValueOnce(stepUpRequired());
+  await act(async () => { await first.view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  const calls = api.link.mock.calls.length;
+  let confirmed!: () => void;
+  let done!: Promise<unknown>;
+  act(() => { done = first.view.result.current.drive.confirmGuestStepUp(() => new Promise((r) => { confirmed = r; }), draftKey); });
+  act(() => first.view.result.current.drive.resetDrive());
+  confirmed();
+  let held: unknown = "unset";
+  await act(async () => { held = await done; });
+  expect(held).toBeNull();
+  expect(api.link).toHaveBeenCalledTimes(calls);
+  expect(first.quill.root.querySelector("a")?.getAttribute("href")).toBe("https://drive.example.com/l/#tok");
+
+  // Reset while the first of two links is being made.
+  const second = await heldForOutsider();
+  second.quill.root.insertAdjacentHTML("beforeend", "<p></p>");
+  act(() => { second.view.result.current.drive.offerDrive([file("two.bin", 2)]); });
+  api.link.mockResolvedValueOnce({ url: "https://drive.example.com/l/#tok2", expires: "" });
+  await act(() => second.view.result.current.drive.acceptDriveOffer());
+  let made!: (l: { url: string; expires: string }) => void;
+  api.link.mockImplementationOnce(() => new Promise((r) => { made = r; }));
+  const before = api.link.mock.calls.length;
+  let sending!: Promise<boolean>;
+  act(() => { sending = second.view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  act(() => second.view.result.current.drive.resetDrive());
+  made({ url: "https://drive.example.com/g/#late", expires: "" });
+  let ok = true;
+  await act(async () => { ok = await sending; });
+  expect(ok).toBe(false);
+  expect(api.link).toHaveBeenCalledTimes(before + 1);
+  expect(second.quill.root.innerHTML).not.toContain("/g/");
+  expect(second.setError).not.toHaveBeenCalled();
+});
+
+it("sends nothing when the draft changes while guest links are made or the step-up runs", async () => {
+  // Recipients changed while KyDrive was making the link.
+  const { quill, setError, view } = await heldForOutsider();
+  let made!: (l: { url: string; expires: string }) => void;
+  api.link.mockImplementationOnce(() => new Promise((r) => { made = r; }));
+  let sending!: Promise<boolean>;
+  act(() => { sending = view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  recipients = "someone@else.example";
+  made({ url: "https://drive.example.com/g/#guest", expires: "" });
+  let ok = true;
+  await act(async () => { ok = await sending; });
+  expect(ok).toBe(false);
+  expect(setError).toHaveBeenLastCalledWith(expect.stringMatching(/^The message changed/));
+  expect(quill.root.innerHTML).not.toContain("/g/");
+  recipients = "dana@partner.example";
+
+  // The body changed instead.
+  api.link.mockImplementationOnce(() => new Promise((r) => { made = r; }));
+  act(() => { sending = view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  quill.root.insertAdjacentHTML("beforeend", "<p>a new paragraph</p>");
+  made({ url: "https://drive.example.com/g/#guest", expires: "" });
+  await act(async () => { ok = await sending; });
+  expect(ok).toBe(false);
+  expect(quill.root.innerHTML).not.toContain("/g/");
+
+  // Edited between the step-up request and its confirmation: no link is made.
+  api.link.mockRejectedValueOnce(Object.assign(new HttpError("step up", 403, { code: "step_up_required" })));
+  await act(async () => { await view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  expect(view.result.current.drive.driveGuestStepUp).not.toBeNull();
+  const calls = api.link.mock.calls.length;
+  recipients = "someone@else.example";
+  let held: unknown = "unset";
+  await act(async () => { held = await view.result.current.drive.confirmGuestStepUp(async () => {}, draftKey); });
+  expect(held).toBeNull();
+  expect(api.link).toHaveBeenCalledTimes(calls);
+  expect(quill.root.innerHTML).not.toContain("/g/");
+  recipients = "dana@partner.example";
+});
+
+it("links picked files, or attaches copies of them, from KyDrive's picker", async () => {
+  const { quill, setError, view } = setup();
+  await waitFor(() => expect(view.result.current.drive.driveStatus.available).toBe(true));
+  api.pick.mockResolvedValueOnce([{ name: "plan.pdf", size: 2048, url: "https://drive.example.com/l/#p", expires: "" }]);
+  await act(() => view.result.current.drive.attachFromDrive("link"));
+  expect(api.pick).toHaveBeenLastCalledWith("https://drive.example.com", "link");
+  expect(quill.inserted[0]).toEqual(["plan.pdf", { link: "https://drive.example.com/l/#p" }]);
+  expect(String(quill.inserted[1][0])).toBe(" (2 KB, KyDrive, link does not expire)\n");
+
+  api.pick.mockResolvedValueOnce([{ name: "a.pdf", size: 3, fileId: "f-a" }, { name: "huge.bin", size: 1 << 30, fileId: "f-h" }]);
+  await act(() => view.result.current.drive.attachFromDrive("copy"));
+  expect(api.copy).toHaveBeenCalledTimes(1);
+  expect(api.copy).toHaveBeenCalledWith("f-a");
+  expect(view.result.current.attachments.map((a) => a.name)).toEqual(["f-a.pdf"]);
+  expect(setError).toHaveBeenCalledWith(expect.stringMatching(/^huge\.bin does not fit the .+ attachment limit; share a link instead\.$/));
+  expect(view.result.current.drive.driveUploads).toEqual([]);
+});
+
+it("never puts picked files into the next draft after compose is reset", async () => {
+  const { quill, setError, view } = setup();
+  await waitFor(() => expect(view.result.current.drive.driveStatus.available).toBe(true));
+  // Reset while the picker is open.
+  let pickedLinks!: (f: unknown[]) => void;
+  api.pick.mockImplementationOnce(() => new Promise((r) => { pickedLinks = r; }));
+  let done!: Promise<void>;
+  act(() => { done = view.result.current.drive.attachFromDrive("link"); });
+  act(() => view.result.current.drive.resetDrive());
+  pickedLinks([{ name: "plan.pdf", size: 1, url: "https://drive.example.com/l/#p", expires: "" }]);
+  await act(() => done);
+  expect(quill.inserted).toEqual([]);
+
+  // Reset while a copy is being fetched.
+  let fetched!: () => void;
+  api.pick.mockResolvedValueOnce([{ name: "a.pdf", size: 3, fileId: "f-a" }, { name: "b.pdf", size: 3, fileId: "f-b" }]);
+  api.copy.mockImplementationOnce((id: string) => new Promise((r) => { fetched = () => r({ name: id, mimeType: "x", dataBase64: "AAAA", size: 3 }); }));
+  act(() => { done = view.result.current.drive.attachFromDrive("copy"); });
+  await waitFor(() => expect(api.copy).toHaveBeenCalledTimes(1));
+  act(() => view.result.current.drive.resetDrive());
+  fetched();
+  await act(() => done);
+  expect(api.copy).toHaveBeenCalledTimes(1);
+  expect(view.result.current.attachments).toEqual([]);
+  expect(setError).not.toHaveBeenCalled();
+});
+
+it("does not open the picker while KyDrive is unavailable", async () => {
+  api.status = { available: false, origin: "https://drive.example.com" };
+  const { view } = setup();
+  await act(() => view.result.current.drive.attachFromDrive("link"));
+  expect(api.pick).not.toHaveBeenCalled();
+  api.status = { available: true, origin: "https://drive.example.com", appUrl: "https://drive.example.com/" };
 });

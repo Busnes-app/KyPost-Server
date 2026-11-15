@@ -111,7 +111,15 @@ const permissionsPolicy = "accelerometer=(), autoplay=(), camera=(), display-cap
 // provider now loads nothing cross-origin at all.) Buying isolation by breaking
 // the CAPTCHA that guards the login form is the wrong trade; revisit if those
 // origins ever serve CORP headers.
-func withSecurityHeaders(next http.Handler, policy func() string) http.Handler {
+//
+// While KyDrive is paired COOP is same-origin-allow-popups instead: compose's
+// KyDrive picker is a popup that answers through window.opener.postMessage
+// (docs/KYDRIVE.md "Picker"), which same-origin severs. Being opened by
+// another origin still severs, and the links this app opens carry noopener
+// (emailHtml.ts overwrites target and rel on every <a> and <area>, SVG's
+// included; step-up nulls its popup's opener), so only the picker keeps a
+// handle on this window.
+func withSecurityHeaders(next http.Handler, policy func() string, driveOrigin func() string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Content-Security-Policy", policy())
@@ -119,7 +127,11 @@ func withSecurityHeaders(next http.Handler, policy func() string) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Permissions-Policy", permissionsPolicy)
-		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		if driveOrigin() != "" {
+			h.Set("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
+		} else {
+			h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		}
 		if isRequestSecure(r) {
 			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}

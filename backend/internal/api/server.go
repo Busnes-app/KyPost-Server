@@ -44,6 +44,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/suitepair"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
 )
@@ -197,6 +198,8 @@ type Server struct {
 	peopleLimiter *keyedLimiter
 	// kydriveLimiter meters every /api/kydrive route per account.
 	kydriveLimiter *keyedLimiter
+	// kymessageLimiter meters every /api/kymessage route per account.
+	kymessageLimiter *keyedLimiter
 	// pushPollLimiter meters the two unauthenticated push-MFA endpoints per IP.
 	// They were the only public routes with no meter, and both take mfa.Store's
 	// process-wide lock. See withPushPollRateLimit.
@@ -273,6 +276,7 @@ type Server struct {
 	nativeMail    bool
 	kycal         *kycalendar.Client
 	kydrive       *kydrive.Client
+	kymessage     *suitepair.Client
 	suiteApps     sync.Map // user ID -> suiteAppsEntry
 	suitePeople   suitePeopleCache
 	driveStatuses sync.Map // user ID -> driveStatusEntry
@@ -471,6 +475,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		accountWriteLimiter:      newKeyedLimiter(accountWriteBurst, accountWriteRefillPerSec),
 		peopleLimiter:            newKeyedLimiter(30, 2),
 		kydriveLimiter:           newKeyedLimiter(kydriveBurst, kydriveRefillPerSec),
+		kymessageLimiter:         newKeyedLimiter(kymessageBurst, kymessageRefillPerSec),
 		pushPollLimiter:          newKeyedLimiter(pushPollBurst, pushPollRefillPerSec),
 		loginParamsLimiter:       newKeyedLimiter(loginParamsBurst, loginParamsRefillPerSec),
 		deviceRescan:             newKeyedLimiter(1, 1/deviceRescanInterval.Seconds()),
@@ -568,7 +573,7 @@ func (s *Server) routes() http.Handler {
 	s.routesFrontend(mux)
 
 	// The paired KyDrive origin can change at run time, so the policy is per response.
-	return withGzip(withSecurityHeaders(mux, func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }))
+	return withGzip(withSecurityHeaders(mux, func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }, s.kydrive.Origin))
 }
 
 // routesAuth registers sign-in, session, and second-factor endpoints.
@@ -624,6 +629,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/backup/status", s.withAdmin(s.handleBackupStatus))
 	mux.HandleFunc("GET /api/admin/kycalendar", s.withAdmin(s.handleAdminKyCalendar))
 	mux.HandleFunc("GET /api/admin/kydrive", s.withAdmin(s.handleAdminKyDrive))
+	mux.HandleFunc("GET /api/admin/kymessage", s.withAdmin(s.handleAdminKyMessage))
 	mux.HandleFunc("GET /api/admin/native-recovery/status", s.withAdmin(s.handleNativeRecoveryStatus))
 	mux.HandleFunc("POST /api/admin/native-recovery/repair", s.withAdmin(withActionDigest(s.handleNativeRecoveryRepair)))
 	mux.HandleFunc("POST /api/admin/native-recovery/release", s.withAdmin(withActionDigest(s.handleNativeRecoveryRelease)))
@@ -688,8 +694,11 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/kydrive/status", s.withMailAuth(s.handleKyDriveStatus))
 	mux.HandleFunc("POST /api/kydrive/upload-tickets", s.withMailAuth(s.handleKyDriveTicket))
 	mux.HandleFunc("POST /api/kydrive/links", s.withMailAuth(s.handleKyDriveLink))
+	mux.HandleFunc("POST /api/kydrive/copies", s.withMailAuth(s.handleKyDriveCopy))
 	mux.HandleFunc("POST /api/kydrive/recipients", s.withMailAuth(s.handleKyDriveRecipients))
 	mux.HandleFunc("POST /api/kydrive/save-attachment", s.withMailAuth(s.withMailbox(s.handleKyDriveSaveAttachment)))
+	mux.HandleFunc("POST /api/kymessage/people", s.withMailAuth(s.handleKyMessagePeople))
+	mux.HandleFunc("POST /api/kymessage/chat", s.withMailAuth(s.handleKyMessageChat))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
 	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))

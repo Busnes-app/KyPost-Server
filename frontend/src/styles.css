@@ -3899,6 +3899,14 @@ pre {
   font-size: 0.85rem;
 }
 
+/* Chat beside the reader's sender: compact, like Save to KyDrive. */
+.email-reader-chat {
+  min-height: 28px;
+  margin: var(--ky-space-1) var(--ky-space-2) 0 0;
+  padding: 2px 10px;
+  font-size: 0.85rem;
+}
+
 .email-attachment-size {
   opacity: 0.7;
 }
@@ -5252,6 +5260,10 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .compose-window > .compose-drive, .compose-window > .compose-drive-upload { margin: 12px 24px 0; }
 .compose-drive p { margin: 0; }
 .compose-drive-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.compose-drive-actions label { display: flex; align-items: center; gap: 6px; }
+.compose-drive-guest { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.compose-drive-stepup { display: grid; gap: 8px; margin-top: 8px; }
+.compose-drive-stepup label { display: grid; gap: 4px; font-size: 0.85rem; }
 .compose-drive-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.85rem; }
 .compose-drive-upload progress { flex: 1 1 120px; accent-color: var(--accent); }
 .compose-security { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-top: 1px solid var(--line); background: var(--panel); }
@@ -5263,6 +5275,9 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .compose-actionbar .compose-save-draft { background: var(--panel); border-color: var(--line); color: var(--ink-strong); }
 .compose-actionbar .compose-attach { border-color: transparent; }
 .compose-actionbar .compose-trash { margin-left: auto; }
+/* The action bar is the window's foot: the KyDrive menu opens upward. */
+.compose-drive-menu .ky-menu-list { top: auto; bottom: calc(100% + var(--ky-space-2)); inset-inline: 0 auto; }
+.compose-drive-menu .ky-menu-list > button[role="menuitem"] { width: 100%; border: 0; background: transparent; justify-content: flex-start; }
 .compose-window > .notice, .compose-window > .compose-pgp-warning { padding: 12px 24px; }
 @media (max-width: 600px) { .compose-window { width: 100%; max-height: 100dvh; border-radius: 0; } .compose-topbar, .compose-connection-hint, .compose-security, .compose-actionbar { padding-inline: 16px; } .compose-window > .compose-form-grid { padding-inline: 16px; } .compose-window > .compose-editor-html.ql-container.ql-snow { margin-inline: 16px; } .compose-form-grid .compose-field-row { grid-template-columns: 48px minmax(0, 1fr); } .compose-actionbar { gap: 6px; } .compose-actionbar .compose-trash { margin-left: 0; } }
 

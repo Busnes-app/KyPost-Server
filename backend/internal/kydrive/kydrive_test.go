@@ -285,3 +285,33 @@ func TestResolve(t *testing.T) {
 		})
 	}
 }
+
+// Fetch signs kypost.drive.fetch, reads a file answer larger than the JSON
+// cap with its headers, and stops reading at MaxFetchBytes.
+func TestFetch(t *testing.T) {
+	big := bytes.Repeat([]byte("x"), maxResponseBytes*2)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		ev, err := syncauth.Verify(testSecret, syncauth.FromRequest(r), body, syncauth.Options{})
+		if err != nil || r.URL.Path != PathFetch || ev.Type != EventFetch {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		if strings.Contains(string(body), "huge") {
+			_, _ = w.Write(bytes.Repeat([]byte("y"), MaxFetchBytes+10))
+			return
+		}
+		_, _ = w.Write(big)
+	}))
+	defer srv.Close()
+	base, _ := url.Parse(srv.URL)
+	c := New(base, testSecret, srv.Client().Transport)
+	status, h, out, err := c.Fetch(t.Context(), "ev-1", map[string]string{"file_id": "f"})
+	if err != nil || status != 200 || !bytes.Equal(out, big) || h.Get("Content-Type") != "application/octet-stream" {
+		t.Fatalf("Fetch = %d %v %d bytes", status, err, len(out))
+	}
+	if _, _, out, _ := c.Fetch(t.Context(), "ev-2", map[string]string{"file_id": "huge"}); len(out) != MaxFetchBytes {
+		t.Fatalf("read %d bytes, want the %d cap", len(out), MaxFetchBytes)
+	}
+}
