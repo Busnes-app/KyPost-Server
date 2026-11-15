@@ -36,6 +36,7 @@ const (
 	EventTicket = "kypost.drive.ticket"
 	EventLink   = "kypost.drive.link"
 	EventStatus = "kypost.drive.status"
+	EventFetch  = "kypost.drive.fetch"
 )
 
 // Routes on KyDrive.
@@ -43,6 +44,7 @@ const (
 	PathTicket = "/api/suite/kypost/upload-tickets"
 	PathLink   = "/api/suite/kypost/links"
 	PathStatus = "/api/suite/kypost/status"
+	PathFetch  = "/api/suite/kypost/fetch"
 	// UploadPrefix is where every ticket URL must point.
 	UploadPrefix = "/api/suite/upload/"
 	// LinkPrefix is where every link URL must point.
@@ -55,6 +57,9 @@ const MinSecretBytes = 32
 // maxResponseBytes caps a KyDrive answer; they are a few bytes of JSON.
 const maxResponseBytes = 64 << 10
 
+// MaxFetchBytes caps a fetched file's answer; callers name a lower max_bytes.
+const MaxFetchBytes = 32 << 20
+
 // ErrOff is a request made while KyDrive is not paired.
 var ErrOff = errors.New("kydrive: not paired")
 
@@ -64,6 +69,7 @@ type Client struct {
 	link   atomic.Pointer[link]
 	http   *http.Client
 	upload *http.Client
+	fetch  *http.Client
 	dir    *directory // nil when the environment paired it
 }
 
@@ -136,9 +142,13 @@ func newClient(rt http.RoundTripper) *Client {
 			Timeout:       30 * time.Second,
 			CheckRedirect: noRedirect,
 		},
-		// An upload is bounded by its caller's context, not a fixed timeout.
+		// An upload or fetch is bounded by its caller's context, not a fixed timeout.
 		upload: &http.Client{
 			Transport:     &netguard.BoundedTransport{Base: rt, Limit: maxResponseBytes},
+			CheckRedirect: noRedirect,
+		},
+		fetch: &http.Client{
+			Transport:     &netguard.BoundedTransport{Base: rt, Limit: MaxFetchBytes},
 			CheckRedirect: noRedirect,
 		},
 	}
@@ -223,29 +233,41 @@ func (c *Client) OnOrigin(raw, prefix string) bool {
 // returning the status and the response body. A bad_signature answer asks
 // Run to re-resolve the pairing.
 func (c *Client) Post(ctx context.Context, path, eventType, eventID string, body any) (int, []byte, error) {
+	status, _, out, err := c.post(ctx, c.http, path, eventType, eventID, body)
+	return status, out, err
+}
+
+// Fetch is kypost.drive.fetch: the answer is the file itself (at most
+// MaxFetchBytes are read; a longer one is truncated), returned with its
+// headers so the caller can check the type and read the name.
+func (c *Client) Fetch(ctx context.Context, eventID string, body any) (int, http.Header, []byte, error) {
+	return c.post(ctx, c.fetch, PathFetch, EventFetch, eventID, body)
+}
+
+func (c *Client) post(ctx context.Context, hc *http.Client, path, eventType, eventID string, body any) (int, http.Header, []byte, error) {
 	l := c.link.Load()
 	if l == nil {
-		return 0, nil, ErrOff
+		return 0, nil, nil, ErrOff
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	h, err := syncauth.Sign(l.secret, time.Now(), eventType, eventID, payload)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.base.JoinPath(path).String(), bytes.NewReader(payload))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	h.Apply(req)
 	req.Header.Set("Content-Type", "application/json")
-	status, out, err := c.do(c.http, req)
+	status, header, out, err := c.do(hc, req)
 	if status == http.StatusUnauthorized && Outcome(out) == "bad_signature" {
 		c.Refresh()
 	}
-	return status, out, err
+	return status, header, out, err
 }
 
 // Upload PUTs size bytes from r to a ticket URL, in Content-Range chunks of
@@ -269,14 +291,14 @@ func (c *Client) Upload(ctx context.Context, ticketURL string, r io.ReaderAt, si
 		if n < size {
 			req.Header.Set("Content-Range", "bytes "+strconv.FormatInt(off, 10)+"-"+strconv.FormatInt(off+n-1, 10)+"/"+strconv.FormatInt(size, 10))
 		}
-		status, out, err := c.do(c.upload, req)
+		status, _, out, err := c.do(c.upload, req)
 		if err != nil || off+n >= size || status/100 != 2 {
 			return status, out, err
 		}
 	}
 }
 
-func (c *Client) do(hc *http.Client, req *http.Request) (int, []byte, error) {
+func (c *Client) do(hc *http.Client, req *http.Request) (int, http.Header, []byte, error) {
 	resp, err := hc.Do(req)
 	if err != nil {
 		// url.Error carries the URL, and a ticket URL is a credential.
@@ -284,14 +306,14 @@ func (c *Client) do(hc *http.Client, req *http.Request) (int, []byte, error) {
 		if errors.As(err, &uerr) {
 			err = uerr.Err
 		}
-		return 0, nil, fmt.Errorf("kydrive: %w", err)
+		return 0, nil, nil, fmt.Errorf("kydrive: %w", err)
 	}
 	defer resp.Body.Close()
 	out, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, nil, fmt.Errorf("kydrive: read answer: %w", err)
+		return 0, nil, nil, fmt.Errorf("kydrive: read answer: %w", err)
 	}
-	return resp.StatusCode, out, nil
+	return resp.StatusCode, resp.Header, out, nil
 }
 
 // Outcome reads the "outcome" or "code" of a KyDrive answer; anything but a

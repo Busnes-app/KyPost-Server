@@ -9,7 +9,9 @@ const api = vi.hoisted(() => ({
   ticket: vi.fn(async () => ({ uploadUrl: "https://drive.example.com/api/suite/upload/t", expires: "", maxChunk: 64 })),
   upload: vi.fn(async (_t: unknown, blob: Blob, onProgress: (n: number) => void, _signal: AbortSignal): Promise<{ file_id: string; name: string; size: number }> => { onProgress(blob.size); return { file_id: "f1", name: "big.bin", size: blob.size }; }),
   link: vi.fn(async () => ({ url: "https://drive.example.com/l/#tok", expires: "2026-12-14T00:00:00Z" })),
-  outside: vi.fn(async (_a: string[]): Promise<string[]> => [])
+  outside: vi.fn(async (_a: string[]): Promise<string[]> => []),
+  pick: vi.fn(async (_o: string, _m: string): Promise<unknown[]> => []),
+  copy: vi.fn(async (id: string) => ({ name: `${id}.pdf`, mimeType: "application/pdf", dataBase64: "AAAA", size: 3 }))
 }));
 vi.mock("../api/kydrive", async (importActual) => ({
   ...(await importActual<typeof import("../api/kydrive")>()),
@@ -17,7 +19,9 @@ vi.mock("../api/kydrive", async (importActual) => ({
   requestUploadTicket: api.ticket,
   uploadToTicket: api.upload,
   createDriveLink: api.link,
-  checkOutsideRecipients: (a: string[]) => api.outside(a)
+  checkOutsideRecipients: (a: string[]) => api.outside(a),
+  pickFromDrive: api.pick,
+  copyFromDrive: api.copy
 }));
 
 import { useComposeDrive } from "./useComposeDrive";
@@ -189,4 +193,57 @@ it("leaves the next draft alone when attach-instead or the recipient check finis
   await act(async () => { await ok; });
   expect(view.result.current.drive.driveOutside).toBeNull();
   expect(setError).not.toHaveBeenCalled();
+});
+
+it("links picked files, or attaches copies of them, from KyDrive's picker", async () => {
+  const { quill, setError, view } = setup();
+  await waitFor(() => expect(view.result.current.drive.driveStatus.available).toBe(true));
+  api.pick.mockResolvedValueOnce([{ name: "plan.pdf", size: 2048, url: "https://drive.example.com/l/#p", expires: "" }]);
+  await act(() => view.result.current.drive.attachFromDrive("link"));
+  expect(api.pick).toHaveBeenLastCalledWith("https://drive.example.com", "link");
+  expect(quill.inserted[0]).toEqual(["plan.pdf", { link: "https://drive.example.com/l/#p" }]);
+  expect(String(quill.inserted[1][0])).toBe(" (2 KB, KyDrive, link does not expire)\n");
+
+  api.pick.mockResolvedValueOnce([{ name: "a.pdf", size: 3, fileId: "f-a" }, { name: "huge.bin", size: 1 << 30, fileId: "f-h" }]);
+  await act(() => view.result.current.drive.attachFromDrive("copy"));
+  expect(api.copy).toHaveBeenCalledTimes(1);
+  expect(api.copy).toHaveBeenCalledWith("f-a");
+  expect(view.result.current.attachments.map((a) => a.name)).toEqual(["f-a.pdf"]);
+  expect(setError).toHaveBeenCalledWith(expect.stringMatching(/^huge\.bin does not fit the .+ attachment limit; share a link instead\.$/));
+  expect(view.result.current.drive.driveUploads).toEqual([]);
+});
+
+it("never puts picked files into the next draft after compose is reset", async () => {
+  const { quill, setError, view } = setup();
+  await waitFor(() => expect(view.result.current.drive.driveStatus.available).toBe(true));
+  // Reset while the picker is open.
+  let pickedLinks!: (f: unknown[]) => void;
+  api.pick.mockImplementationOnce(() => new Promise((r) => { pickedLinks = r; }));
+  let done!: Promise<void>;
+  act(() => { done = view.result.current.drive.attachFromDrive("link"); });
+  act(() => view.result.current.drive.resetDrive());
+  pickedLinks([{ name: "plan.pdf", size: 1, url: "https://drive.example.com/l/#p", expires: "" }]);
+  await act(() => done);
+  expect(quill.inserted).toEqual([]);
+
+  // Reset while a copy is being fetched.
+  let fetched!: () => void;
+  api.pick.mockResolvedValueOnce([{ name: "a.pdf", size: 3, fileId: "f-a" }, { name: "b.pdf", size: 3, fileId: "f-b" }]);
+  api.copy.mockImplementationOnce((id: string) => new Promise((r) => { fetched = () => r({ name: id, mimeType: "x", dataBase64: "AAAA", size: 3 }); }));
+  act(() => { done = view.result.current.drive.attachFromDrive("copy"); });
+  await waitFor(() => expect(api.copy).toHaveBeenCalledTimes(1));
+  act(() => view.result.current.drive.resetDrive());
+  fetched();
+  await act(() => done);
+  expect(api.copy).toHaveBeenCalledTimes(1);
+  expect(view.result.current.attachments).toEqual([]);
+  expect(setError).not.toHaveBeenCalled();
+});
+
+it("does not open the picker while KyDrive is unavailable", async () => {
+  api.status = { available: false, origin: "https://drive.example.com" };
+  const { view } = setup();
+  await act(() => view.result.current.drive.attachFromDrive("link"));
+  expect(api.pick).not.toHaveBeenCalled();
+  api.status = { available: true, origin: "https://drive.example.com", appUrl: "https://drive.example.com/" };
 });

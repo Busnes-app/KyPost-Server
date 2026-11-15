@@ -2093,7 +2093,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
               })()}
               <div className="email-reader-facts email-reader-from">
                 <p><strong>Sender</strong><span className="email-reader-sender">{selected.sender || "-"}</span>
-                  <ChatButton address={firstAddressFromText(selected.sender || "")} origin={chatOrigin} /></p>
+                  <ChatButton className="email-reader-chat" address={firstAddressFromText(selected.sender || "")} origin={chatOrigin} /></p>
                 <time dateTime={selected.atUtc}>{formatReaderTime(selected.atUtc)}</time>
               </div>
               <details className="email-reader-details">
