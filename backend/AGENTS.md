@@ -10,6 +10,8 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ## Local Contracts
 
+- Every store keeps its SQLite path as its name; on Postgres `dbbackend` maps it to a schema. Opens that may create a database go to Postgres whenever it is configured; opens of an existing one (`OpenExisting`, read-only and helper opens) follow `dbbackend.Held`: a path the catalog holds is Postgres, any other a SQLite file (restore staging, capsule members, snapshots). Restore staging, the drill and capsule validation stay SQLite on both backends. SQL that differs gets a per-backend text at the call site; the translator only takes rules true token by token.
+
 - Invalid-recipient SMTP RCPT refusals use `mailmsg.SMTPInvalidRecipientError`; immediate external-account send/send-pgp return the `422 invalid_recipient` JSON contract in [API](../docs/API.md). Keep the underlying SMTP code available to retry classification; `Error()` stays free of correspondence, and `UserMessage()` is only for the sending user.
 
 - Container-local `apply-setup --file <private-file|-> [--check]` or `--capabilities` runs as the runtime data owner after base bootstrap; version1 bundles verify retained effective pairing authority and create only missing SSO/domain/recovery settings, refuse conflicts and restore holds, and audit changes through the instance store. File references resolve only absolute private runtime-owned credentials; `--check` uses an existing read-only state opener and lock-free backup inspection, never consuming codes or adding settings/audits. New SSO/directory identities and step-up links retain their verified issuer independently of native mailbox storage. Historical unbound links are bound only by API startup (`users.BindUnboundSSOLinks`), never by installer adoption. `GET /api/installer/network` is a public secret-free G11 diagnostic. `setup-status` reports advisory local configuration checks and external acceptance still required, without mail submission or DNS refresh. Read [installer contract](../docs/INSTALLER_SETUP.md); never equate successful configuration with production readiness.
@@ -174,7 +176,8 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 | Package | Responsibility |
 |---------|---------------|
-| `app/` | Mode parsing/bootstrap, poller/API, opt-in direct receiving commands and daemon import |
+| `app/` | Mode parsing/bootstrap, poller/API, opt-in direct receiving commands and daemon import, `migrate-to-postgres` |
+| `dbbackend/` | SQLite or Postgres for every store (`KYPOST_DATABASE_URL[_FILE]`): startup checks, one schema per database file with a catalog, the per-schema writer lock, the SQLite↔Postgres table copy; `pgdialect/` is KyIdentity's statement translator and `kypg` driver |
 - **Per-user mailbox state is SQLite** (`STATE_DIR/users/<id>/state.db`), not JSON. `state.Store` owns processed-message ids, the decision audit log, the deferral ledger, native devices, web-push subscriptions, and the App Pull queue. `RecordProcessedDecision` writes the decision, the processed marker AND the deferral delete in one transaction: retiring a message ends its deferral, and putting that in the store is what stops a caller forgetting it. Every method reads and writes the database directly — there is no in-memory copy, no dirty flags, and no `fsutil.WithFileLock`, because SQLite's own WAL locking is what makes the api and daemon processes safe against each other. Two rules that are load-bearing rather than tuning:
   - the DSN sets `_txlock=immediate`. `database/sql`'s `Begin` issues a DEFERRED `BEGIN`, which cannot upgrade to a writer under contention and fails `SQLITE_BUSY_SNAPSHOT` (517) — `busy_timeout` does not retry an upgrade. Pinned by `TestConcurrentUpdateNotifyLatchFiresOnce`.
   - `state.Store` releases its handle on UNREACHABILITY, via the `runtime.AddCleanup` registered in `state.New` — **not** on cache eviction. `api.Server.sweepIdleUserStores` must only drop the map entry. The caches hand out bare pointers and release `userMu` before the caller is done, and `userLastSeen` records acquisition rather than release, so "idle" never means "unheld": closing at eviction severed the handle under long-running callers and their next query failed `sql: database is closed`. `Close()` remains, is idempotent, and is for callers that genuinely own the last reference. Pinned by `TestEvictedStoreStaysUsableForItsHolder`.
@@ -344,6 +347,7 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 |----------|---------|--------|
 | `CONFIG_DIR` | `/kypost/config` | Config and admin files |
 | `STATE_DIR` | `/kypost/state` | State JSON files |
+| `KYPOST_DATABASE_URL` / `KYPOST_DATABASE_URL_FILE` | empty (SQLite) | One Postgres database for every store; both set, a bad URL or file, Postgres < 16 or a non-C/UTF8 database refuses startup ([RUNNING.md](../docs/RUNNING.md#postgres)) |
 | `LOG_DIR` | `/kypost/logs` | Log file directory |
 | `SECRET_DIR` | `/kypost/private` | Encrypted secrets (IMAP key) |
 | `WEB_PORT` | `5866` | HTTP API listen port |
@@ -524,6 +528,7 @@ This list is the CI gate. `ci-backend-checks` runs the static steps, the release
 - `go list -deps -test ./... | grep '^golang.org/x/crypto/openpgp'` must print nothing (`ci-backend-checks`). `osv-scanner.toml` ignores GO-2026-5932 (x/crypto/openpgp unmaintained) only because of this; PGP uses `github.com/ProtonMail/go-crypto`. Never import x/crypto/openpgp; if that changes, drop the ignore
 - `go tool -modfile=../tools/go.mod deadcode -test=false ./cmd/...` (`ci-backend-checks`) must report exactly the functions `deadcode.allow` lists. Delete code nothing in `cmd/` reaches; test-only code goes in a `_test.go` file or a `*test` package (`pgpmail/pgpmailtest`, `sso/ssotest`). The allow list is only for hooks other packages' tests call to reach unexported state
 - `go build -buildvcs=false ./...` must succeed with zero errors
+- With a throwaway `postgres:17` (UTF8, C locale), `KYPOST_TEST_DATABASE_URL=postgres://postgres@localhost:5432/postgres?sslmode=disable go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/...` must pass (`ci-backend-postgres`): every store runs on Postgres, one schema per test path; tests about SQLite files, WAL or restore staging skip and say so in `-v` output. Without the variable those Postgres-only tests skip.
 - `go test -race -count=1 -timeout=20m ./...` must pass. The sorter parity test and the poller's hybrid tests skip unless `EMBED_MODEL_DIR` points at the pinned model; the `ci-backend-other` legs download it using the Dockerfile's `EMBED_*` ARG pins, so set it locally too or those tests prove nothing. The `-timeout` is not optional: `internal/api` alone exceeds Go's default 600s under `-race`, which is why CI splits it into its own shards and passes `-timeout=20m`. Running plain `go test -race ./...` locally reports a timeout that CI would not see
 
 - `GOTOOLCHAIN=go1.26.9 go test -race ./internal/sso ./internal/api -run '^TestReleaseFloor' -count=1` checks monotonic durable release floors, the refusal rule, snapshot validation, webhook refusal of stale activations while queued deletions apply, direct allocation refusal, unchanged active rows passing, and the worker quietly refusing administrator provisioning, unpublished allocation and reallocation of a repaired account while the disable path converges.
@@ -535,6 +540,8 @@ This list is the CI gate. `ci-backend-checks` runs the static steps, the release
 ## Child DOX Index
 
 - `internal/agentskill/` — the embedded AI agent skill served beside `/mcp`. See [internal/agentskill/AGENTS.md](internal/agentskill/AGENTS.md).
+
+- `internal/dbbackend/` — the SQLite/Postgres backend selection, schema catalog, writer lock and table copy every store opener uses. See [internal/dbbackend/AGENTS.md](internal/dbbackend/AGENTS.md).
 
 - `internal/mailbox/` — permanent per-owner SQLite storage, delivery receipts, durable changes, encrypted outbox claims/Sent obligations, atomic account preparation and the internal full mail Client; selected for admitted native accounts only with `KYPOST_NATIVE_MAIL=true`. See [internal/mailbox/AGENTS.md](internal/mailbox/AGENTS.md).
 

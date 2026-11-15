@@ -10,6 +10,8 @@ All files in this package. Opt-in app receiving commands and daemon import selec
 
 ## Local Contracts
 
+- On Postgres `ingress.db` is the `kypost_ingress` schema (`pg_schema.go`, `archived` and its index created up front). Physical admission counts the schema's relation sizes; the WAL checkpoint and the local free-space reserve do not apply.
+
 - Callers are trusted local receiver/importer processes with exclusive access to an owner-only directory. Gateway IDs are supplied by authenticated transport configuration, never SMTP headers. This package is not a network authentication boundary.
 - Route writers must verify KyIdentity provenance before calling `SetRoute`. Versions are the ledger address generation, monotonic per address; same-version refresh cannot change ownership or activation. `DeactivateRoutes` is the ledger writer's release/disable/reassign path under the directory fence: it writes existing routes inactive at a never-lower generation, refuses a lower one, and is a no-op without a store or route.
 - `RefreshRoute` is accepted-mail recovery only: existing identical issuer/subject/mailbox/generation/active tuple, no insertion or reactivation. App import selects it only without fresh admission proof.
@@ -33,6 +35,8 @@ All files in this package. Opt-in app receiving commands and daemon import selec
 - Keep public deployment gated by receiver abuse/capacity, TLS, provenance and recovery qualification; app command integration does not install a receiver.
 
 ## Verification
+
+- Postgres: `KYPOST_TEST_DATABASE_URL=postgres://postgres@localhost:5432/postgres?sslmode=disable go test -race -count=1 ./internal/ingress/...` runs the holding store on Postgres; WAL, checkpoint, drive-reserve and legacy-file tests skip.
 
 - `GOTOOLCHAIN=go1.26.9 go test -race ./internal/ingress -count=1` checks retention, archival (record limit, replay, atomicity, legacy migration), release/discard (frozen owners, interrupted release, discard tombstone replay, envelope-only listing), fencing, immutable ownership, quotas, physical admission/recovery, pinned-reader WAL reclamation, competing-process refusal and transaction replay.
 - `TestHoldingLimitsRaiseOnly` raises a spool created with the old limits through every opener, keeping held mail, and refuses lowering; `TestDriveReserveRefusesGrowth` refuses Bind/Accept growth inside an injected reserve while exact replays answer. `main_test.go` stubs `fsutil.DiskSpace` for the rest.

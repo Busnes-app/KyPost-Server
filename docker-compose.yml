@@ -68,6 +68,8 @@ services:
       # rest-server, recommended) or the commented volume below; see
       # docs/RESTORE.md. Empty keeps them inside the capsule, capped at 64 MiB each.
       KYPOST_BULK_BACKUP_REPOSITORY: ${KYPOST_BULK_BACKUP_REPOSITORY:-}
+      KYPOST_DATABASE_URL: ${KYPOST_DATABASE_URL:-}
+      KYPOST_DATABASE_URL_FILE: ${KYPOST_DATABASE_URL_FILE:-}
       KYPOST_BACKUP_SCRATCH_DIR: ${KYPOST_BACKUP_SCRATCH_DIR:-}
       # Peers whose X-Forwarded-For/Proto/Host may be believed: a comma-separated
       # list of CIDRs or bare IPs (not hostnames). Empty trusts nothing and uses

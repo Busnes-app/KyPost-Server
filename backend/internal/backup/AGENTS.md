@@ -10,6 +10,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Local Contracts
 
+- On Postgres, collection exports each catalogued database into a SQLite member at the path a SQLite install uses (`collectPostgres`), skipping SQLite files whose path the catalog holds. Restore runs every hold and revocation on the staged SQLite files, then `ImportDatabases` loads them into the empty database in one transaction and recounts; the published tree holds no database file. `ImportDatabases` is also `migrate-to-postgres`.
+
 - Each offline native quarantine invocation first persists an empty-epoch version-1 hold, then generates and persists a fresh UUID-v4 `epoch` before validation. Retries and failed validation rotate it; fatal random generation or a returned error leaves staging held and unpublished. Existence-only runtime refusal remains unchanged. Future reconciliation must reject absent/invalid epochs and bind evidence under its durable fence; an epoch grants no authority or hold release.
 
 - Nonempty native outboxes require relay config/master key and `outbox:encrypted-jobs-claims-and-sent` recipe evidence. Decrypt actual frozen job bytes; check namespace/owner/domain, foreign keys, Sent receipts and quota. Databases with neither queue table remain compatible; a partial schema or orphan claims is corruption. Historical generations/claims are preserved. After whole-snapshot validation and durable hold, offline restore atomically quarantines queued/retryable deliveries per mailbox before publication; accepted/Sent and submitting/uncertain evidence remain intact. Partial failure preserves held staging; retry is idempotent.
@@ -48,6 +50,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 - Record an intent before mutations and a completion afterward. If completion auditing fails, state that the action may have happened.
 
 ## Verification
+
+- Postgres: `KYPOST_TEST_DATABASE_URL=postgres://postgres@localhost:5432/postgres?sslmode=disable go test -race -count=1 ./internal/backup/...` runs collection, drill, bulk (restic) and restore on Postgres; `TestPostgresCapsuleRoundTrips` checks equal capsule members on both backends, the drill, a Postgres capsule restored onto SQLite, a SQLite capsule restored into Postgres and the refused non-empty restore.
 
 - `TestNativeRestoreRaisesTokenCutoffPreservesDirectory` uses sealed native restore and actual quarantine to check skew-inclusive cutoffs, higher-floor preservation, retry monotonicity, unchanged directory/lifecycle authority and retained holds. API `TestNativeRestoreTokenCutoffBothSignedSignInPaths` isolates the quarantined lifecycle cutoff in real signed browser/device flows while keeping restored data held; post-cutoff controls wait for the real clock. SSO `TestNativeRestoreTokenCutoffRefusesUnsafeInputsAndWriteFailure` checks malformed/public/missing epoch, missing authority, foreign owner and atomic-write refusal; `TestNativeRestoreTokenCutoffSurvivesDirectoryUpdate` checks subsequent authority updates preserve the higher cutoff.
 

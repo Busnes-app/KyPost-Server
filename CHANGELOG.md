@@ -20,6 +20,16 @@ non-prerelease version.
 
 ### Added
 
+- Postgres backend, one instance per database. `KYPOST_DATABASE_URL` or
+  `KYPOST_DATABASE_URL_FILE` keeps every store in one Postgres 16+ database
+  (UTF8, C locale), one schema per SQLite file; unset keeps SQLite unchanged.
+  Startup refuses both variables, a bad URL or file, an older server or another
+  locale before writing, and never logs or returns the URL. `kypost-server
+  migrate-to-postgres -from <state dir>` moves a stopped install in one
+  transaction and verifies every table's count. Backups, the drill, restore
+  and capsules work on both backends. `/api/health` and `/api/status` report
+  `databaseBackend`. Docs: `docs/RUNNING.md#postgres`.
+
 - KyDrive pairing (`KYPOST_KYDRIVE_URL`, `KYPOST_KYDRIVE_SECRET_FILE`,
   `KYPOST_KYDRIVE_ALLOW_PRIVATE`, or automatic through KyIdentity). Compose
   uploads files over the attachment limit, or any attachment, to KyDrive and

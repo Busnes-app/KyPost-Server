@@ -35,6 +35,8 @@ Important files:
 - `/kypost/state/mailboxes/<mailboxID>/` (an administrator-created extra native mailbox: `native-mailbox.json`, `mailbox/mailbox.db` and a mail-only `state.db`; devices and subscriptions stay with the owner's primary)
 - `/kypost/config/admin.env` (legacy single-admin seed. KyPost imports it once, then stops reading it.)
 
+On Postgres (`KYPOST_DATABASE_URL`, [RUNNING.md](RUNNING.md#postgres)) the `.db` files above are schemas in that database, one per file, listed in `kypost_catalog.stores`; every other file stays in its volume. Back up the volumes and the database together, or use sealed capsules, which carry both. The manual volume procedure below covers SQLite only.
+
 ## Backup and Restore
 
 For sealed capsules, pairing, scheduling and offline recovery, follow [docs/RESTORE.md](RESTORE.md). The manual volume procedure below produces an unencrypted archive and requires secure storage.
