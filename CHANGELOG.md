@@ -22,7 +22,7 @@ non-prerelease version.
 
 - Out-of-office reply (Settings → Mail → Out of office), Outlook style: one
   text for people in the organisation (KyIdentity suite members and the native
-  mail domains) and one for everyone else, which an administrator must allow
+  mail domains in service) and one for everyone else, which an administrator must allow
   first (`outOfOfficeRemote`, off by default) and the user can limit to their
   contacts. Optional start and end. RFC 3834: never to lists, bulk, automated
   or junk mail, or a sender whose DKIM does not align with From; once per

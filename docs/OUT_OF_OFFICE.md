@@ -108,8 +108,9 @@ Turning the reply on with an empty text for a reply that would be sent is refuse
 
 The sender's DKIM-aligned From is local when either holds:
 
-- its domain is one of the native mail domains (`sso.NativeDomainStore`), and the polled
-  mailbox is native; or
+- its domain is an established native mail domain (`sso.NativeDomainStore`), and the
+  polled mailbox is native. Retired and unproven domains do not count: a retired domain
+  may now belong to anyone; or
 - KyIdentity's suite directory resolves it to a person (`suitedir.Resolve`) under the
   user's linked subject.
 

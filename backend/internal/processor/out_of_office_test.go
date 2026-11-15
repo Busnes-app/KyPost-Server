@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/mail"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -287,5 +289,36 @@ func TestOutOfOfficeReplyNativeQueues(t *testing.T) {
 	j := h.queued[0]
 	if j.From != "bob@x.test" || len(j.Deliveries) != 1 || j.Deliveries[0].Recipients[0] != "alice@example.com" || len(j.Sent) == 0 {
 		t.Fatalf("job %+v", j)
+	}
+}
+
+// Only an established native domain makes a sender local; a retired or
+// unproven domain falls back to the suite directory.
+func TestOutOfOfficeLocalNeedsEstablishedDomain(t *testing.T) {
+	token := strings.Repeat("ab", 32)
+	proof := func(established string) string {
+		return `{"example.com":{"token":"` + token + `","expiresAt":1,"established":` + established + `,"verifiedUntil":0}}`
+	}
+	for name, tc := range map[string]struct {
+		domains, retired string
+		want             int
+	}{
+		"established": {proof("true"), `[]`, 1},
+		"unproven":    {proof("false"), `[]`, 0},
+		"retired":     {`{}`, `["example.com"]`, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newOOOHarness(t)
+			set := `{"version":1,"issuer":"https://id.x.test","domains":` + tc.domains + `,"retired":` + tc.retired + `}`
+			if err := os.WriteFile(filepath.Join(h.p.configDir, sso.NativeDomainsFile), []byte(set), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			uc := h.ctx(t, oooOn(), []byte(oooBase+"\r\nhi\r\n"))
+			uc.mailbox = h.userID
+			h.p.outOfOfficeReply(t.Context(), uc, imapadapter.Message{ID: "1"}, "bob@x.test")
+			if len(h.queued)+len(h.sent) != tc.want {
+				t.Fatalf("replies %d, want %d", len(h.queued)+len(h.sent), tc.want)
+			}
+		})
 	}
 }

@@ -263,11 +263,12 @@ func oooSubject(s string) string {
 	return s
 }
 
-// oooLocal reports whether sender is inside the organisation: at one of the
-// native mail domains (native mailbox) or a suite member in KyIdentity.
+// oooLocal reports whether sender is inside the organisation: at an
+// established native mail domain (native mailbox) or a suite member in
+// KyIdentity. Retired domains prove nothing: they may now belong to anyone.
 func (p *Poller) oooLocal(ctx context.Context, uc userCtx, u users.User, sender string) bool {
 	if uc.mailbox != "" {
-		if set, err := sso.NewNativeDomainStore(p.configDir).ReadSet(); err == nil && set.Known(sso.AddressDomain(sender)) {
+		if set, err := sso.NewNativeDomainStore(p.configDir).ReadSet(); err == nil && set.Domains[sso.AddressDomain(sender)].Established {
 			return true
 		}
 	}
