@@ -140,16 +140,17 @@ func (s *Server) handleKyMessagePeople(w http.ResponseWriter, r *http.Request) {
 		writeChat(w, http.StatusBadRequest, "bad_request", "1 to 100 addresses are required")
 		return
 	}
+	// One malformed contact address must not hide Chat for the rest of a batch.
 	var addrs []string
 	for _, raw := range req.Addresses {
-		a := bareAddress(raw)
-		if a == "" {
-			writeChat(w, http.StatusBadRequest, "bad_request", "addresses must be bare addresses")
-			return
-		}
-		if !slices.Contains(addrs, a) {
+		if a := bareAddress(raw); a != "" && !slices.Contains(addrs, a) {
 			addrs = append(addrs, a)
 		}
+	}
+	if len(addrs) == 0 {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"inside": []string{}})
+		return
 	}
 	known, err := resolvePeople(r.Context(), dir, u.SSOSub, addrs)
 	if err != nil {

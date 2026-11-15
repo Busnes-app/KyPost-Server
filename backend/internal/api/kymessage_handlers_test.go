@@ -175,20 +175,22 @@ func (f *chatFixture) call(t *testing.T, u users.User, path, body string) (int, 
 
 func TestKyMessagePeople(t *testing.T) {
 	f := newChatFixture(t)
-	code, out, _ := f.call(t, f.ann, "/api/kymessage/people", `{"addresses":["Bob@Example.com","out@other.org","ann@example.com","bob@example.com"]}`)
+	code, out, _ := f.call(t, f.ann, "/api/kymessage/people", `{"addresses":["Bob@Example.com","out@other.org","ann@example.com","bob@example.com","john@","a@b, c@d","Bob <bob@example.com>"]}`)
 	if code != 200 || fmt.Sprint(out["inside"]) != "[bob@example.com]" {
 		t.Fatalf("people %d %v", code, out)
 	}
 	many := strings.TrimSuffix(strings.Repeat(`"a@example.com",`, 101), ",")
 	for name, body := range map[string]string{
-		"none":         `{"addresses":[]}`,
-		"too many":     `{"addresses":[` + many + `]}`,
-		"display name": `{"addresses":["Bob <bob@example.com>"]}`,
-		"not json":     `x`,
+		"none":     `{"addresses":[]}`,
+		"too many": `{"addresses":[` + many + `]}`,
+		"not json": `x`,
 	} {
 		if code, out, _ := f.call(t, f.ann, "/api/kymessage/people", body); code != 400 || out["code"] != "bad_request" {
 			t.Errorf("%s: %d %v", name, code, out)
 		}
+	}
+	if code, out, _ := f.call(t, f.ann, "/api/kymessage/people", `{"addresses":["john@"]}`); code != 200 || fmt.Sprint(out["inside"]) != "[]" {
+		t.Fatalf("only malformed: %d %v", code, out)
 	}
 	if code, out, _ := f.call(t, f.ann, "/api/kymessage/people", `{"addresses":["down@example.com"]}`); code != 503 || out["code"] != "unavailable" {
 		t.Fatalf("KyIdentity down: %d %v", code, out)

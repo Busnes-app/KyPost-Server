@@ -77,7 +77,7 @@ inactive, or `kymessage-chat` is not in the user's suite app list.
 
 | Route | Body | Answer |
 |---|---|---|
-| `POST /api/kymessage/people` | `{addresses}` (1 to 100 bare addresses) | 200 `{inside}` |
+| `POST /api/kymessage/people` | `{addresses}` (1 to 100; any that is not a bare address is skipped) | 200 `{inside}` |
 | `POST /api/kymessage/chat` | `{address}` (one bare address) | 200 `{url}` |
 
 - `people` resolves the addresses with `suitedir.Resolve` under the session's
