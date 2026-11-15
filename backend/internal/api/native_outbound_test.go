@@ -26,6 +26,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -306,6 +307,7 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 }
 
 func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	certServer := httptest.NewTLSServer(nil)
 	certificate := certServer.TLS.Certificates[0]
 	certServer.Close()

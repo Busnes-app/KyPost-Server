@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
@@ -26,6 +27,7 @@ import (
 // Exercise the real permanent store and full mail Client through the unchanged
 // router. Only client selection is injected; production still selects IMAP.
 func TestNativeMailboxClientAPI(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	t.Setenv("STATE_DIR", t.TempDir())
 	t.Setenv("CONFIG_DIR", t.TempDir())
 	ctx := context.Background()

@@ -21,7 +21,10 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
@@ -124,6 +127,9 @@ func sweepScratch(root string) error {
 // liveMailBytes is what staging copies: every state mailbox/ingress database
 // and its WAL.
 func (s *Service) liveMailBytes() (int64, error) {
+	if dbbackend.Postgres() {
+		return dbbackend.KindBytes(context.Background(), mailbox.Kind, ingress.Kind)
+	}
 	var n int64
 	err := filepath.WalkDir(s.dirs.State, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

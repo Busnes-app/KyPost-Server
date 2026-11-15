@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	_ "modernc.org/sqlite"
 )
@@ -99,6 +100,7 @@ type Store struct {
 	limits        Limits
 	path          string
 	physicalLimit int64
+	postgres      bool
 }
 
 const schema = `
@@ -122,8 +124,12 @@ const ArchivedColumns = "gateway TEXT,id TEXT,sender TEXT,digest TEXT,recipients
 // archive moves deliveries matching where into tombstones inside the caller's
 // writer transaction; bindings cascade with the delivery row. insert is
 // "INSERT" (a duplicate is a bug) or "INSERT OR IGNORE" (legacy).
-func archive(ctx context.Context, tx *sql.Tx, insert, disposition, where string, args ...any) error {
-	_, err := tx.ExecContext(ctx, insert+` INTO archived(gateway,id,sender,digest,recipients,archived_at,disposition) SELECT gateway,id,sender,digest,(SELECT group_concat(b.address,char(10)) FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id),unixepoch(),? FROM deliveries d WHERE `+where, append([]any{disposition}, args...)...)
+func archive(ctx context.Context, tx *sql.Tx, pg bool, insert, disposition, where string, args ...any) error {
+	recipients := "(SELECT group_concat(b.address,char(10)) FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id)"
+	if pg {
+		recipients = "(SELECT string_agg(b.address,chr(10) ORDER BY b.address) FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id)"
+	}
+	_, err := tx.ExecContext(ctx, insert+` INTO archived(gateway,id,sender,digest,recipients,archived_at,disposition) SELECT gateway,id,sender,digest,`+recipients+`,unixepoch(),? FROM deliveries d WHERE `+where, append([]any{disposition}, args...)...)
 	if err == nil {
 		_, err = tx.ExecContext(ctx, "DELETE FROM deliveries WHERE "+where, args...)
 	}
@@ -133,8 +139,25 @@ func archive(ctx context.Context, tx *sql.Tx, insert, disposition, where string,
 // migrateArchive creates the tombstone table and archives 'imported' rows left
 // by an earlier (or downgraded) binary. A plain read skips the writer lock when
 // there is nothing to do; the write is one idempotent transaction.
-func migrateArchive(ctx context.Context, db *sql.DB) error {
+//
+// On Postgres pgSchema has the table, index and column, so only legacy rows (copied from
+// an older SQLite file) are archived.
+func migrateArchive(ctx context.Context, db *sql.DB, pg bool) error {
 	var ready, legacy, disposition int
+	if pg {
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM deliveries WHERE state='imported'").Scan(&legacy); err != nil || legacy == 0 {
+			return err
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := archive(ctx, tx, true, "INSERT OR IGNORE", "imported", "state='imported'"); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('archived','imported')").Scan(&ready); err != nil {
 		return err
 	}
@@ -160,7 +183,7 @@ func migrateArchive(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
-	if err := archive(ctx, tx, "INSERT OR IGNORE", "imported", "state='imported'"); err != nil {
+	if err := archive(ctx, tx, false, "INSERT OR IGNORE", "imported", "state='imported'"); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -180,16 +203,20 @@ func archivedDelivery(ctx context.Context, tx *sql.Tx, gateway, id string) (tomb
 }
 
 func Open(dir string, limits Limits) (*Store, error) {
-	return open(dir, limits, false)
+	return openStore(dir, limits, false, dbbackend.Postgres())
 }
 
 // OpenExisting is the runtime opener. Only explicit initialization may create
 // a holding database; missing accepted-mail storage must never look empty.
 func OpenExisting(dir string, limits Limits) (*Store, error) {
-	return open(dir, limits, true)
+	pg, err := dbbackend.Held(filepath.Join(dir, "ingress.db"))
+	if err != nil {
+		return nil, err
+	}
+	return openStore(dir, limits, true, pg)
 }
 
-func open(dir string, limits Limits, existing bool) (*Store, error) {
+func openStore(dir string, limits Limits, existing, pg bool) (*Store, error) {
 	if limits.MessageBytes <= 0 || limits.MessageBytes > 64<<20 || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 || limits.PayloadBytes > math.MaxInt64/4 || int64(limits.Records) > (math.MaxInt64-4*limits.PayloadBytes)/(32<<10) {
 		return nil, errors.New("invalid ingress limits")
 	}
@@ -209,22 +236,28 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	u := url.URL{Scheme: "file", Path: path}
-	query := u.Query()
-	query.Set("_txlock", "immediate")
-	query["_pragma"] = []string{"synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(5000)"}
-	if existing {
-		query.Set("mode", "rw")
+	var db *sql.DB
+	if pg {
+		if db, err = dbbackend.Open(path, dbbackend.Options{Kind: Kind, DDL: pgSchema, Create: !existing}); err != nil {
+			return nil, err
+		}
 	} else {
-		query["_pragma"] = append(query["_pragma"], "journal_mode(WAL)")
+		u := url.URL{Scheme: "file", Path: path}
+		query := u.Query()
+		query.Set("_txlock", "immediate")
+		query["_pragma"] = []string{"synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(5000)"}
+		if existing {
+			query.Set("mode", "rw")
+		} else {
+			query["_pragma"] = append(query["_pragma"], "journal_mode(WAL)")
+		}
+		u.RawQuery = query.Encode()
+		if db, err = sql.Open("sqlite", u.String()); err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(1)
 	}
-	u.RawQuery = query.Encode()
-	db, err := sql.Open("sqlite", u.String())
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	s := &Store{db: db, limits: limits, path: path, physicalLimit: max(32<<20, 4*limits.PayloadBytes+int64(limits.Records)*(32<<10))}
+	s := &Store{db: db, limits: limits, path: path, postgres: pg, physicalLimit: max(32<<20, 4*limits.PayloadBytes+int64(limits.Records)*(32<<10))}
 	if existing {
 		var persisted Limits
 		err := db.QueryRow("SELECT message_bytes,payload_bytes,records FROM limits WHERE id=1").Scan(&persisted.MessageBytes, &persisted.PayloadBytes, &persisted.Records)
@@ -233,19 +266,20 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 		}
 		if err == nil {
 			var tables int
-			err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('routes','deliveries','bindings')").Scan(&tables)
+			err = db.QueryRow(pick(pg, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('routes','deliveries','bindings')",
+				"SELECT COUNT(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('routes','deliveries','bindings')")).Scan(&tables)
 			if err == nil && tables != 3 {
 				err = errors.New("receiving storage is incomplete; preserve it and reconcile")
 			}
 		}
-		if err == nil {
+		if err == nil && !pg {
 			_, err = db.Exec("PRAGMA journal_mode=WAL")
 		}
 		if err == nil && persisted != limits {
 			err = raiseLimits(db, limits)
 		}
 		if err == nil {
-			err = migrateArchive(context.Background(), db)
+			err = migrateArchive(context.Background(), db, pg)
 		}
 		if err != nil {
 			_ = db.Close()
@@ -256,7 +290,9 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 	tx, err := db.Begin()
 	if err == nil {
 		defer func() { _ = tx.Rollback() }()
-		_, err = tx.Exec(schema)
+		if !pg { // dbbackend.Open ran pgSchema
+			_, err = tx.Exec(schema)
+		}
 		if err == nil {
 			_, err = tx.Exec("INSERT OR IGNORE INTO limits VALUES(1,?,?,?)", limits.MessageBytes, limits.PayloadBytes, limits.Records)
 		}
@@ -268,7 +304,7 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 		}
 	}
 	if err == nil {
-		err = migrateArchive(context.Background(), db)
+		err = migrateArchive(context.Background(), db, pg)
 	}
 	if err == nil {
 		err = fsutil.SyncDir(dir)
@@ -418,19 +454,10 @@ func DeactivateRoutes(ctx context.Context, dir string, generations map[string]in
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+	db, err := dbbackend.OpenFile(path, "_txlock=immediate&mode=rw&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)")
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
-		return err
-	}
-	u := url.URL{Scheme: "file", Path: path}
-	query := u.Query()
-	query.Set("_txlock", "immediate")
-	query.Set("mode", "rw")
-	query["_pragma"] = []string{"synchronous(FULL)", "busy_timeout(5000)"}
-	u.RawQuery = query.Encode()
-	db, err := sql.Open("sqlite", u.String())
-	if err != nil {
 		return err
 	}
 	defer db.Close()
@@ -911,7 +938,7 @@ func (s *Store) acknowledge(ctx context.Context, gateway, id, lease, digest stri
 	// in the default budget; ~170K attacker-shaped), and ingress.db hits the
 	// 64 MiB backup file cap near 360K. Pruning by archived_at, or after a
 	// gateway proves its source copy gone, is a public-MX gate.
-	if err := archive(ctx, tx, "INSERT", disposition, "gateway=? AND id=? AND state=?", gateway, id, want); err != nil {
+	if err := archive(ctx, tx, s.postgres, "INSERT", disposition, "gateway=? AND id=? AND state=?", gateway, id, want); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -952,7 +979,7 @@ func (s *Store) Discard(ctx context.Context, gateway, id string) (string, error)
 	if lease != "" {
 		disposition = "partially_released"
 	}
-	if err := archive(ctx, tx, "INSERT", disposition, "gateway=? AND id=? AND state='quarantined'", gateway, id); err != nil {
+	if err := archive(ctx, tx, s.postgres, "INSERT", disposition, "gateway=? AND id=? AND state='quarantined'", gateway, id); err != nil {
 		return "", err
 	}
 	return disposition, tx.Commit()

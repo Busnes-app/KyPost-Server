@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
@@ -301,6 +302,7 @@ func TestNativeOutboxKilledSubmitterCannotReplay(t *testing.T) {
 }
 
 func TestNativeOutboxSnapshotRefusesOrphanClaims(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "corrupts a SQLite snapshot with pragmas")
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)
@@ -315,6 +317,7 @@ func TestNativeOutboxSnapshotRefusesOrphanClaims(t *testing.T) {
 }
 
 func TestNativeOutboxSnapshotRefusesPartialSchema(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "corrupts a SQLite snapshot")
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)
@@ -358,7 +361,7 @@ func TestNativeOutboxSnapshotAcceptsUsageAboveLoweredQuota(t *testing.T) {
 	must(t, err)
 	must(t, s.Close())
 	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domains: []string{"example.test"}, Issuer: testOwner.Issuer, Host: "smtp.provider.test", Port: 465, Username: "operator", Password: "secret"}
-	if has, err := ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay); err != nil || !has {
+	if has, err := ValidateOutboundSnapshot(ctx, snapshotFile(t, filepath.Join(dir, "mailbox.db")), outboxMaster, relay); err != nil || !has {
 		t.Fatalf("over-quota snapshot refused: %v %v", has, err)
 	}
 }
@@ -458,7 +461,7 @@ func TestNativeOutboxCompactsFinishedJob(t *testing.T) {
 	outboxUsage(t, s)
 	must(t, s.Close())
 	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domains: []string{"example.test"}, Issuer: testOwner.Issuer, Host: "smtp.provider.test", Port: 465, Username: "operator", Password: "secret"}
-	if has, err := ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay); err != nil || !has {
+	if has, err := ValidateOutboundSnapshot(ctx, snapshotFile(t, filepath.Join(dir, "mailbox.db")), outboxMaster, relay); err != nil || !has {
 		t.Fatalf("snapshot with a compacted job refused: %v %v", has, err)
 	}
 	s = openTest(t, dir, testOwner, testLimits)
@@ -466,7 +469,7 @@ func TestNativeOutboxCompactsFinishedJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	must(t, s.Close())
-	if _, err := ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay); err == nil {
+	if _, err := ValidateOutboundSnapshot(ctx, snapshotFile(t, filepath.Join(dir, "mailbox.db")), outboxMaster, relay); err == nil {
 		t.Fatal("receipt with an unfinished delivery accepted")
 	}
 }

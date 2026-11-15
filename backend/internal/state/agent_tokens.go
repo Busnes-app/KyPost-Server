@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // Agent token scopes. The scope lives in the row, never in the token, so a
@@ -161,6 +163,9 @@ func (s *Store) ExpireIdleAgentTokens(ctx context.Context, cutoff int64, id stri
 // agent token: the backup may hold tokens the user had already revoked, and an
 // agent reconnects with a fresh token after a restore.
 func FenceRestoredAgentTokens(stateDir string) (err error) {
+	if err := dbbackend.SQLiteOnly(filepath.Join(stateDir, "state.db")); err != nil {
+		return err
+	}
 	absolute, err := filepath.Abs(filepath.Join(stateDir, "state.db"))
 	if err != nil {
 		return err

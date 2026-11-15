@@ -13,6 +13,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
@@ -143,6 +144,9 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 	return checks
 }
 func integrityOK(path string) bool {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return false
+	}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
 	if err != nil {
 		return false

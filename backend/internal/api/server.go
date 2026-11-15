@@ -29,6 +29,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/captcha"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/groups"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
@@ -1356,6 +1357,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{
 		"version":                 appversion.String(),
+		"databaseBackend":         dbbackend.Name(),
 		"scanIntervalSeconds":     cfg.Scan.IntervalSeconds,
 		"rateLimits":              cfg.RateLimits,
 		"checkpoint":              checkpoint,

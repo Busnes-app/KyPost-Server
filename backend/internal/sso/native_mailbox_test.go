@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -171,6 +172,7 @@ func TestNativeExtraMailboxLifecycle(t *testing.T) {
 
 // A creation killed after its reservation resumes with the same address and ID.
 func TestNativeExtraMailboxCreationResumes(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "deletes a directory to delete its databases; on Postgres they are schemas")
 	ctx := context.Background()
 	f := newAddressFixture(t, "one", "two")
 	m, err := f.life.CreateNativeMailbox(ctx, f.root, f.ids["one"], "sales@example.test")
@@ -214,6 +216,7 @@ func TestNativeExtraMailboxCreationResumes(t *testing.T) {
 }
 
 func TestNativeExtraMailboxSnapshotValidation(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	ctx := context.Background()
 	f := newAddressFixture(t, "one")
 	m, err := f.life.CreateNativeMailbox(ctx, f.root, f.ids["one"], "sales@example.test")
@@ -342,6 +345,7 @@ func TestNativeRecoveryDigestIncludesExtraMailboxes(t *testing.T) {
 // An extra mailbox sends only from its own active addresses, keeps its own
 // outbox and files Sent in itself; the primary cannot borrow its address.
 func TestNativeOutboundFromExtraMailbox(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads mailbox.db as a SQLite file")
 	ctx := context.Background()
 	sender, u, job := outboundFixture(t)
 	life := NewLifecycleStore(sender.ConfigDir)

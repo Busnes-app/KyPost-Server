@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func TestNativeRestoreSnapshotOwnership(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	for _, tc := range []struct {
 		name string
 		edit func(*testing.T, *LifecycleStore, string, users.User) []users.User
@@ -208,6 +210,7 @@ func TestNativeRestoreHoldRefusesAllocation(t *testing.T) {
 }
 
 func TestNativeRestoreTokenCutoffRefusesUnsafeInputsAndWriteFailure(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens, replaces or damages the SQLite file itself")
 	for _, damage := range []string{"missing-epoch", "bad-epoch", "public-epoch", "missing-directory", "foreign-owner", "blocked-write"} {
 		t.Run(damage, func(t *testing.T) {
 			life, root, _, _, accounts, u := publishedRecoveryFixture(t, true)

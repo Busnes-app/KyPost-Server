@@ -10,13 +10,19 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // ponytail: admission reserves are conservative estimates, not a filesystem
 // quota. Shared-volume writers and pinned WAL during recovery still need an
 // operator volume quota; never evict accepted mail to meet a byte budget.
+//
+// On Postgres the bytes are the schema's relations; the database's disk is the server's.
 func (s *Store) physicalBytes() (int64, error) {
+	if s.postgres {
+		return dbbackend.SchemaBytes(s.db), nil
+	}
 	var total int64
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		info, err := os.Lstat(s.path + suffix)
@@ -39,7 +45,7 @@ func (s *Store) admissionTx(ctx context.Context) (*sql.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if used >= s.physicalLimit-2*s.limits.MessageBytes-(2<<20) && s.checkpointHeadroom() == nil {
+	if !s.postgres && used >= s.physicalLimit-2*s.limits.MessageBytes-(2<<20) && s.checkpointHeadroom() == nil {
 		var busy, pages, checkpointed int
 		if err := s.db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &pages, &checkpointed); err != nil {
 			return nil, errors.New("receiving checkpoint failed; preserve mail and repair storage before retrying")
@@ -59,9 +65,11 @@ func (s *Store) checkAdmission(ctx context.Context, tx *sql.Tx, payload int64) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	var pageSize int64
-	if err := tx.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
-		return err
+	pageSize := int64(8192) // Postgres's block
+	if !s.postgres {
+		if err := tx.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
+			return err
+		}
 	}
 	if pageSize < 512 || pageSize > 65536 || pageSize&(pageSize-1) != 0 || payload < 0 || payload > s.limits.MessageBytes {
 		return errors.New("invalid receiving storage geometry; preserve mail and repair storage")
@@ -73,6 +81,9 @@ func (s *Store) checkAdmission(ctx context.Context, tx *sql.Tx, payload int64) e
 	}
 	if used > s.physicalLimit-growth {
 		return fmt.Errorf("%w; receiving database/WAL reserve exhausted", ErrCapacity)
+	}
+	if s.postgres {
+		return nil // no local file to checkpoint or disk to measure
 	}
 	if used >= s.physicalLimit-2*s.limits.MessageBytes-(2<<20) {
 		if err := s.checkpointHeadroom(); err != nil {

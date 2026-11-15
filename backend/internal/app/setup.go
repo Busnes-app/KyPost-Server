@@ -19,6 +19,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -99,8 +100,7 @@ func runApplySetup(args []string, stdin io.Reader, stdout io.Writer) error {
 		return err
 	}
 	// Setup runs after base bootstrap, never creates or repairs instance storage.
-	info, err := os.Lstat(filepath.Join(config.StateDir(), "state.db"))
-	if err != nil || !info.Mode().IsRegular() {
+	if !dbbackend.Present(filepath.Join(config.StateDir(), "state.db")) {
 		return errors.New("existing instance state unavailable; start the base server before setup")
 	}
 	var st *state.Store

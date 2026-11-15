@@ -22,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	_ "modernc.org/sqlite"
@@ -110,6 +111,7 @@ type Store struct {
 	dir                 string
 	namespace           string
 	referenceGeneration string
+	postgres            bool
 }
 
 const schema = `
@@ -138,7 +140,12 @@ CREATE TRIGGER IF NOT EXISTS mailbox_delete AFTER DELETE ON messages BEGIN UPDAT
 `
 
 func Open(dir string, owner Owner, limits Limits) (*Store, error) {
-	return open(dir, owner, limits, "")
+	return open(dir, owner, limits, "", dbbackend.Postgres())
+}
+
+// openSQLiteStore is Open on SQLite whatever the backend: the copies' SQLite form.
+func openSQLiteStore(dir string, owner Owner, limits Limits, source string) (*Store, error) {
+	return open(dir, owner, limits, source, false)
 }
 
 // OpenExisting refuses missing or differently bound databases before migrations.
@@ -147,10 +154,14 @@ func OpenExisting(dir string, owner Owner, limits Limits, source string) (*Store
 	if !strings.HasPrefix(source, "native:") {
 		return nil, ErrPreparation
 	}
-	return open(dir, owner, limits, source)
+	pg, err := dbbackend.Held(filepath.Join(dir, "mailbox.db"))
+	if err != nil {
+		return nil, err
+	}
+	return open(dir, owner, limits, source, pg)
 }
 
-func open(dir string, owner Owner, limits Limits, source string) (*Store, error) {
+func open(dir string, owner Owner, limits Limits, source string, pg bool) (*Store, error) {
 	if !validText(owner.Issuer, 2048) || !validText(owner.Subject, 512) || !fsutil.SafePathComponent(owner.Mailbox) || !limits.valid() {
 		return nil, errors.New("invalid mailbox identity or limits")
 	}
@@ -170,19 +181,28 @@ func open(dir string, owner Owner, limits Limits, source string) (*Store, error)
 	if err != nil {
 		return nil, err
 	}
-	u := url.URL{Scheme: "file", Path: path}
-	query := "?_txlock=immediate&_pragma=synchronous(FULL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
-	if source != "" {
-		query += "&mode=rw"
+	var db *sql.DB
+	if pg {
+		if db, err = dbbackend.Open(path, dbbackend.Options{Kind: Kind, DDL: pgSchema, Create: source == ""}); err != nil {
+			if errors.Is(err, dbbackend.ErrNotFound) {
+				return nil, ErrPreparation
+			}
+			return nil, err
+		}
 	} else {
-		query += "&_pragma=journal_mode(WAL)"
+		u := url.URL{Scheme: "file", Path: path}
+		query := "?_txlock=immediate&_pragma=synchronous(FULL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
+		if source != "" {
+			query += "&mode=rw"
+		} else {
+			query += "&_pragma=journal_mode(WAL)"
+		}
+		if db, err = sql.Open("sqlite", u.String()+query); err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(1)
 	}
-	db, err := sql.Open("sqlite", u.String()+query)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	s := &Store{db: db, owner: owner, limits: limits, dir: dir}
+	s := &Store{db: db, owner: owner, limits: limits, dir: dir, postgres: pg}
 	if source != "" {
 		var storedOwner Owner
 		var storedLimits Limits
@@ -194,9 +214,11 @@ func open(dir string, owner Owner, limits Limits, source string) (*Store, error)
 			_ = db.Close()
 			return nil, ErrPreparation
 		}
-		if _, err = db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-			_ = db.Close()
-			return nil, err
+		if !pg {
+			if _, err = db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+				_ = db.Close()
+				return nil, err
+			}
 		}
 	}
 	if err := s.initialize(); err != nil {
@@ -216,8 +238,10 @@ func (s *Store) initialize() error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.Exec(schema); err != nil {
-		return err
+	if !s.postgres { // dbbackend.Open ran pgSchema
+		if _, err = tx.Exec(schema); err != nil {
+			return err
+		}
 	}
 	if _, err = tx.Exec("INSERT OR IGNORE INTO identity VALUES(1,?,?,?,?,?,?)", s.owner.Issuer, s.owner.Subject, s.owner.Mailbox, s.limits.MessageBytes, s.limits.PayloadBytes, s.limits.Records); err != nil {
 		return err
@@ -260,7 +284,7 @@ func (s *Store) initialize() error {
 	if err = tx.QueryRow("SELECT token FROM namespace WHERE id=1").Scan(&s.namespace); err != nil {
 		return err
 	}
-	if s.referenceGeneration, err = messageReferenceGeneration(tx); err != nil {
+	if s.referenceGeneration, err = referenceGenerationOn(tx, s.postgres); err != nil {
 		return err
 	}
 	if s.referenceGeneration == "" {
@@ -268,8 +292,10 @@ func (s *Store) initialize() error {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(referenceGenerationSchema); err != nil {
-			return err
+		if !s.postgres { // pgSchema has the table
+			if _, err = tx.Exec(referenceGenerationSchema); err != nil {
+				return err
+			}
 		}
 		if _, err = tx.Exec("INSERT INTO reference_generation VALUES(1,?)", s.referenceGeneration); err != nil {
 			return err
@@ -412,12 +438,8 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 			at = imported.Received.UTC()
 		}
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, folder, raw, digest, headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339), seen, starred, draft)
-	if err != nil {
-		return 0, err
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
+	var id int64
+	if err := tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, folder, raw, digest, headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339), seen, starred, draft).Scan(&id); err != nil {
 		return 0, err
 	}
 	if gateway != "" {
@@ -455,7 +477,9 @@ func (s *Store) List(ctx context.Context, folder string, before int64, limit int
 	if !validFolder(folder) || before < 0 || limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid mailbox page")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?`, folder, before, before, limit)
+	// Postgres types a bare ?=0 as int4, too small for a cursor past 2^31.
+	rows, err := s.db.QueryContext(ctx, pick(s.postgres, `SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?`,
+		`SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?::bigint=0 OR id<?) ORDER BY id DESC LIMIT ?`), folder, before, before, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -107,6 +107,11 @@ Notes:
   `docker-compose.yml`, `.env.example`, and the backend's own fallback.
 - The image sets `OLLAMA_MODELS=/kypost/ollama-models`.
 
+## Database
+
+- `KYPOST_DATABASE_URL`: empty keeps every database in its SQLite file. A `postgres://` URL keeps them in that one Postgres database (16 or newer, UTF8, C locale), one schema per file. The URL holds the password, so prefer the file below; use `sslmode=verify-full` off the host.
+- `KYPOST_DATABASE_URL_FILE`: the path of a file holding that URL, such as a mounted Secret. Setting both refuses startup, as does an unreadable or empty file, a URL that does not parse, an older server or another locale; there is no fallback to SQLite. Setup, moving an install (`migrate-to-postgres`) and restoring are in [RUNNING.md](RUNNING.md#postgres).
+
 ## Redaction patterns
 
 `redaction.patterns` in `config.yaml` (or admin-only `PUT /api/config`) is
