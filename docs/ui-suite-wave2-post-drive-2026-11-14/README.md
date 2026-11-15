@@ -6,8 +6,8 @@ and 390×844, Busnes Light and Dark, America/New_York, page clock 2026-10-28. Ea
 run used a disposable KyPost server built from the branch, the loopback
 kypost-demo-IMAP fixture (`1130062`), and a created user signed in for real.
 Before images serve the frontend from main before #615 (`ad1f0655`); after images
-serve the branch builds (#615 at `92161a3f`, #616 at `2b7b2aef`, #617 at
-`8fc2be5c`). Built on Node 26.13.0. Drivers: `drivers/` (`w2-captures.mjs`, boot in
+serve the branch builds (#615 at `92161a3f`; #616 before its kept-draft fix,
+which changes nothing shown here; #617 at `8fc2be5c`). Built on Node 26.13.0. Drivers: `drivers/` (`w2-captures.mjs`, boot in
 `boot.mjs`; they import wave 1's `ky-redesign/captures/drivers/lib.mjs`).
 
 KyPost is paired with KyDrive by the environment (`https://drive.example.test`, a
