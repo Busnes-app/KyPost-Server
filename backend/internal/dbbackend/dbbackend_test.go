@@ -30,6 +30,7 @@ func TestConfigurationRefusals(t *testing.T) {
 	}{
 		{"both", "postgres://kypost:" + secret + "@db.internal/kypost", good, ErrBoth},
 		{"unparsable", "postgres://kypost:" + secret + "@db.internal:notaport/kypost", "", nil},
+		{"keyword DSN", "host=db.internal user=kypost password=" + secret, "", nil},
 		{"unreadable file", "", filepath.Join(dir, "missing"), ErrURLFile},
 		{"empty file", "", empty, ErrURLFile},
 	} {
@@ -69,21 +70,21 @@ func TestConfigurationRefusals(t *testing.T) {
 	})
 }
 
-// A wrong password reaches the server; neither its error nor the log line may carry it.
+// An unreachable server: neither the error nor the log line may carry the password or URL.
 func TestConnectionErrorHidesURL(t *testing.T) {
-	RequirePostgres(t)
-	base := current().url
-	u := strings.Replace(base, "://", "://nobody:hunter2pw@", 1)
-	if strings.Contains(base, "@") {
-		u = base[:strings.Index(base, "://")+3] + "nobody:hunter2pw@" + base[strings.Index(base, "@")+1:]
-	}
-	u = strings.Replace(u, "localhost", "127.0.0.1", 1)
-	t.Setenv(EnvURL, u+"&connect_timeout=2")
+	const raw = "postgres://nobody:hunter2pw@127.0.0.1:1/kypost?connect_timeout=2"
+	t.Setenv(EnvURL, raw)
 	t.Setenv(EnvURLFile, "")
 	ReloadForTest(t)
 	err := Check(context.Background())
-	if err != nil && strings.Contains(err.Error(), "hunter2pw") {
-		t.Fatalf("error %q leaks the password", err)
+	if err == nil {
+		t.Fatal("connected to nothing")
+	}
+	if strings.Contains(err.Error(), "hunter2pw") || strings.Contains(err.Error(), raw) {
+		t.Fatalf("error %q leaks the URL", err)
+	}
+	if !strings.Contains(err.Error(), "127.0.0.1/kypost") {
+		t.Fatalf("error %q does not name the server", err)
 	}
 }
 
@@ -276,30 +277,39 @@ func TestLocaleRefusedBeforeWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admin.Close()
-	name := "kt_db_locale_" + strings.ReplaceAll(strings.ToLower(t.Name()), "/", "_")[:8]
-	_, _ = admin.Exec(`DROP DATABASE IF EXISTS ` + name)
-	if _, err := admin.Exec(`CREATE DATABASE ` + name + ` ENCODING 'UTF8' LOCALE 'en_US.utf8' TEMPLATE template0`); err != nil {
-		t.Skipf("server has no en_US.utf8 locale: %v", err)
-	}
-	defer func() { _, _ = admin.Exec(`DROP DATABASE IF EXISTS ` + name + ` WITH (FORCE)`) }()
-	parsed, err := url.Parse(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed.Path = "/" + name
-	u := parsed.String()
-	SetURLForTest(t, u)
-	if err := Check(context.Background()); err == nil || !strings.Contains(err.Error(), "C locale") {
-		t.Fatalf("a non-C database was accepted: %v", err)
-	}
-	db, err := sql.Open("kypg", u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var n int
-	if err := db.QueryRow(`SELECT count(*) FROM pg_namespace WHERE nspname='kypost_catalog'`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("the refusal wrote the catalog: %d %v", n, err)
+	for name, create := range map[string]string{
+		"kt_db_wrong_locale":   `ENCODING 'UTF8' LOCALE 'en_US.utf8' TEMPLATE template0`,
+		"kt_db_wrong_encoding": `ENCODING 'SQL_ASCII' LOCALE 'C' TEMPLATE template0`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _ = admin.Exec(`DROP DATABASE IF EXISTS ` + name)
+			if _, err := admin.Exec(`CREATE DATABASE ` + name + ` ` + create); err != nil {
+				t.Skipf("server cannot create it: %v", err)
+			}
+			defer func() { _, _ = admin.Exec(`DROP DATABASE IF EXISTS ` + name + ` WITH (FORCE)`) }()
+			parsed, err := url.Parse(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed.Path = "/" + name
+			u := parsed.String()
+			SetURLForTest(t, u)
+			if err := Check(context.Background()); err == nil || !strings.Contains(err.Error(), "C locale") {
+				t.Fatalf("accepted: %v", err)
+			}
+			db, err := sql.Open("pgx", u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var n int
+			if err := db.QueryRow(`SELECT count(*) FROM pg_namespace WHERE nspname='kypost_catalog'`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("the refusal wrote the catalog: %d %v", n, err)
+			}
+			if err := db.QueryRow(`SELECT count(*) FROM pg_extension WHERE extname='citext'`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("the refusal created citext: %d %v", n, err)
+			}
+		})
 	}
 }
 

@@ -79,6 +79,10 @@ func load() selection {
 	if raw == "" {
 		return selection{}
 	}
+	// A URL, not a keyword DSN: the stores set search_path in its query.
+	if u, err := url.Parse(raw); err != nil || u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return selection{url: raw, err: pgdialect.ErrBadURL}
+	}
 	if _, err := pgdialect.Config(raw); err != nil {
 		return selection{url: raw, err: pgdialect.ErrBadURL}
 	}
@@ -274,9 +278,11 @@ func Open(path string, o Options) (*sql.DB, error) {
 		return nil, err
 	}
 	digest := ddlDigest(o.DDL)
-	var kind, stored string
-	err = cat.QueryRowContext(ctx, `SELECT kind, ddl FROM kypost_catalog.stores WHERE path=? AND schema=?`, rel, schema).Scan(&kind, &stored)
+	var kind, stored, held string
+	err = cat.QueryRowContext(ctx, `SELECT kind, ddl, schema FROM kypost_catalog.stores WHERE path=?`, rel).Scan(&kind, &stored, &held)
 	switch {
+	case err == nil && held != schema:
+		return nil, fmt.Errorf("the catalog maps %s to schema %s, not %s", rel, held, schema)
 	case errors.Is(err, sql.ErrNoRows) && !o.Create:
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, rel)
 	case errors.Is(err, sql.ErrNoRows), err == nil && kind == o.Kind && o.DDL != "" && stored != digest && !o.ReadOnly:
