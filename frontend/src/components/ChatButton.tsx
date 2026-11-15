@@ -7,7 +7,7 @@ import { isChatPerson, openChat } from "../api/kymessage";
  * places the address in the organisation. A refusal goes to onMessage when
  * given, else beside the button.
  */
-export function ChatButton({ address, origin, onMessage }: { address: string; origin: string; onMessage?: (m: string) => void }) {
+export function ChatButton({ address, origin, onMessage, className = "btn-ghost" }: { address: string; origin: string; onMessage?: (m: string) => void; className?: string }) {
   const [person, setPerson] = useState({ address: "", inside: false });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState({ address: "", text: "" });
@@ -26,7 +26,7 @@ export function ChatButton({ address, origin, onMessage }: { address: string; or
     <>
       <button
         type="button"
-        className="btn-ghost"
+        className={className}
         title="Chat on KyMessages"
         disabled={busy}
         onClick={() => {
