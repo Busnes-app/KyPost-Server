@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	kylog "github.com/Busnes-app/ky-primitives/logging"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -15,8 +16,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	kylog "github.com/Busnes-app/ky-primitives/logging"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"

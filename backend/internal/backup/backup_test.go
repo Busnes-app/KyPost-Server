@@ -5,12 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"

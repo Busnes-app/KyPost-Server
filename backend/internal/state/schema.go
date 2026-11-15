@@ -9,9 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	_ "modernc.org/sqlite"
 )
 
 // SQLite replaces the JSON files this package used to keep.

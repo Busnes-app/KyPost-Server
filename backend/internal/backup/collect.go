@@ -13,8 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -26,6 +24,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"gopkg.in/yaml.v3"
 )
 
 const ErrMailExcluded = "IMAP mail and the rebuildable mail cache are excluded; local mailbox/receiving databases and encrypted pickup messages awaiting collection are included"

@@ -9,14 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"path/filepath"
-	"testing"
-
-	"github.com/emersion/go-msgauth/dkim"
-
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/emersion/go-msgauth/dkim"
+	"path/filepath"
+	"testing"
 )
 
 func TestNativeOutboundDirectIndependentRefusalsAndRevocation(t *testing.T) {

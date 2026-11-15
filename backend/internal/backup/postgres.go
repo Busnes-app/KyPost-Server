@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -112,21 +113,28 @@ func ImportDatabases(ctx context.Context, roots []Root, scratch string) (Counts,
 		return copied, fmt.Errorf("recounting after the commit: %w", err)
 	}
 	after = recountStep(after)
-	for _, rel := range slices.Sorted(maps.Keys(after)) {
-		for table, n := range after[rel] {
-			if copied[rel][table] != n {
-				return copied, fmt.Errorf("after the commit %s table %s holds %d rows, but %d were copied: the copy is not trustworthy; drop the database and run again", rel, table, n, copied[rel][table])
-			}
+	if rel, table, ok := countsDiffer(copied, after); ok {
+		err := fmt.Errorf("after the commit %s table %s holds %d rows, but %d were copied", rel, table, after[rel][table], copied[rel][table])
+		if undoErr := dbbackend.Undo(ctx, slices.Collect(maps.Keys(copied)), before); undoErr != nil {
+			return copied, fmt.Errorf("%w; removing the copy failed too, so drop the database before trying again: %w", err, undoErr)
 		}
-	}
-	for rel, tables := range copied {
-		for table, n := range tables {
-			if after[rel][table] != n {
-				return copied, fmt.Errorf("after the commit %s table %s holds %d rows, but %d were copied: the copy is not trustworthy; drop the database and run again", rel, table, after[rel][table], n)
-			}
-		}
+		return copied, fmt.Errorf("%w; the copy was removed and the database is as it was", err)
 	}
 	return copied, nil
+}
+
+// countsDiffer finds a table whose recount differs from what was copied.
+func countsDiffer(copied, after Counts) (rel, table string, differ bool) {
+	for _, c := range []Counts{after, copied} {
+		for _, rel := range slices.Sorted(maps.Keys(c)) {
+			for _, table := range slices.Sorted(maps.Keys(c[rel])) {
+				if copied[rel][table] != after[rel][table] {
+					return rel, table, true
+				}
+			}
+		}
+	}
+	return "", "", false
 }
 
 func heldRows(c Counts) []string {
@@ -231,4 +239,18 @@ func RemoveDatabaseFiles(roots []Root) error {
 		}
 	}
 	return nil
+}
+
+// SetImportHooksForTest fails ImportDatabases before its commit (beforeCommit) or changes
+// what its recount sees (recount), until the test ends.
+func SetImportHooksForTest(t testing.TB, beforeCommit func() error, recount func(Counts) Counts) {
+	t.Helper()
+	oldStep, oldRecount := importStep, recountStep
+	if beforeCommit != nil {
+		importStep = beforeCommit
+	}
+	if recount != nil {
+		recountStep = recount
+	}
+	t.Cleanup(func() { importStep, recountStep = oldStep, oldRecount })
 }

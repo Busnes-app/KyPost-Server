@@ -10,9 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	_ "modernc.org/sqlite"
 )
 
 // Native authority (the directory lifecycle and the native ledger) is stored

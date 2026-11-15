@@ -666,3 +666,12 @@ func Held(path string) bool {
 	held, err := Exists(path)
 	return err == nil && held
 }
+
+// Present reports whether the database at path exists: a held schema, or a regular file.
+func Present(path string) bool {
+	if Held(path) {
+		return true
+	}
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
+}

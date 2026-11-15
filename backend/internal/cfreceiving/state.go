@@ -12,10 +12,9 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	_ "modernc.org/sqlite"
 )
 
 const (

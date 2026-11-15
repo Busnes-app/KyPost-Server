@@ -5,11 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 const metadataColumns = "id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels"

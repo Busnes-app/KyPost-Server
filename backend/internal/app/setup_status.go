@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -66,12 +67,11 @@ func runSetupStatus(args []string, out io.Writer) error {
 	receiving, e := config.NativeReceivingEnabled()
 	bundled, bundledErr := config.EnvBool("KYPOST_NATIVE_RECEIVER")
 	profile := bundled || os.Getenv("KYPOST_CLOUDFLARE_RECEIVING_ORIGIN") != ""
-	info, spoolErr := os.Lstat(filepath.Join(config.StateDir(), "receiving", "ingress.db"))
-	add("receiving", e == nil && bundledErr == nil && receiving && profile && spoolErr == nil && info.Mode().IsRegular(), "initialize a new spool once and select the bundled or hosted receiving profile; runtime and external delivery still require verification")
+	spool := dbbackend.Present(filepath.Join(config.StateDir(), "receiving", "ingress.db"))
+	add("receiving", e == nil && bundledErr == nil && receiving && profile && spool, "initialize a new spool once and select the bundled or hosted receiving profile; runtime and external delivery still require verification")
 	bc, e := config.LoadBackupConfig()
 	add("bulk-backup", e == nil && bc.BulkRepository != "", "configure KYPOST_BULK_BACKUP_REPOSITORY before mail exceeds ordinary capsule limits")
-	info, e = os.Lstat(filepath.Join(config.StateDir(), "state.db"))
-	if e != nil || !info.Mode().IsRegular() {
+	if !dbbackend.Present(filepath.Join(config.StateDir(), "state.db")) {
 		return errors.New("instance state unavailable; start the base server before setup-status")
 	}
 	st, e := state.OpenReadOnly(config.StateDir())

@@ -6,13 +6,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"path/filepath"
-	"testing"
-	"time"
-
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"path/filepath"
+	"testing"
+	"time"
 )
 
 func TestNativeAllocationPreparedBeforePublication(t *testing.T) {

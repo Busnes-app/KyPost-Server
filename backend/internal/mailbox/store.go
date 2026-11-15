@@ -22,11 +22,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	_ "modernc.org/sqlite"
 )
 
 var (

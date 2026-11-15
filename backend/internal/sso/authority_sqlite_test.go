@@ -20,9 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"modernc.org/sqlite"
-
 	"github.com/Busnes-app/ky-primitives/oidcverify"
+	"modernc.org/sqlite"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"

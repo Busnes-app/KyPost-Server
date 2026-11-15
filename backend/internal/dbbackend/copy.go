@@ -849,3 +849,39 @@ func DDLFingerprint(ctx context.Context, ddl string) ([]string, error) {
 	}
 	return Fingerprint(ctx, tx)
 }
+
+// Undo removes what an import committed, in one transaction: the schemas at rels that
+// were not catalogued before (drop) and the rows of those that were (they were empty).
+func Undo(ctx context.Context, rels []string, before map[string]map[string]int64) error {
+	tx, err := Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, rel := range rels {
+		schema := SchemaForRel(rel)
+		if _, existed := before[rel]; !existed {
+			if err := dropTx(ctx, tx, schema, rel); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `SET LOCAL search_path TO `+QuoteIdent(schema)+`, public`); err != nil {
+			return err
+		}
+		pg, err := pgTables(ctx, tx)
+		if err != nil {
+			return err
+		}
+		var quoted []string
+		for name := range pg {
+			quoted = append(quoted, QuoteIdent(name))
+		}
+		if len(quoted) > 0 {
+			if _, err := tx.ExecContext(ctx, `TRUNCATE `+strings.Join(quoted, ", ")); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}

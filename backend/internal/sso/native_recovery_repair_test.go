@@ -9,14 +9,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/ky-primitives/syncauth"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/Busnes-app/ky-primitives/syncauth"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"

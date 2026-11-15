@@ -3,13 +3,12 @@ package sso
 import (
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/Busnes-app/ky-primitives/syncauth"
-	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func TestHasAdminRole(t *testing.T) {
