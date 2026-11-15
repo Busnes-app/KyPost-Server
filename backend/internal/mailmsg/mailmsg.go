@@ -63,6 +63,20 @@ type Message struct {
 	// AutoReplied marks an automatic reply: "Auto-Submitted: auto-replied"
 	// (RFC 3834).
 	AutoReplied bool
+	// AutoSource marks a message a server feature generated (RFC 3834):
+	// Build adds "Auto-Submitted: auto-generated" and "X-Ky-Source: " with
+	// it. Only server code sets it; anything but 1 to 32 of [a-z0-9-] is
+	// dropped, headers and all.
+	AutoSource string
+}
+
+// autoSource is m.AutoSource when it is a short lowercase token, else "".
+func (m Message) autoSource() string {
+	v := m.AutoSource
+	if len(v) == 0 || len(v) > 32 || strings.ContainsFunc(v, func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' }) {
+		return ""
+	}
+	return v
 }
 
 // Stamp fills an empty Date and Message-ID. The Message-ID domain is the From
@@ -265,6 +279,9 @@ func (m Message) Build() []byte {
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	if m.Autocrypt != "" {
 		msg.WriteString("Autocrypt: " + FoldHeaderValue(SanitizeHeaderValue(m.Autocrypt)) + "\r\n")
+	}
+	if src := m.autoSource(); src != "" && !m.AutoReplied {
+		msg.WriteString("Auto-Submitted: auto-generated\r\nX-Ky-Source: " + src + "\r\n")
 	}
 
 	if len(m.Attachments) == 0 && len(m.Calendar) == 0 {
