@@ -3899,6 +3899,14 @@ pre {
   font-size: 0.85rem;
 }
 
+/* Chat beside the reader's sender: compact, like Save to KyDrive. */
+.email-reader-chat {
+  min-height: 28px;
+  margin: var(--ky-space-1) var(--ky-space-2) 0 0;
+  padding: 2px 10px;
+  font-size: 0.85rem;
+}
+
 .email-attachment-size {
   opacity: 0.7;
 }
