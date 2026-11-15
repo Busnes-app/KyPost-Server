@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
@@ -304,6 +305,7 @@ func TestNativeRecoveryRepairHTTPReconcilesAndRevokesWhileHeld(t *testing.T) {
 }
 
 func TestNativeRecoveryRepairHTTPFailsClosed(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	for _, scenario := range []string{"bad-password", "csrf", "missing-storage", "cleanup-failure", "changed-key"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := nativeRepairHTTPFixture(t, "inactive", false)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
@@ -83,6 +84,7 @@ func releaseHeld(t *testing.T, s *Server) bool {
 }
 
 func TestNativeRestoreReleaseHTTPFlag(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	f := nativeReleaseFixture(t)
 	for value, code := range map[string]int{"": 404, "false": 404, "maybe": 409} {
 		t.Setenv("KYPOST_NATIVE_RESTORE_RELEASE", value)
@@ -93,6 +95,7 @@ func TestNativeRestoreReleaseHTTPFlag(t *testing.T) {
 }
 
 func TestNativeRestoreReleaseHTTPRefusesOperators(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	for name, code := range map[string]int{"bad-password": 403, "kysignon-session": 403, "generic-sso-session": 403, "expired-session": 401, "linked-admin": 403, "native-account": 401} {
 		t.Run(name, func(t *testing.T) {
 			f := nativeReleaseFixture(t)
@@ -143,6 +146,7 @@ func TestNativeRestoreReleaseHTTPRefusesOperators(t *testing.T) {
 }
 
 func TestNativeRestoreReleaseHTTPPreconditions(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	for name, reason := range map[string]string{
 		"P8-domain-proof": "P8: no configured mail domain has a fresh DNS proof",
 		"maddy-flag":      "the bundled receiver (Maddy) has no fence",
@@ -181,6 +185,7 @@ func TestNativeRestoreReleaseHTTPPreconditions(t *testing.T) {
 }
 
 func TestNativeRestoreReleaseHTTPReleases(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	f := nativeReleaseFixture(t)
 	t.Setenv("KYPOST_NATIVE_RECEIVER", "true")
 	legacy, err := f.s.users.GetByUsername("legacy-admin")
@@ -251,6 +256,7 @@ func TestNativeRestoreReleaseHTTPReleases(t *testing.T) {
 }
 
 func TestNativeRestoreReleaseHTTPCrashPoints(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	for _, point := range []string{"intent", "ledger", "lifecycle", "rename"} {
 		t.Run(point, func(t *testing.T) {
 			f := nativeReleaseFixture(t)
@@ -295,6 +301,7 @@ func TestNativeRestoreReleaseHTTPCrashPoints(t *testing.T) {
 }
 
 func TestNativeRestoreReleaseHTTPWithoutHold(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	f := nativeReleaseFixture(t)
 	if err := os.Remove(filepath.Join(f.s.stateDir, sso.NativeRestoreHoldFile)); err != nil {
 		t.Fatal(err)

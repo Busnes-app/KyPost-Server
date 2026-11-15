@@ -16,11 +16,13 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
 func TestNativeRestoreTokenCutoffBothSignedSignInPaths(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	srv, idp := nativeSignOnServer(t)
 	ctx := context.Background()
 	domains := sso.NewNativeDomainStore(srv.configDir)

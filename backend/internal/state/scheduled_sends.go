@@ -108,8 +108,11 @@ func (s *Store) HasScheduledWork(ctx context.Context) (bool, error) {
 // ScheduledReturns lists returning rows whose draft is due to be saved, the
 // earliest per user, so one account's unreachable mailbox cannot fill a sweep.
 func (s *Store) ScheduledReturns(ctx context.Context, now int64) ([]ScheduledSend, error) {
-	return s.scheduledRows(ctx, `SELECT id,user_id,mailbox,min(send_at),status,reason,sealed,summary,created_at,returning_since
-		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? GROUP BY user_id LIMIT 100`, now)
+	return s.scheduledRows(ctx, dbbackend.SQL(`SELECT id,user_id,mailbox,min(send_at),status,reason,sealed,summary,created_at,returning_since
+		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? GROUP BY user_id LIMIT 100`,
+		// SQLite's min() with bare columns reads the earliest row of each group; DISTINCT ON is that.
+		`SELECT DISTINCT ON (user_id) id,user_id,mailbox,send_at,status,reason,sealed,summary,created_at,returning_since
+		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? ORDER BY user_id, send_at, id LIMIT 100`), now)
 }
 
 // ListScheduledSends returns one mailbox's rows, newest send time first, without the sealed job.

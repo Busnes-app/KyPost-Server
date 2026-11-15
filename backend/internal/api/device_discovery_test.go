@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 func TestDeviceDiscoveryFallsBackForOlderStorage(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "builds an older SQLite state file")
 	for _, layout := range []string{"json", "older-schema"} {
 		for _, sweep := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/sweep=%t", layout, sweep), func(t *testing.T) {
@@ -107,6 +109,7 @@ func TestDeviceDiscoveryDoesNotRetainAccountStores(t *testing.T) {
 }
 
 func TestDeviceDiscoveryHintsDoNotAuthorizeNativeMail(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	for _, damage := range []string{"unpair", "hold", "mailbox", "ledger", "state", "source", "owner"} {
 		t.Run(damage, func(t *testing.T) {
 			t.Setenv("STATE_DIR", t.TempDir())

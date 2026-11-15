@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -253,6 +254,7 @@ func TestNativeAdmissionMatchesDaemon(t *testing.T) {
 // valid copy renamed over state.db passes the full storage check, which
 // reopens by path, but the open client refuses, primary and extra alike.
 func TestNativeClientAdmitsItsOpenStorage(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	ctx := context.Background()
 	s := newNativeRuntimeServer(t)
 	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "held-create", 1, runtimeDirectoryUser(true)))

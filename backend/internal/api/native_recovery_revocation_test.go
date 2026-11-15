@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
@@ -20,6 +21,7 @@ import (
 )
 
 func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	for _, scenario := range []string{"offboarding", "demotion", "storage-failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			demote := scenario == "demotion"

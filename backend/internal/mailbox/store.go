@@ -473,7 +473,9 @@ func (s *Store) List(ctx context.Context, folder string, before int64, limit int
 	if !validFolder(folder) || before < 0 || limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid mailbox page")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?`, folder, before, before, limit)
+	// Postgres types a bare ?=0 as int4, too small for a cursor past 2^31.
+	rows, err := s.db.QueryContext(ctx, pick(s.postgres, `SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?`,
+		`SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?::bigint=0 OR id<?) ORDER BY id DESC LIMIT ?`), folder, before, before, limit)
 	if err != nil {
 		return nil, err
 	}
