@@ -166,6 +166,13 @@ func (c *Client) FetchRawMessage(ctx context.Context, folder string, uid int) ([
 	if err := c.checkAccess(ctx); err != nil {
 		return nil, err
 	}
+	return c.raw(ctx, folder, uid)
+}
+
+// raw reads one message for an operation that already admitted its access:
+// admission takes the shared directory lock, so a batch admits once, not per
+// message.
+func (c *Client) raw(ctx context.Context, folder string, uid int) ([]byte, error) {
 	folder, err := normalizeFolder(folder)
 	if err != nil {
 		return nil, err
@@ -182,8 +189,10 @@ func (c *Client) FetchRawMessage(ctx context.Context, folder string, uid int) ([
 	}
 	return raw, nil
 }
+
+// parsed reads through raw; its callers admit first.
 func (c *Client) parsed(ctx context.Context, folder string, uid int) (imapadapter.ParsedContent, int64, error) {
-	raw, err := c.FetchRawMessage(ctx, folder, uid)
+	raw, err := c.raw(ctx, folder, uid)
 	if err != nil {
 		return imapadapter.ParsedContent{}, 0, err
 	}
@@ -351,7 +360,7 @@ func (c *Client) FetchHeaderFields(ctx context.Context, folder string, uids []in
 		if _, exists := out[uid]; exists {
 			continue
 		}
-		raw, err := c.FetchRawMessage(ctx, folder, uid)
+		raw, err := c.raw(ctx, folder, uid)
 		if errors.Is(err, ErrNotFound) || errors.Is(err, mailmsg.ErrMessageTooLarge) {
 			continue
 		}
@@ -442,7 +451,7 @@ func (c *Client) SearchMessages(ctx context.Context, folder, field, query string
 			o := nativeOverview(m)
 			found := (field == "sender" || field == "all") && strings.Contains(strings.ToLower(o.Sender), query) || (field == "subject" || field == "all") && strings.Contains(strings.ToLower(o.Subject), query)
 			if !found && (field == "body" || field == "all") {
-				raw, err := c.FetchRawMessage(ctx, folder, int(m.ID))
+				raw, err := c.raw(ctx, folder, int(m.ID))
 				if errors.Is(err, ErrNotFound) {
 					continue
 				}
