@@ -656,7 +656,7 @@ func HasPendingOutbound(ctx context.Context, dir string) (bool, error) {
 	}
 	path := filepath.Join(dir, "mailbox.db")
 	now := time.Now()
-	if dbbackend.Postgres() {
+	if dbbackend.Held(path) {
 		// No file to mark idle: the query is the answer.
 		db, err := openReadOnly(path)
 		if err != nil {

@@ -210,7 +210,7 @@ func Open(dir string, limits Limits) (*Store, error) {
 // OpenExisting is the runtime opener. Only explicit initialization may create
 // a holding database; missing accepted-mail storage must never look empty.
 func OpenExisting(dir string, limits Limits) (*Store, error) {
-	return openStore(dir, limits, true, dbbackend.Postgres())
+	return openStore(dir, limits, true, dbbackend.Held(filepath.Join(dir, "ingress.db")))
 }
 
 func openStore(dir string, limits Limits, existing, pg bool) (*Store, error) {

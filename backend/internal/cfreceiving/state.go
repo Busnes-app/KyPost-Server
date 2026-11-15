@@ -392,7 +392,7 @@ func ReadStatus(ctx context.Context, dir string) (Status, error) {
 	s := Status{State: "not-started", Ledger: map[string]int{}}
 	var db *sql.DB
 	var err error
-	if dbbackend.Postgres() {
+	if dbbackend.Held(filepath.Join(dir, DBFile)) {
 		if db, err = dbbackend.Open(filepath.Join(dir, DBFile), dbbackend.Options{Kind: Kind, ReadOnly: true}); errors.Is(err, os.ErrNotExist) {
 			return s, nil
 		} else if err != nil {

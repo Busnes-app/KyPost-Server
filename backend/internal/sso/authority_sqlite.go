@@ -20,7 +20,6 @@ import (
 
 	"modernc.org/sqlite"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 )
@@ -515,7 +514,7 @@ func (a sqliteAuthority) Update(ctx context.Context, fn func(authorityWriter) er
 
 // run reads one subject's rows with meta when pre is set (read only).
 func (a sqliteAuthority) run(ctx context.Context, write bool, pre *subjectRows, fn func(*sqliteTx) error) (*sqliteTx, error) {
-	if dbbackend.Postgres() && !a.offline {
+	if onPostgres(a.path) {
 		return a.runPostgres(ctx, write, pre, fn)
 	}
 	h, err := acquireAuthority(a.path)

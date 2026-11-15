@@ -112,7 +112,7 @@ func SnapshotDB(ctx context.Context, path, scratchDir string) ([]byte, error) {
 // On Postgres it exports the store's schema into dest instead, a SQLite file with the same
 // schema and rows, so a capsule's members are the same on both backends.
 func SnapshotDBToFile(ctx context.Context, path, dest string) error {
-	if dbbackend.Postgres() {
+	if dbbackend.Held(path) {
 		return dbbackend.ExportSQLite(ctx, path, dest)
 	}
 	if _, err := os.Stat(path); err != nil {

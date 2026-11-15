@@ -5,13 +5,12 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend/pgdialect"
 )
 
 // Tests run their stores on Postgres when KYPOST_TEST_DATABASE_URL is set: a store at a
@@ -65,11 +64,12 @@ func FreshDatabaseForTest(t testing.TB) string {
 	if _, err := admin.Exec(`CREATE DATABASE ` + name + ` ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0`); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := pgdialect.Config(base)
+	u, err := url.Parse(base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh := strings.Replace(base, "/"+cfg.Database, "/"+name, 1)
+	u.Path = "/" + name
+	fresh := u.String()
 	SetURLForTest(t, fresh)
 	productionNames.Store(true)
 	t.Cleanup(func() {

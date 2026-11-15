@@ -403,7 +403,7 @@ func (s *Store) LastCleanup() string {
 // contributes zero rather than failing — the -wal and -shm files exist only
 // while the database is open.
 func (s *Store) DiskUsageBytes() int64 {
-	if dbbackend.Postgres() {
+	if dbbackend.Held(filepath.Join(s.baseDir, "state.db")) {
 		return dbbackend.SchemaBytes(s.db)
 	}
 	var total int64

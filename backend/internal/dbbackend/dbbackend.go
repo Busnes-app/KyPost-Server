@@ -593,11 +593,10 @@ func dropTx(ctx context.Context, tx *sql.Tx, schema, rel string) error {
 }
 
 // OpenFile opens an existing database for a helper that opens the file directly rather
-// than through its store: on SQLite the file at path with the URI query, on Postgres its
-// schema, read-only when query has mode=ro. A missing database is an os.ErrNotExist on
-// both.
+// than through its store: a held schema (read-only when query has mode=ro), else the
+// SQLite file at path with the URI query. A missing database is an os.ErrNotExist.
 func OpenFile(path, query string) (*sql.DB, error) {
-	if !Postgres() {
+	if !Held(path) {
 		return OpenSQLiteFile(path, query)
 	}
 	ro := false
@@ -623,4 +622,47 @@ func OpenSQLiteFile(path, query string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	return db, nil
+}
+
+// LivePath is the database path a catalog path names: under STATE_DIR or CONFIG_DIR, or
+// itself (a test schema's absolute path).
+func (s Store) LivePath() string {
+	if rest, ok := strings.CutPrefix(s.Path, "state/"); ok {
+		return filepath.Join(config.StateDir(), filepath.FromSlash(rest))
+	}
+	if rest, ok := strings.CutPrefix(s.Path, "config/"); ok {
+		return filepath.Join(config.ConfigDir(), filepath.FromSlash(rest))
+	}
+	return s.Path
+}
+
+// Pending reports a database still being prepared (Stage), not yet published.
+func (s Store) Pending() bool { return strings.HasPrefix(s.Kind, pendingPrefix) }
+
+// KindBytes is the size of every catalogued schema of the given kinds.
+func KindBytes(ctx context.Context, kinds ...string) (int64, error) {
+	cat, err := root(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	err = cat.QueryRowContext(ctx, `SELECT COALESCE(sum(pg_total_relation_size(c.oid)), 0)::bigint FROM pg_class c
+ JOIN pg_namespace ns ON ns.oid = c.relnamespace JOIN kypost_catalog.stores s ON s.schema = ns.nspname
+ WHERE c.relkind = 'r' AND s.kind = ANY(?)`, kinds).Scan(&n)
+	return n, err
+}
+
+// Held reports whether the catalog holds the database for path: the rule for every open
+// of an existing database. A held path is read from Postgres; any other path is a SQLite
+// file (restore staging, capsule members, snapshots), on either backend. Opens that may
+// create a database go to Postgres whenever it is configured.
+//
+// ponytail: an unreachable catalog reads as not held, so the open falls to a SQLite file
+// that is not there and fails; startup's Check is what reports the outage itself.
+func Held(path string) bool {
+	if !Postgres() {
+		return false
+	}
+	held, err := Exists(path)
+	return err == nil && held
 }

@@ -516,7 +516,8 @@ func OpenSQLiteSource(ctx context.Context, path, kindName, scratch string) (db *
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown store kind %s", kindName)
 	}
-	if _, err := os.Stat(path + "-wal"); err == nil {
+	// An empty log (a reader still open) holds nothing the immutable open would miss.
+	if wal, err := os.Stat(path + "-wal"); err == nil && wal.Size() > 0 {
 		return nil, nil, fmt.Errorf("%s has a write-ahead log beside it: stop every KyPost process that uses it (a clean stop folds the log into the file) and try again", filepath.Base(path))
 	}
 	open := func(p string) (*sql.DB, error) {
@@ -571,6 +572,36 @@ func OpenSQLiteSource(ctx context.Context, path, kindName, scratch string) (db *
 // ddlTables is the Postgres catalog the kind's DDL creates, read from a scratch schema
 // that is rolled back.
 func ddlTables(ctx context.Context, kind Kind) (tables, error) {
+	probedMu.Lock()
+	defer probedMu.Unlock()
+	if t, ok := probed[kind.DDL]; ok {
+		return t.clone(), nil
+	}
+	t, err := probeTables(ctx, kind)
+	if err != nil {
+		return nil, err
+	}
+	probed[kind.DDL] = t
+	return t.clone(), nil
+}
+
+var (
+	probedMu sync.Mutex
+	probed   = map[string]tables{}
+)
+
+// clone copies the tables, which matchTables edits.
+func (c tables) clone() tables {
+	out := tables{}
+	for name, t := range c {
+		cp := *t
+		cp.cols = slices.Clone(t.cols)
+		out[name] = &cp
+	}
+	return out
+}
+
+func probeTables(ctx context.Context, kind Kind) (tables, error) {
 	cat, err := root(ctx)
 	if err != nil {
 		return nil, err
@@ -660,6 +691,10 @@ func ImportSQLite(ctx context.Context, tx *sql.Tx, rel, kindName string, src *sq
 			return nil, fmt.Errorf("%s: %w", rel, err)
 		}
 		counts[name] = n
+	}
+	// Deferred foreign keys are checked now: ALTER TABLE refuses pending checks.
+	if _, err := tx.ExecContext(ctx, `SET CONSTRAINTS ALL IMMEDIATE`); err != nil {
+		return nil, fmt.Errorf("%s: %w", rel, err)
 	}
 	// ALTER ... RESTART is transactional, unlike setval.
 	for _, name := range order {

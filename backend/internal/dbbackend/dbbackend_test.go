@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,7 +282,12 @@ func TestLocaleRefusedBeforeWrite(t *testing.T) {
 		t.Skipf("server has no en_US.utf8 locale: %v", err)
 	}
 	defer func() { _, _ = admin.Exec(`DROP DATABASE IF EXISTS ` + name + ` WITH (FORCE)`) }()
-	u := strings.Replace(base, "/postgres?", "/"+name+"?", 1)
+	parsed, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.Path = "/" + name
+	u := parsed.String()
 	SetURLForTest(t, u)
 	if err := Check(context.Background()); err == nil || !strings.Contains(err.Error(), "C locale") {
 		t.Fatalf("a non-C database was accepted: %v", err)

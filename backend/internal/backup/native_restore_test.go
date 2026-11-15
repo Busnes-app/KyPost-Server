@@ -20,6 +20,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -248,6 +249,7 @@ func TestNativeBackupRestoreOwnershipAndHold(t *testing.T) {
 }
 
 func TestDatabaseOnlyNativeRestoreStaysHeld(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "removes database files")
 	for _, name := range []string{"mailbox.db", "ingress.db"} {
 		t.Run(name, func(t *testing.T) {
 			s := validService(t)
@@ -373,6 +375,7 @@ func TestNativeRestoreFatalEntropyKeepsHold(t *testing.T) {
 }
 
 func TestNativeBackupRefusesOrphanMailboxAndForeignReceiving(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "edits database files")
 	for _, damage := range []string{"orphan-mailbox", "foreign-route", "foreign-binding", "missing-binding", "reshaped-archive"} {
 		t.Run(damage, func(t *testing.T) {
 			s, u := nativeService(t)

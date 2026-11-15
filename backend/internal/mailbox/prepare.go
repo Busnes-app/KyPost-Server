@@ -353,6 +353,7 @@ type heldDB struct {
 	*sql.DB
 	mu    sync.Mutex
 	stmts map[string]*sql.Stmt
+	pg    bool // a Postgres schema, not a file
 }
 
 func (h *heldDB) QueryRow(query string, args ...any) *sql.Row {
@@ -420,7 +421,7 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 		}
 	}
 	var tables int
-	if e := p.state.QueryRow(dbbackend.SQL("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')",
+	if e := p.state.QueryRow(pick(p.state.pg, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')",
 		"SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')")).Scan(&tables); e != nil || tables != 10 {
 		return "", ErrPreparation
 	}
@@ -429,7 +430,7 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 		return "", ErrPreparation
 	}
 	db := p.mail
-	if err = db.QueryRow(dbbackend.SQL("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')",
+	if err = db.QueryRow(pick(db.pg, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')",
 		"SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')")).Scan(&tables); err != nil || tables != 9 {
 		return "", ErrPreparation
 	}
@@ -442,7 +443,7 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 	if err = db.QueryRow("SELECT token FROM namespace WHERE id=1").Scan(&namespace); err != nil || namespace == "" {
 		return "", ErrPreparation
 	}
-	if _, err = referenceGenerationOn(db, dbbackend.Postgres()); err != nil {
+	if _, err = referenceGenerationOn(db, db.pg); err != nil {
 		return "", ErrPreparation
 	}
 	client := &Client{store: &Store{owner: storedOwner, namespace: namespace}}
@@ -453,7 +454,7 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 		path string
 		info os.FileInfo
 	}{{statePath, p.stateFile}, {mailPath, p.mailFile}} {
-		if dbbackend.Postgres() {
+		if p.state.pg {
 			break // no files; the schemas are found by path on every open
 		}
 		if info, err = os.Lstat(f.path); err != nil || !os.SameFile(info, f.info) {
@@ -466,7 +467,8 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 func openHeld(path string) (*heldDB, os.FileInfo, error) {
 	var info os.FileInfo
 	var err error
-	if !dbbackend.Postgres() {
+	pg := dbbackend.Held(path)
+	if !pg {
 		if info, err = os.Lstat(path); err != nil {
 			return nil, nil, ErrPreparation
 		}
@@ -475,13 +477,13 @@ func openHeld(path string) (*heldDB, os.FileInfo, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return &heldDB{DB: db, stmts: map[string]*sql.Stmt{}}, info, nil
+	return &heldDB{DB: db, stmts: map[string]*sql.Stmt{}, pg: pg}, info, nil
 }
 
 // openSQLite opens an existing regular database file, never creating one.
-// On Postgres it opens the schema for path instead, read-only for a mode=ro query.
+// A path the Postgres catalog holds opens its schema instead, read-only for mode=ro.
 func openSQLite(path, query string) (*sql.DB, error) {
-	if dbbackend.Postgres() {
+	if dbbackend.Held(path) {
 		db, err := dbbackend.Open(path, dbbackend.Options{ReadOnly: strings.Contains(query, "mode=ro")})
 		if err != nil {
 			return nil, ErrPreparation
