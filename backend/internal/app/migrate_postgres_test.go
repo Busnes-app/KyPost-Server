@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/ky-primitives/recoverykey"
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
@@ -403,5 +405,79 @@ func TestMigrateToPostgresUpgradesOlderFileOnACopy(t *testing.T) {
 	defer two.Close()
 	if err := two.EnqueuePullNotification(state.PullNotification{Title: "t", DeviceIDs: []string{"phone"}}); err != nil {
 		t.Fatal("upgraded schema lacks its new column", err)
+	}
+}
+
+// runRestore with the variable set loads the capsule's databases into Postgres and
+// publishes no database file; a second restore into the now non-empty database is refused.
+func TestRestoreCLIIntoPostgres(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	key, err := recoverykey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shares, err := recoverykey.Split(key, 2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stateDB []byte
+	t.Run("state.db on SQLite", func(t *testing.T) {
+		dbbackend.SetURLForTest(t, "")
+		dir := t.TempDir()
+		st, err := state.New(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.AddDecision(state.Decision{MessageID: "m1", Label: "Work", Status: "labeled", AtUTC: "2026-11-14T10:00:00Z"}); err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if stateDB, err = os.ReadFile(filepath.Join(dir, "state.db")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	raw, _, err := recoveryclient.Seal(recoveryclient.Payload{ServiceName: backup.AppName, AppVersion: "test", Files: []recoveryclient.File{
+		{Path: "config/test.json", Data: []byte(`{"synthetic":true}`), Mode: 0600},
+		{Path: "state/state.db", Data: stateDB, Mode: 0600},
+	}}, recoveryclient.RecoveryKey{Public: key.Public(), Threshold: 2, TotalShares: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capsulePath := filepath.Join(t.TempDir(), "test.kycap")
+	if err := os.WriteFile(capsulePath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restore")
+	t.Setenv("STATE_DIR", filepath.Join(target, "state"))
+	t.Setenv("CONFIG_DIR", filepath.Join(target, "config"))
+	dbbackend.FreshDatabaseForTest(t)
+	input := shares[0].String() + "\n" + shares[2].String() + "\n"
+	var out bytes.Buffer
+	if err := runRestore([]string{capsulePath, target}, strings.NewReader(input), &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(target, "state", "state.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("restore into Postgres published a database file", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(target, "config", "test.json")); err != nil || string(got) != `{"synthetic":true}` {
+		t.Fatal("other files not published", err)
+	}
+	st, err := state.New(filepath.Join(target, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if d, err := st.DecisionsStrict(10); err != nil || len(d) != 1 || d[0].MessageID != "m1" {
+		t.Fatal("restored decisions", d, err)
+	}
+	before, err := dbbackend.RowCounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runRestore([]string{capsulePath, filepath.Join(t.TempDir(), "again")}, strings.NewReader(input), &out); err == nil || !strings.Contains(err.Error(), "not empty") {
+		t.Fatalf("restore into a non-empty database: %v", err)
+	}
+	if after, err := dbbackend.RowCounts(context.Background()); err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("a refused restore changed the database", err)
 	}
 }
