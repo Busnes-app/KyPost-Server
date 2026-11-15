@@ -271,6 +271,19 @@ export async function saveDraftSnapshot(userId: string, draft: DraftInput): Prom
  * the vault is not open, so the caller can ask for an unlock and try again;
  * null if there is none, it is unreadable, or another version wrote it.
  */
+/**
+ * Whether a snapshot is stored for userId, without reading, decrypting,
+ * expiring or deleting it (loadDraftSnapshot deletes what it cannot open,
+ * which a locked or still-loading vault cannot).
+ */
+export function hasDraftSnapshot(userId: string): boolean {
+  try {
+    return !!userId && draftStorage().getItem(storageKey(userId)) !== null;
+  } catch {
+    return false;
+  }
+}
+
 export async function loadDraftSnapshot(userId: string): Promise<DraftSnapshot | "locked" | null> {
   if (!userId) return null;
   try {

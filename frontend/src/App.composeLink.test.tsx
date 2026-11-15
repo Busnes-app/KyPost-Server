@@ -76,3 +76,13 @@ it("never autosaves over an unsent draft the tab already holds", async () => {
   await new Promise((r) => setTimeout(r, 1600));
   expect(await loadDraftSnapshot("u1")).toMatchObject({ to: "bob@example.com", subject: "Half-written", body: "<p>keep me</p>" });
 });
+
+it("keeps a sealed draft it cannot open yet, byte for byte", async () => {
+  // A sealed snapshot as client custody writes it; the vault is not open (and the PGP state not loaded).
+  const sealed = JSON.stringify({ version: 2, savedAt: new Date().toISOString(), sealed: "-----BEGIN PGP MESSAGE-----\nx\n-----END PGP MESSAGE-----" });
+  window.sessionStorage.setItem("kypost-compose-draft:u1", sealed);
+  render(<MemoryRouter initialEntries={[link]}><App /><Where /></MemoryRouter>);
+  expect(await screen.findByDisplayValue("Report", {}, { timeout: 5000 })).toBeTruthy();
+  await new Promise((r) => setTimeout(r, 1600));
+  expect(window.sessionStorage.getItem("kypost-compose-draft:u1")).toBe(sealed);
+});
