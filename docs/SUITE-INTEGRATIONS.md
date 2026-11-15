@@ -39,7 +39,9 @@ KyPost's reading of it:
   single sign-on sign-in both return to the same tab, so both keep it.
 - It opens through the same path as a reply (`openDraftInCompose`, intent
   `new`, so the "new message" signature applies) and never replaces a compose
-  window already open.
+  window already open. If the tab holds an autosaved unsent draft, the link's
+  draft opens with autosave off and says so; that earlier draft stays stored
+  (send, Trash and Save Draft of the link's draft leave it alone).
 
 ## E. "New meeting" deep link: KyPost → KyCalendar
 

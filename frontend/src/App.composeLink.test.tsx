@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router";
 import { App } from "./App";
+import { loadDraftSnapshot, saveDraftSnapshot } from "./app/draftAutosave";
 
 vi.mock("./lib/pgpSession", () => ({
   subscribePGPSession: () => () => {},
@@ -63,4 +64,15 @@ it("holds the link through the sign-in page", async () => {
   render(<MemoryRouter initialEntries={[link]}><App /><Where /></MemoryRouter>);
   await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/login"), { timeout: 5000 });
   expect(JSON.parse(window.sessionStorage.getItem("kypost.compose-link.v1") ?? "{}")).toMatchObject({ to: ["ann@example.com"], subject: "Report" });
+});
+
+it("never autosaves over an unsent draft the tab already holds", async () => {
+  const earlier = { to: "bob@example.com", cc: "", bcc: "", subject: "Half-written", body: "<p>keep me</p>", attachments: [], mailbox: "", from: "" };
+  expect(await saveDraftSnapshot("u1", earlier)).toBe("saved");
+  render(<MemoryRouter initialEntries={[link]}><App /><Where /></MemoryRouter>);
+  expect(await screen.findByDisplayValue("Report", {}, { timeout: 5000 })).toBeTruthy();
+  expect(screen.getByText(/Your earlier unsent draft is kept/)).toBeTruthy();
+  // Past the one-second autosave, with no interaction.
+  await new Promise((r) => setTimeout(r, 1600));
+  expect(await loadDraftSnapshot("u1")).toMatchObject({ to: "bob@example.com", subject: "Half-written", body: "<p>keep me</p>" });
 });

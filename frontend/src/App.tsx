@@ -29,7 +29,7 @@ import type {
   DragMessagePayload
 } from "./app/types";
 import { bodyHtml, holdComposeLink, parseComposeLink, takeComposeLink } from "./lib/composeLink";
-import { clearDraftSnapshot } from "./app/draftAutosave";
+import { clearDraftSnapshot, loadDraftSnapshot } from "./app/draftAutosave";
 import { mailboxLabel, standardMailboxKind, standardMailboxPath, type StandardMailboxKind } from "./app/mailboxKind";
 import {
   AppMark, ArchiveIcon, ChevronIcon, ClockIcon, ContactsIcon, DraftIcon, FolderIcon, InboxIcon, LogoutIcon, PlusIcon, SendIcon, SettingsIcon, TrashIcon, WarningIcon
@@ -76,12 +76,15 @@ export function App() {
   const compose = useCompose({ userId: auth?.userId, mailboxes });
   // The compose deep link (lib/composeLink.ts): /compose holds it, and the first
   // signed-in page opens it as a new draft.
-  const openHeldComposeLink = useEffectEvent(() => {
+  // A link never autosaves over the tab's earlier unsent draft (it opens with autosave off instead).
+  const openHeldComposeLink = useEffectEvent(async () => {
     const link = takeComposeLink();
-    if (link) compose.openDraftInCompose({ sentTo: link.to.join(", "), subject: link.subject, body: bodyHtml(link.body), intent: "new" });
+    if (!link) return;
+    const keepSnapshot = auth?.userId ? (await loadDraftSnapshot(auth.userId)) !== null : false;
+    compose.openDraftInCompose({ sentTo: link.to.join(", "), subject: link.subject, body: bodyHtml(link.body), intent: "new", keepSnapshot });
   });
   useEffect(() => {
-    if (auth?.authenticated && !auth.mustChangePassword && location.pathname !== "/compose") openHeldComposeLink();
+    if (auth?.authenticated && !auth.mustChangePassword && location.pathname !== "/compose") void openHeldComposeLink();
   }, [auth?.authenticated, auth?.mustChangePassword, location.pathname]);
   // Folder URLs name their mailbox, so one replayed after a switch is recognised (ReadPage).
   const boxQuery = selectedMailbox ? `&box=${selectedMailbox}` : "";
