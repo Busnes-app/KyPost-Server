@@ -2,7 +2,7 @@
 
 The full feature list; [README.md](../README.md#features) has the summary.
 
-- Web reader: keep the sender and Reply visible, expand full message details and keywords, and use More actions for archive, snooze, read/unread, spam, print, remote content and delete. Remote content remains blocked until explicitly enabled for that message.
+- Web reader: keep the sender and Reply visible, expand full message details and keywords, and use More actions for archive, snooze, flag, read/unread, spam, print, remote content and delete. Remote content remains blocked until explicitly enabled for that message.
 
 - Repeatable installer setup: runtime-owned `apply-setup --file [--check]` and capability discovery preserves existing SSO/webhook/domain/recovery configuration and returns a secret-free JSON report. Target-held credential file references avoid installer secret copies. `setup-status` lists configuration blockers and external acceptance checks. See [clean installation](INSTALLER_SETUP.md).
 
@@ -42,6 +42,7 @@ The full feature list; [README.md](../README.md#features) has the summary.
 - Pre-sort before the model: mail from a contact you added is labelled `Primary` without an LLM call, and mail with mailing-list or automated headers (`List-Id`, `List-Unsubscribe`, `Precedence: bulk/list/junk`, `Auto-Submitted`) can never be labelled `Primary`. Same input, same answer; edit your contacts or add a rule to change it.
 - Filter Rules: a GUI condition and action builder plus a raw Sieve script editor. A run-now panel applies the rules on demand. Rules can test any header, so a provider's spam verdict (for example `X-Spam-Flag: YES`) can move mail to Junk.
 - Compose flow with SMTP send and IMAP draft save; invalid-recipient relay refusals name the address to correct and keep the message open.
+- Flag: flag mail from the reader or the list, with a due choice (Today, Tomorrow, This week, Next week, No date). The flag is IMAP `\Flagged`, so other mail apps see it. With KyCalendar paired, a flag becomes a task in the user's KyCalendar Inbox list, and finishing, reopening or deleting the task clears or sets the flag again. The task links back to the message, or says the message is no longer available.
 - Snooze: hide an email in a `Snoozed` folder until a chosen time, then return it to the inbox unread, with a notification, at the top of the list for 30 days (in KyPost; other mail apps show its original date). Wake is accurate to one poll interval.
 - PGP mail encryption and signing. Signing defaults on with an unlocked browser key; compose labels unsigned mail, and the reader distinguishes encrypted but unsigned mail from a verified signature. Generate or import a key, search for recipient keys on keys.openpgp.org, and check recipient key status before you send. KyPost has two key-protection modes. Read [Where your PGP private key lives](PGP-KEYS.md#where-your-pgp-private-key-lives) before you rely on this.
 - Email encryption for SSO-only accounts: an account with no password seals its PGP key under a separate encryption passphrase and confirms key changes with KySignOn

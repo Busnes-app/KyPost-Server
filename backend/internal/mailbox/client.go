@@ -591,6 +591,8 @@ func (c *Client) ApplyInboxAction(ctx context.Context, id, action, folder, targe
 	case "read", "unread":
 		seen := action == "read"
 		return c.store.editFlags(ctx, folder, uid, &seen, "", false)
+	case "flag", "unflag":
+		return c.store.setStarred(ctx, folder, uid, action == "flag")
 	case "archive":
 		m, err := c.store.metadata(ctx, folder, uid)
 		if err != nil {

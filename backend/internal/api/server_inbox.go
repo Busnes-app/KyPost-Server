@@ -24,6 +24,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 type inboxEmail struct {
@@ -1164,6 +1165,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		TargetMailbox string   `json:"targetMailbox"`
 		Keyword       string   `json:"keyword"`
 		WakeAt        string   `json:"wakeAt"`
+		Due           string   `json:"due"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -1175,7 +1177,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	targetMailbox := strings.TrimSpace(req.TargetMailbox)
 	keyword := strings.TrimSpace(req.Keyword)
 	switch action {
-	case "delete", "archive", "spam", "read", "unread", "move", "label", "unlabel", "snooze":
+	case "delete", "archive", "spam", "read", "unread", "move", "label", "unlabel", "snooze", "flag", "unflag":
 	default:
 		http.Error(w, "unsupported action", http.StatusBadRequest)
 		return
@@ -1191,6 +1193,18 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to open user state", http.StatusInternalServerError)
 			return
 		}
+	}
+	due := strings.TrimSpace(req.Due)
+	if _, err := time.Parse(time.DateOnly, due); due != "" && (action != "flag" || err != nil) {
+		http.Error(w, "due must be a YYYY-MM-DD date on flag", http.StatusBadRequest)
+		return
+	}
+	// Flags follow into KyCalendar tasks when the user takes part (docs/KYCALENDAR.md, Tasks).
+	var taskUser *users.User
+	tasks := map[string]string{}
+	ac, _ := authFromContext(r)
+	if action == "flag" || action == "unflag" {
+		taskUser = s.flagTaskUser(ac.UserID)
 	}
 	if action == "move" && targetMailbox == "" {
 		http.Error(w, "targetMailbox is required for move action", http.StatusBadRequest)
@@ -1284,6 +1298,9 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		processed++
+		if uid, convErr := strconv.Atoi(internalID); taskUser != nil && convErr == nil {
+			tasks[messageID] = s.flagTask(r.Context(), taskUser, mailClient, ac.Mailbox, mailbox, messageID, uid, action == "flag", due)
+		}
 		if action == "label" {
 			labelled = append(labelled, internalID)
 		}
@@ -1302,6 +1319,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		"processed":     processed,
 		"failed":        failures,
 		"targetMailbox": targetMailbox,
+		"tasks":         tasks,
 	})
 }
 
