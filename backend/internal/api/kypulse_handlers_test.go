@@ -519,8 +519,16 @@ func TestKyPulseConfirmLink(t *testing.T) {
 	if rec := pulseSend(t, f.srv, pulseSecret, kypulseEventAlert, "ev-pending", alertBody(func(b map[string]any) { b["recipients"] = []string{"new@x.test"} })); answerCode(rec) != "recipient_unconfirmed" {
 		t.Fatalf("pending alert: %s", rec.Body.String())
 	}
+	// Change the MAC's first character: every bit of it is significant, unlike
+	// the last one, whose two spare bits decoding ignores.
+	mac := strings.Index(token, ".") + 1
+	swap := "A"
+	if token[mac] == 'A' {
+		swap = "B"
+	}
+	tampered := token[:mac] + swap + token[mac+1:]
 	for name, bad := range map[string]string{
-		"tampered":      token[:len(token)-2] + "xx",
+		"tampered":      tampered,
 		"empty":         "",
 		"other purpose": f.mintToken(t, pairingPurposePickupLink, time.Hour, strings.SplitN(f.tokenSub(t, token), "|", 2)[0]),
 		"expired":       f.mintToken(t, pairingPurposeKyPulse, -time.Minute, f.tokenSub(t, token)),
