@@ -84,6 +84,19 @@ else 404 `not_found`.
 
 `{"sub":"…","issuer":"…"}` → 200 `{"enabled":true,"free_bytes":123,"max_file_bytes":123,"guest_links":true,"guest_max_days":30}`.
 `guest_links` and `guest_max_days` are wave 2 (K); an older KyDrive omits them.
+`"viewer":true` says Euro-Office is configured, so **Open** and **Edit in KyDrive** are offered; an older KyDrive omits it.
+
+### Viewing copies
+
+KyDrive's `docs/KYPOST.md` "Viewing copies" is the receiver's half; design in
+kydrive-server `docs/superpowers/specs/2026-11-15-office-attachments-design.md`.
+`kypost.drive.view` → `POST /api/suite/kypost/view-tickets` with
+`{"sub","issuer","name","size"}` answers 201 `{"upload_url","expires"}`; the URL must be
+on the paired origin under `/api/suite/view/`. KyPost's server PUTs the attachment's
+exact bytes there once (`Client.UploadView`, no `Origin`, no chunks) and gets 201
+`{"view_url","expires"}`, which must be exactly `https://<KyDrive>/view.html?copy=<id>`.
+KyDrive refuses: 400 `bad_body`, 413 `too_large`, 507 `quota`, 429 `too_many_tickets`,
+409 `editor_off`, 415 `bad_type` (bytes not the extension's kind), plus the signed-route refusals.
 
 ### Guest links (K)
 
@@ -140,11 +153,12 @@ means: hide the KyDrive options.
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET /api/kydrive/status` | | 200 `{available, freeBytes?, maxFileBytes?, appUrl?, origin?, guestLinks?, guestMaxDays?}` |
+| `GET /api/kydrive/status` | | 200 `{available, freeBytes?, maxFileBytes?, appUrl?, origin?, guestLinks?, guestMaxDays?, viewer?}` |
 | `POST /api/kydrive/upload-tickets` | `{name, size}` | 201 `{uploadUrl, expires, maxChunk}` |
 | `POST /api/kydrive/links` | `{fileId, days?, audience?}` (default 30; `audience` `"organisation"` or `"guest"`) | 201 `{url, expires}` |
 | `POST /api/kydrive/copies` | `{fileId}` (from the picker) | 200 `{name, mimeType, size, dataBase64}` |
-| `POST /api/kydrive/save-attachment` | `{messageId, mailbox?, index}` | 201 `{fileId, name, size, folder, appUrl}` |
+| `POST /api/kydrive/save-attachment` | `{messageId, mailbox?, index, edit?}` | 201 `{fileId, name, size, folder, appUrl, editUrl?}` |
+| `POST /api/kydrive/view-attachment` | `{messageId, mailbox?, index}` | 201 `{viewUrl}` |
 | `POST /api/kydrive/recipients` | `{addresses}` (1 to 500 bare addresses) | 200 `{outside}` |
 
 - `available` is true only when KyDrive is paired, the account has a live
@@ -181,6 +195,19 @@ means: hide the KyDrive options.
   `application/octet-stream` or is over the limit is 502. The name comes from
   KyDrive's `Content-Disposition` (header-sanitized, `validDriveName`, else
   `attachment`), the type from its extension.
+- **Open** (`view-attachment`) and **Edit in KyDrive** (`save-attachment` with
+  `edit:true`) both need `viewer`, then refuse, before KyDrive is asked: 415
+  `unsupported_type` unless the name's extension is docx, xlsx, pptx, odt, ods, odp,
+  csv or pdf and the declared content type is that extension's
+  (`officeTypes`, `kydrive_office.go`) or `application/octet-stream`; 413 `too_large`
+  over KyDrive's `max_file_bytes` or 25 MiB, the inbound cap; 409 `encrypted` when the
+  raw message is encrypted by the agent tools' verdict (`rawEncrypted`: any PGP or
+  S/MIME part, armor, or a message that cannot be read or parsed), so decrypted
+  end-to-end content never reaches a server-side editor. Open sends the bytes as a
+  viewing copy and answers its `viewUrl`; Edit saves as Save to KyDrive does and adds
+  `editUrl` = `https://<KyDrive>/editor.html?file=<fileId>`. Both are logged
+  `kydrive attachment opened` / `kydrive attachment edit` with user and IDs only.
+  Plain Save to KyDrive is unchanged.
 - `recipients` resolves the addresses with `suitedir.Resolve` (KyIdentity
   `GET /api/suite/people?sub=&email=…`, 100 per call) under the session's
   subject and answers the ones that are not people in the organisation. 503
@@ -197,6 +224,11 @@ another origin still severs; every link in a message (`<a>`, SVG `<a>`, image-ma
 ## Web client
 
 - Shown only when `available`.
+- Reading: **Open** and **Edit in KyDrive** sit beside Save to KyDrive only
+  when `viewer`, the attachment passes `officeViewable` (the server's table) and the
+  message is not `pgpEncrypted`; client-decrypted attachments are listed separately and
+  never get them. The tab opens inside the click with no opener and is pointed at the
+  answer only when it is on the paired origin (`openInDrive`).
 - Compose: picking files over the 18 MiB attachment limit offers "Upload to
   KyDrive and send a link" instead of the error; every attachment chip has a
   **Link** action doing the same. Uploads show progress with Cancel; Send and

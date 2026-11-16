@@ -54,7 +54,8 @@ import {
 } from "./read/types";
 import type { InboxDeltaResponse } from "./read/inboxDelta";
 import { SaveToDrive } from "./read/SaveToDrive";
-import { loadDriveStatus } from "../api/kydrive";
+import { OfficeActions } from "./read/OfficeActions";
+import { loadDriveStatus, officeViewable, type DriveStatus } from "../api/kydrive";
 import { applyInboxDelta, messageIDsIn, withoutMessages } from "./read/inboxDelta";
 import { formatBytes, formatTimestamp, formatInboxListTime, formatReaderTime, formatUpdatedLabel, senderName } from "./read/format";
 import {
@@ -147,10 +148,11 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [attachmentsError, setAttachmentsError] = useState("");
-  const [driveOn, setDriveOn] = useState(false);
+  const [drive, setDrive] = useState<DriveStatus>({ available: false });
+  const driveOn = drive.available;
   useEffect(() => {
     let live = true;
-    void loadDriveStatus().then((s) => { if (live) setDriveOn(s.available); });
+    void loadDriveStatus().then((s) => { if (live) setDrive(s); });
     return () => { live = false; };
   }, []);
   // Bumped per opened message, so a late list cannot land on another message.
@@ -2196,6 +2198,10 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                         </a>
                       )}
                       {driveOn ? <SaveToDrive messageId={selected.messageId} folder={mailbox} index={attachment.index} name={attachment.name} /> : null}
+                      {/* Never for encrypted mail: its plaintext stays inside the end-to-end boundary. */}
+                      {driveOn && drive.viewer && drive.origin && !selected.pgpEncrypted && officeViewable(attachment.name, attachment.mimeType) ? (
+                        <OfficeActions messageId={selected.messageId} folder={mailbox} index={attachment.index} name={attachment.name} origin={drive.origin} />
+                      ) : null}
                       </span>
                     ))}
                   </div>

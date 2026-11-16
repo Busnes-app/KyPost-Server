@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,7 +19,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/kydrive"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -65,6 +65,9 @@ type driveStatus struct {
 	// then its guest_max_days, 1 to maxGuestDays.
 	GuestLinks   bool `json:"guestLinks,omitempty"`
 	GuestMaxDays int  `json:"guestMaxDays,omitempty"`
+	// Viewer is KyDrive's status "viewer": Euro-Office is there, so Open
+	// and Edit in KyDrive are offered (an old KyDrive omits it).
+	Viewer bool `json:"viewer,omitempty"`
 	// Origin is the paired KyDrive, so the client can find its links in a
 	// body even while the user's own status is off.
 	Origin string `json:"origin,omitempty"`
@@ -138,9 +141,10 @@ func (s *Server) driveStatusFor(ctx context.Context, u users.User) driveStatus {
 			MaxFileBytes int64 `json:"max_file_bytes"`
 			GuestLinks   *bool `json:"guest_links"`
 			GuestMaxDays int   `json:"guest_max_days"`
+			Viewer       bool  `json:"viewer"`
 		}
 		if err == nil && status == http.StatusOK && json.Unmarshal(body, &ans) == nil && ans.Enabled {
-			st.Available, st.FreeBytes, st.MaxFileBytes = true, max(0, ans.FreeBytes), max(0, ans.MaxFileBytes)
+			st.Available, st.FreeBytes, st.MaxFileBytes, st.Viewer = true, max(0, ans.FreeBytes), max(0, ans.MaxFileBytes), ans.Viewer
 			if ans.GuestLinks != nil && *ans.GuestLinks && ans.GuestMaxDays >= 1 {
 				st.GuestLinks, st.GuestMaxDays = true, min(ans.GuestMaxDays, maxGuestDays)
 			}
@@ -185,6 +189,7 @@ var driveErrors = map[string]string{
 	"not_found":        "that file is no longer in your KyDrive",
 	"no_user":          "you have no KyDrive account yet",
 	"guest_links_off":  "KyDrive does not allow guest links for you; turn them on in KyDrive settings",
+	"editor_off":       "KyDrive has no document viewer",
 }
 
 // writeDriveRefusal maps a KyDrive answer that was not the expected success.
@@ -356,37 +361,11 @@ func (s *Server) handleKyDriveSaveAttachment(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	var req struct {
-		MessageID string `json:"messageId"`
-		Mailbox   string `json:"mailbox"`
-		Index     int    `json:"index"`
-	}
-	if json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req) != nil || req.Index < 0 {
-		writeDrive(w, http.StatusBadRequest, "bad_request", "invalid request")
+	req, info, content, ok := s.driveAttachment(w, r)
+	if !ok {
 		return
 	}
-	if req.Mailbox != "" && imapadapter.ValidateMailboxName(req.Mailbox) != nil {
-		writeDrive(w, http.StatusBadRequest, "bad_request", "invalid mailbox")
-		return
-	}
-	mailClient, err := s.mailFor(r)
-	if err != nil {
-		writeDrive(w, http.StatusServiceUnavailable, "mailbox_unavailable", "could not open the mailbox")
-		return
-	}
-	id, err := imapadapter.ResolveMessageReference(mailClient, strings.TrimSpace(req.MessageID))
-	uid, convErr := strconv.Atoi(id)
-	if err != nil || convErr != nil || uid <= 0 {
-		writeDrive(w, http.StatusBadRequest, "bad_request", "invalid messageId; refresh the mailbox")
-		return
-	}
-	info, content, err := mailClient.GetAttachment(r.Context(), req.Mailbox, uid, req.Index)
-	if errors.Is(err, imapadapter.ErrAttachmentNotFound) {
-		writeDrive(w, http.StatusNotFound, "not_found", "attachment not found")
-		return
-	}
-	if err != nil {
-		writeDrive(w, http.StatusBadGateway, "mailbox_unavailable", "could not read the attachment")
+	if req.Edit && !s.officeAttachment(w, r, u, st, req, info, content) {
 		return
 	}
 	name := mailmsg.SanitizeHeaderValue(info.Name)
@@ -421,8 +400,13 @@ func (s *Server) handleKyDriveSaveAttachment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.logger.Info("kydrive save completed", "actor", u.ID, "target", ans.FileID, "result", "saved")
+	out := map[string]any{"fileId": ans.FileID, "name": ans.Name, "size": ans.Size, "folder": "Mail attachments", "appUrl": st.AppURL}
+	if req.Edit {
+		s.logger.Info("kydrive attachment edit", "actor", u.ID, "action", "edit", "target", ans.FileID, "result", "opened")
+		out["editUrl"] = s.kydrive.Origin() + "/editor.html?file=" + url.QueryEscape(ans.FileID)
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusCreated, map[string]any{"fileId": ans.FileID, "name": ans.Name, "size": ans.Size, "folder": "Mail attachments", "appUrl": st.AppURL})
+	writeJSON(w, http.StatusCreated, out)
 }
 
 // kydriveFetchBudget bounds one server-side fetch of a picked file.

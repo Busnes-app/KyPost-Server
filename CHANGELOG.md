@@ -20,6 +20,14 @@ non-prerelease version.
 
 ### Added
 
+- Open mail attachments in Euro-Office, like Outlook on the web: a received
+  docx, xlsx, pptx, odt, ods, odp, csv or pdf attachment whose type matches its
+  name has **Open** (read-only, through a 24-hour KyDrive viewing copy only the
+  user sees) and **Edit in KyDrive** (saved to `Mail attachments`, then opened in
+  the editor). Needs KyDrive with Euro-Office; never offered or allowed for
+  encrypted mail. `POST /api/kydrive/view-attachment`; `save-attachment` takes
+  `edit`.
+
 - Out-of-office reply (Settings → Mail → Out of office), Outlook style: one
   text for people in the organisation (KyIdentity suite members and the native
   mail domains in service) and one for everyone else, which an administrator must allow

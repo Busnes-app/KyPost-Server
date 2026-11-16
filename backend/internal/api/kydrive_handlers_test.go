@@ -54,6 +54,11 @@ type fakeDrive struct {
 	// guestOff makes a new KyDrive refuse guest links (policy or switch off).
 	guestOff bool
 	fetchCT  string // overrides the fetch answer's Content-Type when set
+	// viewer is a KyDrive with Euro-Office (status viewer:true, view tickets).
+	viewer bool
+	views  map[string][]byte // viewing copy ID -> bytes
+	// viewURL overrides the view upload's answer when set.
+	viewURL string
 }
 
 type driveTicketState struct {
@@ -71,7 +76,8 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 	d := &fakeDrive{issuer: issuer, enabled: map[string]bool{}, seen: map[string]bool{}, tickets: map[string]*driveTicketState{},
 		files: map[string]driveFile{}, calls: map[string]int{}, maxChunk: 64 << 20, maxFile: 100 << 20}
 	routes := map[string]string{kydrive.PathTicket: kydrive.EventTicket, kydrive.PathLink: kydrive.EventLink, kydrive.PathStatus: kydrive.EventStatus,
-		kydrive.PathFetch: kydrive.EventFetch}
+		kydrive.PathFetch: kydrive.EventFetch, kydrive.PathView: kydrive.EventView}
+	d.views = map[string][]byte{}
 	d.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -81,6 +87,10 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 		}
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, kydrive.UploadPrefix) {
 			d.upload(w, r, refuse)
+			return
+		}
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, kydrive.ViewUploadPrefix) {
+			d.viewUpload(w, r, refuse)
 			return
 		}
 		eventType, ok := routes[r.URL.Path]
@@ -131,7 +141,20 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 			if d.guestMax != nil {
 				guest = fmt.Sprintf(`,"guest_links":true,"guest_max_days":%d`, *d.guestMax)
 			}
+			if d.viewer {
+				guest += `,"viewer":true`
+			}
 			fmt.Fprintf(w, `{"enabled":true,"free_bytes":%d,"max_file_bytes":%d%s}`, 1<<30, d.maxFile, guest)
+		case kydrive.EventView:
+			if !d.viewer {
+				refuse(http.StatusConflict, "editor_off")
+				return
+			}
+			tok := make([]byte, 32)
+			_, _ = rand.Read(tok)
+			d.tickets[hex.EncodeToString(tok)] = &driveTicketState{sub: req.Sub, name: req.Name, size: req.Size}
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintf(w, `{"upload_url":%q,"expires":"2026-12-14T00:00:00Z"}`, d.URL+kydrive.ViewUploadPrefix+hex.EncodeToString(tok))
 		case kydrive.EventTicket:
 			live := 0
 			for _, tk := range d.tickets {
@@ -231,6 +254,22 @@ func (d *fakeDrive) upload(w http.ResponseWriter, r *http.Request, refuse func(i
 	delete(d.tickets, strings.TrimPrefix(r.URL.Path, kydrive.UploadPrefix))
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, `{"file_id":%q,"name":%q,"size":%d}`, id, tk.name, tk.size)
+}
+
+func (d *fakeDrive) viewUpload(w http.ResponseWriter, r *http.Request, refuse func(int, string)) {
+	key := strings.TrimPrefix(r.URL.Path, kydrive.ViewUploadPrefix)
+	tk := d.tickets[key]
+	body, _ := io.ReadAll(r.Body)
+	if tk == nil || r.Header.Get("Cookie") != "" || r.Header.Get("Content-Range") != "" || int64(len(body)) != tk.size {
+		refuse(http.StatusNotFound, "not_found")
+		return
+	}
+	delete(d.tickets, key)
+	id := "view-" + strconv.Itoa(len(d.views)+1)
+	d.views[id] = body
+	tk.name = id // the copy's name is never needed again
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintf(w, `{"view_url":%q,"expires":"2026-12-14T00:00:00Z"}`, cmp.Or(d.viewURL, d.URL+"/view.html?copy="+id))
 }
 
 type syncLog struct {

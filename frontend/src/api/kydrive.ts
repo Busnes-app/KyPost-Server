@@ -10,6 +10,8 @@ export type DriveStatus = {
   available: boolean; freeBytes?: number; maxFileBytes?: number; appUrl?: string; origin?: string;
   /** KyDrive offers guest links (contract K); guestMaxDays is then 1 to 365. */
   guestLinks?: boolean; guestMaxDays?: number;
+  /** KyDrive has Euro-Office: Open and Edit in KyDrive are offered. */
+  viewer?: boolean;
 };
 
 export type DriveTicket = { uploadUrl: string; expires: string; maxChunk: number };
@@ -43,6 +45,7 @@ export async function loadDriveStatus(): Promise<DriveStatus> {
       maxFileBytes: typeof s.maxFileBytes === "number" ? s.maxFileBytes : undefined,
       appUrl,
       origin,
+      ...(s.viewer === true ? { viewer: true } : {}),
       ...(guest ? { guestLinks: true, guestMaxDays: s.guestMaxDays as number } : {})
     };
   } catch {
@@ -61,6 +64,51 @@ export function createDriveLink(fileId: string, days = 30, audience?: "guest"): 
 
 export function saveAttachmentToDrive(messageId: string, mailbox: string, index: number): Promise<DriveSaved> {
   return postJSON<DriveSaved>("/api/kydrive/save-attachment", { messageId, mailbox, index });
+}
+
+// The server's officeTypes (kydrive_office.go): extension and declared type
+// must agree; application/octet-stream is "unspecified". The server decides.
+const officeTypes: Record<string, string[]> = {
+  docx: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  pptx: ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  odt: ["application/vnd.oasis.opendocument.text"],
+  ods: ["application/vnd.oasis.opendocument.spreadsheet"],
+  odp: ["application/vnd.oasis.opendocument.presentation"],
+  csv: ["text/csv", "application/csv", "text/x-csv", "text/comma-separated-values", "application/vnd.ms-excel"],
+  pdf: ["application/pdf", "application/x-pdf"]
+};
+
+/** Whether Euro-Office can show this attachment (Open, Edit in KyDrive). */
+export function officeViewable(name: string, mimeType: string): boolean {
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  // Own keys only: a sender's "x.constructor" must not reach Object.prototype.
+  const types = Object.prototype.hasOwnProperty.call(officeTypes, ext) ? officeTypes[ext] : undefined;
+  const type = mimeType.split(";")[0].trim().toLowerCase();
+  return Boolean(types && (type === "application/octet-stream" || types.includes(type)));
+}
+
+/**
+ * Open (a read-only viewing copy) or Edit (saved to My files, then the editor)
+ * one attachment in KyDrive, in a tab opened inside the click so no popup
+ * blocker stops it. The answer must be on the paired KyDrive.
+ */
+export async function openInDrive(mode: "view" | "edit", messageId: string, mailbox: string, index: number, origin: string): Promise<void> {
+  const tab = window.open("", "_blank");
+  if (tab) tab.opener = null;
+  try {
+    const path = mode === "view" ? "/api/kydrive/view-attachment" : "/api/kydrive/save-attachment";
+    const body = mode === "view" ? { messageId, mailbox, index } : { messageId, mailbox, index, edit: true };
+    const answer = await postJSON<{ viewUrl?: unknown; editUrl?: unknown }>(path, body);
+    const url = mode === "view" ? answer.viewUrl : answer.editUrl;
+    if (typeof url !== "string" || httpsOrigin(url) !== origin || !origin) throw new Error("KyDrive gave an unusable address");
+    if (tab) tab.location.replace(url);
+    else window.open(url, "_blank", "noopener,noreferrer");
+  } catch (e) {
+    tab?.close();
+    throw e;
+  }
 }
 
 /** The KyDrive refusal code of an error, if it is one. */
