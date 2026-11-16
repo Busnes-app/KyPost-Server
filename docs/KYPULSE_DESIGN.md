@@ -15,7 +15,11 @@ KyPulse side's design is KyPulse `docs/superpowers/specs/2026-11-15-kypost-email
   type checked, replay guard; the secret is held in memory only. A durable claim per event
   ID in the shared send ledger stops a replay that another pod or a restart would not
   remember from sending twice.
-- **Confirmation links.** The owner's Sent copy withholds the link, so the owner cannot confirm for the recipient. Opening a link only shows a page; the POST behind its button
+- **Confirmation links.** The owner's Sent copy withholds the link, so the owner cannot confirm for the recipient.
+  Limit: a member who sends through their own external SMTP server controls that relay and
+  could read the link there. KyPost has no sender independent of the member's mailbox (system
+  sending is not built), and such a member can already mail that address from the same account
+  at the same quota, so self-confirming grants nothing new beyond the `[KyPulse]` template. Opening a link only shows a page; the POST behind its button
   confirms, so mail scanners confirm nothing. Links expire after 7 days, die once used, and
   are revoked when the address is removed.
 - **Header injection.** Only the subject text crosses into a header, after the fixed
