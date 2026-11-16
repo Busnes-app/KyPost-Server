@@ -30,10 +30,10 @@ afterEach(cleanup);
 const plans = { messageId: "11", sender: "b@example.com", subject: "Plans Mail", status: "read", atUtc: "2026-08-02T10:00:00Z" };
 const other = { messageId: "12", sender: "c@example.com", subject: "Other Mail", status: "read", atUtc: "2026-08-01T10:00:00Z" };
 
-function serve(flags: object[]) {
+function serve(flags: object[], tasks = false) {
   getJSON.mockImplementation((url: string) => {
     if (url.startsWith("/api/inbox?")) return Promise.resolve({ tabs: ["Primary"], byTab: { Primary: [plans, other] }, cursor: 1 });
-    if (url === "/api/mail/flags") return Promise.resolve({ flags });
+    if (url === "/api/mail/flags") return Promise.resolve({ flags, tasks });
     if (url === "/api/snoozes") return Promise.resolve({ snoozes: [] });
     return Promise.resolve({ configured: [], imap: [] });
   });
@@ -59,7 +59,10 @@ describe("flag", () => {
     renderPage();
     await user.click(await screen.findByLabelText("Select email Plans Mail"));
     await user.click(screen.getByRole("button", { name: "Flag" }));
-    await user.click(within(screen.getByRole("dialog", { name: "Flag" })).getByRole("button", { name: "Tomorrow" }));
+    const dialog = screen.getByRole("dialog", { name: "Flag" });
+    expect(within(dialog).queryByText(/KyCalendar/)).toBeNull();
+    expect(within(dialog).getByRole("button", { name: /^Next week · \S+ \d+$/ })).toBeDefined();
+    await user.click(within(dialog).getByRole("button", { name: "Tomorrow" }));
 
     await waitFor(() => expect(postJSON).toHaveBeenCalled());
     const tomorrow = flagDueChoices(new Date()).find((c) => c.label === "Tomorrow")?.due;
@@ -71,11 +74,13 @@ describe("flag", () => {
 
   it("sends no due date for No date and says when KyCalendar failed", async () => {
     postJSON.mockResolvedValue({ ok: true, processed: 1, failed: [], tasks: { "11": "failed" } });
-    serve([]);
+    serve([], true);
     const user = userEvent.setup();
     renderPage();
     await user.click(await screen.findByLabelText("Select email Plans Mail"));
     await user.click(screen.getByRole("button", { name: "Flag" }));
+    // Linked: the dialog says what else happens.
+    await within(screen.getByRole("dialog", { name: "Flag" })).findByText("Also adds a task in KyCalendar.");
     await user.click(within(screen.getByRole("dialog", { name: "Flag" })).getByRole("button", { name: "No date" }));
 
     await waitFor(() => expect(postJSON).toHaveBeenCalled());
