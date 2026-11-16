@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PairingPanel } from "./PairingPanel";
 import { decidePendingDevice, listPendingDevices, mintPairing } from "../../api/devices";
+import { HttpError } from "../../api/client";
 
 const auth = vi.hoisted(() => ({ ssoSession: false }));
 vi.mock("../../auth", () => ({ useAuth: () => auth }));
@@ -30,34 +31,61 @@ beforeEach(() => {
   vi.mocked(decidePendingDevice).mockResolvedValue({ ok: true });
 });
 
+const stale = () => new HttpError("step_up_required", 403, { error: "step_up_required" });
+
 describe("pairing step-up", () => {
-  it("mints nothing until the account password is confirmed", async () => {
+  it("uses the page's step-up without asking again", async () => {
     render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={() => {}} />);
-    const show = screen.getByRole("button", { name: "Show pairing code" });
+    expect(screen.queryByLabelText("Account password")).toBeNull();
     expect(mintPairing).not.toHaveBeenCalled();
-    expect((show as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("Account password"), { target: { value: "account credential" } });
-    fireEvent.click(show);
-    await waitFor(() => expect(mintPairing).toHaveBeenCalledWith({ ssoSession: false, accountPassword: "account credential" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
+    await waitFor(() => expect(mintPairing).toHaveBeenCalledWith(undefined));
     await screen.findByAltText("Native mobile pairing QR code");
   });
 
-  it("lets SSO sessions confirm with KySignOn instead of a password", async () => {
-    auth.ssoSession = true;
-    render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={() => {}} />);
-    expect(screen.queryByLabelText("Account password")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
-    await waitFor(() => expect(mintPairing).toHaveBeenCalledWith({ ssoSession: true, accountPassword: "" }));
-  });
-
-  it("shows the refusal and stays on the confirmation form", async () => {
-    vi.mocked(mintPairing).mockRejectedValue(new Error("invalid credentials"));
+  it("asks for the password once the page's step-up is refused", async () => {
+    vi.mocked(mintPairing).mockRejectedValueOnce(stale());
     const onStatus = vi.fn();
     render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={onStatus} />);
-    fireEvent.change(screen.getByLabelText("Account password"), { target: { value: "wrong" } });
     fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
-    await waitFor(() => expect(onStatus).toHaveBeenCalledWith("Could not show a pairing code: invalid credentials"));
+    const password = await screen.findByLabelText("Account password");
+    expect(onStatus).toHaveBeenCalledWith("Your confirmation has expired. Confirm it is you to show a pairing code.");
+    const show = screen.getByRole("button", { name: "Show pairing code" });
+    expect((show as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(password, { target: { value: "account credential" } });
+    fireEvent.click(show);
+    await waitFor(() => expect(mintPairing).toHaveBeenLastCalledWith({ ssoSession: false, accountPassword: "account credential" }));
+    await screen.findByAltText("Native mobile pairing QR code");
+  });
+
+  it("lets SSO sessions confirm with KySignOn once the page's step-up is refused", async () => {
+    auth.ssoSession = true;
+    vi.mocked(mintPairing).mockRejectedValueOnce(stale());
+    render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
+    await screen.findByText("You will confirm with KySignOn.");
+    expect(screen.queryByLabelText("Account password")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
+    await waitFor(() => expect(mintPairing).toHaveBeenLastCalledWith({ ssoSession: true, accountPassword: "" }));
+  });
+
+  it("treats a 403 that is not step_up_required as an ordinary refusal", async () => {
+    vi.mocked(mintPairing).mockRejectedValueOnce(new HttpError("forbidden", 403, null));
+    const onStatus = vi.fn();
+    render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={onStatus} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
+    await waitFor(() => expect(onStatus).toHaveBeenCalledWith("Could not show a pairing code: forbidden"));
+    expect(screen.queryByLabelText("Account password")).toBeNull();
+  });
+
+  it("shows other refusals and stays on the form", async () => {
+    vi.mocked(mintPairing).mockRejectedValue(new Error("server down"));
+    const onStatus = vi.fn();
+    render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={onStatus} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
+    await waitFor(() => expect(onStatus).toHaveBeenCalledWith("Could not show a pairing code: server down"));
     expect(screen.getByRole("button", { name: "Show pairing code" })).toBeTruthy();
+    expect(screen.queryByLabelText("Account password")).toBeNull();
     expect(screen.queryByAltText("Native mobile pairing QR code")).toBeNull();
   });
 });
@@ -75,7 +103,6 @@ describe("device approval", () => {
 
   async function showCode() {
     render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={() => {}} />);
-    fireEvent.change(screen.getByLabelText("Account password"), { target: { value: "account credential" } });
     fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
     await screen.findByAltText("Native mobile pairing QR code");
   }

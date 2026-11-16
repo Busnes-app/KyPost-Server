@@ -1,4 +1,4 @@
-# KyCalendar invitation mail
+# KyCalendar invitation mail and tasks
 
 Server-to-server contract between KyPost and KyCalendar. KyCalendar sends
 invitations, cancellations and replies through the user's own KyPost mailbox,
@@ -67,6 +67,8 @@ shared secret; headers via `Headers.Apply` / `FromRequest`.
 | `kycalendar.itip.send` | KyCalendar → KyPost | `POST /api/calendar/itip/send` |
 | `kypost.itip.inbound` | KyPost → KyCalendar | `POST {KYPOST_KYCALENDAR_URL}/api/itip/inbound` |
 | `kypost.itip.respond` | KyPost → KyCalendar | `POST {KYPOST_KYCALENDAR_URL}/api/itip/respond` |
+| `kypost.task.flag` | KyPost → KyCalendar | `POST {KYPOST_KYCALENDAR_URL}/api/tasks/flag` |
+| `kycalendar.task.state` | KyCalendar → KyPost | `POST /api/calendar/tasks/state` |
 
 A receiver checks the event type equals its route's, then `syncauth.Verify`
 with a replay guard (`DefaultWindow`, 100000 IDs). A verified replay is
@@ -296,3 +298,70 @@ is written the way `kypost.itip.respond` writes it.
 KyPost's half: `api/out_of_office.go` `syncOOOCalendar`, run after every
 `PUT /api/mail/out-of-office` (its answer carries `calendarSync`) and every agent
 `set_out_of_office`. Tests: `TestOutOfOfficeSyncsKyCalendar`, `TestOutOfOfficeRemoteCommentRevoked`, `TestOutOfOfficeRemoteCommentChangedWhileKyCalendarDown`, `TestOutOfOfficeRemoteCommentReorderedAnswers`, `TestOutOfOfficeRemoteCommentReplyOff`, `TestStripRemoteOOOComment`, config `TestOOORemoteTextsSurviveReorderedAnswers`.
+
+## Tasks from flagged mail
+
+Added 2026-11-16 under this pair (KyCalendar design
+`docs/superpowers/specs/2026-11-15-kypost-flag-to-task-design.md`). Flagging a message in KyPost
+makes a task in the user's KyCalendar Inbox list; finishing the task clears the flag. Neither
+side calls the other back for a change the other made.
+
+**KyPost → KyCalendar, `kypost.task.flag`.** Sent once per message by `POST /api/inbox/actions`
+`flag` or `unflag` (web, list or reader), with a fresh event ID and one shared 5-second task-sync budget per request (including Subject
+lookups), while
+the pair is up, the user's KyCalendar switch is on, the account has a live SSO link and
+`SERVER_BASE_URL` is set:
+
+```json
+{"sub":"…","issuer":"…","ref":"<22 base64url characters>","subject":"Café plans",
+ "url":"https://mail.example.com/read?flag=<ref>","due":"2026-11-20","flagged":true}
+```
+
+- `ref` is an opaque random reference KyPost records per message in the user's
+  `$STATE_DIR/users/<id>/kycalendar-flags.json` (newest 2000): mailbox selector, folder, message
+  reference, due date, and whether the flag was cleared. Flagging the same message again reuses
+  it, so KyCalendar updates one task. Local flag/unflag actions maintain this record even when
+  unpaired, opted out, or without a live SSO link or server URL; only task synchronization is
+  gated by those prerequisites.
+- `subject` is the message's Subject header, decoded, on one line, without control characters,
+  cut to 255 bytes. Never the body, the sender, the Message-ID or the attachments.
+- `url` is on `SERVER_BASE_URL`'s host. KyCalendar refuses a link on any other host than the one it
+  pairs with (400 `bad_body`), so `SERVER_BASE_URL` must name the KyPost host KyIdentity lists.
+- `due` is the user's local date (the web's choices: Today, Tomorrow, This week = Friday,
+  Next week = Monday); absent for No date and on unflag.
+- An unflag of a message KyCalendar never heard of sends nothing (`none`).
+- KyCalendar answers 200 `{outcome: created|updated|completed|unchanged}` or a refusal
+  (`tasks_off` when the user turned it off there, `no_user`, `bad_body`, 429). Anything but 200
+  is `failed` to the client; the flag stays set in KyPost and the web says the task was not made.
+  KyPost does not retry. The first failed sync stops further task-sync network work in that
+  request; remaining local flags are still applied and recorded, with `failed` task outcomes.
+
+Mailbox-admission failures other than an unknown/foreign/disabled mailbox return 503 and
+release the event ID for retry. An unknown mailbox or stale native message reference is `gone`;
+reference validation itself does no I/O. Following a task link returns 502 on header-read
+failure, so temporary mail outages are not reported as deleted messages.
+
+**KyCalendar → KyPost, `kycalendar.task.state`.** KyCalendar sends `{sub, issuer, ref, done}`
+when such a task is completed, reopened or deleted on its web or over MCP (not from a CalDAV
+app). The route verifies like `itip/send` (event type, signature, replay guard; 404
+`kycalendar_off` unpaired). Then:
+
+| Status | Answer | When |
+|---|---|---|
+| 400 | `bad_body` | Malformed JSON, or `sub`, `issuer`, `ref` or `done` missing |
+| 404 | `no_user` | No active account for `(issuer, sub)`, a revoked SSO link, or (native mail) an administrator |
+| 409 | `sending_off` | The user's KyCalendar switch is off |
+| 503 | `unavailable` | Storage or the mailbox unreadable; the event ID is forgotten, so a retry works |
+| 200 | `{"outcome":"gone"}` | Unknown `ref`, a message reference that no longer resolves, or an extra mailbox the user lost |
+| 200 | `{"outcome":"unchanged"}` | The flag is already in that state |
+| 200 | `{"outcome":"cleared"\|"flagged"}` | `done` true clears `\Flagged`, false sets it again |
+
+**The link.** `/read?flag=<ref>` asks `GET /api/mail/flags/{ref}` (the signed-in user's own
+records only), switches to the message's mailbox and opens it, or shows "This message is no
+longer available." when the reference is unknown or the message is gone. `GET /api/mail/flags`
+gives the web its Flagged marks and `tasks`, true only while a flag here also makes a task, so
+the Flag dialog says "Also adds a task in KyCalendar." only then.
+
+KyPost's half: `api/flag_tasks.go`, `kycalendar/flags.go`. Tests: `TestFlagMakesKyCalendarTask`,
+`TestTaskStateOffWhenUnpaired`, mailbox `TestNativeClientFlagAction`, web
+`ReadPage.flag.test.tsx` and `App.mailboxes.test.tsx` ("flagged mail task link").

@@ -48,7 +48,8 @@ func NewClient(store *Store, from string) (*Client, error) {
 
 // OpenClient owns an existing runtime database. Cached clients retain storage
 // identity only: every operation calls admit again, including PGP replacement,
-// with the client's own read-only preparation handles (dir's parent).
+// with the client's read-only preparation handles (dir's parent): the
+// process's held ones when there are (opened before this store), else its own.
 // Eviction drops the client; cleanup waits until its operations are unreachable.
 func OpenClient(dir string, owner Owner, limits Limits, from, source string, admit func(context.Context, *Prepared) error) (*Client, error) {
 	if admit == nil {
@@ -58,25 +59,25 @@ func OpenClient(dir string, owner Owner, limits Limits, from, source string, adm
 	if err != nil {
 		return nil, err
 	}
-	held := &Prepared{dir: account}
+	held, _ := useHeld(account)
 	if s, e := held.check(owner, from, limits); e != nil || s != source {
-		held.Close()
+		dropHeld(held)
 		return nil, cmp.Or(e, ErrPreparation)
 	}
 	store, err := OpenExisting(dir, owner, limits, source)
 	if err != nil {
-		held.Close()
+		releaseHeld(held)
 		return nil, err
 	}
 	c, err := NewClient(store, from)
 	if err != nil {
 		_ = store.Close()
-		held.Close()
+		releaseHeld(held)
 		return nil, err
 	}
 	c.admit, c.held = admit, held
 	runtime.AddCleanup(c, func(s *Store) { _ = s.Close() }, store)
-	runtime.AddCleanup(c, func(p *Prepared) { p.Close() }, held)
+	runtime.AddCleanup(c, releaseHeld, held)
 	return c, nil
 }
 
@@ -591,6 +592,8 @@ func (c *Client) ApplyInboxAction(ctx context.Context, id, action, folder, targe
 	case "read", "unread":
 		seen := action == "read"
 		return c.store.editFlags(ctx, folder, uid, &seen, "", false)
+	case "flag", "unflag":
+		return c.store.setStarred(ctx, folder, uid, action == "flag")
 	case "archive":
 		m, err := c.store.metadata(ctx, folder, uid)
 		if err != nil {

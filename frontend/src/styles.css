@@ -4426,6 +4426,35 @@ pre {
   font-size: 0.9em;
 }
 
+/* Flag and Snooze: a short sheet of choices with KyCalendar's dialog spacing; full screen on phones. */
+.rules-help-window.due-sheet {
+  width: min(420px, 94vw);
+  padding: var(--ky-space-4);
+  gap: var(--ky-space-3);
+}
+.due-sheet .rules-help-body > p { margin: 0 0 var(--ky-space-3); }
+.due-choices { display: flex; flex-wrap: wrap; gap: var(--ky-space-2); }
+.due-custom { display: block; margin-top: var(--ky-space-3); }
+.due-sheet-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ky-space-2);
+  padding-top: var(--ky-space-3);
+  border-top: 1px solid var(--line);
+}
+
+/* Flagged rows: a muted flag and word, no chip, so the row keeps its height. */
+.inbox-flag-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-inline-start: 6px;
+  color: var(--ink);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+.inbox-flag-mark svg { width: 12px; height: 12px; }
+
 .rules-help-table {
   width: 100%;
   border-collapse: collapse;
@@ -5613,7 +5642,10 @@ thead:has(.inbox-bulk-head) th { background: var(--accent-soft); }
   .inbox-scope { flex: 1; }
 }
 @media (max-width: 600px) {
-  .inbox-bulk-bar .inbox-action-button { min-height: 40px; }
+  /* Five actions on the first row at 390px (Flag and Print wrap to the second). */
+  .inbox-table th.inbox-bulk-head { padding-inline-end: 4px; }
+  .inbox-bulk-bar { column-gap: 0; }
+  .inbox-bulk-bar .inbox-action-button { min-height: 40px; padding-inline: 3px; }
   .inbox-bulk-clear.icon-button { width: 40px; min-height: 40px; }
 }
 
@@ -5639,3 +5671,13 @@ thead:has(.inbox-bulk-head) th { background: var(--accent-soft); }
 .recipient-status[data-state="in_a_meeting"] .recipient-status-dot { background: var(--ky-danger); border-color: var(--ky-danger); }
 .recipient-status[data-state="away"] .recipient-status-dot { background: var(--ky-warning); border-color: var(--ky-warning); }
 .recipient-status[data-state="out_of_office"] .recipient-status-dot { border: 2px solid var(--ky-danger); }
+
+/* Phones: the Flag and Snooze sheets fill the screen, one full-width row per choice, actions pinned to the bottom. */
+@media (max-width: 900px) and (max-aspect-ratio: 10/9) {
+  .rules-help-window.due-sheet { width: 100vw; padding: var(--ky-space-3); }
+  .due-sheet .rules-help-body { flex: 1; }
+  .due-choices { flex-direction: column; }
+  .due-choices > button { display: flex; width: 100%; min-height: 44px; justify-content: flex-start; text-align: start; }
+  .due-sheet-foot > button { flex: 1; min-height: 44px; }
+  .due-custom input { width: 100%; min-height: 44px; }
+}

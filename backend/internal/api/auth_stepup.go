@@ -28,11 +28,19 @@ import (
 // new, because every endpoint that matters still re-verifies for itself.
 //
 // It records one thing: Session.SteppedUpAt, the time of the last success.
-// Exactly one server-side decision reads it, stepUpFresh, which gates
-// KyDrive guest links (docs/KYDRIVE.md "Guest links": a step-up within the
-// last 10 minutes before a send that makes links for people outside the
-// organisation). Everything else still re-verifies for itself; do not let a
-// second gate lean on this timestamp without the same reasoning.
+// stepUpFresh reads it for exactly two decisions:
+//   - KyDrive guest links (docs/KYDRIVE.md "Guest links"): a step-up within the
+//     last 10 minutes before a send that makes links for people outside the
+//     organisation.
+//   - Device pairing, within securityPageStepUpWindow: pairing lives on the
+//     Security page, which the user has just unlocked with this same proof, so
+//     asking for the password again proves nothing new.
+// Everything else still re-verifies for itself; do not let another gate lean
+// on this timestamp without the same reasoning.
+
+// securityPageStepUpWindow matches ReauthGate's CONFIRMATION_WINDOW_MS. Past
+// it, pairing answers step_up_required and the page asks for the credential.
+const securityPageStepUpWindow = 5 * time.Minute
 
 // totpCodeShape distinguishes a TOTP code from a recovery code by shape, so a
 // mistyped six-digit code is never run through ConsumeRecoveryCode and never

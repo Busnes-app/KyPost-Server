@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import QRCode from "qrcode";
-import { toErrorMessage } from "../../api/client";
+import { HttpError, toErrorMessage } from "../../api/client";
 import { decidePendingDevice, listPendingDevices, mintPairing, type PendingDevice } from "../../api/devices";
 import { useAuth } from "../../auth";
 import {
@@ -17,8 +17,10 @@ import { buildNativePairingLink } from "./pairingLink";
  * A REAL CHILD COMPONENT, mounted only while the panel is open, and that is the
  * point rather than tidiness. `POST /api/notifications/pairing` mints a live
  * 90-second pairing token, and only after the account credential (or a KySignOn
- * confirmation) is re-proved: the device it pairs outlives the session. A code
- * that runs out is not replaced on its own; the user confirms again.
+ * confirmation) is re-proved: the device it pairs outlives the session. The
+ * Security page's own step-up counts while the page is unlocked, so the panel
+ * asks again only if the server refuses it. A code that runs out is not
+ * replaced on its own.
  *
  * A device that redeems the code waits for approval here (#516): while a code
  * is open, and for the five minutes a pending device lives after it, the panel
@@ -52,6 +54,11 @@ type PairingStatusResponse = {
   configured: boolean;
 };
 
+function isStaleStepUp(error: unknown): boolean {
+  return error instanceof HttpError && error.status === 403
+    && (error.body as { error?: unknown } | null)?.error === "step_up_required";
+}
+
 export type PairingPanelProps = {
   /** Called after a pairing attempt, so the device list can pick up a new one. */
   onDevicesMayHaveChanged: () => void;
@@ -62,6 +69,8 @@ export type PairingPanelProps = {
 export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanelProps) {
   const { ssoSession = false } = useAuth();
   const [password, setPassword] = useState("");
+  // The page's step-up is tried first; a refusal means it went stale.
+  const [needConfirm, setNeedConfirm] = useState(false);
   const [pairingStatus, setPairingStatus] = useState<PairingStatusResponse | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [expiresAtMs, setExpiresAtMs] = useState<number | null>(null);
@@ -92,7 +101,7 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
   async function showCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
-    const confirm = { ssoSession, accountPassword: password };
+    const confirm = needConfirm ? { ssoSession, accountPassword: password } : undefined;
     setPassword("");
     try {
       const minted = await mintPairing<PairingStatusResponse>(confirm);
@@ -100,7 +109,12 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
       const ttlSeconds = minted.pairingTtlSeconds ?? DEFAULT_PAIRING_TTL_SECONDS;
       if (minted.pairingToken) setPollUntilMs(Date.now() + ttlSeconds * 1000 + PENDING_WINDOW_MS);
     } catch (error: unknown) {
-      onStatus(`Could not show a pairing code: ${toErrorMessage(error, "unknown error")}`);
+      if (!confirm && isStaleStepUp(error)) {
+        setNeedConfirm(true);
+        onStatus("Your confirmation has expired. Confirm it is you to show a pairing code.");
+      } else {
+        onStatus(`Could not show a pairing code: ${toErrorMessage(error, "unknown error")}`);
+      }
     } finally {
       setBusy(false);
     }
@@ -252,10 +266,10 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
         {approvals}
         <form className="sec-pairing" onSubmit={(event) => void showCode(event)}>
           <p className="sec-muted">
-            A paired device keeps access after you sign out, so confirm it is you first. The code
-            is good for ninety seconds and works once.
+            A paired device keeps access after you sign out. The code is good for ninety seconds
+            and works once.
           </p>
-          {ssoSession ? (
+          {!needConfirm ? null : ssoSession ? (
             <p className="sec-muted">You will confirm with KySignOn.</p>
           ) : (
             <label className="sec-label">
@@ -272,7 +286,7 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
             </label>
           )}
           <div className="sec-actions">
-            <button type="submit" disabled={busy || (!ssoSession && !password)}>
+            <button type="submit" disabled={busy || (needConfirm && !ssoSession && !password)}>
               {busy ? "Confirming…" : "Show pairing code"}
             </button>
           </div>

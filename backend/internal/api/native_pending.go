@@ -219,7 +219,7 @@ func (s *Server) writeApprovedStatus(w http.ResponseWriter, userID, deviceID, tr
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, s.withRelayIdentity(map[string]any{
 		"ok":           true,
 		"synced":       true,
 		"status":       "approved",
@@ -227,7 +227,7 @@ func (s *Server) writeApprovedStatus(w http.ResponseWriter, userID, deviceID, tr
 		"deliveryMode": store.NativeDeliveryMode(),
 		"pullEndpoint": s.nativeEndpoint("/api/notifications/native/pull"),
 		"transport":    transport,
-	})
+	}))
 }
 
 // handleNativePendingDevices lists the signed-in user's devices awaiting

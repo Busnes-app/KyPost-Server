@@ -289,6 +289,11 @@ func TestNativeClientAdmitsItsOpenStorage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The pooled handles are the client's: they refuse once and drop, and
+		// the reopening admission accepts the copy.
+		if _, _, err = s.nativeMailboxAssignment(ctx, u.ID, id); !errors.Is(err, mailbox.ErrPreparation) {
+			t.Fatalf("mailbox %q: pooled handles accepted replaced state.db: %v", id, err)
+		}
 		if _, _, err = s.nativeMailboxAssignment(ctx, u.ID, id); err != nil {
 			t.Fatal("full admission refused a valid copy:", err)
 		}

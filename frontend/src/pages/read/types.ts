@@ -126,13 +126,15 @@ export type InboxResponse = {
   byTab: Record<string, InboxEmail[]>;
 };
 
-export type InboxAction = "delete" | "archive" | "spam" | "read" | "unread" | "snooze";
+export type InboxAction = "delete" | "archive" | "spam" | "read" | "unread" | "snooze" | "flag" | "unflag";
 
 export type InboxActionResponse = {
   ok: boolean;
   action: InboxAction;
   processed: number;
   failed: Array<{ messageId: string; error: string }>;
+  /** flag/unflag: KyCalendar's answer per message ("created", "failed", ...) when it takes part. */
+  tasks?: Record<string, string>;
 };
 
 // KeywordActionResponse is the same /api/inbox/actions response shape used

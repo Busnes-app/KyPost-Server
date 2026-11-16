@@ -41,7 +41,9 @@ type fakeMailClient struct {
 	bodies map[int]string
 	// headerLines is what FetchHeaderFields returns; headerFields records
 	// the names it was asked for.
-	headerLines        map[int][]string
+	headerLines map[int][]string
+	// inboxActions records each ApplyInboxAction as "action:id:mailbox".
+	inboxActions       []string
 	headerFields       []string
 	headerMailbox      string
 	bodyHasAttachments map[int]bool
@@ -156,7 +158,8 @@ func (f *fakeMailClient) RemoveLabel(_ context.Context, messageID string, label 
 	f.removedLabels = append(f.removedLabels, labelCall{messageID: messageID, label: label})
 	return nil
 }
-func (f *fakeMailClient) ApplyInboxAction(_ context.Context, _ string, _ string, _ string, _ string) error {
+func (f *fakeMailClient) ApplyInboxAction(_ context.Context, id string, action string, mailbox string, _ string) error {
+	f.inboxActions = append(f.inboxActions, action+":"+id+":"+mailbox)
 	return nil
 }
 func (f *fakeMailClient) SaveDraft(_ context.Context, d imapadapter.DraftMessage) error {

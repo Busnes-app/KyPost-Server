@@ -380,3 +380,29 @@ describe("webmail mailbox switcher", () => {
     expect(screen.queryByRole("combobox", { name: "Your mailboxes" })).toBeNull();
   });
 });
+
+// A KyCalendar task links to /read?flag=<ref> (docs/KYCALENDAR.md, Tasks).
+describe("flagged mail task link", () => {
+  it("opens the message in its own mailbox", async () => {
+    const inner = (globalThis.fetch as ReturnType<typeof vi.fn>).getMockImplementation() as (url: string, init: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url === "/api/mail/flags/r1") return json(200, { mailbox: TEAM, folder: "", messageId: "Team inbox" });
+      return inner(url, init);
+    }));
+    render(<MemoryRouter initialEntries={["/read?flag=r1"]}><App /></MemoryRouter>);
+    await screen.findByText("Team inbox", {}, { timeout: 5000 });
+    expect((await switcher()).selectedOptions[0]?.textContent).toBe("team-test@example.com");
+    expect(screen.queryByText("This message is no longer available.")).toBeNull();
+  });
+
+  it("says when the message is gone", async () => {
+    const inner = (globalThis.fetch as ReturnType<typeof vi.fn>).getMockImplementation() as (url: string, init: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url === "/api/mail/flags/r2") return json(404, { error: "This message is no longer available", code: "gone" });
+      return inner(url, init);
+    }));
+    render(<MemoryRouter initialEntries={["/read?flag=r2"]}><App /></MemoryRouter>);
+    expect(await screen.findByText("This message is no longer available.", {}, { timeout: 5000 })).toBeDefined();
+    expect((await switcher()).selectedOptions[0]?.textContent).toBe("me@example.com");
+  });
+});
