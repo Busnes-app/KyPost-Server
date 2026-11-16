@@ -393,17 +393,21 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 				if err := l.hit("routes-admitted"); err != nil {
 					return err
 				}
-				// One read for every fresh address: a failure publishes no
-				// fresh route for this mailbox, so all keep their previous one.
-				now, err := r.life.NativeAddresses()
-				if err != nil {
-					return err
-				}
+				// A failed read publishes no fresh route for this mailbox, so
+				// all keep their previous one.
+				admitted := []cfreceiving.Route{}
 				for _, address := range fresh {
-					if x := now[address]; x.State == "active" && x.Mailbox == id {
-						routes = append(routes, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: min(receivingLimits.MessageBytes, a.Limits.MessageBytes, cfreceiving.MaxMessageBytes), Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox})
-						added[address] = true
+					x, err := r.life.NativeAddress(address)
+					if err != nil {
+						return err
 					}
+					if x.State == "active" && x.Mailbox == id {
+						admitted = append(admitted, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: min(receivingLimits.MessageBytes, a.Limits.MessageBytes, cfreceiving.MaxMessageBytes), Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox})
+					}
+				}
+				for _, route := range admitted {
+					routes = append(routes, route)
+					added[route.Address] = true
 				}
 				return nil
 			})
