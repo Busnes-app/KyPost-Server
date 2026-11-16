@@ -403,7 +403,7 @@ republish trigger).
 | `WithNativeMailAccess` (receiving import, quarantine release) | ledger whole, plus k admissions | one `View`, k × (`Mailbox`, `Account`, `Directory`, `PrimaryAddress`) |
 | `NativeOutbound.withAuthority` (Queue/Send/Submit/Status/Pending/FileSent/Quarantine/Recover) | `NativeMailboxAssignment`, admission, `NativeAddresses`, `Directory`, all whole | admission plus `Address(from)`, `Directory` |
 | `NativeAssignmentForAddress` (`app/receiving.go`, `receiving_cloudflare.go`, per RCPT) | ledger whole | `Address`, `Mailbox`, `Account` |
-| `NativeAddresses()` in `app/receiving.go` `activeAddress`, `api/native_outbound.go` `nativeFrom`, `api/scheduled_send.go`, `receiving_cfcontinuous.go:392` | ledger whole | new `NativeAddress(address)` point method; the callers change by one line each |
+| `NativeAddresses()` in `app/receiving.go` `activeAddress` and `frozenAuthority` (every accept and import), `api/native_outbound.go` `nativeFrom`, `api/scheduled_send.go`, `receiving_cfcontinuous.go` `buildRoutes` | ledger whole | new `NativeAddress(address)` point method; the callers change by one line each |
 | `NativeMailboxAssignment` (receiving, quarantine, outbound) | ledger whole | `Mailbox`, `Account`, `PrimaryAddress` |
 | `cfChangeMark` | ledger `stat` | `Change()` (`meta.change`, +1 per mailbox/address commit), plus the blocks file `stat` as today |
 | `Directory()` (`api/native_signon.go`, `sso_handlers.go`, provisioning worker) | lifecycle whole | `Directory` row |
