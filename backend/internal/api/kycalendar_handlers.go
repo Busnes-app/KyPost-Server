@@ -197,6 +197,13 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 	if err != nil {
 		return refuse(http.StatusUnprocessableEntity, "bad_ics", err.Error())
 	}
+	if o := settings.OutOfOffice; req.Method == "REPLY" && !s.oooRemoteCommentAllowed(o) {
+		texts := []string{o.RemoteMessage}
+		for _, t := range o.CalendarRemoteTexts {
+			texts = append(texts, t.Text)
+		}
+		ics = stripRemoteOOOComment(ics, texts)
+	}
 	sender := strings.ToLower(envelopeFrom)
 	allowed := it.Attendees
 	if req.Method == "REPLY" {

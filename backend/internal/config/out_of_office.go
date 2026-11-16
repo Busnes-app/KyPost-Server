@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -33,6 +34,62 @@ type OutOfOffice struct {
 	Remote        string `yaml:"remote,omitempty" json:"remote"`
 	RemoteMessage string `yaml:"remoteMessage,omitempty" json:"remoteMessage"`
 	Period        string `yaml:"period,omitempty" json:"-"`
+	// CalendarAway shows the dated period as an out-of-office event in
+	// KyCalendar; CalendarTentative also answers new invitations TENTATIVE
+	// during it (docs/KYCALENDAR.md, Out of office).
+	CalendarAway      bool `yaml:"calendarAway,omitempty" json:"calendarAway"`
+	CalendarTentative bool `yaml:"calendarTentative,omitempty" json:"calendarTentative"`
+	// CalendarRemoteTexts are the remote comments KyCalendar may still hold:
+	// server-only, kept so a stale one can be refused at send time.
+	CalendarRemoteTexts []OOORemoteText `yaml:"calendarRemoteTexts,omitempty" json:"-"`
+}
+
+// OOORemoteText is a remote comment sent to KyCalendar, with the newest sync
+// revision that carried it and, once a newer state was applied, when.
+type OOORemoteText struct {
+	Text       string `yaml:"text"`
+	Revision   int64  `yaml:"revision"`
+	Superseded int64  `yaml:"superseded,omitempty"` // unix ms; 0 while KyCalendar may still use it
+}
+
+// MaxOOORemoteTexts bounds CalendarRemoteTexts; past it a sync carrying a new
+// text is refused rather than sent unrevocably.
+const MaxOOORemoteTexts = 32
+
+// OOORemoteRetention is how long a superseded text stays refused: KyCalendar
+// abandons an unsent REPLY 24 hours after building it (its outboxGiveUp),
+// plus an hour for clock skew.
+const OOORemoteRetention = 25 * time.Hour
+
+// NoteOOORemoteSent records that the sync at rev carries text, before it is
+// sent; false when the list is full.
+func NoteOOORemoteSent(list []OOORemoteText, text string, rev int64) ([]OOORemoteText, bool) {
+	for i := range list {
+		if list[i].Text == text {
+			list[i].Revision, list[i].Superseded = max(list[i].Revision, rev), 0
+			return list, true
+		}
+	}
+	if len(list) >= MaxOOORemoteTexts {
+		return list, false
+	}
+	return append(list, OOORemoteText{Text: text, Revision: rev}), true
+}
+
+// ForgetOOORemoteBefore marks superseded the texts no sync at or after rev
+// carried, once KyCalendar applied rev (it keeps only the newest revision, so
+// answers may arrive in any order), and drops those superseded longer than
+// OOORemoteRetention ago, when no queued REPLY can still carry them.
+func ForgetOOORemoteBefore(list []OOORemoteText, rev int64, now time.Time) []OOORemoteText {
+	ms := now.UnixMilli()
+	for i := range list {
+		if list[i].Revision < rev && list[i].Superseded == 0 {
+			list[i].Superseded = ms
+		}
+	}
+	return slices.DeleteFunc(list, func(t OOORemoteText) bool {
+		return t.Superseded != 0 && ms-t.Superseded > OOORemoteRetention.Milliseconds()
+	})
 }
 
 // RemoteMode is Remote with "" read as off.
@@ -64,7 +121,7 @@ func (o OutOfOffice) ActiveAt(now time.Time) bool {
 // while it is off the remote mode may still be stored, but turning the reply
 // on needs a text for a reply that would actually be sent.
 func NormalizeOutOfOffice(prev, next OutOfOffice, remoteAllowed bool) (OutOfOffice, error) {
-	out := OutOfOffice{Enabled: next.Enabled, Remote: next.RemoteMode()}
+	out := OutOfOffice{Enabled: next.Enabled, Remote: next.RemoteMode(), CalendarAway: next.CalendarAway, CalendarTentative: next.CalendarAway && next.CalendarTentative}
 	switch out.Remote {
 	case RemoteOff, RemoteOn, RemoteContacts:
 	default:
@@ -98,7 +155,7 @@ func NormalizeOutOfOffice(prev, next OutOfOffice, remoteAllowed bool) (OutOfOffi
 			return prev, errors.New("write the message before turning the reply on")
 		}
 	}
-	out.Period = prev.Period
+	out.Period, out.CalendarRemoteTexts = prev.Period, prev.CalendarRemoteTexts
 	if out.Enabled && (!prev.Enabled || out.Start != prev.Start || out.End != prev.End || out.Period == "") {
 		out.Period = rand.Text()
 	}

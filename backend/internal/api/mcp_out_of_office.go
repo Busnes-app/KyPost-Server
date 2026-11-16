@@ -22,7 +22,7 @@ type oooAgentView struct {
 }
 
 func (t mcpTools) oooAgentView(o config.OutOfOffice) oooAgentView {
-	v := t.s.oooView(o)
+	v := t.s.oooView(t.caller.user.ID, o)
 	return oooAgentView{Enabled: v.Enabled, Active: v.Active, Start: v.Start, End: v.End, TimeZone: v.TimeZone, LocalMessage: v.LocalMessage, Remote: v.Remote}
 }
 
@@ -45,7 +45,7 @@ type setOOOIn struct {
 // setOutOfOffice changes the reply for people inside the organisation. It
 // never touches the remote reply, and may not turn the reply on while the
 // remote one would go out with it.
-func (t mcpTools) setOutOfOffice(_ context.Context, _ *mcp.CallToolRequest, in setOOOIn) (*mcp.CallToolResult, oooAgentView, error) {
+func (t mcpTools) setOutOfOffice(ctx context.Context, _ *mcp.CallToolRequest, in setOOOIn) (*mcp.CallToolResult, oooAgentView, error) {
 	if !t.caller.canOrganize() {
 		return nil, oooAgentView{}, errors.New(msgReadOnly)
 	}
@@ -71,6 +71,7 @@ func (t mcpTools) setOutOfOffice(_ context.Context, _ *mcp.CallToolRequest, in s
 		}
 		return nil, oooAgentView{}, errors.New("settings unavailable")
 	}
+	t.s.syncOOOCalendar(ctx, t.caller.user.ID, saved)
 	t.log("out_of_office", "1", "0")
 	return nil, t.oooAgentView(saved), nil
 }

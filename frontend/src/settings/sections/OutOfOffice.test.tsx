@@ -8,7 +8,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const view = (patch = {}) => ({
   enabled: false, start: "", end: "", timeZone: "", localMessage: "", remote: "off", remoteMessage: "",
-  active: false, remoteAllowed: false, ...patch
+  calendarAway: false, calendarTentative: false,
+  active: false, remoteAllowed: false, calendarAvailable: false, ...patch
 });
 
 function stub(get: object, put?: (body: Record<string, unknown>) => Response) {
@@ -31,7 +32,7 @@ it("saves the reply with its period as instants", async () => {
   const body = JSON.parse(String(put?.[1]?.body));
   expect(body).toMatchObject({ enabled: true, end: "", localMessage: "Away until Monday.", remote: "off" });
   expect(body.start).toBe(new Date("2026-12-01T09:00").toISOString());
-  expect(Object.keys(body).sort()).toEqual(["enabled", "end", "localMessage", "remote", "remoteMessage", "start", "timeZone"]);
+  expect(Object.keys(body).sort()).toEqual(["calendarAway", "calendarTentative", "enabled", "end", "localMessage", "remote", "remoteMessage", "start", "timeZone"]);
 });
 
 it("hides the outside reply unless the administrator allows it", async () => {
@@ -68,4 +69,22 @@ it("the inbox bar stays hidden while the reply is off", async () => {
   render(<OutOfOfficeBar />);
   await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("offers KyCalendar only when it takes the period, and says when it did not", async () => {
+  stub(view({ localMessage: "Away" }));
+  render(<OutOfOffice />);
+  await screen.findByRole("button", { name: "Save automatic reply" });
+  expect(screen.queryByRole("checkbox", { name: /Show me as away in KyCalendar/ })).toBeNull();
+  cleanup();
+  const fetchMock = stub(view({ localMessage: "Away", calendarAvailable: true }), (b) => json(view({ ...b, calendarAvailable: true, calendarSync: "failed" })));
+  render(<OutOfOffice />);
+  const tentative = await screen.findByRole("checkbox", { name: /Answer new invitations Tentative/ });
+  expect((tentative as HTMLInputElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("checkbox", { name: /Show me as away in KyCalendar/ }));
+  fireEvent.click(tentative);
+  fireEvent.click(screen.getByRole("button", { name: "Save automatic reply" }));
+  expect(await screen.findByText(/KyCalendar did not take it/)).toBeTruthy();
+  const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+  expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({ calendarAway: true, calendarTentative: true });
 });
