@@ -7,6 +7,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/password"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -37,6 +38,8 @@ func TestMain(m *testing.M) {
 	// The drive reserve (5 GiB or more) would tie imports to the host's free
 	// space; tests that check it set their own disk.
 	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 1 << 50, 1 << 50, nil }
+	// As the api and daemon run: admissions share held mailbox handles.
+	mailbox.HoldAdmissionHandles(mailbox.MaxHeldAdmissions())
 	code := m.Run()
 	restoreIterations()
 	restoreParams()
