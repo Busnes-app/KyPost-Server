@@ -18,6 +18,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -167,6 +168,7 @@ func (s *Server) handleFlagRef(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mailbox unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	// This is pure generation/ID validation; it performs no mailbox or network lookup.
 	id, err := imapadapter.ResolveMessageReference(c, f.Message)
 	uid, convErr := strconv.Atoi(id)
 	if err != nil || convErr != nil {
@@ -259,13 +261,17 @@ func (s *Server) taskState(ctx context.Context, body []byte) (string, *itipRefus
 	// Access to an extra mailbox may have ended since the flag: then the message is gone for us.
 	if f.Mailbox != "" && f.Mailbox != u.ID {
 		if _, _, err := s.nativeMailboxAssignment(ctx, u.ID, f.Mailbox); err != nil {
-			return "gone", nil
+			if errors.Is(err, sso.ErrNativeMailboxUnknown) {
+				return "gone", nil
+			}
+			return "", errUnavailable
 		}
 	}
 	c, err := s.mailboxMailClient(u.ID, f.Mailbox)
 	if err != nil {
 		return "", errUnavailable
 	}
+	// This is pure generation/ID validation; it performs no mailbox or network lookup.
 	id, err := imapadapter.ResolveMessageReference(c, f.Message)
 	if err != nil {
 		return "gone", nil

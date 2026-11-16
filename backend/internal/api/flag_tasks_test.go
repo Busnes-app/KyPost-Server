@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +17,10 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // signedTo posts body to path, signed as eventType under secret.
@@ -303,5 +308,66 @@ func TestBulkFlagTaskSyncSharesDeadline(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func TestTaskStateUnavailableMailboxRemainsRetryable(t *testing.T) {
+	f := newKyCalFixture(t)
+	u, err := f.srv.users.PublishPreparedSSOUser(t.Context(), "native-task-user", "native-task-user", users.RoleUser, kycalIssuer, "native-task-sub", "native-task-user", "native@example.test", func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.UpdateUserSettings(f.srv.userSettingsPath(u.ID), func(s *config.UserSettings) error { on := true; s.KyCalendar = &on; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	// Native mode is unavailable: authority cannot currently be admitted. This is not absence.
+	ref, err := kycalendar.OpenFlags(f.srv.userStateDir(u.ID)).Put(kycalendar.Flag{Mailbox: "mbx-00000000-0000-4000-8000-000000000001", Folder: "INBOX", Message: "5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"sub": u.SSOSub, "issuer": kycalIssuer, "ref": ref, "done": true}
+	for range 2 {
+		rec := signedTo(t, f.srv, "/api/calendar/tasks/state", kycalendar.EventTaskState, "retry-mailbox", body)
+		if rec.Code != http.StatusServiceUnavailable || answerCode(rec) != "unavailable" {
+			t.Fatalf("unavailable or replay swallowed: %d %s", rec.Code, rec.Body)
+		}
+	}
+	flags, err := kycalendar.OpenFlags(f.srv.userStateDir(u.ID)).List()
+	if err != nil || len(flags) != 1 || flags[0].Cleared {
+		t.Fatalf("failure changed local mark: %+v %v", flags, err)
+	}
+}
+
+func TestTaskStateUnknownMailboxIsGone(t *testing.T) {
+	f := newKyCalFixture(t)
+	ref, err := kycalendar.OpenFlags(f.srv.userStateDir(f.userID)).Put(kycalendar.Flag{Mailbox: "mbx-00000000-0000-4000-8000-000000000001", Folder: "INBOX", Message: "5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"sub": "sub-1", "issuer": kycalIssuer, "ref": ref, "done": true}
+	rec := signedTo(t, f.srv, "/api/calendar/tasks/state", kycalendar.EventTaskState, "missing-mailbox", body)
+	if rec.Code != http.StatusOK || answerCode(rec) != "gone" {
+		t.Fatalf("missing: %d %s", rec.Code, rec.Body)
+	}
+}
+
+type unavailableFlagHeaders struct{ imapadapter.Client }
+
+func (c unavailableFlagHeaders) FetchHeaderFields(context.Context, string, []int, ...string) (map[int][]string, error) {
+	return nil, errors.New("temporary IMAP failure")
+}
+func TestFlagLinkHeaderFailureIsRetryable(t *testing.T) {
+	f := newKyCalFixture(t)
+	ref, err := kycalendar.OpenFlags(f.srv.userStateDir(f.userID)).Put(kycalendar.Flag{Folder: "INBOX", Message: "5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.userMail[f.userID].client = unavailableFlagHeaders{f.fake}
+	req := httptest.NewRequest(http.MethodGet, "/api/mail/flags/"+ref, nil)
+	authRequestAs(f.srv, req, f.userID)
+	rec := httptest.NewRecorder()
+	f.srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway || strings.Contains(rec.Body.String(), "gone") {
+		t.Fatalf("header failure: %d %s", rec.Code, rec.Body)
 	}
 }

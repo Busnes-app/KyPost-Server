@@ -336,6 +336,11 @@ the pair is up, the user's KyCalendar switch is on, the account has a live SSO l
   KyPost does not retry. The first failed sync stops further task-sync network work in that
   request; remaining local flags are still applied and recorded, with `failed` task outcomes.
 
+Mailbox-admission failures other than an unknown/foreign/disabled mailbox return 503 and
+release the event ID for retry. An unknown mailbox or stale native message reference is `gone`;
+reference validation itself does no I/O. Following a task link returns 502 on header-read
+failure, so temporary mail outages are not reported as deleted messages.
+
 **KyCalendar → KyPost, `kycalendar.task.state`.** KyCalendar sends `{sub, issuer, ref, done}`
 when such a task is completed, reopened or deleted on its web or over MCP (not from a CalDAV
 app). The route verifies like `itip/send` (event type, signature, replay guard; 404
