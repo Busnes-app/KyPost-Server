@@ -434,3 +434,59 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 	t.Fatal(what + ": timed out")
 }
+
+// Verify accepts a signed request once: a second delivery of the same event
+// ID is a replay until forgotten; a wrong event type or secret is refused.
+func TestVerifyReplayForget(t *testing.T) {
+	c := New(testPeer, nil, secretA, nil)
+	verify := func(secret []byte, eventType, id string) error {
+		body := []byte(`{"a":"b"}`)
+		h, err := syncauth.Sign(secret, time.Now(), eventType, id, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/x", nil)
+		h.Apply(r)
+		_, err = c.Verify(r, "peer.event", body)
+		return err
+	}
+	if err := verify(secretA, "peer.event", "ev-1"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if err := verify(secretA, "peer.event", "ev-1"); !errors.Is(err, syncauth.ErrReplay) {
+		t.Fatalf("replay: %v", err)
+	}
+	c.Forget("ev-1")
+	if err := verify(secretA, "peer.event", "ev-1"); err != nil {
+		t.Fatalf("after forget: %v", err)
+	}
+	if err := verify(secretA, "other.event", "ev-2"); err == nil {
+		t.Fatal("wrong event type accepted")
+	}
+	if err := verify(secretB, "peer.event", "ev-3"); !errors.Is(err, syncauth.ErrBadSignature) {
+		t.Fatalf("wrong secret: %v", err)
+	}
+	var off *Client
+	if _, err := off.Verify(httptest.NewRequest(http.MethodPost, "/x", nil), "peer.event", nil); !errors.Is(err, ErrOff) {
+		t.Fatalf("nil client: %v", err)
+	}
+	if FromKyIdentity(testPeer).Available() {
+		t.Fatal("a KyIdentity-only client is paired before Run")
+	}
+}
+
+func TestGuardExpiresAndBounds(t *testing.T) {
+	g := newGuard(time.Minute, 2)
+	now := time.Now()
+	if g.Check("a", now) != nil || g.Check("b", now) != nil {
+		t.Fatal("fresh IDs refused")
+	}
+	if !errors.Is(g.Check("c", now), syncauth.ErrReplayGuardFull) {
+		t.Fatal("full guard accepted a new ID")
+	}
+	g2 := newGuard(time.Minute, 1)
+	_ = g2.Check("old", now.Add(-2*time.Minute))
+	if g2.Check("new", now) != nil {
+		t.Fatal("expired ID still held its slot")
+	}
+}

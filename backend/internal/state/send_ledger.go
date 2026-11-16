@@ -98,3 +98,25 @@ func (s *Store) sendQuotaWait(ctx context.Context, userID string, recipients, me
 	}
 	return time.Duration(max(until-now, 1)) * time.Second, nil
 }
+
+// ClaimSend records id under userID once and reports whether this call made
+// the claim, so one delivery happens once across processes and restarts.
+// Claims count toward no quota and last a day; ReleaseSend drops one whose
+// send definitely did not happen.
+func (s *Store) ClaimSend(ctx context.Context, id, userID string, now int64) (bool, error) {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM send_ledger WHERE user_id=? AND at<=?`, userID, now-sendDay); err != nil {
+		return false, err
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO send_ledger(id,user_id,at,recipients) VALUES(?,?,?,0) ON CONFLICT(id) DO NOTHING`, id, userID, now)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// ReleaseSend forgets a claim, so a retry of its send is processed again.
+func (s *Store) ReleaseSend(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM send_ledger WHERE id=?`, id)
+	return err
+}

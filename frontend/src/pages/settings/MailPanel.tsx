@@ -5,6 +5,7 @@ import { CardDavClient } from "../../settings/sections/CardDavClient";
 import { Filters } from "../../settings/sections/Filters";
 import { MailStorage } from "../../settings/sections/MailStorage";
 import { KyCalendar } from "../../settings/sections/KyCalendar";
+import { KyPulse } from "../../settings/sections/KyPulse";
 import { ReadingPane } from "../../settings/sections/ReadingPane";
 import { Signatures } from "../../settings/sections/Signatures";
 import { OutOfOffice } from "../../settings/sections/OutOfOffice";
@@ -16,7 +17,7 @@ import { OutOfOffice } from "../../settings/sections/OutOfOffice";
  *
  * Import and export live under Security, behind its re-authentication.
  *
- * Tabbed rather than stacked — eight sections, each with its own save action,
+ * Tabbed rather than stacked — nine sections, each with its own save action,
  * is more than one scroll can present clearly.
  */
 export function MailPanel() {
@@ -24,7 +25,7 @@ export function MailPanel() {
     <section className="panel">
       <div className="config-header">
         <h2 className="visually-hidden">Mail</h2>
-        <p>Your mail server, where messages open, mailbox storage, the addresses you send as and their signatures, your out-of-office reply, KyCalendar invitations, contact sync and mailbox rules.</p>
+        <p>Your mail server, where messages open, mailbox storage, the addresses you send as and their signatures, your out-of-office reply, KyCalendar invitations, KyPulse alerts, contact sync and mailbox rules.</p>
       </div>
       <PanelTabs
         ariaLabel="Mail sections"
@@ -36,6 +37,7 @@ export function MailPanel() {
           { id: "signatures", label: "Signatures", body: <Signatures /> },
           { id: "out-of-office", label: "Out of office", body: <OutOfOffice /> },
           { id: "kycalendar", label: "KyCalendar", body: <KyCalendar /> },
+          { id: "kypulse", label: "KyPulse", body: <KyPulse /> },
           { id: "carddav-client", label: "CardDAV client", body: <CardDavClient /> },
           { id: "rules", label: "Mailbox rules", body: <Filters /> }
         ]}

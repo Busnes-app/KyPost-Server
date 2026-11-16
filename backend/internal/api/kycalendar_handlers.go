@@ -155,7 +155,7 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 			return f
 		}
 		deliver = func(wire, sent []byte) *itipRefusal {
-			return s.sendNativeITIP(ctx, u, mailboxID, envelopeFrom, recipients, wire, sent)
+			return s.sendNativeITIP(ctx, "kycalendar", u, mailboxID, envelopeFrom, recipients, wire, sent)
 		}
 	default:
 		payload, exists, err := s.outboundMailConfig(u.ID)
@@ -281,13 +281,17 @@ func (s *Server) nativeITIPMailbox(ctx context.Context, userID string, primary s
 	return mailboxID, nil
 }
 
-// sendNativeITIP sends through the native outbox, which files Sent. The
-// event ID is forgotten only when nothing went out and nothing will: the job
-// was never queued, or every delivery failed for good. Otherwise a retry of
-// the same event would queue a second copy.
-func (s *Server) sendNativeITIP(ctx context.Context, u users.User, mailboxID, from string, recipients []string, wire, sent []byte) *itipRefusal {
+// sendNativeITIP sends a suite feature's message (KyCalendar, KyPulse)
+// through the native outbox, which files Sent. The event ID is forgotten only
+// when nothing went out and nothing will: the job was never queued, or every
+// delivery failed for good. Otherwise a retry of the same event would queue a
+// second copy.
+func (s *Server) sendNativeITIP(ctx context.Context, feature string, u users.User, mailboxID, from string, recipients []string, wire, sent []byte) *itipRefusal {
 	raw, err := mailmsg.NormalizeSMTPMessage(wire)
 	if err != nil {
+		if feature != "kycalendar" {
+			return refuse(http.StatusBadRequest, "bad_body", "the message cannot be sent as mail")
+		}
 		return refuse(http.StatusUnprocessableEntity, "bad_ics", "the invitation cannot be sent as mail")
 	}
 	id, err := fsutil.NewUUIDv4()
@@ -309,7 +313,7 @@ func (s *Server) sendNativeITIP(ctx context.Context, u users.User, mailboxID, fr
 		if !first.SentSaved {
 			finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			if sender.FileSent(finish, mailboxID, id) != nil {
-				s.logger.Error("kycalendar send not saved to Sent", "correlation_id", id)
+				s.logger.Error(feature+" send not saved to Sent", "correlation_id", id)
 			}
 			cancel()
 		}
@@ -323,7 +327,7 @@ func (s *Server) sendNativeITIP(ctx context.Context, u users.User, mailboxID, fr
 	if statuses, _, err := sender.Status(context.WithoutCancel(ctx), mailboxID, id); err == nil && len(statuses) > 0 {
 		f.keep = slices.ContainsFunc(statuses, func(st mailbox.OutboundStatus) bool { return st.State != "failed" || st.NextAttempt != 0 })
 	}
-	s.logger.Info("kycalendar native send not confirmed", "correlation_id", id)
+	s.logger.Info(feature+" native send not confirmed", "correlation_id", id)
 	return f
 }
 

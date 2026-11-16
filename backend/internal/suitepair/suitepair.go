@@ -1,6 +1,7 @@
 // Package suitepair is one KyPost ↔ suite-app pairing (docs/KYCALENDAR.md
 // "Pairing"): the environment's URL and secret file, or KyIdentity's suite
-// directory, and the signed client for KyPost → peer requests.
+// directory, the signed client for KyPost → peer requests, and the
+// receiver's replay guard for peer → KyPost requests.
 //
 // ponytail: internal/kycalendar and internal/kydrive still carry their own
 // copies of this pairing; fold them into this package in a change of their own.
@@ -19,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,10 +49,11 @@ type Peer struct {
 // Client signs requests to the peer. It is paired by the environment for the
 // life of the process, or through KyIdentity by Run.
 type Client struct {
-	peer Peer
-	link atomic.Pointer[link]
-	http *http.Client
-	dir  *directory // nil when the environment paired it
+	peer   Peer
+	link   atomic.Pointer[link]
+	http   *http.Client
+	replay *guard
+	dir    *directory // nil when the environment paired it
 }
 
 type link struct {
@@ -112,9 +115,15 @@ func New(p Peer, base *url.URL, secret []byte, rt http.RoundTripper) *Client {
 	return c
 }
 
+// FromKyIdentity returns a Client that only Run pairs, through KyIdentity,
+// for a peer that only calls KyPost. KyPost never dials it, so a private
+// address is allowed; loopback and link-local stay refused.
+func FromKyIdentity(p Peer) *Client { return newDirectoryClient(p, true) }
+
 func newClient(p Peer, rt http.RoundTripper) *Client {
 	return &Client{
-		peer: p,
+		peer:   p,
+		replay: newGuard(syncauth.DefaultWindow, 100000),
 		http: &http.Client{
 			Transport: &netguard.BoundedTransport{Base: rt, Limit: maxResponseBytes},
 			Timeout:   30 * time.Second,
@@ -233,4 +242,77 @@ func Outcome(body []byte) string {
 		return ""
 	}
 	return out
+}
+
+// Verify checks a request the peer sent to the route for eventType. A signed
+// request whose event ID was already accepted returns its event and an error
+// wrapping syncauth.ErrReplay: answer 2xx without acting again. A bad
+// signature asks Run to re-resolve the pairing, like Post's. Nil-safe.
+func (c *Client) Verify(r *http.Request, eventType string, body []byte) (syncauth.Event, error) {
+	if c == nil {
+		return syncauth.Event{}, ErrOff
+	}
+	l := c.link.Load()
+	if l == nil {
+		return syncauth.Event{}, ErrOff
+	}
+	h := syncauth.FromRequest(r)
+	if h.EventType != eventType {
+		return syncauth.Event{}, errors.New("event type does not match the route")
+	}
+	ev, err := syncauth.Verify(l.secret, h, body, syncauth.Options{Replay: c.replay})
+	if errors.Is(err, syncauth.ErrReplay) {
+		ev = syncauth.Event{Type: h.EventType, ID: h.EventID}
+	}
+	if errors.Is(err, syncauth.ErrBadSignature) {
+		c.Refresh()
+	}
+	return ev, err
+}
+
+// Forget lets the sender's retry of eventID run again: the attempt it names
+// was refused or failed before anything was stored for sending.
+func (c *Client) Forget(eventID string) { c.replay.forget(eventID) }
+
+// guard is syncauth's bounded in-memory replay guard plus forget. A restart
+// forgets everything, which the signature's window bounds.
+type guard struct {
+	mu     sync.Mutex
+	window time.Duration
+	max    int
+	seen   map[string]time.Time
+	order  []string
+}
+
+func newGuard(window time.Duration, max int) *guard {
+	return &guard{window: window, max: max, seen: map[string]time.Time{}}
+}
+
+func (g *guard) Check(id string, at time.Time) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	cutoff := time.Now().Add(-g.window)
+	for len(g.order) > 0 {
+		if t, ok := g.seen[g.order[0]]; ok && t.After(cutoff) {
+			break
+		} else if ok {
+			delete(g.seen, g.order[0])
+		}
+		g.order = g.order[1:]
+	}
+	if _, ok := g.seen[id]; ok {
+		return syncauth.ErrReplay
+	}
+	if len(g.order) >= g.max {
+		return syncauth.ErrReplayGuardFull
+	}
+	g.seen[id] = at
+	g.order = append(g.order, id)
+	return nil
+}
+
+func (g *guard) forget(id string) {
+	g.mu.Lock()
+	delete(g.seen, id)
+	g.mu.Unlock()
 }
