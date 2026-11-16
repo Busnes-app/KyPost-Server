@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 
@@ -79,6 +80,13 @@ func TestKyMessageStatus(t *testing.T) {
 	// The signed body names the caller and organisation subjects only: never an address.
 	if len(c.bodies) != 1 || fmt.Sprint(c.bodies[0]["subs"]) != "[s-bob s-cy s-dee]" || c.bodies[0]["sub"] != "sub-ann" || c.bodies[0]["issuer"] != f.issuer || len(c.bodies[0]) != 3 {
 		t.Fatalf("sent %v", c.bodies)
+	}
+	// Cached per caller: KyMessages decides per caller, so ann's answer never serves anyone else.
+	if _, hit := f.srv.kymessageStatus.get(f.ann.ID, "s-bob", time.Now()); !hit {
+		t.Fatal("ann's answer was not cached")
+	}
+	if _, hit := f.srv.kymessageStatus.get("someone-else", "s-bob", time.Now()); hit {
+		t.Fatal("ann's cached answer serves another caller")
 	}
 	// Answers are kept a minute.
 	f.call(t, f.ann, "/api/kymessage/status", `{"addresses":["bob@example.com"]}`)
