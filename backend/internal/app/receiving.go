@@ -476,9 +476,14 @@ func (r *receivingRuntime) frozenAuthority(ctx context.Context, shared bool, d i
 			}
 			return ingress.ErrRoute
 		}
-		addresses, err := r.life.NativeAddresses()
-		if err != nil {
-			return err
+		// Keyed reads, all before any route refresh: the fence holds writers.
+		addresses := make(map[string]sso.NativeAddress, len(d.Bindings))
+		for _, b := range d.Bindings {
+			x, err := r.life.NativeAddress(b.Address)
+			if err != nil {
+				return err
+			}
+			addresses[b.Address] = x
 		}
 		for _, b := range d.Bindings {
 			a, x := current[b.Mailbox], addresses[b.Address]
