@@ -95,3 +95,49 @@ function onOrigin(raw: string, origin: string): boolean {
     return false;
   }
 }
+
+/** A colleague's coarse status from KyMessages (KyMessages docs/PRESENCE.md). */
+export type PresenceState = "available" | "busy" | "in_a_meeting" | "away" | "out_of_office" | "unknown";
+export type Presence = { state: PresenceState; until?: string };
+
+const LABELS: Record<PresenceState, string> = {
+  available: "Available",
+  busy: "Busy",
+  in_a_meeting: "In a meeting",
+  away: "Away",
+  out_of_office: "Out of office",
+  unknown: "Status unknown"
+};
+
+/** "In a meeting until 15:00", "Out of office until 5 Dec": words always carry the meaning. */
+export function statusText(p: Presence, now = new Date()): string {
+  const label = LABELS[p.state] ?? LABELS.unknown;
+  const until = p.until ? new Date(p.until) : null;
+  if (!until || Number.isNaN(until.getTime())) return label;
+  if (p.state === "in_a_meeting") return `${label} until ${until.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  if (p.state === "out_of_office") {
+    const year = until.getFullYear() === now.getFullYear() ? {} : { year: "numeric" as const };
+    return `${label} until ${until.toLocaleDateString([], { day: "numeric", month: "short", ...year })}`;
+  }
+  return label;
+}
+
+/** Status of the organisation people among addresses (at most 50); {} on any failure. */
+export async function statusOf(addresses: string[]): Promise<Record<string, Presence>> {
+  const list = [...new Set(addresses.map((a) => a.trim().toLowerCase()).filter((a) => a.includes("@")))].slice(0, 50);
+  if (list.length === 0) return {};
+  try {
+    const { people } = await postJSON<{ people?: unknown }>("/api/kymessage/status", { addresses: list });
+    const out: Record<string, Presence> = {};
+    if (Array.isArray(people)) {
+      for (const p of people) {
+        if (typeof p?.address === "string" && typeof p?.state === "string" && p.state in LABELS) {
+          out[p.address.toLowerCase()] = { state: p.state, until: typeof p.until === "string" ? p.until : undefined };
+        }
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}

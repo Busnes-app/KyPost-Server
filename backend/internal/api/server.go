@@ -279,15 +279,17 @@ type Server struct {
 	kycal         *kycalendar.Client
 	kydrive       *kydrive.Client
 	kymessage     *suitepair.Client
-	suiteApps     sync.Map // user ID -> suiteAppsEntry
-	suitePeople   suitePeopleCache
-	driveStatuses sync.Map // user ID -> driveStatusEntry
-	aiDisabled    bool
-	ssoLifecycle  *sso.LifecycleStore
-	ollamaMu      sync.Mutex
-	ollamaStatus  ollamaVersionStatus
-	serverMu      sync.Mutex
-	serverStatus  serverVersionStatus
+	// kymessageStatus caches colleagues' status from KyMessages for a minute.
+	kymessageStatus statusCache
+	suiteApps       sync.Map // user ID -> suiteAppsEntry
+	suitePeople     suitePeopleCache
+	driveStatuses   sync.Map // user ID -> driveStatusEntry
+	aiDisabled      bool
+	ssoLifecycle    *sso.LifecycleStore
+	ollamaMu        sync.Mutex
+	ollamaStatus    ollamaVersionStatus
+	serverMu        sync.Mutex
+	serverStatus    serverVersionStatus
 
 	// releaseFloorLogged names subjects whose floor refusal was already logged.
 	releaseFloorLogged sync.Map
@@ -703,6 +705,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/kydrive/view-attachment", s.withMailAuth(s.withMailbox(s.handleKyDriveViewAttachment)))
 	mux.HandleFunc("POST /api/kymessage/people", s.withMailAuth(s.handleKyMessagePeople))
 	mux.HandleFunc("POST /api/kymessage/chat", s.withMailAuth(s.handleKyMessageChat))
+	mux.HandleFunc("POST /api/kymessage/status", s.withMailAuth(s.handleKyMessageStatus))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
 	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))

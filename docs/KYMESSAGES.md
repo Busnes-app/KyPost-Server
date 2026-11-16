@@ -79,6 +79,7 @@ inactive, or `kymessage-chat` is not in the user's suite app list.
 |---|---|---|
 | `POST /api/kymessage/people` | `{addresses}` (1 to 100; any that is not a bare address is skipped) | 200 `{inside}` |
 | `POST /api/kymessage/chat` | `{address}` (one bare address) | 200 `{url}` |
+| `POST /api/kymessage/status` | `{addresses}` (1 to 50; non-bare ones skipped; more is 400 `too_many`) | 200 `{people:[{address,state,until?}]}` |
 
 - `people` resolves the addresses with `suitedir.Resolve` under the session's
   subject and answers, lowercased, the ones that are people in the
@@ -105,6 +106,24 @@ inactive, or `kymessage-chat` is not in the user's suite app list.
   name or URL.
 - Chat says who an address belongs to in the organisation, not who sent the
   message: a forged From still opens a chat with the address's real owner.
+
+## Status
+
+Colleagues' coarse status from KyMessages (owner request 2026-11-15; KyMessages
+`docs/PRESENCE.md` owns the contract). `status` resolves the addresses with
+`suitedir.Resolve` like `people`, then posts `kypost.presence.lookup` to
+`POST /api/suite/presence/lookup` with `{"sub","issuer","subs"}`: subjects only, never an
+address. Answers are cached by subject for 60 seconds (`statusCache`), so a lookup asks
+KyMessages only for subjects not seen in the last minute. States are `available`, `busy`,
+`in_a_meeting`, `away`, `out_of_office` and `unknown` (anything else reads unknown); `until`
+comes only with `in_a_meeting` and `out_of_office`. Only organisation people are answered.
+KyMessages unreachable or refusing: 502 `kymessage_unavailable`. The recipient autocomplete
+shows a dot and the words ("In a meeting until 15:00") under each organisation suggestion;
+colour never carries the meaning alone.
+
+Not built yet: KyPost's out-of-office push (`kypost.presence.ooo`, `POST
+/api/suite/presence/out-of-office` on KyMessages). It waits for the KyCalendar
+out-of-office tie to land.
 
 ## Web client
 

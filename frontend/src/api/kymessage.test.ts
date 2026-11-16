@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chatOrigin, forgetChatPeople, isChatPerson, openChat } from "./kymessage";
+import { chatOrigin, forgetChatPeople, isChatPerson, openChat, statusText } from "./kymessage";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const fetchMock = vi.fn<typeof fetch>();
@@ -77,5 +77,15 @@ describe("openChat", () => {
       expect(tab.close).toHaveBeenCalled();
       expect(tab.location.replace).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("statusText", () => {
+  it("names every state and gives meetings and out-of-office their end", () => {
+    const end = new Date(2026, 10, 16, 15, 30);
+    expect(statusText({ state: "in_a_meeting", until: end.toISOString() })).toBe(`In a meeting until ${end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    expect(statusText({ state: "out_of_office", until: end.toISOString() }, new Date(2026, 10, 1))).toMatch(/^Out of office until .*16/);
+    expect(statusText({ state: "busy" })).toBe("Busy");
+    expect(statusText({ state: "unknown" })).toBe("Status unknown");
   });
 });
