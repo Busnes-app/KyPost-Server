@@ -121,9 +121,14 @@ KyMessages unreachable or refusing: 502 `kymessage_unavailable`. The recipient a
 shows a dot and the words ("In a meeting until 15:00") under each organisation suggestion;
 colour never carries the meaning alone.
 
-Not built yet: KyPost's out-of-office push (`kypost.presence.ooo`, `POST
-/api/suite/presence/out-of-office` on KyMessages). It waits for the KyCalendar
-out-of-office tie to land.
+**Out-of-office.** Every save of the out-of-office reply (the web, an agent through MCP)
+also posts `kypost.presence.ooo` to KyMessages' `POST /api/suite/presence/out-of-office`
+(`syncOOOMessages`, `api/kymessage_ooo.go`) while KyMessages is paired and the account is
+active with a live SSO link: `{"sub","issuer","revision","away":true,"start","end"}` (RFC 3339
+UTC) while the reply is on with both dates, else `{"sub","issuer","revision","away":false}`.
+Never the reply text. The user's "Show my status to colleagues" switch lives in KyMessages,
+which drops the state when it is off. Best effort: a failure is logged (user ID and result
+only) and the next save sends it again; it never blocks the save.
 
 ## Web client
 

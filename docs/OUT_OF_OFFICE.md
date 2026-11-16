@@ -168,6 +168,10 @@ office").
   is on, both dates are set and `calendarAway` is ticked. Saves come from the web, the inbox
   Turn off and the MCP agent. The PUT answer's `calendarSync` is `synced` or `failed`, and the
   web says so. The next save sends again; nothing retries in the background.
+- **KyMessages status:** the same saves also tell a paired KyMessages whether the user is out of
+  office and for when (`kypost.presence.ooo`, [KYMESSAGES.md](KYMESSAGES.md#status)): `away` while
+  the reply is on with both dates, independent of `calendarAway`. Never the reply text. Colleagues
+  then see "Out of office until <date>" unless the user turned status sharing off in KyCalendar.
 - KyCalendar keeps one integration-owned `TRANSP:OPAQUE` out-of-office event and, when asked,
   answers new invitations TENTATIVE with `comment_local`, or with `comment_remote`. KyPost
   sends `comment_remote` only while its remote reply goes to everyone and the administrator
