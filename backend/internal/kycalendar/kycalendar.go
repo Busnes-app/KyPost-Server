@@ -34,6 +34,10 @@ const (
 	EventInbound = "kypost.itip.inbound"
 	EventRespond = "kypost.itip.respond"
 	EventOOO     = "kypost.ooo.set"
+	// EventTaskFlag: the user flagged or unflagged a message (KyCalendar's task follows).
+	EventTaskFlag = "kypost.task.flag"
+	// EventTaskState: KyCalendar's task for a flagged message was completed, reopened or deleted.
+	EventTaskState = "kycalendar.task.state"
 )
 
 // MinSecretBytes is the shortest shared secret accepted, after trimming.

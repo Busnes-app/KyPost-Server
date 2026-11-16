@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"compress/gzip"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -132,10 +133,14 @@ type Server struct {
 	// redeemed under. Held here, built once in NewServer, because its key is a
 	// file in SECRET_DIR and neither users.Store nor a per-request path should
 	// be reading one — see mfa.NewRecoveryCodeDigester.
-	recoveryCodeDigest  func(string) string
-	sessions            map[string]Session
-	mfaChallenges       *mfa.Store
-	pairingSecret       string
+	recoveryCodeDigest func(string) string
+	sessions           map[string]Session
+	mfaChallenges      *mfa.Store
+	pairingSecret      string
+	// relayIdentity signs the TLS pin a device rolls over to; nil disables it.
+	// See relay_identity.go.
+	relayIdentity       ed25519.PrivateKey
+	tlsPinLimiter       *keyedLimiter
 	serverBaseURL       string
 	baseURLFallbackWarn sync.Once
 	pairingBaseURLWarn  sync.Once
@@ -373,6 +378,8 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 	// See resolvePairingSecret.
 	pairingSecretKeyPath := config.SecretFile("PAIRING_SECRET_FILE", "pairing.key")
 	pairingSecret := resolvePairingSecret(pairingSecretKeyPath, logger)
+	// Never rotated: devices hold its public half. Replicas must share SECRET_DIR.
+	relayIdentity := loadRelayIdentity(config.SecretFile("RELAY_IDENTITY_KEY_FILE", "relay-identity.key"), logger)
 
 	// Same key file the TOTP secrets are sealed under, and for the same reason:
 	// both are second-factor material that must not be usable from a copy of
@@ -484,6 +491,8 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		kydriveLimiter:           newKeyedLimiter(kydriveBurst, kydriveRefillPerSec),
 		kymessageLimiter:         newKeyedLimiter(kymessageBurst, kymessageRefillPerSec),
 		pushPollLimiter:          newKeyedLimiter(pushPollBurst, pushPollRefillPerSec),
+		tlsPinLimiter:            newKeyedLimiter(tlsPinRateBurst, tlsPinRefillPerSec),
+		relayIdentity:            relayIdentity,
 		loginParamsLimiter:       newKeyedLimiter(loginParamsBurst, loginParamsRefillPerSec),
 		deviceRescan:             newKeyedLimiter(1, 1/deviceRescanInterval.Seconds()),
 		mfaPushLimiter:           newMfaPushLimiter(),
@@ -696,6 +705,9 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sync/hr-mailbox", withTokenAuth(s.handleHRMailbox))
 	mux.HandleFunc("POST /api/calendar/itip/send", withPublicRoute(s.handleITIPSend))
 	mux.HandleFunc("POST /api/calendar/rsvp", s.withMailAuth(s.withMailbox(s.handleCalendarRSVP)))
+	mux.HandleFunc("POST /api/calendar/tasks/state", withPublicRoute(s.handleTaskState))
+	mux.HandleFunc("GET /api/mail/flags", s.withMailAuth(s.withMailbox(s.handleListFlags)))
+	mux.HandleFunc("GET /api/mail/flags/{ref}", s.withMailAuth(s.handleFlagRef))
 	mux.HandleFunc("GET /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
 	mux.HandleFunc("PUT /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
 	mux.HandleFunc("POST /api/suite/kypulse/alert", withPublicRoute(s.handleKyPulseAlert))
@@ -966,6 +978,7 @@ func (s *Server) routesNotifications(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/notifications/native/unpair", s.withAuth(s.handleNotificationNativeUnpair))
 	mux.HandleFunc("POST /api/notifications/native/deregister", withDeviceAuth(s.handleNotificationNativeDeregister))
 	mux.HandleFunc("POST /api/notifications/native/refresh", withDeviceAuth(s.handleNotificationNativeRefresh))
+	mux.HandleFunc("GET /api/notifications/native/tls-pin", withPublicRoute(s.withTLSPinRateLimit(s.handleNativeTLSPin)))
 	mux.HandleFunc("PUT /api/notifications/native/mode", s.withAuth(s.handleNotificationNativeMode))
 	mux.HandleFunc("GET /api/notifications/native/pull", withDeviceAuth(s.handleNotificationNativePull))
 }

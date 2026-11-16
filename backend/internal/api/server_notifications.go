@@ -692,7 +692,7 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, s.withRelayIdentity(map[string]any{
 		"ok":           true,
 		"synced":       true,
 		"status":       "approved",
@@ -702,7 +702,7 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 		"deliveryMode": store.NativeDeliveryMode(),
 		"pullEndpoint": s.nativeEndpoint("/api/notifications/native/pull"),
 		"transport":    transport,
-	})
+	}))
 }
 
 // persistNativeDevice writes device to ownerID's account and returns the id it
@@ -998,7 +998,7 @@ func (s *Server) handleNotificationNativeRefresh(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deviceId": device.DeviceID, "transport": transport})
+	writeJSON(w, http.StatusOK, s.withRelayIdentity(map[string]any{"ok": true, "deviceId": device.DeviceID, "transport": transport}))
 }
 
 // handleNotificationNativeMode switches native delivery between the relay-backed

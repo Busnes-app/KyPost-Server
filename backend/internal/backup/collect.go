@@ -51,7 +51,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	var empty recoveryclient.Payload
 	// Individual secret overrides must remain at their canonical location. A
 	// capsule cannot reproduce an arbitrary host mount on a different machine.
-	for env, name := range map[string]string{"IMAP_CONFIG_KEY_FILE": "imap-config.key", "TOTP_SECRET_KEY_FILE": "totp-secret.key", "PGP_PRIVATE_KEY_FILE": "pgp-private-key.key", "PICKUP_STORE_KEY_FILE": "pickup-store.key", "PAIRING_SECRET_FILE": "pairing.key", "POW_SECRET_FILE": "pow.key", "PUSH_RELAY_KEY_FILE": "push_relay_key", "APNS_RELAY_KEY_FILE": "apns_relay_key"} {
+	for env, name := range map[string]string{"IMAP_CONFIG_KEY_FILE": "imap-config.key", "TOTP_SECRET_KEY_FILE": "totp-secret.key", "PGP_PRIVATE_KEY_FILE": "pgp-private-key.key", "PICKUP_STORE_KEY_FILE": "pickup-store.key", "PAIRING_SECRET_FILE": "pairing.key", "POW_SECRET_FILE": "pow.key", "RELAY_IDENTITY_KEY_FILE": "relay-identity.key", "PUSH_RELAY_KEY_FILE": "push_relay_key", "APNS_RELAY_KEY_FILE": "apns_relay_key"} {
 		if path := strings.TrimSpace(os.Getenv(env)); path != "" && filepath.Clean(path) != filepath.Join(s.dirs.Secret, name) {
 			return empty, fmt.Errorf("backup does not support %s outside its default SECRET_DIR location; restore the standard layout before backing up", env)
 		}
