@@ -536,6 +536,10 @@ type Store struct {
 	cachedMod  time.Time
 	cachedSize int64
 	cacheValid bool
+	// currentRaw is the bytes WithCurrentUsers last decoded into current;
+	// identical bytes decode identically, so no stamp is trusted. Guarded by mu.
+	currentRaw []byte
+	current    []User
 }
 
 // userIndex resolves a lookup key to a position in usersFile.Users, replacing
@@ -788,17 +792,24 @@ func (s *Store) WithCurrentUsers(ctx context.Context, action func([]User) error)
 		return err
 	}
 	defer release()
-	f, err := s.readFileUnlocked()
+	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return err
 	}
-	if f.Version != 1 || ctx.Err() != nil {
-		if err := ctx.Err(); err != nil {
+	if s.currentRaw == nil || !bytes.Equal(b, s.currentRaw) {
+		var f usersFile
+		if err := json.Unmarshal(b, &f); err != nil {
 			return err
 		}
-		return errors.New("unsupported account authority version")
+		if f.Version != 1 {
+			return errors.New("unsupported account authority version")
+		}
+		s.currentRaw, s.current = b, f.Users
 	}
-	return action(f.Users)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return action(slices.Clone(s.current))
 }
 
 // withWriteLock is fsutil.WithFileLock through the gate, so a stream of
