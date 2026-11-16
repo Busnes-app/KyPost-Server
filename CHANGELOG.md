@@ -18,6 +18,10 @@ non-prerelease version.
 
 ## Unreleased
 
+### Documentation
+
+- Link the published KyPost mdBook server/client manual from the README.
+
 ### Added
 
 - Open mail attachments in Euro-Office, like Outlook on the web: a received
