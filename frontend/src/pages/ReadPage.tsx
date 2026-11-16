@@ -24,10 +24,11 @@ import { mailboxName, useMailboxes } from "../app/mailboxes";
 import { standardMailboxKind } from "../app/mailboxKind";
 import type { DraftComposePayload } from "../app/types";
 import { PageTabs } from "../components/PageTabs";
-import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PaperclipIcon, PlusIcon, PrintIcon, RefreshIcon, SearchIcon, TrashIcon, WarningIcon } from "./read/icons";
+import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon, FlagIcon, CloseIcon, ImageIcon, PaperclipIcon, PlusIcon, PrintIcon, RefreshIcon, SearchIcon, TrashIcon, WarningIcon } from "./read/icons";
 import { ListSplitter } from "./read/ListSplitter";
 import { useReadingPane } from "./read/readingPane";
 import { SnoozeDialog } from "./read/SnoozeDialog";
+import { FlagDialog } from "./read/FlagDialog";
 import { sortTime } from "../lib/snooze";
 
 import type {
@@ -206,6 +207,12 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   // The server's fixed snooze folder (adapters/imap/snooze.go).
   const isSnoozedMailbox = mailbox === "Snoozed";
   const [snoozeTarget, setSnoozeTarget] = useState<{ ids: string[]; fromReader: boolean } | null>(null);
+  // Messages flagged here (folder and ID), which KyCalendar may follow as tasks (docs/KYCALENDAR.md).
+  const [flagged, setFlagged] = useState<Set<string>>(() => new Set());
+  const [flagTarget, setFlagTarget] = useState<string[] | null>(null);
+  // KyCalendar follows this user's flags as tasks, so the Flag dialog says so.
+  const [flagTasks, setFlagTasks] = useState(false);
+  const flagKey = (folder: string, id: string) => `${folder}\n${id}`;
   // Wake time per row of the Snoozed folder, for its "until" label.
   const [snoozeUntil, setSnoozeUntil] = useState<Record<string, string>>({});
   // The mailbox the inbox listing actually used. loadInbox omits the parameter
@@ -749,6 +756,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   const allRowsSelected = pageRows.length > 0 && pageRows.every((row) => selectedMessageIds.includes(row.messageId));
   const updatedLabel = formatUpdatedLabel(lastLoadedAt, Date.now());
 
+  const allFlagged = selectedMessageIds.length > 0 && selectedMessageIds.every((id) => flagged.has(flagKey(mailbox, id)));
   const batchActions = [
     {
       key: "delete",
@@ -786,6 +794,13 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
       disabled: selectedMessageIds.length === 0 || actionLoading
     },
     {
+      key: "flag",
+      label: allFlagged ? "Clear flag" : "Flag",
+      icon: <FlagIcon />,
+      onClick: () => (allFlagged ? void applyInboxAction("unflag", selectedMessageIds) : setFlagTarget(selectedMessageIds)),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
       key: "print",
       label: "Print",
       icon: <PrintIcon />,
@@ -814,7 +829,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
           {item.preview ? <span className="inbox-snippet">{item.preview}</span> : null}
         </span>
         <time className="inbox-time" dateTime={item.atUtc} title={formatTimestamp(item.atUtc)}>
-          {formatInboxListTime(item.atUtc)}{snoozeBadge(item)}
+          {formatInboxListTime(item.atUtc)}{snoozeBadge(item)}{flagBadge(item)}
         </time>
       </button>
     );
@@ -829,6 +844,22 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
         ? `until ${new Date(until).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
         : "";
     return text ? <span className="inbox-keyword-chip" style={{ marginLeft: 6 }}>{text}</span> : null;
+  }
+
+  // A failed flag list leaves the marks off; flagging still works.
+  const loadFlags = useEffectEvent(() => {
+    getJSON<{ flags: Array<{ folder: string; messageId: string }>; tasks?: boolean }>("/api/mail/flags").then(
+      (r) => {
+        setFlagged(new Set((r.flags ?? []).map((f) => flagKey(f.folder, f.messageId))));
+        setFlagTasks(r.tasks === true);
+      },
+      () => {}
+    );
+  });
+  useEffect(() => loadFlags(), []);
+
+  function flagBadge(item: InboxEmail) {
+    return flagged.has(flagKey(mailbox, item.messageId)) ? <span className="inbox-flag-mark"><FlagIcon />Flagged</span> : null;
   }
 
   function snooze(wakeAt: string) {
@@ -874,7 +905,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     return true;
   }
 
-  async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string; confirmed?: boolean }): Promise<boolean> {
+  async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string; due?: string; confirmed?: boolean }): Promise<boolean> {
     if (messageIds.length === 0 || actionLoading) return false;
     if (action === "delete" && !options?.confirmed && !confirmPermanentDelete(messageIds.length)) return false;
     setActionLoading(true);
@@ -884,13 +915,23 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
         action,
         messageIds,
         mailbox,
-        wakeAt: options?.wakeAt
+        wakeAt: options?.wakeAt,
+        due: options?.due || undefined
       });
       if (response.failed.length > 0) {
         const first = response.failed[0];
         throw new Error(first?.error || "some messages could not be updated");
       }
-      if (action === "snooze" && isSnoozedMailbox) {
+      if (action === "flag" || action === "unflag") {
+        setFlagged((current) => {
+          const next = new Set(current);
+          messageIds.forEach((id) => (action === "flag" ? next.add(flagKey(mailbox, id)) : next.delete(flagKey(mailbox, id))));
+          return next;
+        });
+        if (Object.values(response.tasks ?? {}).includes("failed")) {
+          setActionError(action === "flag" ? "Flagged, but KyCalendar could not make the task. Flag it again later." : "Flag cleared, but KyCalendar could not finish the task.");
+        }
+      } else if (action === "snooze" && isSnoozedMailbox) {
         // Re-snoozed in place: the rows stay, only their wake times moved.
         void loadInbox();
       } else if (action === "read" || action === "unread") {
@@ -1967,6 +2008,9 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                 {[
                   { id: "archive", label: "Archive", icon: <ArchiveIcon />, onClick: () => applyInboxAction("archive", [selected.messageId], { closeModal: true }) },
                   { id: "snooze", label: "Snooze", icon: <ClockIcon />, onClick: () => setSnoozeTarget({ ids: [selected.messageId], fromReader: true }) },
+                  flagged.has(flagKey(mailbox, selected.messageId))
+                    ? { id: "flag", label: "Clear flag", icon: <FlagIcon />, onClick: () => applyInboxAction("unflag", [selected.messageId]) }
+                    : { id: "flag", label: "Flag…", icon: <FlagIcon />, onClick: () => setFlagTarget([selected.messageId]) },
                   { id: "read", label: selected.status === "read" ? "Mark as unread" : "Mark as Read", icon: <CheckIcon />, onClick: () => applyInboxAction(selected.status === "read" ? "unread" : "read", [selected.messageId]) },
                   { id: "spam", label: "Mark as Spam", icon: <WarningIcon />, onClick: () => applyInboxAction("spam", [selected.messageId], { closeModal: true }) },
                   { id: "print", label: "Print", icon: <PrintIcon />, onClick: () => printEmails([selected]) },
@@ -2293,6 +2337,17 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
       </dialog>
       {selected ? null : <p className="reading-pane-empty">Select a message to read it here.</p>}
       </div>
+      <FlagDialog
+        open={flagTarget !== null}
+        busy={actionLoading}
+        tasks={flagTasks}
+        onFlag={(due) => {
+          const ids = flagTarget ?? [];
+          setFlagTarget(null);
+          void applyInboxAction("flag", ids, { due });
+        }}
+        onCancel={() => setFlagTarget(null)}
+      />
       <SnoozeDialog
         open={snoozeTarget !== null}
         busy={actionLoading}
