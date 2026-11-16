@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -199,5 +200,108 @@ func TestTaskStateOffWhenUnpaired(t *testing.T) {
 	rec := signedTo(t, srv, "/api/calendar/tasks/state", kycalendar.EventTaskState, "e", map[string]any{"sub": "s", "issuer": "i", "ref": "r", "done": true})
 	if rec.Code != http.StatusNotFound || answerCode(rec) != "kycalendar_off" {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+type flagTransport func(*http.Request) (*http.Response, error)
+
+func (f flagTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func flagAction(t *testing.T, f *kycalFixture, action string, ids []string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"action": action, "messageIds": ids, "mailbox": "INBOX"})
+	req := httptest.NewRequest(http.MethodPost, "/api/inbox/actions", bytes.NewReader(body))
+	authRequestAs(f.srv, req, f.userID)
+	rec := httptest.NewRecorder()
+	f.srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("action: %d %s", rec.Code, rec.Body)
+	}
+	return rec
+}
+func TestLocalFlagsSurviveWithoutTaskSync(t *testing.T) {
+	for _, mode := range []string{"switch off", "unpaired", "revoked link", "missing base URL"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newKyCalFixture(t)
+			f.srv.serverBaseURL = "https://mail.example.com"
+			base, _ := url.Parse("https://cal.example.com")
+			calls := 0
+			f.srv.SetKyCalendar(kycalendar.New(base, kycalSecret, flagTransport(func(*http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"outcome":"created"}`)), Header: make(http.Header)}, nil
+			})))
+			flagAction(t, f, "flag", []string{"5"})
+			switch mode {
+			case "switch off":
+				f.setEnabled(t, false)
+			case "unpaired":
+				f.srv.SetKyCalendar(nil)
+			case "revoked link":
+				if err := f.srv.users.RevokeSSOLink(f.userID); err != nil {
+					t.Fatal(err)
+				}
+			case "missing base URL":
+				f.srv.serverBaseURL = ""
+			}
+			list := func() []kycalendar.Flag {
+				flags, err := kycalendar.OpenFlags(f.srv.userStateDir(f.userID)).List()
+				if err != nil {
+					t.Fatal(err)
+				}
+				return flags
+			}
+			flagAction(t, f, "unflag", []string{"5"})
+			if flags := list(); len(flags) != 1 || !flags[0].Cleared {
+				t.Fatalf("stale unflag: %+v", flags)
+			}
+			flagAction(t, f, "flag", []string{"6"})
+			flags := list()
+			if len(flags) != 2 || flags[1].Cleared || flags[1].Message != "6" {
+				t.Fatalf("local-only flag lost: %+v", flags)
+			}
+			if calls != 1 {
+				t.Fatalf("task sync while unavailable: %d calls", calls)
+			}
+		})
+	}
+}
+func TestBulkFlagTaskSyncSharesDeadline(t *testing.T) {
+	for _, timeout := range []bool{false, true} {
+		t.Run(fmt.Sprintf("timeout=%t", timeout), func(t *testing.T) {
+			f := newKyCalFixture(t)
+			f.srv.serverBaseURL = "https://mail.example.com"
+			base, _ := url.Parse("https://cal.example.com")
+			calls := 0
+			f.srv.SetKyCalendar(kycalendar.New(base, kycalSecret, flagTransport(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if !timeout {
+					return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+				}
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			})))
+			start := time.Now()
+			rec := flagAction(t, f, "flag", []string{"5", "6", "7"})
+			if elapsed := time.Since(start); elapsed > flagTaskTimeout+2*time.Second {
+				t.Errorf("task sync multiplied deadline: %s", elapsed)
+			}
+			if calls != 1 || len(f.fake.headerFields) != 1 {
+				t.Errorf("continued network work: sends=%d headers=%v", calls, f.fake.headerFields)
+			}
+			var result struct {
+				Processed int
+				Tasks     map[string]string
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Processed != 3 || len(result.Tasks) != 3 {
+				t.Fatalf("lost actions: %s", rec.Body)
+			}
+			flags, err := kycalendar.OpenFlags(f.srv.userStateDir(f.userID)).List()
+			if err != nil || len(flags) != 3 {
+				t.Fatalf("lost local flags: %+v %v", flags, err)
+			}
+
+		})
 	}
 }

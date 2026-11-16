@@ -1264,6 +1264,13 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		MessageID string `json:"messageId"`
 		Error     string `json:"error"`
 	}
+	// One sync budget for the entire batch, including Subject lookups. Local mailbox
+	// actions and marks continue after it expires or the first peer failure.
+	taskCtx, cancelTasks := r.Context(), func() {}
+	if taskUser != nil {
+		taskCtx, cancelTasks = context.WithTimeout(taskCtx, flagTaskTimeout)
+	}
+	defer cancelTasks()
 	failures := make([]inboxActionFailure, 0)
 	processed := 0
 	var labelled []string
@@ -1298,8 +1305,15 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		processed++
-		if uid, convErr := strconv.Atoi(internalID); taskUser != nil && convErr == nil {
-			tasks[messageID] = s.flagTask(r.Context(), taskUser, mailClient, ac.Mailbox, mailbox, messageID, uid, action == "flag", due)
+		if action == "flag" || action == "unflag" {
+			uid, _ := strconv.Atoi(internalID)
+			outcome := s.flagTask(taskCtx, ac.UserID, taskUser, mailClient, ac.Mailbox, mailbox, messageID, uid, action == "flag", due)
+			if taskUser != nil || outcome == "failed" {
+				tasks[messageID] = outcome
+			}
+			if outcome == "failed" {
+				cancelTasks()
+			}
 		}
 		if action == "label" {
 			labelled = append(labelled, internalID)

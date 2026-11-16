@@ -65,15 +65,14 @@ func flagSubject(ctx context.Context, c imapadapter.Client, folder string, uid i
 
 // flagTask records one message flagged or unflagged in KyPost and tells KyCalendar, which makes,
 // updates or completes its task. It answers the outcome the client shows: KyCalendar's
-// (created, updated, completed, unchanged), "none" for an unflag with no task, or "failed".
+// (created, updated, completed, unchanged), "none" when no sync applies, or "failed".
 // A failure never undoes the flag.
-func (s *Server) flagTask(ctx context.Context, u *users.User, c imapadapter.Client, mailbox, folder, message string, uid int, flagged bool, due string) string {
-	flags := kycalendar.OpenFlags(s.userStateDir(u.ID))
+func (s *Server) flagTask(ctx context.Context, userID string, u *users.User, c imapadapter.Client, mailbox, folder, message string, uid int, flagged bool, due string) string {
+	flags := kycalendar.OpenFlags(s.userStateDir(userID))
 	var ref, subject string
 	var err error
 	if flagged {
 		ref, err = flags.Put(kycalendar.Flag{Mailbox: mailbox, Folder: folder, Message: message, Due: due})
-		subject = flagSubject(ctx, c, folder, uid)
 	} else {
 		ref, err = flags.Clear(mailbox, folder, message)
 	}
@@ -82,6 +81,16 @@ func (s *Server) flagTask(ctx context.Context, u *users.User, c imapadapter.Clie
 	}
 	if ref == "" {
 		return "none"
+	}
+	// Local marks follow the mailbox even when task sync is unavailable or exhausted.
+	if u == nil {
+		return "none"
+	}
+	if ctx.Err() != nil || uid <= 0 {
+		return "failed"
+	}
+	if flagged {
+		subject = flagSubject(ctx, c, folder, uid)
 	}
 	body := map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "ref": ref, "subject": subject,
 		"url": strings.TrimRight(s.serverBaseURL, "/") + "/read?flag=" + ref, "flagged": flagged}
@@ -92,8 +101,6 @@ func (s *Server) flagTask(ctx context.Context, u *users.User, c imapadapter.Clie
 	if err != nil {
 		return "failed"
 	}
-	ctx, cancel := context.WithTimeout(ctx, flagTaskTimeout)
-	defer cancel()
 	eventID := "kypost-flag-" + rid
 	status, answer, err := s.kycal.Post(ctx, flagTaskPath, kycalendar.EventTaskFlag, eventID, body)
 	outcome := kycalendar.Outcome(answer)
@@ -107,7 +114,7 @@ func (s *Server) flagTask(ctx context.Context, u *users.User, c imapadapter.Clie
 	return outcome
 }
 
-// handleListFlags lists the selected mailbox's messages flagged for KyCalendar tasks, for the
+// handleListFlags lists the selected mailbox's locally flagged messages, for the
 // web's flag marks.
 func (s *Server) handleListFlags(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)

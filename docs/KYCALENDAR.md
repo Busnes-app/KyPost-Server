@@ -307,7 +307,8 @@ makes a task in the user's KyCalendar Inbox list; finishing the task clears the 
 side calls the other back for a change the other made.
 
 **KyPost → KyCalendar, `kypost.task.flag`.** Sent once per message by `POST /api/inbox/actions`
-`flag` or `unflag` (web, list or reader), with a fresh event ID and a 5-second limit, while
+`flag` or `unflag` (web, list or reader), with a fresh event ID and one shared 5-second task-sync budget per request (including Subject
+lookups), while
 the pair is up, the user's KyCalendar switch is on, the account has a live SSO link and
 `SERVER_BASE_URL` is set:
 
@@ -319,7 +320,9 @@ the pair is up, the user's KyCalendar switch is on, the account has a live SSO l
 - `ref` is an opaque random reference KyPost records per message in the user's
   `$STATE_DIR/users/<id>/kycalendar-flags.json` (newest 2000): mailbox selector, folder, message
   reference, due date, and whether the flag was cleared. Flagging the same message again reuses
-  it, so KyCalendar updates one task.
+  it, so KyCalendar updates one task. Local flag/unflag actions maintain this record even when
+  unpaired, opted out, or without a live SSO link or server URL; only task synchronization is
+  gated by those prerequisites.
 - `subject` is the message's Subject header, decoded, on one line, without control characters,
   cut to 255 bytes. Never the body, the sender, the Message-ID or the attachments.
 - `url` is on `SERVER_BASE_URL`'s host. KyCalendar refuses a link on any other host than the one it
@@ -330,7 +333,8 @@ the pair is up, the user's KyCalendar switch is on, the account has a live SSO l
 - KyCalendar answers 200 `{outcome: created|updated|completed|unchanged}` or a refusal
   (`tasks_off` when the user turned it off there, `no_user`, `bad_body`, 429). Anything but 200
   is `failed` to the client; the flag stays set in KyPost and the web says the task was not made.
-  KyPost does not retry.
+  KyPost does not retry. The first failed sync stops further task-sync network work in that
+  request; remaining local flags are still applied and recorded, with `failed` task outcomes.
 
 **KyCalendar → KyPost, `kycalendar.task.state`.** KyCalendar sends `{sub, issuer, ref, done}`
 when such a task is completed, reopened or deleted on its web or over MCP (not from a CalDAV
