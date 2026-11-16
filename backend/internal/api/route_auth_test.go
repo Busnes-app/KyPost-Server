@@ -142,6 +142,7 @@ var publicRoutes = map[string]string{
 	"POST /api/notifications/review-pairing": "Play reviewer has no session; handler is disabled by default and verifies only the operator-named demo account or prefix",
 	"GET /api/auth/captcha-config":           "tells an anonymous browser which CAPTCHA widget to render",
 	"GET /api/auth/sso-config":               "tells an anonymous browser whether SSO login is enabled",
+	"GET /api/notifications/native/tls-pin":  "a device whose pinned leaf rotated has no trusted channel yet; returns only a signature over the relay's own served leaf, per-IP metered",
 	"GET /api/auth/oidc/login":               "initiates OIDC authorization flow before user is authenticated",
 	"POST /api/auth/oidc/backchannel-logout": "receives a signed logout token from the identity provider; the token is the credential",
 	"GET /auth/sso/login":                    "alias for OIDC authorization flow initialization",

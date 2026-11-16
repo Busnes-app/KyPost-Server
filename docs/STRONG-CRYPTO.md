@@ -26,6 +26,7 @@ administrator's request.
 | Master keys (`imap-config.key`, `totp-secret.key`, `pgp-private-key.key`, `pickup-store.key`, scheduled-send, domain-relay and bulk-backup keys) | 32 random bytes, generated in `SECRET_DIR` | A file that does not decode to exactly 32 bytes is refused, never overwritten (`backend/internal/cryptutil`). AES-256-GCM; HKDF-SHA256 subkeys. |
 | `PAIRING_SECRET` (HMAC-SHA256 for pickup links, device pairing, QR key exchange, native-restore evidence) | 32 random bytes in `pairing.key` | An operator value under 32 bytes is refused and the features stay off. |
 | `POW_SECRET` (proof-of-work CAPTCHA HMAC-SHA256) | 32 random bytes in `pow.key` | Under 16 bytes is refused; login CAPTCHA then fails closed. |
+| Relay identity (native TLS pin rollover signatures) | Ed25519 from a 32-byte random seed in `relay-identity.key` | No other algorithm or size is accepted; devices verify Ed25519 only. |
 | KyCalendar shared secret (`KYPOST_KYCALENDAR_SECRET_FILE`) | Operator-supplied | Under 32 bytes is refused at startup. |
 | OIDC ID tokens (browser sign-in, step-up, native sign-on) | Verified by `coreos/go-oidc`; RS/PS 256–512 and ES256–512 only, never HMAC | Every RSA key in the provider's JWKS must have at least 2048 modulus bits, or the whole set is refused and sign-in fails (`backend/internal/sso/jwks_strength.go`). |
 | OIDC back-channel logout tokens | `ky-primitives/oidcverify`, RS256 | RSA keys under 2048 bits are refused by `oidcverify`. |
