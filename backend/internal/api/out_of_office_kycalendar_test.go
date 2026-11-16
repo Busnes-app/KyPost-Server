@@ -196,11 +196,19 @@ func TestOutOfOfficeRemoteCommentChangedWhileKyCalendarDown(t *testing.T) {
 			t.Fatalf("stale %q mailed:\n%s", text, got)
 		}
 	}
-	// Once KyCalendar takes a state without a remote comment, nothing is kept.
+	// KyCalendar takes a state without a remote comment. A REPLY it built
+	// earlier and retries now still carries the old text, which stays refused
+	// until KyCalendar's outbox has given up on it.
 	status = http.StatusOK
 	save("off", "", "synced")
-	if o, err := f.srv.loadOutOfOffice(f.userID); err != nil || len(o.CalendarRemoteTexts) != 0 {
-		t.Fatalf("kept %v %v", o.CalendarRemoteTexts, err)
+	for i, text := range []string{"First text", "Second text"} {
+		if got := mailedReply(t, f, "ev-retry-"+strconv.Itoa(i), "COMMENT:"+text+"\r\n"); strings.Contains(got, text) {
+			t.Fatalf("retried %q mailed:\n%s", text, got)
+		}
+	}
+	o, err := f.srv.loadOutOfOffice(f.userID)
+	if err != nil || len(o.CalendarRemoteTexts) != 2 || o.CalendarRemoteTexts[0].Superseded == 0 || o.CalendarRemoteTexts[1].Superseded == 0 {
+		t.Fatalf("kept %+v %v", o.CalendarRemoteTexts, err)
 	}
 }
 

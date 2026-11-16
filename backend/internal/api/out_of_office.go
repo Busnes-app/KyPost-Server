@@ -108,7 +108,7 @@ func (s *Server) syncOOOCalendar(ctx context.Context, userID string, o config.Ou
 	}
 	if kycalendar.Outcome(answer) == "applied" {
 		_ = s.trackOOORemoteTexts(userID, func(l []config.OOORemoteText) []config.OOORemoteText {
-			return config.ForgetOOORemoteBefore(l, rev)
+			return config.ForgetOOORemoteBefore(l, rev, time.Now())
 		})
 	}
 	return "synced"

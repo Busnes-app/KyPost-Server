@@ -177,9 +177,11 @@ office").
   reply KyCalendar may still hold, unless the reply is on and active with both calendar boxes
   ticked and the remote reply goes to everyone with the administrator's permission
   (`stripRemoteOOOComment`). Those texts are the server-only `calendarRemoteTexts`, each with the
-  revision of the newest sync that carried it. They are added before each send, and an `applied`
-  answer for revision R forgets only those last carried before R. At most 32 are kept; past
-  that, a sync with a new text is refused, not sent.
+  revision of the newest sync that carried it. They are added before each send. An `applied`
+  answer for revision R marks superseded those last carried before R, and they are forgotten 25
+  hours later (`config.OOORemoteRetention`, past KyCalendar's 24-hour outbox give-up), so a REPLY
+  it retries meanwhile is still refused. At most 32 are kept; past that, a sync with a new text
+  is refused, not sent.
 - An agent's save keeps the calendar settings as they are.
 
 ## Not built

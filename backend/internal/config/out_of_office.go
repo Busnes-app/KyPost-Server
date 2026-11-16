@@ -45,22 +45,28 @@ type OutOfOffice struct {
 }
 
 // OOORemoteText is a remote comment sent to KyCalendar, with the newest sync
-// revision that carried it.
+// revision that carried it and, once a newer state was applied, when.
 type OOORemoteText struct {
-	Text     string `yaml:"text"`
-	Revision int64  `yaml:"revision"`
+	Text       string `yaml:"text"`
+	Revision   int64  `yaml:"revision"`
+	Superseded int64  `yaml:"superseded,omitempty"` // unix ms; 0 while KyCalendar may still use it
 }
 
 // MaxOOORemoteTexts bounds CalendarRemoteTexts; past it a sync carrying a new
 // text is refused rather than sent unrevocably.
 const MaxOOORemoteTexts = 32
 
+// OOORemoteRetention is how long a superseded text stays refused: KyCalendar
+// abandons an unsent REPLY 24 hours after building it (its outboxGiveUp),
+// plus an hour for clock skew.
+const OOORemoteRetention = 25 * time.Hour
+
 // NoteOOORemoteSent records that the sync at rev carries text, before it is
 // sent; false when the list is full.
 func NoteOOORemoteSent(list []OOORemoteText, text string, rev int64) ([]OOORemoteText, bool) {
 	for i := range list {
 		if list[i].Text == text {
-			list[i].Revision = max(list[i].Revision, rev)
+			list[i].Revision, list[i].Superseded = max(list[i].Revision, rev), 0
 			return list, true
 		}
 	}
@@ -70,11 +76,20 @@ func NoteOOORemoteSent(list []OOORemoteText, text string, rev int64) ([]OOORemot
 	return append(list, OOORemoteText{Text: text, Revision: rev}), true
 }
 
-// ForgetOOORemoteBefore drops the texts no sync at or after rev carried, once
-// KyCalendar applied rev: it keeps only the newest revision, so it can no
-// longer hold them. Answers may arrive in any order.
-func ForgetOOORemoteBefore(list []OOORemoteText, rev int64) []OOORemoteText {
-	return slices.DeleteFunc(list, func(t OOORemoteText) bool { return t.Revision < rev })
+// ForgetOOORemoteBefore marks superseded the texts no sync at or after rev
+// carried, once KyCalendar applied rev (it keeps only the newest revision, so
+// answers may arrive in any order), and drops those superseded longer than
+// OOORemoteRetention ago, when no queued REPLY can still carry them.
+func ForgetOOORemoteBefore(list []OOORemoteText, rev int64, now time.Time) []OOORemoteText {
+	ms := now.UnixMilli()
+	for i := range list {
+		if list[i].Revision < rev && list[i].Superseded == 0 {
+			list[i].Superseded = ms
+		}
+	}
+	return slices.DeleteFunc(list, func(t OOORemoteText) bool {
+		return t.Superseded != 0 && ms-t.Superseded > OOORemoteRetention.Milliseconds()
+	})
 }
 
 // RemoteMode is Remote with "" read as off.

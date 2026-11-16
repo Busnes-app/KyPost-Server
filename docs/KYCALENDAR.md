@@ -284,9 +284,13 @@ is written the way `kypost.itip.respond` writes it.
   calendar boxes are ticked, and the remote reply goes to everyone with the administrator's
   permission.
 - KyPost records each remote comment, with the revision of the newest sync carrying it, before
-  sending. An `applied` answer for revision R forgets only texts last carried before R, so
-  answers may arrive in any order. A text changed, cleared or turned off while KyCalendar was
-  unreachable is still refused.
+  sending. An `applied` answer for revision R marks superseded only the texts last carried
+  before R, so answers may arrive in any order. A superseded text stays refused for 25 hours.
+  A REPLY KyCalendar built earlier may still be retried in that time, and a text changed,
+  cleared or turned off while KyCalendar was unreachable is still refused.
+- **KyCalendar's half of that bound:** its scheduling outbox abandons an unsent message 24 hours
+  after building it (`outboxGiveUp`, `internal/davbackend/scheduling.go`). Raising that limit
+  means raising KyPost's 25-hour retention (`config.OOORemoteRetention`) in the same change.
 - Logs and audit carry IDs only, never the period or the texts.
 
 KyPost's half: `api/out_of_office.go` `syncOOOCalendar`, run after every
