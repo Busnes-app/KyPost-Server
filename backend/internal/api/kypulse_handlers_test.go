@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/mail"
@@ -304,6 +305,47 @@ func TestKyPulseAlertRetryAfterRefusal(t *testing.T) {
 
 // The 31st alert in an hour is refused with Retry-After; a retry of an
 // accepted alert does not count twice.
+// A retry after a definite SMTP failure reuses the earlier charge only for the
+// same recipients: more recipients are charged afresh against the quota.
+func TestKyPulseAlertRetryChargesChangedRecipients(t *testing.T) {
+	f := newPulseFixture(t)
+	if _, err := f.srv.users.SetSendQuota(f.userID, &config.SendQuota{MessagesPerHour: 100, RecipientsPerDay: 2}); err != nil {
+		t.Fatal(err)
+	}
+	path := f.srv.userIMAPConfigPath(f.userID)
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	if err := writeIMAPConfigPayload(path, f.srv.imapConfigKeyPath, imapConfigPayload{
+		Host: "imap.example.com", Port: 993, Username: "alice@example.com", Password: "pw", Mailbox: "INBOX",
+		SMTPHost: "127.0.0.1", SMTPPort: port, UpdatedAt: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	one := alertBody(func(b map[string]any) { b["recipients"] = []string{"ops@x.test"} })
+	if rec := pulseSend(t, f.srv, pulseSecret, kypulseEventAlert, "ev-q", one); answerCode(rec) != "smtp_failed" {
+		t.Fatalf("smtp down: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := os.WriteFile(path, saved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rec := pulseSend(t, f.srv, pulseSecret, kypulseEventAlert, "ev-q", alertBody(nil)); rec.Code != http.StatusTooManyRequests || answerCode(rec) != "rate_limited" {
+		t.Fatalf("two recipients on a one-recipient charge: %d %s", rec.Code, rec.Body.String())
+	}
+	noDelivery(t, f.kycalFixture, "changed recipients")
+	if rec := pulseSend(t, f.srv, pulseSecret, kypulseEventAlert, "ev-q", one); rec.Code != http.StatusAccepted {
+		t.Fatalf("same recipients retry: %d %s", rec.Code, rec.Body.String())
+	}
+	f.delivered(t)
+}
+
 func TestKyPulseAlertRateLimit(t *testing.T) {
 	f := newPulseFixture(t)
 	if _, err := f.srv.users.SetSendQuota(f.userID, &config.SendQuota{MessagesPerHour: 100, RecipientsPerDay: 1000}); err != nil {

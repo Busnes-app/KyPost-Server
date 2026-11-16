@@ -187,8 +187,13 @@ func (s *Server) sendKyPulseAlert(ctx context.Context, eventID string, body []by
 // errKyPulseReplayed is a durably claimed event ID: nothing is sent again.
 var errKyPulseReplayed = &itipRefusal{status: http.StatusOK, code: "duplicate"}
 
-// admitKyPulseAlert charges the per-mailbox limit and sends.
+// admitKyPulseAlert charges the per-mailbox limit and sends. Both charges are
+// keyed by the event ID and its recipient set, so a retry reuses a charge only
+// for the same recipients and a changed set is charged afresh.
 func (s *Server) admitKyPulseAlert(ctx context.Context, u users.User, out kypulseOutbox, eventID string, recipients []string, subject, text string) *itipRefusal {
+	sorted := slices.Sorted(slices.Values(recipients))
+	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
+	eventID += ":" + hex.EncodeToString(sum[:8])
 	wait, err := s.globalStore.AdmitSend(ctx, "kypulse-rate:"+u.ID+":"+eventID, "kypulse:"+u.ID, 1, kypulseAlertsPerHour, kypulseAlertsPerHour*24, time.Now().Unix())
 	switch {
 	case errors.Is(err, state.ErrSendQuota):
