@@ -324,14 +324,14 @@ func (u User) HasServerReadableKey() bool {
 	return u.PGPProtection() == PGPProtectionServer
 }
 
-// clone returns a deep copy of u. Every read served out of the Store's cache
-// goes through this, and it must deep-copy every field a plain struct copy
-// would still share with the cache's backing array — currently
-// RecoveryCodesHash and PGPWrappedEnvelopes, both slices, so a shallow copy
-// would let a caller corrupt shared state. WrappedEnvelope is all
-// value-typed strings, so a shallow slices.Clone is enough for it — there is
-// nothing under it left to alias.
+// clone returns a deep copy of u for cached reads and authority snapshots.
+// Copy every mutable slice and pointer; WrappedEnvelope contains only values,
+// so cloning its slice leaves no nested aliases.
 func (u User) clone() User {
+	if u.SendQuota != nil {
+		quota := *u.SendQuota
+		u.SendQuota = &quota
+	}
 	if u.PGPKeyring != nil {
 		ring := *u.PGPKeyring
 		ring.KeyFingerprints = slices.Clone(ring.KeyFingerprints)
@@ -536,6 +536,10 @@ type Store struct {
 	cachedMod  time.Time
 	cachedSize int64
 	cacheValid bool
+	// currentRaw is the bytes WithCurrentUsers last decoded into current;
+	// identical bytes decode identically, so no stamp is trusted. Guarded by mu.
+	currentRaw []byte
+	current    []User
 }
 
 // userIndex resolves a lookup key to a position in usersFile.Users, replacing
@@ -788,17 +792,28 @@ func (s *Store) WithCurrentUsers(ctx context.Context, action func([]User) error)
 		return err
 	}
 	defer release()
-	f, err := s.readFileUnlocked()
+	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return err
 	}
-	if f.Version != 1 || ctx.Err() != nil {
-		if err := ctx.Err(); err != nil {
+	if s.currentRaw == nil || !bytes.Equal(b, s.currentRaw) {
+		var f usersFile
+		if err := json.Unmarshal(b, &f); err != nil {
 			return err
 		}
-		return errors.New("unsupported account authority version")
+		if f.Version != 1 {
+			return errors.New("unsupported account authority version")
+		}
+		s.currentRaw, s.current = b, f.Users
 	}
-	return action(f.Users)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	snapshot := slices.Clone(s.current)
+	for i := range snapshot {
+		snapshot[i] = snapshot[i].clone()
+	}
+	return action(snapshot)
 }
 
 // withWriteLock is fsutil.WithFileLock through the gate, so a stream of

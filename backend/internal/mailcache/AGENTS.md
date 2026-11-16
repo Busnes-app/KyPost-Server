@@ -34,6 +34,10 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
   here it's not hypothetical: both actually call into this package. Every
   writer holds `fsutil.LockFile(s.path())` across that cycle; `s.mu` only
   covers this process.
+- The re-read skips the JSON decode when the file's bytes equal `Store.raw`, the
+  bytes memory was decoded from. `persistLocked` clears `raw` before writing, so a
+  mutation whose write fails is decoded away on the next read. A new mutation path
+  must end in `persistLocked`.
 - **`Snapshot` returns that re-read's error.** Entries carry warm bodies and
   cached signature verdicts, so a window served after a failed re-read is a
   stale body and a badge this process cannot check, presented as current.

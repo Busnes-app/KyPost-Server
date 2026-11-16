@@ -1,7 +1,9 @@
 package mailcache
 
 import (
+	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math/rand/v2"
 	"os"
@@ -76,6 +78,9 @@ type Store struct {
 	omitBodies      bool
 	sourceIdentity  string
 	referencePrefix string
+	// raw is the file the in-memory state was decoded from; nil once memory
+	// may differ from it (persistLocked clears it before any write lands).
+	raw []byte
 }
 
 type mailCacheFile struct {
@@ -101,7 +106,10 @@ func (s *Store) path() string {
 }
 
 func (s *Store) load() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, s.persistLocked)
+	if err := s.readDiskLocked(); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.persistLocked()
 }
 
 func (s *Store) applyFile(cf mailCacheFile) {
@@ -199,12 +207,31 @@ func (s *Store) InvalidatePGPVerdicts() error {
 // refreshFromDiskLocked re-reads mailcache.json into memory. Its error is
 // never discarded: entries carry PGP signature verdicts and warm bodies, so an
 // in-memory copy served after a failed re-read is a message body and a trust
-// badge this process can no longer confirm.
+// badge this process can no longer confirm. Unchanged bytes skip the decode:
+// they decode to the state already in memory.
 func (s *Store) refreshFromDiskLocked() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, nil)
+	if err := s.readDiskLocked(); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) readDiskLocked() error {
+	b, err := os.ReadFile(s.path())
+	if err != nil || (s.raw != nil && bytes.Equal(b, s.raw)) {
+		return err
+	}
+	var cf mailCacheFile
+	if err := json.Unmarshal(b, &cf); err != nil {
+		return err
+	}
+	s.applyFile(cf)
+	s.raw = b
+	return nil
 }
 
 func (s *Store) persistLocked() error {
+	s.raw = nil
 	for key, win := range s.mailboxes {
 		// Bodies live once, in the base window; limit windows borrow them.
 		if s.omitBodies || windowMailbox(key) != key {
