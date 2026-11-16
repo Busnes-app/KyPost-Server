@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -329,8 +330,9 @@ func TestPooledAdmissionBounds(t *testing.T) {
 	must(t, err)
 	heldAdmissions.Lock()
 	p := heldAdmissions.m[account]
+	replaced := holdAdmission(&Prepared{dir: account}) || heldAdmissions.m[account] != p
 	heldAdmissions.Unlock()
-	if holdAdmission(&Prepared{dir: account}) || heldAdmissions.m[account] != p {
+	if replaced {
 		t.Fatal("a second handle replaced the held one")
 	}
 	_, err = checkHeld(other, preparationOwner(), "one@example.test", preparationLimits())
@@ -353,5 +355,145 @@ func TestHeldBoundScalesWithMemory(t *testing.T) {
 	}
 	if memoryLimit() <= 0 {
 		t.Fatal("no memory limit or total read on Linux")
+	}
+}
+
+// A client opened while its mailbox is held shares those handles with the
+// pooled admissions: no second open, and native-mailbox.json is decoded again
+// only when its bytes change. Sharing changes no refusal: a change refuses the
+// client and the pooled admission alike, the pool drops the handles, and only
+// a reopening admission sees the valid copy. The pool's idle close and a
+// refused pooled check leave the client's handles open.
+func TestOpenClientSharesHeldAdmission(t *testing.T) {
+	ctx := context.Background()
+	account, admit := pooledAccount(t, MaxHeldAdmissions())
+	owner, limits := preparationOwner(), preparationLimits()
+	source, err := admit()
+	must(t, err)
+	heldAdmissions.Lock()
+	pooled := heldAdmissions.m[account]
+	heldAdmissions.Unlock()
+	c, err := OpenClient(filepath.Join(account, "mailbox"), owner, limits, "one@example.test", source, func(_ context.Context, held *Prepared) error {
+		_, err := held.ValidatePreparedMailbox(filepath.Dir(account), owner, "one@example.test", limits)
+		return err
+	})
+	must(t, err)
+	if c.held != pooled {
+		t.Fatal("client reopened storage the pool holds")
+	}
+	raw := &pooled.raw[0]
+	for range 3 {
+		if _, err = c.ListLabels(ctx); err != nil {
+			t.Fatal("client refused intact storage:", err)
+		}
+		if _, err = admit(); err != nil {
+			t.Fatal("pooled admission refused intact storage:", err)
+		}
+	}
+	heldAdmissions.Lock()
+	still, users := heldAdmissions.m[account] == pooled, pooled.users
+	heldAdmissions.Unlock()
+	if !still || users != 1 || &pooled.raw[0] != raw {
+		t.Fatalf("unchanged storage reopened or re-decoded: held %v users %d", still, users)
+	}
+
+	heldAdmissions.Lock()
+	pooled.used = time.Now().Add(-heldIdle)
+	heldAdmissions.Unlock()
+	closeIdleAdmissions()
+	if heldCount() != 0 || pooled.state.Ping() != nil {
+		t.Fatal("idle close kept the entry or closed a client's handles")
+	}
+	if _, err = c.ListLabels(ctx); err != nil {
+		t.Fatal("client refused after the pool dropped its handles:", err)
+	}
+	_, err = admit()
+	must(t, err)
+
+	rewritePreparation(t, account, func(p *preparedAccount) { p.Address = "two@example.test" })
+	if _, err = c.ListLabels(ctx); !errors.Is(err, ErrPreparation) {
+		t.Fatal("client accepted a changed preparation:", err)
+	}
+	if _, err = admit(); !errors.Is(err, ErrPreparation) {
+		t.Fatal("pooled admission accepted a changed preparation:", err)
+	}
+	rewritePreparation(t, account, func(p *preparedAccount) { p.Address = "one@example.test" })
+	if _, err = c.ListLabels(ctx); err != nil {
+		t.Fatal("client refused restored preparation:", err)
+	}
+	if &pooled.raw[0] == raw {
+		t.Fatal("changed preparation bytes reused the old decoding")
+	}
+
+	dbbackend.SkipOnPostgres(t, "replaces SQLite files")
+	_, err = admit()
+	must(t, err)
+	heldAdmissions.Lock()
+	second := heldAdmissions.m[account]
+	heldAdmissions.Unlock()
+	c2, err := OpenClient(filepath.Join(account, "mailbox"), owner, limits, "one@example.test", source, func(_ context.Context, held *Prepared) error {
+		_, err := held.ValidatePreparedMailbox(filepath.Dir(account), owner, "one@example.test", limits)
+		return err
+	})
+	must(t, err)
+	if c2.held != second {
+		t.Fatal("second client did not share the held handles")
+	}
+	replaceWithCopy(t, filepath.Join(account, "mailbox", "mailbox.db"))
+	if _, err = admit(); !errors.Is(err, ErrPreparation) {
+		t.Fatal("pooled admission accepted a replaced mailbox.db:", err)
+	}
+	if heldCount() != 0 || second.mail.Ping() != nil {
+		t.Fatal("refused handles kept in the pool, or closed under their client")
+	}
+	for _, client := range []*Client{c, c2} {
+		if _, err = client.ListLabels(ctx); !errors.Is(err, ErrPreparation) {
+			t.Fatal("client accepted a replaced mailbox.db:", err)
+		}
+	}
+	if _, err = admit(); err != nil {
+		t.Fatal("reopened admission refused the valid copy:", err)
+	}
+	runtime.KeepAlive(c)
+	runtime.KeepAlive(c2)
+	releaseHeld(second) // as c2's cleanup does: unpooled and unused, it closes
+	heldAdmissions.Lock()
+	users = second.users
+	heldAdmissions.Unlock()
+	if users != 0 || second.mail.Ping() == nil {
+		t.Fatal("released handles left open")
+	}
+}
+
+// BenchmarkOpenClient is a client cache miss after its admission: with the
+// pool the client shares the admission's handles, without it opens its own.
+func BenchmarkOpenClient(b *testing.B) {
+	for _, pool := range []int{MaxHeldAdmissions(), 0} {
+		b.Run(fmt.Sprintf("pool=%v", pool != 0), func(b *testing.B) {
+			HoldAdmissionHandles(pool)
+			defer HoldAdmissionHandles(0)
+			root := b.TempDir()
+			owner, limits := preparationOwner(), preparationLimits()
+			source, err := PrepareAccount(root, owner, "one@example.test", limits)
+			if err != nil {
+				b.Fatal(err)
+			}
+			parent := filepath.Join(root, "users")
+			admit := func(_ context.Context, held *Prepared) error {
+				_, err := held.ValidatePreparedMailbox(parent, owner, "one@example.test", limits)
+				return err
+			}
+			for b.Loop() {
+				if err := admit(context.Background(), nil); err != nil {
+					b.Fatal(err)
+				}
+				c, err := OpenClient(filepath.Join(parent, owner.Mailbox, "mailbox"), owner, limits, "one@example.test", source, admit)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_ = c.store.Close() // as runtime cleanup does once the client is evicted
+				releaseHeld(c.held)
+			}
+		})
 	}
 }
