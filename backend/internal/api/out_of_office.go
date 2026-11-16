@@ -73,7 +73,8 @@ func (s *Server) syncOOOCalendar(ctx context.Context, userID string, o config.Ou
 	if !ok {
 		return ""
 	}
-	body := map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "revision": time.Now().UnixMilli(), "away": false}
+	rev := time.Now().UnixMilli()
+	body := map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "revision": rev, "away": false}
 	if start, end := o.Window(); o.Enabled && o.CalendarAway && !start.IsZero() && !end.IsZero() {
 		body["away"], body["start"], body["end"] = true, o.Start, o.End
 		if zone, err := time.LoadLocation(o.TimeZone); o.TimeZone != "" && err == nil && midnight(start.In(zone)) && midnight(end.In(zone)) {
@@ -89,15 +90,14 @@ func (s *Server) syncOOOCalendar(ctx context.Context, userID string, o config.Ou
 		return "failed"
 	}
 	// Recorded before sending: whatever the answer, KyCalendar may now hold it.
-	remote, _ := body["comment_remote"].(string)
-	before, err := s.trackOOORemoteTexts(userID, func(texts []string) []string {
-		if remote != "" && !slices.Contains(texts, remote) && len(texts) < maxOOORemoteTexts {
-			texts = append(texts, remote)
+	if remote, _ := body["comment_remote"].(string); remote != "" {
+		noted := false
+		if s.trackOOORemoteTexts(userID, func(l []config.OOORemoteText) []config.OOORemoteText {
+			l, noted = config.NoteOOORemoteSent(l, remote, rev)
+			return l
+		}) != nil || !noted {
+			return "failed" // nothing is sent that could not be revoked later
 		}
-		return texts
-	})
-	if err != nil || remote != "" && !slices.Contains(before, remote) && len(before) >= maxOOORemoteTexts {
-		return "failed" // nothing sent that could not be revoked later
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -107,29 +107,20 @@ func (s *Server) syncOOOCalendar(ctx context.Context, userID string, o config.Ou
 		return "failed"
 	}
 	if kycalendar.Outcome(answer) == "applied" {
-		// KyCalendar replaced what it held: forget texts superseded by this send,
-		// keeping any a concurrent save added since.
-		_, _ = s.trackOOORemoteTexts(userID, func(texts []string) []string {
-			return slices.DeleteFunc(texts, func(t string) bool { return t != remote && slices.Contains(before, t) })
+		_ = s.trackOOORemoteTexts(userID, func(l []config.OOORemoteText) []config.OOORemoteText {
+			return config.ForgetOOORemoteBefore(l, rev)
 		})
 	}
 	return "synced"
 }
 
-// maxOOORemoteTexts bounds the remote comments kept for revocation; past it a
-// sync carrying a new text is refused rather than sent unrevocably.
-const maxOOORemoteTexts = 32
-
-// trackOOORemoteTexts updates the user's CalendarRemoteTexts and returns the
-// list as it was before.
-func (s *Server) trackOOORemoteTexts(userID string, change func([]string) []string) ([]string, error) {
-	var before []string
-	err := config.UpdateUserSettings(s.userSettingsPath(userID), func(st *config.UserSettings) error {
-		before = slices.Clone(st.OutOfOffice.CalendarRemoteTexts)
+// trackOOORemoteTexts updates the user's CalendarRemoteTexts under the
+// settings lock.
+func (s *Server) trackOOORemoteTexts(userID string, change func([]config.OOORemoteText) []config.OOORemoteText) error {
+	return config.UpdateUserSettings(s.userSettingsPath(userID), func(st *config.UserSettings) error {
 		st.OutOfOffice.CalendarRemoteTexts = change(st.OutOfOffice.CalendarRemoteTexts)
 		return nil
 	})
-	return before, err
 }
 
 func midnight(t time.Time) bool { return t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 }
@@ -224,6 +215,12 @@ func (s *Server) resyncOOOCalendars() {
 			s.syncOOOCalendar(context.Background(), u.ID, o)
 		}
 	}
+}
+
+// oooRemoteCommentAllowed: KyCalendar may answer outside organizers with the
+// remote text now, which KyPost would have asked it to.
+func (s *Server) oooRemoteCommentAllowed(o config.OutOfOffice) bool {
+	return s.oooRemoteAllowed() && o.RemoteMode() == config.RemoteOn && o.CalendarAway && o.CalendarTentative && o.ActiveAt(time.Now())
 }
 
 // stripRemoteOOOComment drops from a folded iCalendar object every COMMENT

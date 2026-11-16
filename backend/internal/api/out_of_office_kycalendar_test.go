@@ -204,6 +204,108 @@ func TestOutOfOfficeRemoteCommentChangedWhileKyCalendarDown(t *testing.T) {
 	}
 }
 
+// The reviewer's interleaving: T synced, then sync A (text U) and sync B (T
+// again); KyCalendar applies A then B, but A's answer reaches KyPost last.
+// Later T is cleared while KyCalendar fails, and T must still be refused.
+func TestOutOfOfficeRemoteCommentReorderedAnswers(t *testing.T) {
+	f := newKyCalFixture(t)
+	f.srv.cfgMu.Lock()
+	f.srv.cfg.OutOfOfficeRemote = true
+	f.srv.cfgMu.Unlock()
+	var mu sync.Mutex
+	n, status := 0, http.StatusOK
+	arrived, release := make(chan struct{}), make(chan struct{})
+	cal := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		me, code := n, status
+		mu.Unlock()
+		if me == 2 { // sync A: applied, its answer held back
+			close(arrived)
+			<-release
+		}
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(`{"outcome":"applied"}`))
+	}))
+	defer cal.Close()
+	base, _ := url.Parse(cal.URL)
+	f.srv.SetKyCalendar(kycalendar.New(base, kycalSecret, cal.Client().Transport))
+	put := func(remote, text string) string {
+		body, _ := json.Marshal(map[string]any{"enabled": true, "start": "2026-12-01T05:00:00Z", "end": "2026-12-05T05:00:00Z", "localMessage": "Away",
+			"remote": remote, "remoteMessage": text, "calendarAway": true, "calendarTentative": true})
+		req := httptest.NewRequest(http.MethodPut, "/api/mail/out-of-office", bytes.NewReader(body))
+		authRequestAs(f.srv, req, f.userID)
+		rec := httptest.NewRecorder()
+		f.srv.routes().ServeHTTP(rec, req)
+		var v outOfOfficeView
+		_ = json.Unmarshal(rec.Body.Bytes(), &v)
+		return v.CalendarSync
+	}
+	if got := put("on", "T"); got != "synced" {
+		t.Fatalf("first sync %q", got)
+	}
+	done := make(chan string)
+	go func() { done <- put("on", "U") }()
+	<-arrived
+	time.Sleep(5 * time.Millisecond) // B's revision is newer
+	if got := put("on", "T"); got != "synced" {
+		t.Fatalf("sync B %q", got)
+	}
+	close(release)
+	if got := <-done; got != "synced" {
+		t.Fatalf("sync A %q", got)
+	}
+	mu.Lock()
+	status = http.StatusInternalServerError
+	mu.Unlock()
+	if got := put("off", ""); got != "failed" {
+		t.Fatalf("clearing %q", got)
+	}
+	if got := mailedReply(t, f, "ev-reorder", "COMMENT:T\r\n"); strings.Contains(got, "COMMENT:T") {
+		t.Fatalf("stale T mailed:\n%s", got)
+	}
+}
+
+// Turning the reply off while KyCalendar cannot be told leaves the remote mode
+// on; the comment KyCalendar still holds is refused anyway.
+func TestOutOfOfficeRemoteCommentReplyOff(t *testing.T) {
+	f := newKyCalFixture(t)
+	f.srv.cfgMu.Lock()
+	f.srv.cfg.OutOfOfficeRemote = true
+	f.srv.cfgMu.Unlock()
+	status := http.StatusOK
+	cal := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"outcome":"applied"}`))
+	}))
+	defer cal.Close()
+	base, _ := url.Parse(cal.URL)
+	f.srv.SetKyCalendar(kycalendar.New(base, kycalSecret, cal.Client().Transport))
+	start := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	end := time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)
+	for _, enabled := range []bool{true, false} {
+		body, _ := json.Marshal(map[string]any{"enabled": enabled, "start": start, "end": end, "localMessage": "Away",
+			"remote": "on", "remoteMessage": "Outside text", "calendarAway": true, "calendarTentative": true})
+		req := httptest.NewRequest(http.MethodPut, "/api/mail/out-of-office", bytes.NewReader(body))
+		authRequestAs(f.srv, req, f.userID)
+		rec := httptest.NewRecorder()
+		f.srv.routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+		}
+		if enabled {
+			// While on and active, the outside text may go out.
+			if got := mailedReply(t, f, "ev-on", "COMMENT:Outside text\r\n"); !strings.Contains(got, "COMMENT:Outside text") {
+				t.Fatalf("permitted comment dropped:\n%s", got)
+			}
+			status = http.StatusInternalServerError
+		}
+	}
+	if got := mailedReply(t, f, "ev-off", "COMMENT:Outside text\r\n"); strings.Contains(got, "Outside text") {
+		t.Fatalf("comment mailed after the reply was turned off:\n%s", got)
+	}
+}
+
 // mailedReply sends a REPLY carrying extra lines through the signed send route
 // and returns the calendar part as mailed.
 func mailedReply(t *testing.T, f *kycalFixture, eventID, extra string) string {

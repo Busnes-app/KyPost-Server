@@ -278,13 +278,17 @@ is written the way `kypost.itip.respond` writes it.
 - A failure is reported to the user and resent on their next save. KyPost never retries in
   the background.
 - When the administrator turns outside replies off, KyPost resends every calendar-tied state at
-  once, without `comment_remote`. Until that lands, and whenever the remote reply may not go out,
-  KyPost removes from any REPLY it mails for KyCalendar each `COMMENT` that is an outside-reply
-  text KyCalendar may still hold. KyPost records each remote comment before sending it, and
-  forgets superseded ones only after an `applied` answer, so a text changed or cleared while
-  KyCalendar was unreachable is still refused.
+  once, without `comment_remote`.
+- KyPost removes from any REPLY it mails for KyCalendar each `COMMENT` that is an outside-reply
+  text KyCalendar may still hold. The only exception is while the reply is on and active, both
+  calendar boxes are ticked, and the remote reply goes to everyone with the administrator's
+  permission.
+- KyPost records each remote comment, with the revision of the newest sync carrying it, before
+  sending. An `applied` answer for revision R forgets only texts last carried before R, so
+  answers may arrive in any order. A text changed, cleared or turned off while KyCalendar was
+  unreachable is still refused.
 - Logs and audit carry IDs only, never the period or the texts.
 
 KyPost's half: `api/out_of_office.go` `syncOOOCalendar`, run after every
 `PUT /api/mail/out-of-office` (its answer carries `calendarSync`) and every agent
-`set_out_of_office`. Tests: `TestOutOfOfficeSyncsKyCalendar`, `TestOutOfOfficeRemoteCommentRevoked`, `TestOutOfOfficeRemoteCommentChangedWhileKyCalendarDown`, `TestStripRemoteOOOComment`.
+`set_out_of_office`. Tests: `TestOutOfOfficeSyncsKyCalendar`, `TestOutOfOfficeRemoteCommentRevoked`, `TestOutOfOfficeRemoteCommentChangedWhileKyCalendarDown`, `TestOutOfOfficeRemoteCommentReorderedAnswers`, `TestOutOfOfficeRemoteCommentReplyOff`, `TestStripRemoteOOOComment`, config `TestOOORemoteTextsSurviveReorderedAnswers`.

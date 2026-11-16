@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -40,7 +41,40 @@ type OutOfOffice struct {
 	CalendarTentative bool `yaml:"calendarTentative,omitempty" json:"calendarTentative"`
 	// CalendarRemoteTexts are the remote comments KyCalendar may still hold:
 	// server-only, kept so a stale one can be refused at send time.
-	CalendarRemoteTexts []string `yaml:"calendarRemoteTexts,omitempty" json:"-"`
+	CalendarRemoteTexts []OOORemoteText `yaml:"calendarRemoteTexts,omitempty" json:"-"`
+}
+
+// OOORemoteText is a remote comment sent to KyCalendar, with the newest sync
+// revision that carried it.
+type OOORemoteText struct {
+	Text     string `yaml:"text"`
+	Revision int64  `yaml:"revision"`
+}
+
+// MaxOOORemoteTexts bounds CalendarRemoteTexts; past it a sync carrying a new
+// text is refused rather than sent unrevocably.
+const MaxOOORemoteTexts = 32
+
+// NoteOOORemoteSent records that the sync at rev carries text, before it is
+// sent; false when the list is full.
+func NoteOOORemoteSent(list []OOORemoteText, text string, rev int64) ([]OOORemoteText, bool) {
+	for i := range list {
+		if list[i].Text == text {
+			list[i].Revision = max(list[i].Revision, rev)
+			return list, true
+		}
+	}
+	if len(list) >= MaxOOORemoteTexts {
+		return list, false
+	}
+	return append(list, OOORemoteText{Text: text, Revision: rev}), true
+}
+
+// ForgetOOORemoteBefore drops the texts no sync at or after rev carried, once
+// KyCalendar applied rev: it keeps only the newest revision, so it can no
+// longer hold them. Answers may arrive in any order.
+func ForgetOOORemoteBefore(list []OOORemoteText, rev int64) []OOORemoteText {
+	return slices.DeleteFunc(list, func(t OOORemoteText) bool { return t.Revision < rev })
 }
 
 // RemoteMode is Remote with "" read as off.
