@@ -30,6 +30,8 @@ func withPublicRoute(next http.HandlerFunc) http.HandlerFunc { return next }
 // (verifyNativeSignOnToken). Registration mints the device, so it cannot yet
 // have a device secret to present; sign-on mints a pairing token and precedes
 // any session.
+// Directory and HR mailbox requests instead authenticate a signed body through
+// syncauth headers (verifySyncEvent), using the configured pairing credential.
 //
 // None of them takes a session or a cookie, so there is nothing for CSRF to
 // abuse: an attacker holding the token does not need a victim's browser.

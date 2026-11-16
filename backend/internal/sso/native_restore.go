@@ -135,7 +135,7 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 	}
 	for key, a := range f.Accounts {
 		native = true
-		if key != directoryKey(a.Owner.Issuer, a.Owner.Subject) || !directoryIdentifier(a.Owner.Issuer) || !directoryIdentifier(a.Owner.Subject) || !fsutil.SafePathComponent(a.Owner.Mailbox) || ids[a.Owner.Mailbox] || !filepath.IsAbs(a.StateRoot) || filepath.Clean(a.StateRoot) != a.StateRoot || root != "" && root != a.StateRoot || a.Limits.MessageBytes <= 0 || a.Limits.MessageBytes > mailmsg.MaxInboundMessageBytes || a.Limits.PayloadBytes < a.Limits.MessageBytes || a.Limits.Records <= 0 || a.Revision <= 0 || a.Digest == "" {
+		if key != directoryKey(a.Owner.Issuer, a.Owner.Subject) || !directoryIdentifier(a.Owner.Issuer) || !directoryIdentifier(a.Owner.Subject) || !fsutil.SafePathComponent(a.Owner.Mailbox) || ids[a.Owner.Mailbox] || !filepath.IsAbs(a.StateRoot) || filepath.Clean(a.StateRoot) != a.StateRoot || root != "" && root != a.StateRoot || a.Limits.MessageBytes <= 0 || a.Limits.MessageBytes > mailmsg.MaxInboundMessageBytes || a.Limits.PayloadBytes < a.Limits.MessageBytes || a.Limits.Records <= 0 || !a.hrReservation() && (a.Revision <= 0 || a.Digest == "") {
 			return true, ErrNativeProvisioning
 		}
 		if a.Status != "pending" && a.Status != "applied" && a.Status != "failed" {
@@ -143,12 +143,23 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 		}
 		ids[a.Owner.Mailbox], root = true, a.StateRoot
 		d, ok := lifecycle.Directory[key]
-		if !ok || d.Resource == nil || d.Resource.ID != a.Owner.Subject || d.Resource.Active == nil || *d.Resource.Active != d.Active || a.Revision > d.Revision || a.Revision == d.Revision && (a.Digest != d.Digest || a.DesiredActive != d.Active) || a.LegacyMixedUse && directoryDemoted(*d.Resource) {
+		if a.hrReservation() {
+			// Reserved addresses are recoverable, never published authority.
+			if byID[a.Owner.Mailbox].ID != "" || bySubject[a.Owner.Subject].ID != "" {
+				return true, ErrNativeProvisioning
+			}
+			if _, err := os.Lstat(filepath.Join(stateRoot, "users", a.Owner.Mailbox)); !errors.Is(err, os.ErrNotExist) {
+				return true, ErrNativeProvisioning
+			}
+		}
+		if !ok && !a.hrReservation() || ok && (d.Resource == nil || d.Resource.ID != a.Owner.Subject || d.Resource.Active == nil || *d.Resource.Active != d.Active || a.Revision > d.Revision || a.Revision == d.Revision && (a.Digest != d.Digest || a.DesiredActive != d.Active) || a.LegacyMixedUse && directoryDemoted(*d.Resource)) {
 			return true, ErrNativeProvisioning
 		}
-		revision, err := d.Resource.Revision("user.updated")
-		if err != nil || revision != d.Revision {
-			return true, ErrNativeProvisioning
+		if ok {
+			revision, err := d.Resource.Revision("user.updated")
+			if err != nil || revision != d.Revision {
+				return true, ErrNativeProvisioning
+			}
 		}
 		if domains.Issuer != a.Owner.Issuer || domainFormat == 0 {
 			return true, ErrNativeProvisioning

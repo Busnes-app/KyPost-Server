@@ -67,3 +67,7 @@ The full feature list; [README.md](../README.md#features) has the summary.
 - Settings grouped into panels: Appearance, Mail (IMAP/SMTP, storage, send-as, signatures, contact sync, filters), Security (including mail import and export), Notifications and Status — plus Email Labels for each user's own prompt tuning and classification decisions — and an Admin group for server runtime and diagnostics
 - Busnes light/dark defaults follow the OS; Settings → Appearance offers Match system and twenty-two suite theme presets as preview cards, saved in this browser only
 Native direct outbound delivery is available as an explicit protected-API profile. It signs every message with a per-domain DKIM key, and Mail domain shows and checks the DKIM, SPF, DMARC and reverse DNS records and rotates keys on the administrator's request (recommended at 180 days), with a DNS-confirmed switch, a 7-day retire window and an emergency rotation; see [direct delivery](DIRECT_DELIVERY.md) for configuration, recipient outcomes and qualification limits. Existing relay sending remains the default.
+
+## HR address allocation
+
+KyIdentity can request a unique native work address before creating an SSO identity. Stable issuer/subject reservations survive retries and same-name collisions receive numeric suffixes. Address-only reservations create no usable account, mailbox storage or live receiving route. Normal signed directory provisioning consumes them after activation and app assignment. See [HR address reservations](NATIVE_PROVISIONING.md#hr-address-reservations).

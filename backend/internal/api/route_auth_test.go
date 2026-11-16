@@ -120,7 +120,7 @@ var markerRequiresCall = map[string][]string{
 	// The whole credential is a signed token presented in the request — in the
 	// URL for pickup/QR, in the body for native device registration (mints the
 	// device) and native sign-on (mints a pairing token, precedes any session).
-	"withTokenAuth": {"validatePairingToken", "consumeQRToken", "decodeAndVerifyPairingToken", "verifyNativeSignOnToken"},
+	"withTokenAuth": {"validatePairingToken", "consumeQRToken", "decodeAndVerifyPairingToken", "verifyNativeSignOnToken", "verifySyncEvent"},
 	// Inspects the session itself and answers differently when anonymous.
 	"withSelfAuth": {"currentUser"},
 }
@@ -147,7 +147,6 @@ var publicRoutes = map[string]string{
 	"GET /auth/sso/login":                    "alias for OIDC authorization flow initialization",
 	"GET /api/auth/oidc/callback":            "redeems OIDC authorization code for a session",
 	"GET /auth/sso/callback":                 "alias for OIDC authorization code callback",
-	"POST /api/sync/webhook":                 "receives signed directory replication events from KySignOn with HMAC signature validation",
 	"POST /api/calendar/itip/send":           "receives signed send requests from the paired KyCalendar; the syncauth signature is the credential",
 	"GET /api/auth/login-params":             "pre-login KDF parameters; login_params.go covers why it cannot reveal account existence",
 	"GET /api/auth/pow-challenge":            "issues the proof-of-work challenge required to attempt a login",
@@ -226,6 +225,7 @@ func TestAuthMarkersMatchTheirHandlers(t *testing.T) {
 // authPrimitives are the calls that constitute authenticating a caller. A
 // handler that makes one of them is, by definition, not public.
 var authPrimitives = map[string][]string{
+	"verifySyncEvent":             {"withTokenAuth"},
 	"deviceAuthFromRequest":       {"withDeviceAuth"},
 	"validatePairingToken":        {"withTokenAuth"},
 	"decodeAndVerifyPairingToken": {"withTokenAuth"},
