@@ -302,7 +302,7 @@ func (s *Server) kypulseView(ctx context.Context, userID string) (map[string]any
 	if err != nil {
 		return nil, errUnavailable
 	}
-	settings, err := config.LoadUserSettings(s.userSettingsPath(userID))
+	settings, err := config.LoadUserSettings(s.userSettingsPath(u.ID))
 	if err != nil {
 		return nil, errUnavailable
 	}
@@ -598,12 +598,14 @@ func (s *Server) handleKyPulseConfirm(w http.ResponseWriter, r *http.Request) {
 		s.renderKyPulseConfirm(w, http.StatusForbidden, "", kypulseLinkDead)
 		return
 	}
-	userID, want := sub[0], strings.Join(sub, "|")
-	if _, err := s.users.Get(userID); err != nil {
+	want := strings.Join(sub, "|")
+	u, err := s.users.Get(sub[0])
+	if err != nil {
 		s.renderKyPulseConfirm(w, http.StatusGone, "", kypulseLinkDead)
 		return
 	}
-	err := config.UpdateUserSettings(s.userSettingsPath(userID), func(st *config.UserSettings) error {
+	userID := u.ID // the stored account's ID, not the link's text, names the settings path
+	err = config.UpdateUserSettings(s.userSettingsPath(userID), func(st *config.UserSettings) error {
 		for i, x := range st.KyPulse.Recipients {
 			if !x.Confirmed && x.Nonce != "" && subtle.ConstantTimeCompare([]byte(kypulseTokenSubject(userID, x.Nonce, x.Address)), []byte(want)) == 1 {
 				st.KyPulse.Recipients[i].Confirmed, st.KyPulse.Recipients[i].Nonce = true, ""
