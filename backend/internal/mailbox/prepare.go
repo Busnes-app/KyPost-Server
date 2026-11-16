@@ -238,7 +238,17 @@ func (p *Prepared) ValidatePreparedMailbox(parent string, owner Owner, address s
 		return ValidatePreparedMailbox(parent, owner, address, limits)
 	}
 	if p != nil && dir == p.dir {
-		return p.check(owner, address, limits)
+		source, err := p.check(owner, address, limits)
+		heldAdmissions.Lock()
+		if heldAdmissions.m[dir] == p { // a client's check keeps its pool entry fresh, or evicts it
+			if err != nil {
+				delete(heldAdmissions.m, dir)
+			} else {
+				p.used = time.Now()
+			}
+		}
+		heldAdmissions.Unlock()
+		return source, err
 	}
 	return checkHeld(dir, owner, address, limits)
 }
@@ -354,6 +364,10 @@ func useHeld(dir string) (p *Prepared, opened bool) {
 func releaseHeld(p *Prepared) {
 	heldAdmissions.Lock()
 	p.users--
+	if p.users < 0 {
+		heldAdmissions.Unlock()
+		panic("mailbox: held handles released twice")
+	}
 	unused := p.users == 0 && heldAdmissions.m[p.dir] != p
 	heldAdmissions.Unlock()
 	if unused {

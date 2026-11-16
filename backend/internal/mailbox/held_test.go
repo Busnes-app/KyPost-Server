@@ -454,12 +454,17 @@ func TestOpenClientSharesHeldAdmission(t *testing.T) {
 	if _, err = admit(); err != nil {
 		t.Fatal("reopened admission refused the valid copy:", err)
 	}
-	runtime.KeepAlive(c)
-	runtime.KeepAlive(c2)
-	releaseHeld(second) // as c2's cleanup does: unpooled and unused, it closes
-	heldAdmissions.Lock()
-	users = second.users
-	heldAdmissions.Unlock()
+	c, c2 = nil, nil // their cleanups release the shared handles
+	for range 100 {
+		runtime.GC()
+		heldAdmissions.Lock()
+		users = second.users
+		heldAdmissions.Unlock()
+		if users == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if users != 0 || second.mail.Ping() == nil {
 		t.Fatal("released handles left open")
 	}
@@ -491,9 +496,36 @@ func BenchmarkOpenClient(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				_ = c.store.Close() // as runtime cleanup does once the client is evicted
-				releaseHeld(c.held)
+				_ = c // released by its runtime cleanup, as an evicted client is
 			}
 		})
 	}
+}
+
+// TestClientRefusalEvictsHeldEntry: a client refused on shared handles takes
+// them out of the pool, so the next admission reopens and accepts a valid copy.
+func TestClientRefusalEvictsHeldEntry(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "replaces SQLite files")
+	ctx := context.Background()
+	account, admit := pooledAccount(t, MaxHeldAdmissions())
+	owner, limits := preparationOwner(), preparationLimits()
+	source, err := admit()
+	must(t, err)
+	c, err := OpenClient(filepath.Join(account, "mailbox"), owner, limits, "one@example.test", source, func(_ context.Context, held *Prepared) error {
+		_, err := held.ValidatePreparedMailbox(filepath.Dir(account), owner, "one@example.test", limits)
+		return err
+	})
+	must(t, err)
+	shared := c.held
+	replaceWithCopy(t, filepath.Join(account, "mailbox", "mailbox.db"))
+	if _, err = c.ListLabels(ctx); !errors.Is(err, ErrPreparation) {
+		t.Fatal("client accepted a replaced mailbox.db:", err)
+	}
+	if heldCount() != 0 || shared.mail.Ping() != nil {
+		t.Fatal("client refusal left the stale entry pooled, or closed its own handles")
+	}
+	if _, err = admit(); err != nil {
+		t.Fatal("admission after eviction refused the valid copy:", err)
+	}
+	runtime.KeepAlive(c)
 }
