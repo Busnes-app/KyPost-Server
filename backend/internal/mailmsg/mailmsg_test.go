@@ -371,3 +371,21 @@ func TestBuildKeepsSuppliedMessageIDAndOmitsItWithoutFromDomain(t *testing.T) {
 		t.Fatalf("unparseable From: headers %v", msg.Header)
 	}
 }
+
+// AutoSource adds the two fixed headers only for a clean token; any other
+// value adds neither, so it cannot carry a header of its own.
+func TestBuildAutoSource(t *testing.T) {
+	base := Message{From: "a@example.com", To: []string{"b@example.com"}, Subject: "s", Body: "b", Mode: "plain"}
+	m := base
+	m.AutoSource = "kypulse"
+	raw := string(m.Build())
+	if !strings.Contains(raw, "\r\nAuto-Submitted: auto-generated\r\nX-Ky-Source: kypulse\r\n") {
+		t.Fatalf("headers missing:\n%s", raw)
+	}
+	for _, bad := range []string{"", "KyPulse", "a\r\nBcc: x@example.com", "a b", strings.Repeat("a", 33)} {
+		m.AutoSource = bad
+		if raw := string(m.Build()); strings.Contains(raw, "Auto-Submitted") || strings.Contains(raw, "X-Ky-Source") || strings.Contains(raw, "Bcc") {
+			t.Errorf("%q: %s", bad, raw)
+		}
+	}
+}

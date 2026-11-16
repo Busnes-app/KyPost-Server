@@ -191,6 +191,28 @@ type UserSettings struct {
 	Signatures UserSignatureSettings `yaml:"signatures" json:"-"`
 	// OutOfOffice is served only by /api/mail/out-of-office.
 	OutOfOffice OutOfOffice `yaml:"outOfOffice,omitempty" json:"-"`
+	// KyPulse is served only by /api/settings/kypulse (docs/KYPULSE.md).
+	KyPulse KyPulseSettings `yaml:"kyPulse,omitempty" json:"-"`
+}
+
+// MaxKyPulseRecipients caps the extra addresses KyPulse alerts may go to.
+const MaxKyPulseRecipients = 10
+
+// KyPulseSettings is the owner's "Let KyPulse send alerts from my mailbox"
+// switch, off by default, and the extra recipients they listed. Their own
+// addresses are always allowed and never stored here.
+type KyPulseSettings struct {
+	Enabled    bool               `yaml:"enabled,omitempty"`
+	Recipients []KyPulseRecipient `yaml:"recipients,omitempty"`
+}
+
+// KyPulseRecipient is one extra address. Nonce names its live confirmation
+// link; empty once confirmed, so a used link stops working.
+type KyPulseRecipient struct {
+	Address   string `yaml:"address"`
+	Confirmed bool   `yaml:"confirmed,omitempty"`
+	Nonce     string `yaml:"nonce,omitempty"`
+	SentAt    int64  `yaml:"sentAt,omitempty"`
 }
 
 // KyCalendarOn reports whether the paired KyCalendar may send invitations from

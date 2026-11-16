@@ -214,6 +214,8 @@ type Server struct {
 	loginParamsLimiter *keyedLimiter
 	mfaPushLimiter     *keyedLimiter
 	sendAsCooldown     *keyedLimiter
+	// kypulseConfirmCooldown spaces KyPulse confirmation mails per user|address.
+	kypulseConfirmCooldown *keyedLimiter
 	// notificationTestCooldown meters POST /api/notifications/test per user:
 	// the one endpoint an authenticated caller can use to trigger the serial
 	// push fanout on demand. See notificationTestCooldownFor.
@@ -281,6 +283,7 @@ type Server struct {
 	kymessage     *suitepair.Client
 	// kymessageStatus caches colleagues' status from KyMessages for a minute.
 	kymessageStatus statusCache
+	kypulse         *suitepair.Client
 	suiteApps       sync.Map // user ID -> suiteAppsEntry
 	suitePeople     suitePeopleCache
 	driveStatuses   sync.Map // user ID -> driveStatusEntry
@@ -485,6 +488,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		deviceRescan:             newKeyedLimiter(1, 1/deviceRescanInterval.Seconds()),
 		mfaPushLimiter:           newMfaPushLimiter(),
 		sendAsCooldown:           newCooldown(sendAsVerificationCooldownFor),
+		kypulseConfirmCooldown:   newCooldown(sendAsVerificationCooldownFor),
 		notificationTestCooldown: newCooldown(notificationTestCooldownFor),
 		nativeRelayCheckCooldown: newCooldown(30 * time.Second),
 		deliverabilityCooldown:   newCooldown(10 * time.Second),
@@ -694,6 +698,15 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/calendar/rsvp", s.withMailAuth(s.withMailbox(s.handleCalendarRSVP)))
 	mux.HandleFunc("GET /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
 	mux.HandleFunc("PUT /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
+	mux.HandleFunc("POST /api/suite/kypulse/alert", withPublicRoute(s.handleKyPulseAlert))
+	mux.HandleFunc("GET /api/settings/kypulse", s.withAuth(s.handleKyPulseSettings))
+	mux.HandleFunc("PUT /api/settings/kypulse", s.withAuth(s.handleKyPulseSettings))
+	mux.HandleFunc("POST /api/settings/kypulse/recipients", s.withAuth(s.handleKyPulseRecipientAdd))
+	mux.HandleFunc("POST /api/settings/kypulse/recipients/resend", s.withAuth(s.handleKyPulseRecipientResend))
+	mux.HandleFunc("DELETE /api/settings/kypulse/recipients", s.withAuth(s.handleKyPulseRecipientRemove))
+	// The signed link in the confirmation mail: GET only shows the button.
+	mux.HandleFunc("GET /kypulse/confirm", withTokenAuth(s.handleKyPulseConfirmPage))
+	mux.HandleFunc("POST /kypulse/confirm", withTokenAuth(s.handleKyPulseConfirm))
 	mux.HandleFunc("GET /api/suite/apps", s.withAuth(s.handleSuiteApps))
 	mux.HandleFunc("GET /api/suite/people", s.withAuth(s.handleSuitePeople))
 	mux.HandleFunc("GET /api/kydrive/status", s.withMailAuth(s.handleKyDriveStatus))
@@ -1298,7 +1311,7 @@ func (s *Server) StartCooldownSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.deliverabilityCooldown, s.mfaPushLimiter, s.mcpCallLimiter} {
+			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.kypulseConfirmCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.deliverabilityCooldown, s.mfaPushLimiter, s.mcpCallLimiter} {
 				c.sweep()
 			}
 		}
