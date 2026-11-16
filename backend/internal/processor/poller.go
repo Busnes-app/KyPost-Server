@@ -1176,7 +1176,9 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 		// rules first and a deferral after them would re-run their actions on
 		// the retry. Incoming encryption defers all mutations, so it admits quota
 		// after feasibility checks, immediately before the LLM call instead.
-		if label, allow, _ := presort(uc, msg, uid); !msg.ParseError && !uc.encryptIncoming && label == "" &&
+		// Mail handleMessage never classifies (labelling off, too large,
+		// encrypted) spends nothing.
+		if label, allow, _ := presort(uc, msg, uid); uc.autoLabelEnabled && !msg.ParseError && !msg.TooLarge && !msg.PGPEncrypted && !uc.encryptIncoming && label == "" &&
 			!p.guess(uc, msg, allow).confident(p.embedMin) && !p.allowByRate(uc.id) {
 			p.log.Info("rate limit reached, deferring remaining emails", "user_id", uc.id)
 			res.rateLimited = len(messages) - res.processed - res.skippedSeen - res.failed
