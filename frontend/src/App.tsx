@@ -165,6 +165,24 @@ export function App() {
     refreshAuth();
   }, []);
 
+  // A KyCalendar task's link, /read?flag=<ref> (docs/KYCALENDAR.md, Tasks): open the flagged
+  // message in its mailbox, or say it is gone.
+  const flagRef = onReadPage ? new URLSearchParams(location.search).get("flag") ?? "" : "";
+  const openFlagLink = useEffectEvent(async (ref: string) => {
+    try {
+      const f = await getJSON<{ mailbox: string; folder: string; messageId: string }>(`/api/mail/flags/${encodeURIComponent(ref)}`);
+      if (f.mailbox !== selectedMailbox) chooseMailbox(f.mailbox);
+      const folder = f.folder ? `mailbox=${encodeURIComponent(f.folder)}&` : "";
+      navigate(`/read?${folder}message=${encodeURIComponent(f.messageId)}`, { replace: true });
+    } catch {
+      setMailboxNotice("This message is no longer available.");
+      navigate("/read", { replace: true });
+    }
+  });
+  useEffect(() => {
+    if (flagRef && auth?.authenticated) void openFlagLink(flagRef);
+  }, [flagRef, auth?.authenticated]);
+
   function chooseMailbox(id: string) {
     selectMailbox(id);
     setSelectedMailbox(id);
