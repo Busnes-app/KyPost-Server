@@ -87,6 +87,33 @@ func TestPairingTokenRequiresStepUp(t *testing.T) {
 	}
 }
 
+// The Security page's step-up covers pairing while the page is unlocked, and
+// only then: a stale stamp asks for the credential again.
+func TestPairingAcceptsFreshSecurityPageStepUp(t *testing.T) {
+	srv, u := newDeviceGrantServer(t)
+	srv.pairingSecret = "test-pairing-secret-at-least-32-bytes-long"
+	srv.serverBaseURL = "https://mail.example"
+	stamp := func(at time.Time) {
+		token := "session-token-" + u.ID
+		srv.sessMu.Lock()
+		sess := srv.sessions[token]
+		sess.SteppedUpAt = at
+		srv.sessions[token] = sess
+		srv.sessMu.Unlock()
+	}
+
+	stamp(time.Now().Add(-securityPageStepUpWindow - time.Second))
+	if rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", `{}`); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "pairingToken") {
+		t.Fatalf("stale step-up: status %d body %s, want 403 and no token", rec.Code, rec.Body.String())
+	}
+
+	stamp(time.Now())
+	rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", `{}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"pairingToken"`) {
+		t.Fatalf("fresh step-up: status %d body %s, want a token", rec.Code, rec.Body.String())
+	}
+}
+
 func TestPushMFAEnableRequiresStepUp(t *testing.T) {
 	srv, u := newDeviceGrantServer(t)
 	enrollTOTP(t, srv, u.ID)

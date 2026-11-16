@@ -98,6 +98,12 @@ non-prerelease version.
   KyPost never rotates on its own. **Emergency: rotate now** replaces an
   exposed key at once after an explicit acceptance of the DKIM gap.
 
+### Changed
+
+- Pairing a device no longer asks for the password (or a KySignOn confirmation)
+  a second time: the confirmation that unlocked Settings → Account counts for
+  five minutes. After that, pairing asks again.
+
 ### Fixed
 
 - An invitation card answer from someone with no KyCalendar account no longer

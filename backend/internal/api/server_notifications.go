@@ -343,7 +343,8 @@ func (s *Server) handleNotificationPairing(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// The token mints a device credential that outlives the session, so a
-	// session alone may not ask for one.
+	// session alone may not ask for one. The Security page's own step-up
+	// (credential and second factor) counts while that page is unlocked.
 	var cred struct {
 		AuthSecret string `json:"authSecret"`
 	}
@@ -351,7 +352,7 @@ func (s *Server) handleNotificationPairing(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
+	if !s.stepUpFresh(r, securityPageStepUpWindow) && !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
 		return
 	}
 	s.writeNotificationPairing(w, ac.UserID, false)
