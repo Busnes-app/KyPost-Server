@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -310,5 +311,31 @@ func TestNativeOutboxSkipsUnpreparedMailbox(t *testing.T) {
 	ids := outboxMailboxes(all, mailboxes)
 	if len(ids) != len(created) || slices.Contains(ids, m.ID) {
 		t.Fatal("outbox discovery", ids)
+	}
+}
+
+// Accept and import read the frozen recipients by key, never the whole
+// ledger: damage to another account, which every whole-ledger read refuses,
+// leaves this delivery's cost and outcome alone.
+func TestNativeReceivingImportReadsOnlyFrozenRecipients(t *testing.T) {
+	r, created := receivingFixture(t)
+	ctx := context.Background()
+	if err := r.bind(ctx, "keyed", "", "one@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ssotest.DamageAuthority(r.configDir, "UPDATE accounts SET primary_mailbox = 'elsewhere' WHERE subject = 'two'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.life.NativeAddresses(); err == nil {
+		t.Fatal("damage did not break the whole-ledger read")
+	}
+	if err := r.accept(ctx, "keyed", "", strings.NewReader("From: sender@outside.test\r\n\r\nkeyed\r\n")); err != nil {
+		t.Fatal("accept read the whole ledger", err)
+	}
+	if err := r.importDelivery(ctx, "keyed"); err != nil {
+		t.Fatal("import read the whole ledger", err)
+	}
+	if got := receivingInbox(t, r, created[0]); strings.Join(got, ",") != "keyed" {
+		t.Fatal(got)
 	}
 }
