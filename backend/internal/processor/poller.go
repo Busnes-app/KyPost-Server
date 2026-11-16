@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
@@ -100,6 +102,10 @@ type Poller struct {
 	// whether mail is retried or thrown away, and until this existed they could
 	// only be tested a piece at a time. nil means the real client.
 	newMailClient func(configPath, keyPath string) imapadapter.Client
+
+	// quiet holds native mailboxes the tick may pass over (quiet.go).
+	quietMu sync.Mutex
+	quiet   map[string]quietMailbox
 
 	userMu            sync.Mutex
 	stores            map[string]*state.Store
@@ -620,6 +626,7 @@ func (p *Poller) Wait() {
 }
 
 func (p *Poller) TriggerNow() {
+	p.forgetQuiet()
 	p.tick()
 }
 
@@ -646,6 +653,7 @@ func (p *Poller) TriggerUnreadSweep() {
 		}
 		p.forExtraMailboxStores("unread sweep", func(store *state.Store) error { return store.SetCheckpoint("") })
 	}
+	p.forgetQuiet() // checkpoints live in state.db, which the stamp does not cover
 	p.tick()
 }
 
@@ -732,6 +740,7 @@ func (p *Poller) tick() {
 	var resMu sync.Mutex
 	usersPolled := 0
 	usersFailed := 0
+	quiet := 0
 	extras := p.activeExtraMailboxes()
 
 	for _, u := range all {
@@ -748,6 +757,10 @@ func (p *Poller) tick() {
 			modTime = fi.ModTime()
 		}
 		for _, mailboxID := range append([]string{""}, extras[u.ID]...) {
+			if p.skipQuiet(quietKey(u.ID, mailboxID)) {
+				quiet++
+				continue
+			}
 			usersPolled++
 			wg.Add(1)
 			sem <- struct{}{}
@@ -772,7 +785,7 @@ func (p *Poller) tick() {
 	}
 	wg.Wait()
 
-	tickFields := []string{"users_polled", strconv.Itoa(usersPolled), "users_failed", strconv.Itoa(usersFailed)}
+	tickFields := []string{"users_polled", strconv.Itoa(usersPolled), "users_failed", strconv.Itoa(usersFailed), "mailboxes_quiet", strconv.Itoa(quiet)}
 	// Carry classifier admission depth onto the tick line. A tick that
 	// "completed" while messages are still queued behind the model looks
 	// identical to a healthy one otherwise, which is how a backlog that never
@@ -827,6 +840,8 @@ func mailCacheEntriesFromMessages(messages []imapadapter.Message) []mailcache.En
 // user's settings, rules and labels. Incoming encryption keeps one journal per
 // user, so it runs on the primary mailbox only.
 func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime time.Time) error {
+	key := quietKey(u.ID, mailboxID)
+	p.setQuiet(key, quietMailbox{})
 	uc, a, err := p.mailboxTickContext(u, mailboxID, imapConfigModTime)
 	if err != nil {
 		return err
@@ -853,6 +868,14 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 	// Before fetchUnread, so a woken IMAP message is processed as new this tick.
 	p.wakeSnoozed(ctx, uc)
 
+	// Before the fetch: mail landing after it changes the stamp.
+	var quiet quietMailbox
+	if a.Owner.Mailbox != "" && !dbbackend.Postgres() {
+		db := filepath.Join(a.Dir(p.stateDir), "mailbox", "mailbox.db")
+		if stamp, ok := stampMailbox(db); ok {
+			quiet = quietMailbox{db: db, stamp: stamp, at: time.Now()}
+		}
+	}
 	checkpoint, messages, nextCheckpoint, err := p.fetchUnread(ctx, uc)
 	if err != nil {
 		return err
@@ -871,6 +894,9 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 	// key for such an alias while recipients reject it for missing the address.
 
 	p.recordTick(uc, len(messages), res, checkpointHeld)
+	if res.ledgerErr == nil && res.failed == 0 && len(res.deferredIDs) == 0 && !checkpointHeld {
+		p.setQuiet(key, quiet)
+	}
 	// Returned last: the work this tick did is persisted; the error only changes
 	// the tick's reported outcome (see tick's usersFailed accounting).
 	return res.ledgerErr
