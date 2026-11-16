@@ -1,6 +1,12 @@
 package api
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -13,10 +19,10 @@ import (
 
 const nativeSignOnMaxAge = 5 * time.Minute
 
-// handleNativeSignOn turns a KyIdentity device-grant ID token into the same
-// single-use pairing deep link the password path mints. The token is the whole
-// credential, so the route is withTokenAuth; verifyNativeSignOnToken is the
-// primitive the route-marker test looks for.
+// handleNativeSignOn turns a KyIdentity device-grant ID token, plus proof of
+// the app key the token names, into the same single-use pairing deep link the
+// password path mints. The route is withTokenAuth; verifyNativeSignOnToken is
+// the primitive the route-marker test looks for.
 func (s *Server) handleNativeSignOn(w http.ResponseWriter, r *http.Request) {
 	claims, settings, ok := s.verifyNativeSignOnToken(w, r)
 	if !ok {
@@ -108,8 +114,9 @@ func (s *Server) admitNativeSignOn(w http.ResponseWriter, claims *sso.SSOTokenCl
 
 // verifyNativeSignOnToken authenticates the request and returns ok=false after
 // writing the response. Order: SSO and pairing configured, body shape, rate
-// limit, signature and claims, device binding, freshness, single use. The jti
-// is spent only once the token is proven valid; later failures in the handler
+// limit, signature and claims, device binding, origin, freshness, proof of the
+// app key, single use. The jti is spent only once the request is proven valid,
+// so a stolen token without the key cannot burn the user's single use; later failures in the handler
 // (directory, lookup, 5xx) still spend it.
 func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request) (*sso.SSOTokenClaims, sso.SSOSettings, bool) {
 	settings := s.ssoStore.Load()
@@ -122,7 +129,9 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		return nil, settings, false
 	}
 	var req struct {
-		IDToken string `json:"idToken"`
+		IDToken  string `json:"idToken"`
+		ProofKey string `json:"proofKey"`
+		Proof    string `json:"proof"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil || strings.TrimSpace(req.IDToken) == "" {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -147,7 +156,8 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Access denied: this token was not issued for device sign-in.", http.StatusForbidden)
 		return nil, settings, false
 	}
-	if want := canonicalOrigin(s.pairingBaseURL()); want == "" || canonicalOrigin(claims.Origin) != want {
+	origin := canonicalOrigin(s.pairingBaseURL())
+	if origin == "" || canonicalOrigin(claims.Origin) != origin {
 		http.Error(w, "Access denied: this token was issued for a different server.", http.StatusForbidden)
 		return nil, settings, false
 	}
@@ -160,6 +170,14 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Access denied: the identity token is not valid yet.", http.StatusForbidden)
 		return nil, settings, false
 	}
+	if claims.Cnf.SPKIS256 == "" {
+		http.Error(w, "Update KyAuth and KyIdentity to sign in from this app.", http.StatusForbidden)
+		return nil, settings, false
+	}
+	if !verifySignOnProof(claims.Cnf.SPKIS256, origin, req.IDToken, req.ProofKey, req.Proof) {
+		http.Error(w, "Access denied: the sign-in proof does not match.", http.StatusForbidden)
+		return nil, settings, false
+	}
 	fresh, err := s.ssoLifecycle.RecordSignOnJTI(claims.Issuer, settings.ClientID, claims.JTI, time.Now().Add(nativeSignOnMaxAge+time.Minute))
 	if err != nil {
 		s.ssoFailure(w, "lifecycle", err)
@@ -170,6 +188,40 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		return nil, settings, false
 	}
 	return claims, settings, true
+}
+
+// signOnProofMessage is what the app signs: the version tag, this relay's
+// canonical origin and base64url(SHA-256(idToken)), newline-separated.
+func signOnProofMessage(origin, idToken string) []byte {
+	idt := sha256.Sum256([]byte(idToken))
+	return []byte("kypost-signon-pop/1\n" + origin + "\n" + base64.RawURLEncoding.EncodeToString(idt[:]))
+}
+
+// verifySignOnProof reports whether proofKey (std base64 P-256 SPKI DER) is the
+// key thumb names and proof (std base64 ASN.1 ECDSA) signs the message.
+func verifySignOnProof(thumb, origin, idToken, proofKey, proof string) bool {
+	der, err := base64.StdEncoding.DecodeString(proofKey)
+	if err != nil {
+		return false
+	}
+	pub, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return false
+	}
+	key, ok := pub.(*ecdsa.PublicKey)
+	if !ok || key.Curve != elliptic.P256() {
+		return false
+	}
+	sum := sha256.Sum256(der)
+	if subtle.ConstantTimeCompare([]byte(base64.RawURLEncoding.EncodeToString(sum[:])), []byte(thumb)) != 1 {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(proof)
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256(signOnProofMessage(origin, idToken))
+	return ecdsa.VerifyASN1(key, digest[:], sig)
 }
 
 // canonicalOrigin reduces a URL to scheme://host[:port]: host lowercased, an

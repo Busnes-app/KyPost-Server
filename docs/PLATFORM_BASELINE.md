@@ -24,6 +24,14 @@ compatibility break that must move a version tag with it.
 
 Native sign-on through `POST /api/auth/native/signon` accepts a provider-issued ID token with positive `iat`, at most 30 seconds ahead of the server and at most five minutes old, in addition to signature/issuer/audience/origin checks. Keep provider/server clocks synchronized; refusal is HTTP 403 without a pairing grant. Clients obtain the signed token from the provider rather than constructing timestamps.
 
+The token is bound to the app that asked for it. Per sign-on attempt the app generates an ephemeral in-memory P-256 key pair, discarded after the exchange, and hands KyAuth `thumb` = base64url (no padding) of SHA-256 over the public key's SPKI DER (Android `getAuthToken` option `org.kysecurity.identity.cnf`, Apple handoff field `cnf`). KyIdentity copies it into the ID token as `cnf: {"spki#S256": thumb}`. The app then posts `{"idToken", "proofKey", "proof"}`: `proofKey` is the standard-base64 SPKI DER, `proof` the standard-base64 ASN.1 DER ECDSA P-256/SHA-256 signature over the UTF-8 bytes
+
+```
+kypost-signon-pop/1\n<origin>\n<idt>
+```
+
+where `<origin>` is the relay origin the app already sends KyAuth (`https://host[:port]`, lowercase host, no default port, no path) and `<idt>` is base64url (no padding) of SHA-256 over the ID token. The server checks `cnf` is present (else 403 "Update KyAuth and KyIdentity to sign in from this app."), that `proofKey` is a P-256 SPKI whose thumb equals `cnf.spki#S256`, and that `proof` verifies against its own canonical origin (else 403 "Access denied: the sign-in proof does not match."), all before the token's `jti` is spent, so a stolen token without the key cannot use up the user's sign-in. The golden vector lives in `backend/internal/api/native_signon_test.go` (`TestSignOnProofGoldenVector`). Rollout order: KyIdentity, then KyAuth (Android, iOS), then the KyPost apps, then this server. Until all are updated, sign-in through KyAuth fails closed with that 403; QR and link pairing are unaffected.
+
 A device joins an account by scanning a QR code, or by following the same
 string as a deep link. The payload is one URI:
 

@@ -22,12 +22,14 @@ server setting, env var or switch that skips approval.
 | How the app got the token | Approval |
 |---|---|
 | QR code or deep link from Security → Devices (`POST /api/notifications/pairing`) | **Required** |
-| KyIdentity sign-on (`POST /api/auth/native/signon`) | Not required |
+| KyIdentity sign-on (`POST /api/auth/native/signon`), token bound to the app's key | Not required |
 | Review pairing (`POST /api/notifications/review-pairing`) | Not required |
 
 Sign-on and review pairing return the token in the HTTP response to the app
-that just proved the account credential: a device-bound KyIdentity ID token, or
-the account's derived password credential. The token never travels as a link or
+that just proved the account credential: a KyIdentity ID token bound to a key
+only the requesting app holds (the app proves it; see
+[native sign-on](PLATFORM_BASELINE.md#1-pairing)), or the account's derived
+password credential. The token never travels as a link or
 QR code. The server marks these tokens with a signed `direct` claim, which is the
 only thing that registers a device at once. Clients must parse that response's
 `deepLink` in-process. They must never hand it to the OS (`startActivity`,

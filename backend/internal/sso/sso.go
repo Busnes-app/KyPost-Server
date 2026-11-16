@@ -305,6 +305,11 @@ type SSOTokenClaims struct {
 	// Origin is the relay origin the phone user typed, which KyIdentity checked
 	// against the client's registered redirect-URI origins.
 	Origin string `json:"origin"`
+	// Cnf (RFC 7800) names the key the consuming app must prove it holds:
+	// base64url SHA-256 of its SPKI DER, copied by KyIdentity from KyAuth.
+	Cnf struct {
+		SPKIS256 string `json:"spki#S256"`
+	} `json:"cnf"`
 }
 
 // KySignOn reports whether the token speaks the KySignOn contract: it
