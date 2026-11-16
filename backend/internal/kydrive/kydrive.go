@@ -37,6 +37,7 @@ const (
 	EventLink   = "kypost.drive.link"
 	EventStatus = "kypost.drive.status"
 	EventFetch  = "kypost.drive.fetch"
+	EventView   = "kypost.drive.view"
 )
 
 // Routes on KyDrive.
@@ -45,6 +46,9 @@ const (
 	PathLink   = "/api/suite/kypost/links"
 	PathStatus = "/api/suite/kypost/status"
 	PathFetch  = "/api/suite/kypost/fetch"
+	PathView   = "/api/suite/kypost/view-tickets"
+	// ViewUploadPrefix is where every viewing-copy ticket URL must point.
+	ViewUploadPrefix = "/api/suite/view/"
 	// UploadPrefix is where every ticket URL must point.
 	UploadPrefix = "/api/suite/upload/"
 	// LinkPrefix is where every organisation link URL must point.
@@ -298,6 +302,21 @@ func (c *Client) Upload(ctx context.Context, ticketURL string, r io.ReaderAt, si
 			return status, out, err
 		}
 	}
+}
+
+// UploadView PUTs a viewing copy's bytes to its ticket in one request. Like
+// Upload, the URL must be on the paired origin and errors never carry it.
+func (c *Client) UploadView(ctx context.Context, ticketURL string, b []byte) (int, []byte, error) {
+	if !c.OnOrigin(ticketURL, ViewUploadPrefix) {
+		return 0, nil, errors.New("kydrive: ticket URL is not on the paired KyDrive")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, ticketURL, bytes.NewReader(b))
+	if err != nil {
+		return 0, nil, errors.New("kydrive: bad ticket URL")
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	status, _, out, err := c.do(c.upload, req)
+	return status, out, err
 }
 
 func (c *Client) do(hc *http.Client, req *http.Request) (int, http.Header, []byte, error) {
