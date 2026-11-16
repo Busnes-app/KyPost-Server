@@ -277,8 +277,12 @@ is written the way `kypost.itip.respond` writes it.
   "Show me as away in KyCalendar" is ticked.
 - A failure is reported to the user and resent on their next save. KyPost never retries in
   the background.
+- When the administrator turns outside replies off, KyPost resends every calendar-tied state at
+  once, without `comment_remote`. Until that lands, and whenever the remote reply may not go out,
+  KyPost removes from any REPLY it mails for KyCalendar each `COMMENT` that is the user's
+  outside-reply text.
 - Logs and audit carry IDs only, never the period or the texts.
 
 KyPost's half: `api/out_of_office.go` `syncOOOCalendar`, run after every
 `PUT /api/mail/out-of-office` (its answer carries `calendarSync`) and every agent
-`set_out_of_office`. Tests: `TestOutOfOfficeSyncsKyCalendar`.
+`set_out_of_office`. Tests: `TestOutOfOfficeSyncsKyCalendar`, `TestOutOfOfficeRemoteCommentRevoked`, `TestStripRemoteOOOComment`.

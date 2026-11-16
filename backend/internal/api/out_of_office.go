@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -172,4 +173,62 @@ func (s *Server) handleOutOfOffice(w http.ResponseWriter, r *http.Request) {
 	view := s.oooView(ac.UserID, saved)
 	view.CalendarSync = s.syncOOOCalendar(r.Context(), ac.UserID, saved)
 	writeJSON(w, http.StatusOK, view)
+}
+
+// resyncOOOCalendars resends every calendar-tied state after the administrator
+// stops outside replies, so KyCalendar drops the stored remote comment. Best
+// effort: stripRemoteOOOComment refuses the text at send time either way.
+func (s *Server) resyncOOOCalendars() {
+	list, err := s.users.List()
+	if err != nil {
+		s.logger.Error("out-of-office calendar resync: users unavailable")
+		return
+	}
+	for _, u := range list {
+		if o, err := s.loadOutOfOffice(u.ID); err == nil && o.CalendarAway && o.RemoteMessage != "" {
+			s.syncOOOCalendar(context.Background(), u.ID, o)
+		}
+	}
+}
+
+// stripRemoteOOOComment drops from a folded iCalendar object every COMMENT
+// whose text is the user's outside reply, for a REPLY sent while that reply
+// may not go out (KyCalendar may still hold a comment synced before).
+func stripRemoteOOOComment(ics []byte, remote string) []byte {
+	want := strings.ReplaceAll(remote, "\r\n", "\n")
+	lines := strings.Split(strings.TrimSuffix(string(ics), "\r\n"), "\r\n")
+	var out []string
+	for i := 0; i < len(lines); {
+		j := i + 1
+		logical := lines[i]
+		for ; j < len(lines) && (strings.HasPrefix(lines[j], " ") || strings.HasPrefix(lines[j], "\t")); j++ {
+			logical += lines[j][1:]
+		}
+		if !isCommentWithText(logical, want) {
+			out = append(out, lines[i:j]...)
+		}
+		i = j
+	}
+	return []byte(strings.Join(out, "\r\n") + "\r\n")
+}
+
+// isCommentWithText reports whether an unfolded content line is a COMMENT
+// whose TEXT value (RFC 5545 §3.3.11) is want.
+func isCommentWithText(line, want string) bool {
+	name, _, _ := strings.Cut(line, ":")
+	name, _, _ = strings.Cut(name, ";")
+	if !strings.EqualFold(name, "COMMENT") {
+		return false
+	}
+	quoted := false
+	for k, r := range line {
+		switch {
+		case r == '"':
+			quoted = !quoted
+		case r == ':' && !quoted:
+			v := strings.NewReplacer(`\n`, "\n", `\N`, "\n", `\,`, ",", `\;`, ";", `\\`, `\`).Replace(line[k+1:])
+			return v == want
+		}
+	}
+	return false
 }

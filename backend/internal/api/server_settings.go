@@ -90,8 +90,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cfgMu.Lock()
+		revoked := s.cfg.OutOfOfficeRemote && !next.OutOfOfficeRemote
 		s.cfg = next
 		s.cfgMu.Unlock()
+		if revoked {
+			go s.resyncOOOCalendars()
+		}
 		if s.onConfigUpdated != nil {
 			s.onConfigUpdated(next)
 		}

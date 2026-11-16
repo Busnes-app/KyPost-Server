@@ -1,13 +1,17 @@
 package api
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 )
@@ -85,5 +89,95 @@ func TestOutOfOfficeSyncsKyCalendar(t *testing.T) {
 	n := len(got)
 	if v := put(`{"enabled":false}`); v.CalendarSync != "" || v.CalendarAvailable || len(got) != n {
 		t.Fatalf("switch off: %q, sent %d", v.CalendarSync, len(got)-n)
+	}
+}
+
+// After the administrator stops outside replies, KyCalendar is sent the state
+// again without the remote comment, and a REPLY it still asks to mail with the
+// comment synced before goes out without it. Other comments are kept.
+func TestOutOfOfficeRemoteCommentRevoked(t *testing.T) {
+	f := newKyCalFixture(t)
+	f.srv.cfgMu.Lock()
+	f.srv.cfg.OutOfOfficeRemote = true
+	f.srv.cfgMu.Unlock()
+	var mu sync.Mutex
+	var got []map[string]any
+	cal := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var v map[string]any
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &v)
+		mu.Lock()
+		got = append(got, v)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"outcome":"applied"}`))
+	}))
+	defer cal.Close()
+	base, _ := url.Parse(cal.URL)
+	f.srv.SetKyCalendar(kycalendar.New(base, kycalSecret, cal.Client().Transport))
+	remote := "Away, back Monday; ask Sam, please.\nThanks"
+	body, _ := json.Marshal(map[string]any{"enabled": true, "start": "2026-12-01T05:00:00Z", "end": "2026-12-05T05:00:00Z", "localMessage": "Away",
+		"remote": "on", "remoteMessage": remote, "calendarAway": true, "calendarTentative": true})
+	req := httptest.NewRequest(http.MethodPut, "/api/mail/out-of-office", bytes.NewReader(body))
+	authRequestAs(f.srv, req, f.userID)
+	rec := httptest.NewRecorder()
+	f.srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || len(got) != 1 || got[0]["comment_remote"] != remote {
+		t.Fatalf("sync: %d %v", rec.Code, got)
+	}
+
+	f.srv.configPath = t.TempDir() + "/config.yaml"
+	next := f.srv.cfg
+	next.OutOfOfficeRemote = false
+	cfg, _ := json.Marshal(next)
+	req = httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(cfg))
+	authRequestAs(f.srv, req, f.userID)
+	rec = httptest.NewRecorder()
+	f.srv.withAdmin(f.srv.handleConfig)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	for end := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n == 2 || time.Now().After(end) {
+			break
+		}
+	}
+	mu.Lock()
+	if len(got) != 2 || got[1]["away"] != true || got[1]["comment_remote"] != nil {
+		t.Fatalf("resync after revocation: %v", got)
+	}
+	mu.Unlock()
+
+	// KyCalendar still holds the old comment (say the resync failed).
+	if err := kycalendar.OpenInvitations(f.srv.userStateDir(f.userID)).Record("r1@x.test", "org@x.test"); err != nil {
+		t.Fatal(err)
+	}
+	escaped := `Away\, back Monday\; ask Sam\, please.\nThanks`
+	ics := strings.Replace(replyICS, "ORGANIZER:", "COMMENT:"+escaped[:20]+"\r\n "+escaped[20:]+"\r\nCOMMENT:See you\r\nORGANIZER:", 1)
+	reply := sendBody(func(b map[string]any) {
+		b["method"], b["ics"], b["recipients"] = "REPLY", ics, []string{"org@x.test"}
+	})
+	if rec := signedSend(t, f.srv, kycalSecret, kycalendar.EventSend, "ev-ooo-1", reply); rec.Code != http.StatusAccepted {
+		t.Fatalf("reply: %d %s", rec.Code, rec.Body.String())
+	}
+	raw := <-f.delivered
+	_, part, _ := strings.Cut(raw, "Content-Type: text/calendar; method=REPLY; charset=UTF-8\r\n\r\n")
+	part, _, _ = strings.Cut(part, "\r\n--")
+	decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(part, "\r\n", ""))
+	if err != nil {
+		t.Fatalf("calendar part: %v\n%s", err, raw)
+	}
+	if raw := string(decoded); strings.Contains(raw, "Away") || strings.Contains(raw, "back Monday") || !strings.Contains(raw, "COMMENT:See you") || !strings.Contains(raw, "PARTSTAT=ACCEPTED") {
+		t.Fatalf("reply mailed:\n%s", raw)
+	}
+}
+
+func TestStripRemoteOOOComment(t *testing.T) {
+	in := "BEGIN:VEVENT\r\nCOMMENT;LANGUAGE=\"en:gb\":Hi\\nthere\r\nComment:Hi\r\n \\nthere\r\nCOMMENT:Hi\r\nUID:x\r\nEND:VEVENT\r\n"
+	want := "BEGIN:VEVENT\r\nCOMMENT:Hi\r\nUID:x\r\nEND:VEVENT\r\n"
+	if got := string(stripRemoteOOOComment([]byte(in), "Hi\r\nthere")); got != want {
+		t.Fatalf("got %q", got)
 	}
 }
