@@ -54,6 +54,11 @@ type PairingStatusResponse = {
   configured: boolean;
 };
 
+function isStaleStepUp(error: unknown): boolean {
+  return error instanceof HttpError && error.status === 403
+    && (error.body as { error?: unknown } | null)?.error === "step_up_required";
+}
+
 export type PairingPanelProps = {
   /** Called after a pairing attempt, so the device list can pick up a new one. */
   onDevicesMayHaveChanged: () => void;
@@ -104,7 +109,7 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
       const ttlSeconds = minted.pairingTtlSeconds ?? DEFAULT_PAIRING_TTL_SECONDS;
       if (minted.pairingToken) setPollUntilMs(Date.now() + ttlSeconds * 1000 + PENDING_WINDOW_MS);
     } catch (error: unknown) {
-      if (!confirm && error instanceof HttpError && error.status === 403) {
+      if (!confirm && isStaleStepUp(error)) {
         setNeedConfirm(true);
         onStatus("Your confirmation has expired. Confirm it is you to show a pairing code.");
       } else {

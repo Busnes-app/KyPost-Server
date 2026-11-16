@@ -141,10 +141,11 @@ async function confirmed<T>(confirm: DeviceConfirm, body: object, send: (body: o
 
 /**
  * Mints a 90-second pairing token. Without `confirm` it relies on the Security
- * page's own step-up, which the server accepts for five minutes.
+ * page's own step-up, which the server accepts for five minutes and otherwise
+ * refuses with 403 `step_up_required`.
  */
 export function mintPairing<T>(confirm?: DeviceConfirm): Promise<T> {
-  if (!confirm) return postJSON<T>("/api/notifications/pairing", {});
+  if (!confirm) return postJSON<T>("/api/notifications/pairing", { pageStepUp: true });
   return confirmed(confirm, {}, (b, h) => postJSON<T>("/api/notifications/pairing", b, h));
 }
 

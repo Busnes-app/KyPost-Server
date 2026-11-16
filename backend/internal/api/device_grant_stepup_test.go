@@ -88,7 +88,8 @@ func TestPairingTokenRequiresStepUp(t *testing.T) {
 }
 
 // The Security page's step-up covers pairing while the page is unlocked, and
-// only then: a stale stamp asks for the credential again.
+// only then. A stale one is refused as step_up_required with no side effect:
+// no throttle strike, no KySignOn challenge.
 func TestPairingAcceptsFreshSecurityPageStepUp(t *testing.T) {
 	srv, u := newDeviceGrantServer(t)
 	srv.pairingSecret = "test-pairing-secret-at-least-32-bytes-long"
@@ -101,16 +102,52 @@ func TestPairingAcceptsFreshSecurityPageStepUp(t *testing.T) {
 		srv.sessions[token] = sess
 		srv.sessMu.Unlock()
 	}
+	page := `{"pageStepUp":true}`
 
 	stamp(time.Now().Add(-securityPageStepUpWindow - time.Second))
-	if rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", `{}`); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "pairingToken") {
-		t.Fatalf("stale step-up: status %d body %s, want 403 and no token", rec.Code, rec.Body.String())
+	for range loginMaxFailures + 1 {
+		rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", page)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"step_up_required"`) {
+			t.Fatalf("stale step-up: status %d body %s, want 403 step_up_required", rec.Code, rec.Body.String())
+		}
+	}
+	// Those refusals spent no strike: the real credential still works.
+	if rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", `{"authSecret":"`+userAuthSecret(srv, u.ID, deviceGrantPassword)+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("credential after stale refusals: status %d body %s", rec.Code, rec.Body.String())
 	}
 
+	// A fresh stamp counts only when asked for: an empty body still needs the credential.
 	stamp(time.Now())
-	rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", `{}`)
+	if rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", `{}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("fresh stamp without pageStepUp: status %d, want 403", rec.Code)
+	}
+	rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", page)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"pairingToken"`) {
 		t.Fatalf("fresh step-up: status %d body %s, want a token", rec.Code, rec.Body.String())
+	}
+}
+
+// A stale page step-up on a KySignOn session mints no challenge.
+func TestPairingStalePageStepUpMintsNoSSOChallenge(t *testing.T) {
+	srv, u := newDeviceGrantServer(t)
+	srv.sessMu.Lock()
+	srv.sessions["sso-page"] = Session{UserID: u.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), CSRFToken: "sso-csrf", SSOKySignOn: true}
+	srv.sessMu.Unlock()
+	_, _ = srv.users.ClearMustChangePassword(u.ID)
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/pairing", strings.NewReader(`{"pageStepUp":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", "sso-csrf")
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: "sso-page"})
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"step_up_required"`) {
+		t.Fatalf("status %d body %s, want 403 step_up_required", rec.Code, rec.Body.String())
+	}
+	srv.stepUpMu.Lock()
+	n := len(srv.stepUps)
+	srv.stepUpMu.Unlock()
+	if n != 0 {
+		t.Fatalf("a stale page step-up minted %d KySignOn challenges", n)
 	}
 }
 

@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.mocked(decidePendingDevice).mockResolvedValue({ ok: true });
 });
 
-const stale = () => new HttpError("invalid credentials", 403, null);
+const stale = () => new HttpError("step_up_required", 403, { error: "step_up_required" });
 
 describe("pairing step-up", () => {
   it("uses the page's step-up without asking again", async () => {
@@ -67,6 +67,15 @@ describe("pairing step-up", () => {
     expect(screen.queryByLabelText("Account password")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
     await waitFor(() => expect(mintPairing).toHaveBeenLastCalledWith({ ssoSession: true, accountPassword: "" }));
+  });
+
+  it("treats a 403 that is not step_up_required as an ordinary refusal", async () => {
+    vi.mocked(mintPairing).mockRejectedValueOnce(new HttpError("forbidden", 403, null));
+    const onStatus = vi.fn();
+    render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={onStatus} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
+    await waitFor(() => expect(onStatus).toHaveBeenCalledWith("Could not show a pairing code: forbidden"));
+    expect(screen.queryByLabelText("Account password")).toBeNull();
   });
 
   it("shows other refusals and stays on the form", async () => {
