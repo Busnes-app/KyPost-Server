@@ -12,9 +12,8 @@ on:
   # ready_for_review is not in the default set (opened/synchronize/reopened).
   # It is here for ollama-bump.yml: a PR that action opens with GITHUB_TOKEN
   # triggers no workflow at all, so its draft is only ever checked when a
-  # human marks it ready. The cost is one duplicate run when a human takes
-  # their own draft out of draft without pushing — the concurrency group below
-  # cancels the earlier run if it is still going.
+  # human marks it ready. Jobs skip while a PR is a draft, so marking any
+  # draft ready is what runs its CI.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -43,6 +42,7 @@ jobs:
   # this job instead of after it.
   backend-checks:
     name: ci-backend-checks
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -129,16 +129,18 @@ jobs:
   backend-api:
     name: ci-backend-api
     needs: [backend-checks, backend-api-test]
-    if: always()
+    if: (always()) && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}" = true
 
   backend-other:
     name: ci-backend-other
     needs: [backend-checks, backend-other-test]
-    if: always()
+    if: (always()) && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}" = true
 
@@ -150,6 +152,7 @@ jobs:
   # (GODEBUG=fips140=on).
   backend-api-test:
     name: ci-backend-api (${{ matrix.profile }}, ${{ matrix.shard }}/4)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -185,6 +188,7 @@ jobs:
   # group is listed by name; anything new lands in the other group.
   backend-other-test:
     name: ci-backend-other (${{ matrix.profile }}, ${{ matrix.group }})
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -246,6 +250,7 @@ jobs:
   # its own (dbbackend's test hook); tests about SQLite files skip, visibly in -v output.
   backend-postgres:
     name: ci-backend-postgres
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
@@ -291,6 +296,7 @@ jobs:
 
   frontend:
     name: ci-frontend
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -369,6 +375,7 @@ jobs:
 
   relay:
     name: ci-relay
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -405,6 +412,7 @@ jobs:
 
   scripts:
     name: ci-scripts
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -541,6 +549,7 @@ jobs:
 
   docker:
     name: ci-docker
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
