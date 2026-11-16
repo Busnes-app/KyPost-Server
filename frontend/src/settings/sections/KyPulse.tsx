@@ -63,9 +63,9 @@ export function KyPulse() {
       <h4>Other addresses</h4>
       <p className="config-muted">Up to 10. Each gets a link from your mailbox and receives no alert until someone opens it and presses Confirm.</p>
       {state.recipients.length > 0 ? <div className="config-status-card">
-        {state.recipients.map(r => <div key={r.address} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0" }}>
-          <span>{r.address}</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {state.recipients.map(r => <div key={r.address} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0" }}>
+          <span style={{ overflowWrap: "anywhere" }}>{r.address}</span>
+          <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
             <span className="ky-status" data-ky-status={r.confirmed ? "success" : "warning"}>{r.confirmed ? "Confirmed" : "Pending"}</span>
             {!r.confirmed && <button type="button" disabled={busy}
               onClick={() => run(() => postJSON<State>(`${path}/recipients/resend`, { address: r.address }), `A new link was sent to ${r.address}; the old one no longer works.`, "Could not resend the link.")}>
