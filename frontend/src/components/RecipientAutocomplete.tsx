@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { statusOf, statusText, type Presence } from "../api/kymessage";
 import type { Suggestion } from "../hooks/useContactAutocomplete";
 
 type RecipientAutocompleteProps = {
@@ -36,6 +37,18 @@ export function RecipientAutocomplete({
   onHoverIndex,
   onSelect
 }: RecipientAutocompleteProps) {
+  // Organisation people's status from KyMessages, asked once per result list.
+  const org = results.filter((r) => r.organisation).map((r) => r.email.toLowerCase()).join(",");
+  const [status, setStatus] = useState<Record<string, Presence>>({});
+  useEffect(() => {
+    if (!org) return;
+    let live = true;
+    void statusOf(org.split(",")).then((s) => { if (live) setStatus(s); });
+    return () => {
+      live = false;
+    };
+  }, [org]);
+
   if (!searched && !loading) {
     return null;
   }
@@ -60,6 +73,12 @@ export function RecipientAutocomplete({
             >
               <span className="recipient-autocomplete-name">{highlightMatch(item.name || item.email, query)}</span>
               {item.name ? <span className="recipient-autocomplete-email">{highlightMatch(item.email, query)}</span> : null}
+              {item.organisation && status[item.email.toLowerCase()] ? (
+                <span className="recipient-status" data-state={status[item.email.toLowerCase()].state}>
+                  <span className="recipient-status-dot" aria-hidden="true" />
+                  {statusText(status[item.email.toLowerCase()])}
+                </span>
+              ) : null}
             </div>
           </div>
         ))
