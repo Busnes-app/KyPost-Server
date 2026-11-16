@@ -64,4 +64,5 @@ it("decides from the extension and the declared type together", () => {
   expect(officeViewable("page.html", "text/html")).toBe(false);
   expect(officeViewable("run.exe", "application/octet-stream")).toBe(false);
   expect(officeViewable("docx", docx)).toBe(false);
+  for (const ext of ["constructor", "__proto__", "toString", "hasOwnProperty"]) expect(officeViewable(`x.${ext}`, "text/plain")).toBe(false);
 });

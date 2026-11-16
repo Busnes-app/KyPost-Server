@@ -43,7 +43,7 @@ beforeEach(() => {
     if (url.startsWith("/api/labels")) return Promise.resolve({ configured: [], imap: [] });
     if (url.startsWith("/api/mail/body")) return Promise.resolve({ body: "see attached", bodyMode: "plain" });
     if (url.startsWith("/api/mail/attachments")) {
-      return Promise.resolve({ ok: true, attachments: [{ index: 0, name: "plan.docx", mimeType: docx, size: 3 }, { index: 1, name: "page.html", mimeType: "text/html", size: 3 }] });
+      return Promise.resolve({ ok: true, attachments: [{ index: 0, name: "plan.docx", mimeType: docx, size: 3 }, { index: 1, name: "page.html", mimeType: "text/html", size: 3 }, { index: 2, name: "x.constructor", mimeType: "text/plain", size: 3 }, { index: 3, name: "y.__proto__", mimeType: "text/plain", size: 3 }] });
     }
     return Promise.resolve({});
   });
@@ -60,6 +60,10 @@ it("offers Open and Edit for a viewable attachment of plain mail", async () => {
   expect(screen.getByRole("button", { name: "Open plan.docx read-only" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Edit plan.docx in KyDrive" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Open page.html read-only" })).toBeNull();
+  // Sender-chosen extensions naming Object.prototype keys neither crash the reader nor get actions.
+  expect(screen.getByRole("button", { name: "Save x.constructor to KyDrive" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Open x.constructor read-only" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open y.__proto__ read-only" })).toBeNull();
 });
 
 it("never offers them on encrypted mail", async () => {

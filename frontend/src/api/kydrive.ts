@@ -82,7 +82,9 @@ const officeTypes: Record<string, string[]> = {
 /** Whether Euro-Office can show this attachment (Open, Edit in KyDrive). */
 export function officeViewable(name: string, mimeType: string): boolean {
   const dot = name.lastIndexOf(".");
-  const types = dot > 0 ? officeTypes[name.slice(dot + 1).toLowerCase()] : undefined;
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  // Own keys only: a sender's "x.constructor" must not reach Object.prototype.
+  const types = Object.prototype.hasOwnProperty.call(officeTypes, ext) ? officeTypes[ext] : undefined;
   const type = mimeType.split(";")[0].trim().toLowerCase();
   return Boolean(types && (type === "application/octet-stream" || types.includes(type)));
 }
