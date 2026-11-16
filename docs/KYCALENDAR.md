@@ -241,7 +241,7 @@ time:
     except newline and tab.
 
 **The event.** One per user, UID `kypost-ooo-<hash of the user>`, in the default calendar
-(or wherever the user moved it):
+(or wherever the user moved it among their own calendars; a calendar shared to them is never searched or written):
 
 - `SUMMARY:Out of office`, `TRANSP:OPAQUE`, `X-MICROSOFT-CDO-BUSYSTATUS:OOF` and
   `X-KYCALENDAR-OUT-OF-OFFICE:TRUE`. Free/busy shows it as busy.
