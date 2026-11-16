@@ -343,15 +343,24 @@ func (s *Server) handleNotificationPairing(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// The token mints a device credential that outlives the session, so a
-	// session alone may not ask for one.
+	// session alone may not ask for one. PageStepUp leans on the Security
+	// page's own step-up (credential and second factor) instead; a stale one
+	// is refused before confirmActor, so it costs no throttle strike and
+	// mints no KySignOn challenge.
 	var cred struct {
 		AuthSecret string `json:"authSecret"`
+		PageStepUp bool   `json:"pageStepUp"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&cred); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
+	if cred.PageStepUp {
+		if !s.stepUpFresh(r, securityPageStepUpWindow) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "step_up_required"})
+			return
+		}
+	} else if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
 		return
 	}
 	s.writeNotificationPairing(w, ac.UserID, false)
