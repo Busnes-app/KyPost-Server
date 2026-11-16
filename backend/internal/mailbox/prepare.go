@@ -1,6 +1,7 @@
 package mailbox
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -219,7 +220,14 @@ type Prepared struct {
 	dir                 string
 	state, mail         *heldDB
 	stateFile, mailFile os.FileInfo
-	used                time.Time // last admission, for the idle close of heldAdmissions
+	// The last native-mailbox.json bytes decoded and their decoding; a check
+	// decodes again only when the bytes it reads differ. Guarded by mu.
+	raw     []byte
+	decoded preparedAccount
+	// Guarded by heldAdmissions: the last pooled admission, for the idle
+	// close, and the admissions checking p now plus open clients holding it.
+	used  time.Time
+	users int
 }
 
 // ValidatePreparedMailbox is the package function; for p's own mailbox it
@@ -230,7 +238,17 @@ func (p *Prepared) ValidatePreparedMailbox(parent string, owner Owner, address s
 		return ValidatePreparedMailbox(parent, owner, address, limits)
 	}
 	if p != nil && dir == p.dir {
-		return p.check(owner, address, limits)
+		source, err := p.check(owner, address, limits)
+		heldAdmissions.Lock()
+		if heldAdmissions.m[dir] == p { // a client's check keeps its pool entry fresh, or evicts it
+			if err != nil {
+				delete(heldAdmissions.m, dir)
+			} else {
+				p.used = time.Now()
+			}
+		}
+		heldAdmissions.Unlock()
+		return source, err
 	}
 	return checkHeld(dir, owner, address, limits)
 }
@@ -269,9 +287,10 @@ func memoryLimit() int {
 // offboarded mailbox's deleted files are released.
 const heldIdle = 5 * time.Minute
 
-// heldAdmissions holds idle Prepared handles between admissions that have no
-// open client. An admission takes its mailbox's entry out of the map, so no
-// two use one Prepared, and puts it back only after a successful check.
+// heldAdmissions holds Prepared handles between admissions, one per mailbox.
+// Admissions without a client and clients opened while it is held share it
+// (checks serialize on its mu). A passed check keeps it, a refused one drops
+// it; it closes once it is out of the map and no admission or client uses it.
 var heldAdmissions = struct {
 	sync.Mutex
 	max   int
@@ -283,12 +302,17 @@ var heldAdmissions = struct {
 // admissions (0, the default, holds none) and closes those held now. It is
 // for long-running processes; short commands run with few descriptors.
 func HoldAdmissionHandles(max int) {
+	var unused []*Prepared
 	heldAdmissions.Lock()
 	heldAdmissions.max = max
-	old := heldAdmissions.m
+	for _, p := range heldAdmissions.m {
+		if p.users == 0 {
+			unused = append(unused, p)
+		}
+	}
 	heldAdmissions.m = map[string]*Prepared{}
 	heldAdmissions.Unlock()
-	for _, p := range old {
+	for _, p := range unused {
 		p.Close()
 	}
 }
@@ -296,36 +320,69 @@ func HoldAdmissionHandles(max int) {
 // checkHeld is the full check with this process's held handles for dir, if
 // any. A handle opened here repairs a lost parent sync, as preparedSource
 // does; a held one did so when it opened (the #571 rule). A failed check
-// closes the handles, so the next admission reopens.
+// drops the handles from the pool, so the next admission reopens.
 func checkHeld(dir string, owner Owner, address string, limits Limits) (string, error) {
-	heldAdmissions.Lock()
-	p := heldAdmissions.m[dir]
-	delete(heldAdmissions.m, dir)
-	heldAdmissions.Unlock()
-	opened := p == nil
-	if opened {
-		p = &Prepared{dir: dir}
-	}
+	p, opened := useHeld(dir)
 	source, err := p.check(owner, address, limits)
 	if err == nil && opened {
 		err = fsutil.SyncDir(filepath.Dir(dir))
 	}
-	if err != nil || !holdAdmission(p) {
-		p.Close()
-	}
 	if err != nil {
+		dropHeld(p)
 		return "", err
 	}
+	heldAdmissions.Lock()
+	holdAdmission(p)
+	heldAdmissions.Unlock()
+	releaseHeld(p)
 	return source, nil
 }
 
-// holdAdmission keeps p unless the bound is reached or another admission of
-// the same mailbox already put one back.
-func holdAdmission(p *Prepared) bool {
+// dropHeld ends a use whose check refused: p leaves the pool.
+func dropHeld(p *Prepared) {
+	heldAdmissions.Lock()
+	if heldAdmissions.m[p.dir] == p {
+		delete(heldAdmissions.m, p.dir)
+	}
+	heldAdmissions.Unlock()
+	releaseHeld(p)
+}
+
+// useHeld returns dir's held Prepared, or a new one, for one more user;
+// releaseHeld ends that use.
+func useHeld(dir string) (p *Prepared, opened bool) {
 	heldAdmissions.Lock()
 	defer heldAdmissions.Unlock()
-	if heldAdmissions.m[p.dir] != nil || len(heldAdmissions.m) >= heldAdmissions.max {
-		return false
+	if p = heldAdmissions.m[dir]; p == nil {
+		p, opened = &Prepared{dir: dir}, true
+	}
+	p.users++
+	return p, opened
+}
+
+// releaseHeld closes p once it is out of the pool and unused.
+func releaseHeld(p *Prepared) {
+	heldAdmissions.Lock()
+	p.users--
+	if p.users < 0 {
+		heldAdmissions.Unlock()
+		panic("mailbox: held handles released twice")
+	}
+	unused := p.users == 0 && heldAdmissions.m[p.dir] != p
+	heldAdmissions.Unlock()
+	if unused {
+		p.Close()
+	}
+}
+
+// holdAdmission keeps p unless the bound is reached or the mailbox already
+// has an entry; the caller holds heldAdmissions.
+func holdAdmission(p *Prepared) bool {
+	if old := heldAdmissions.m[p.dir]; old != nil || len(heldAdmissions.m) >= heldAdmissions.max {
+		if old == p {
+			p.used = time.Now()
+		}
+		return old == p
 	}
 	p.used = time.Now()
 	heldAdmissions.m[p.dir] = p
@@ -335,13 +392,16 @@ func holdAdmission(p *Prepared) bool {
 	return true
 }
 
-// closeIdleAdmissions closes the mailboxes not admitted for heldIdle.
+// closeIdleAdmissions drops the mailboxes not admitted for heldIdle and
+// closes those no client or admission uses.
 func closeIdleAdmissions() {
 	var idle []*Prepared
 	heldAdmissions.Lock()
 	for dir, p := range heldAdmissions.m {
 		if time.Since(p.used) >= heldIdle {
-			idle = append(idle, p)
+			if p.users == 0 {
+				idle = append(idle, p)
+			}
 			delete(heldAdmissions.m, dir)
 		}
 	}
@@ -418,7 +478,6 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 			return "", ErrPreparation
 		}
 	}
-	var pa preparedAccount
 	path := filepath.Join(dir, preparationFile)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 8192 {
@@ -428,7 +487,15 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 	if err != nil {
 		return "", err
 	}
-	if err = json.Unmarshal(raw, &pa); err != nil || pa.Owner != owner || pa.Address != address || pa.Limits != limits {
+	if p.raw == nil || !bytes.Equal(raw, p.raw) {
+		var decoded preparedAccount
+		if err = json.Unmarshal(raw, &decoded); err != nil {
+			return "", ErrPreparation
+		}
+		p.raw, p.decoded = raw, decoded
+	}
+	pa := p.decoded
+	if pa.Owner != owner || pa.Address != address || pa.Limits != limits {
 		return "", ErrPreparation
 	}
 	statePath, mailPath := filepath.Join(dir, "state.db"), filepath.Join(dir, "mailbox", "mailbox.db")

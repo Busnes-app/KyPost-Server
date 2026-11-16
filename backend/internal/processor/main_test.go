@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -15,6 +16,8 @@ import (
 func TestMain(m *testing.M) {
 	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 1 << 50, 1 << 50, nil }
 	restore := users.SetLoginIterationsForTest(1000)
+	// As the api and daemon run: admissions share held mailbox handles.
+	mailbox.HoldAdmissionHandles(mailbox.MaxHeldAdmissions())
 	code := m.Run()
 	restore()
 	os.Exit(code)
