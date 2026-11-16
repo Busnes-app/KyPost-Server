@@ -7,8 +7,8 @@ describe("flagDueChoices", () => {
     expect(flagDueChoices(new Date(2026, 10, 18, 15))).toEqual([
       { label: "Today", due: "2026-11-18" },
       { label: "Tomorrow", due: "2026-11-19" },
-      { label: "This week", due: "2026-11-20" },
-      { label: "Next week", due: "2026-11-23" },
+      { label: "This week", due: "2026-11-20", date: expect.stringMatching(/ 20$/) },
+      { label: "Next week", due: "2026-11-23", date: expect.stringMatching(/ 23$/) },
       { label: "No date", due: "" }
     ]);
   });

@@ -210,6 +210,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   // Messages flagged here (folder and ID), which KyCalendar may follow as tasks (docs/KYCALENDAR.md).
   const [flagged, setFlagged] = useState<Set<string>>(() => new Set());
   const [flagTarget, setFlagTarget] = useState<string[] | null>(null);
+  // KyCalendar follows this user's flags as tasks, so the Flag dialog says so.
+  const [flagTasks, setFlagTasks] = useState(false);
   const flagKey = (folder: string, id: string) => `${folder}\n${id}`;
   // Wake time per row of the Snoozed folder, for its "until" label.
   const [snoozeUntil, setSnoozeUntil] = useState<Record<string, string>>({});
@@ -785,17 +787,17 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
       disabled: selectedMessageIds.length === 0 || actionLoading
     },
     {
-      key: "flag",
-      label: allFlagged ? "Clear flag" : "Flag",
-      icon: <FlagIcon />,
-      onClick: () => (allFlagged ? void applyInboxAction("unflag", selectedMessageIds) : setFlagTarget(selectedMessageIds)),
-      disabled: selectedMessageIds.length === 0 || actionLoading
-    },
-    {
       key: "read",
       label: "Mark read",
       icon: <CheckIcon />,
       onClick: () => applyInboxAction("read", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "flag",
+      label: allFlagged ? "Clear flag" : "Flag",
+      icon: <FlagIcon />,
+      onClick: () => (allFlagged ? void applyInboxAction("unflag", selectedMessageIds) : setFlagTarget(selectedMessageIds)),
       disabled: selectedMessageIds.length === 0 || actionLoading
     },
     {
@@ -846,15 +848,18 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
 
   // A failed flag list leaves the marks off; flagging still works.
   const loadFlags = useEffectEvent(() => {
-    getJSON<{ flags: Array<{ folder: string; messageId: string }> }>("/api/mail/flags").then(
-      (r) => setFlagged(new Set((r.flags ?? []).map((f) => flagKey(f.folder, f.messageId)))),
+    getJSON<{ flags: Array<{ folder: string; messageId: string }>; tasks?: boolean }>("/api/mail/flags").then(
+      (r) => {
+        setFlagged(new Set((r.flags ?? []).map((f) => flagKey(f.folder, f.messageId))));
+        setFlagTasks(r.tasks === true);
+      },
       () => {}
     );
   });
   useEffect(() => loadFlags(), []);
 
   function flagBadge(item: InboxEmail) {
-    return flagged.has(flagKey(mailbox, item.messageId)) ? <span className="inbox-keyword-chip" style={{ marginLeft: 6 }}>Flagged</span> : null;
+    return flagged.has(flagKey(mailbox, item.messageId)) ? <span className="inbox-flag-mark"><FlagIcon />Flagged</span> : null;
   }
 
   function snooze(wakeAt: string) {
@@ -2335,6 +2340,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
       <FlagDialog
         open={flagTarget !== null}
         busy={actionLoading}
+        tasks={flagTasks}
         onFlag={(due) => {
           const ids = flagTarget ?? [];
           setFlagTarget(null);

@@ -79,8 +79,11 @@ func TestFlagMakesKyCalendarTask(t *testing.T) {
 		authRequestAs(f.srv, req, f.userID)
 		rec := httptest.NewRecorder()
 		f.srv.routes().ServeHTTP(rec, req)
-		var v struct{ Flags []map[string]string }
-		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &v) != nil {
+		var v struct {
+			Flags []map[string]string
+			Tasks bool
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &v) != nil || !v.Tasks {
 			t.Fatalf("flags: %d %s", rec.Code, rec.Body.String())
 		}
 		return v.Flags
@@ -265,6 +268,14 @@ func TestLocalFlagsSurviveWithoutTaskSync(t *testing.T) {
 			}
 			if calls != 1 {
 				t.Fatalf("task sync while unavailable: %d calls", calls)
+			}
+			// The Flag dialog is not told a task follows.
+			req := httptest.NewRequest(http.MethodGet, "/api/mail/flags", nil)
+			authRequestAs(f.srv, req, f.userID)
+			rec := httptest.NewRecorder()
+			f.srv.routes().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tasks":false`) {
+				t.Fatalf("flags: %d %s", rec.Code, rec.Body.String())
 			}
 		})
 	}

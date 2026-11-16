@@ -359,7 +359,8 @@ app). The route verifies like `itip/send` (event type, signature, replay guard; 
 **The link.** `/read?flag=<ref>` asks `GET /api/mail/flags/{ref}` (the signed-in user's own
 records only), switches to the message's mailbox and opens it, or shows "This message is no
 longer available." when the reference is unknown or the message is gone. `GET /api/mail/flags`
-gives the web its Flagged marks.
+gives the web its Flagged marks and `tasks`, true only while a flag here also makes a task, so
+the Flag dialog says "Also adds a task in KyCalendar." only then.
 
 KyPost's half: `api/flag_tasks.go`, `kycalendar/flags.go`. Tests: `TestFlagMakesKyCalendarTask`,
 `TestTaskStateOffWhenUnpaired`, mailbox `TestNativeClientFlagAction`, web

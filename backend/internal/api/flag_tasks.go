@@ -135,7 +135,8 @@ func (s *Server) handleListFlags(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"flags": out})
+	// tasks: a flag here also makes a KyCalendar task, so the Flag dialog says so.
+	writeJSON(w, http.StatusOK, map[string]any{"flags": out, "tasks": s.flagTaskUser(ac.UserID) != nil})
 }
 
 // handleFlagRef resolves a KyCalendar task's link (/read?flag=<ref>) to the user's own message:
