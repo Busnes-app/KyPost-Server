@@ -198,6 +198,7 @@ func (s *Server) handleOutOfOffice(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("out-of-office settings saved", "user_id", ac.UserID)
 	view := s.oooView(ac.UserID, saved)
 	view.CalendarSync = s.syncOOOCalendar(r.Context(), ac.UserID, saved)
+	s.syncOOOMessages(r.Context(), ac.UserID, saved)
 	writeJSON(w, http.StatusOK, view)
 }
 

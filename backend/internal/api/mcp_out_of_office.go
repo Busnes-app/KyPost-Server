@@ -72,6 +72,7 @@ func (t mcpTools) setOutOfOffice(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, oooAgentView{}, errors.New("settings unavailable")
 	}
 	t.s.syncOOOCalendar(ctx, t.caller.user.ID, saved)
+	t.s.syncOOOMessages(ctx, t.caller.user.ID, saved)
 	t.log("out_of_office", "1", "0")
 	return nil, t.oooAgentView(saved), nil
 }
