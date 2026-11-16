@@ -591,6 +591,30 @@ func (s *Store) Update(ctx context.Context, folder string, id int64, seen, starr
 	return tx.Commit()
 }
 
+// setStarred flags or unflags one message (IMAP \Flagged); unchanged is a no-op.
+func (s *Store) setStarred(ctx context.Context, folder string, id int64, starred bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var old bool
+	err = tx.QueryRowContext(ctx, "SELECT starred FROM messages WHERE folder=? AND id=? AND raw IS NOT NULL", folder, id).Scan(&old)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil || old == starred {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE messages SET starred=? WHERE id=?", starred, id); err != nil {
+		return err
+	}
+	if err = change(ctx, tx, id, folder, false); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // Move preserves the numeric ID and emits a removal and arrival atomically.
 // Delete permanently clears raw bytes while retaining the ID/receipt/tombstone.
 func (s *Store) Move(ctx context.Context, folder string, id int64, target string) error {

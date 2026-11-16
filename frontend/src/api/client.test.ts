@@ -154,6 +154,7 @@ describe("mailbox selection", () => {
       () => getJSON("/api/inbox/folders"),
       () => postJSON("/api/inbox/actions", {}),
       () => getJSON("/api/snoozes"),
+      () => getJSON("/api/mail/flags"),
       () => getJSON("/api/mail/search?q=x"),
       () => getJSON("/api/mail/body?messageId=1"),
       () => getJSON("/api/mail/attachments?messageId=1"),
@@ -174,7 +175,7 @@ describe("mailbox selection", () => {
 
   it("never sends it to per-user routes or Settings screens that choose their own", async () => {
     selectMailbox(TEAM);
-    for (const path of ["/api/labels", "/api/mail/send-as", "/api/mailboxes", "/api/decisions?limit=10", "/api/export/folders", "/api/inboxes", "/api/mail/sender"]) {
+    for (const path of ["/api/labels", "/api/mail/send-as", "/api/mailboxes", "/api/decisions?limit=10", "/api/export/folders", "/api/inboxes", "/api/mail/sender", "/api/mail/flags/r1"]) {
       expect(await headerFor(() => getJSON(path))).toBeNull();
     }
   });

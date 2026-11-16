@@ -149,6 +149,7 @@ var publicRoutes = map[string]string{
 	"GET /api/auth/oidc/callback":            "redeems OIDC authorization code for a session",
 	"GET /auth/sso/callback":                 "alias for OIDC authorization code callback",
 	"POST /api/calendar/itip/send":           "receives signed send requests from the paired KyCalendar; the syncauth signature is the credential",
+	"POST /api/calendar/tasks/state":         "receives signed flagged-mail task state from the paired KyCalendar; the syncauth signature is the credential",
 	"POST /api/suite/kypulse/alert":          "receives signed alert requests from the paired KyPulse; the syncauth signature is the credential",
 	"GET /api/auth/login-params":             "pre-login KDF parameters; login_params.go covers why it cannot reveal account existence",
 	"GET /api/auth/pow-challenge":            "issues the proof-of-work challenge required to attempt a login",

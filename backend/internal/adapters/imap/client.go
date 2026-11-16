@@ -1558,6 +1558,15 @@ func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action, mai
 			return fmt.Errorf("imap mark unseen uid %d: %w", uid, err)
 		}
 		return nil
+	case "flag", "unflag":
+		set := goimap.FlagAdd
+		if action == "unflag" {
+			set = goimap.FlagRemove
+		}
+		if err := d.SetFlags(uid, goimap.Flags{Flagged: set}); err != nil {
+			return fmt.Errorf("imap %s uid %d: %w", action, uid, err)
+		}
+		return nil
 	case "archive":
 		year := time.Now().Year()
 		emails, err := d.GetEmails(uid)
