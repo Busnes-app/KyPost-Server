@@ -72,6 +72,35 @@ func TestAdmitSendIsIdempotentPerID(t *testing.T) {
 	}
 }
 
+// A claim is made once, counts toward no quota, is released on request and
+// lapses after a day.
+func TestClaimSendOnce(t *testing.T) {
+	s, ctx := newScheduledStore(t), context.Background()
+	claim := func(id string, now int64) bool {
+		t.Helper()
+		ok, err := s.ClaimSend(ctx, id, "claims", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if !claim("ev", 1_000_000) || claim("ev", 1_000_001) {
+		t.Fatal("a claim was not made exactly once")
+	}
+	if _, err := s.AdmitSend(ctx, "msg", "claims-quota", 1, 1, 1, 1_000_001); err != nil {
+		t.Fatalf("a claim counted toward a quota: %v", err)
+	}
+	if err := s.ReleaseSend(ctx, "ev"); err != nil {
+		t.Fatal(err)
+	}
+	if !claim("ev", 1_000_002) {
+		t.Fatal("a released claim stayed")
+	}
+	if !claim("ev", 1_000_002+sendDay) {
+		t.Fatal("a day-old claim stayed")
+	}
+}
+
 // Two stores on one file stand in for the API and daemon processes; racing
 // senders must not overshoot the quota.
 func TestAdmitSendRaceAcrossProcesses(t *testing.T) {

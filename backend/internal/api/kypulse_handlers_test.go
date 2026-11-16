@@ -253,6 +253,18 @@ func TestKyPulseAlertDelivers(t *testing.T) {
 		t.Fatalf("replay: %d %s", again.Code, again.Body.String())
 	}
 	noDelivery(t, f.kycalFixture, "replay")
+
+	// A second process, or this one after a restart, has an empty replay
+	// guard but shares the durable ledger: the event still sends once.
+	f.srv.SetKyPulse(suitepair.New(KyPulsePeer, nil, pulseSecret, nil))
+	other := pulseSend(t, f.srv, pulseSecret, kypulseEventAlert, "kypulse-alert-ev1", alertBody(nil))
+	if other.Code != http.StatusOK || answerCode(other) != "duplicate" {
+		t.Fatalf("replay in a fresh process: %d %s", other.Code, other.Body.String())
+	}
+	noDelivery(t, f.kycalFixture, "replay in a fresh process")
+	if len(f.sent.copies()) != 1 {
+		t.Fatal("a replay was filed in Sent again")
+	}
 }
 
 func checkPulseMessage(t *testing.T, raw, subject, to string) {
@@ -327,17 +339,30 @@ var confirmLink = regexp.MustCompile(`/kypulse/confirm\?t=([A-Za-z0-9_.-]+)`)
 
 // confirmToken reads the link out of a delivered confirmation mail, which
 // carries the same fixed template as an alert.
+// pulseText is the decoded plain-text body of a KyPulse message.
+func pulseText(t *testing.T, raw string) string {
+	t.Helper()
+	msg, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := new(bytes.Buffer)
+	_, _ = body.ReadFrom(msg.Body)
+	text, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(body.String(), "\r\n", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(text)
+}
+
 func confirmToken(t *testing.T, raw, to string) string {
 	t.Helper()
 	checkPulseMessage(t, raw, "[KyPulse] Confirm alert mail", to)
-	msg, _ := mail.ReadMessage(strings.NewReader(raw))
-	body := new(bytes.Buffer)
-	_, _ = body.ReadFrom(msg.Body)
-	text, _ := base64.StdEncoding.DecodeString(strings.ReplaceAll(body.String(), "\r\n", ""))
-	if !strings.Contains(string(text), "from alice@example.com to this address") {
+	text := pulseText(t, raw)
+	if !strings.Contains(text, "from alice@example.com to this address") {
 		t.Fatalf("confirmation text: %s", text)
 	}
-	m := confirmLink.FindStringSubmatch(string(text))
+	m := confirmLink.FindStringSubmatch(text)
 	if m == nil {
 		t.Fatalf("no link in %s", text)
 	}
@@ -426,8 +451,14 @@ func TestKyPulseConfirmLink(t *testing.T) {
 		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
 	}
 	token := confirmToken(t, f.delivered(t), "new@x.test")
-	if len(f.sent.copies()) != 1 {
+	copies := f.sent.copies()
+	if len(copies) != 1 {
 		t.Fatal("confirmation mail not filed in Sent")
+	}
+	// The owner's Sent copy must not let the owner confirm for the recipient.
+	checkPulseMessage(t, string(copies[0]), "[KyPulse] Confirm alert mail", "new@x.test")
+	if text := pulseText(t, string(copies[0])); strings.Contains(text, token) || confirmLink.MatchString(text) || !strings.Contains(text, "link withheld") {
+		t.Fatalf("Sent copy carries the link: %s", text)
 	}
 	if rec := f.settings(t, http.MethodPost, "/api/settings/kypulse/recipients/resend", `{"address":"new@x.test"}`); rec.Code != 429 || rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("resend inside the cooldown: %d %s", rec.Code, rec.Body.String())

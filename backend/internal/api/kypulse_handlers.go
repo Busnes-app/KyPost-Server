@@ -75,6 +75,10 @@ func (s *Server) handleKyPulseAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f := s.sendKyPulseAlert(r.Context(), ev.ID, body); f != nil {
+		if f == errKyPulseReplayed {
+			writeJSON(w, http.StatusOK, map[string]any{"outcome": "duplicate"})
+			return
+		}
 		if !f.keep {
 			s.kypulse.Forget(ev.ID)
 		}
@@ -160,6 +164,31 @@ func (s *Server) sendKyPulseAlert(ctx context.Context, eventID string, body []by
 	if s.globalStore == nil {
 		return errUnavailable
 	}
+	// The replay guard is per process; this durable claim makes one event ID
+	// send once across processes and restarts. Released only on a definite
+	// non-delivery, so KyPulse's retry of that ID runs again.
+	claim := "kypulse-claim:" + u.ID + ":" + eventID
+	fresh, err := s.globalStore.ClaimSend(ctx, claim, "kypulse-claim:"+u.ID, time.Now().Unix())
+	switch {
+	case err != nil:
+		return errUnavailable
+	case !fresh:
+		return errKyPulseReplayed
+	}
+	f = s.admitKyPulseAlert(ctx, u, out, eventID, recipients, req.Subject, req.Text)
+	if f != nil && !f.keep {
+		if err := s.globalStore.ReleaseSend(context.WithoutCancel(ctx), claim); err != nil {
+			f.keep = true // the claim stands, so a retry would be a duplicate: say so
+		}
+	}
+	return f
+}
+
+// errKyPulseReplayed is a durably claimed event ID: nothing is sent again.
+var errKyPulseReplayed = &itipRefusal{status: http.StatusOK, code: "duplicate"}
+
+// admitKyPulseAlert charges the per-mailbox limit and sends.
+func (s *Server) admitKyPulseAlert(ctx context.Context, u users.User, out kypulseOutbox, eventID string, recipients []string, subject, text string) *itipRefusal {
 	wait, err := s.globalStore.AdmitSend(ctx, "kypulse-rate:"+u.ID+":"+eventID, "kypulse:"+u.ID, 1, kypulseAlertsPerHour, kypulseAlertsPerHour*24, time.Now().Unix())
 	switch {
 	case errors.Is(err, state.ErrSendQuota):
@@ -169,7 +198,7 @@ func (s *Server) sendKyPulseAlert(ctx context.Context, eventID string, body []by
 	case err != nil:
 		return errUnavailable
 	}
-	return s.sendKyPulseMail(ctx, u, out, "kypulse:"+u.ID+":"+eventID, recipients, req.Subject, req.Text)
+	return s.sendKyPulseMail(ctx, u, out, "kypulse:"+u.ID+":"+eventID, recipients, subject, text, "")
 }
 
 // kypulseText reports whether v is 1 to maxBytes of UTF-8 with no control
@@ -270,8 +299,9 @@ func (s *Server) kypulseOutbox(ctx context.Context, u users.User) (kypulseOutbox
 
 // sendKyPulseMail charges the owner's sending quota once per chargeID and
 // sends the fixed template: plain text, "[KyPulse] " subject, the two
-// auto-generated headers, From the owner's own address.
-func (s *Server) sendKyPulseMail(ctx context.Context, u users.User, out kypulseOutbox, chargeID string, recipients []string, subject, text string) *itipRefusal {
+// auto-generated headers, From the owner's own address. A non-empty sentText
+// replaces the body of the owner's Sent copy only.
+func (s *Server) sendKyPulseMail(ctx context.Context, u users.User, out kypulseOutbox, chargeID string, recipients []string, subject, text, sentText string) *itipRefusal {
 	wait, err := s.chargeSend(ctx, chargeID, u.ID, len(recipients), time.Now())
 	switch {
 	case errors.Is(err, state.ErrSendQuota):
@@ -285,15 +315,19 @@ func (s *Server) sendKyPulseMail(ctx context.Context, u users.User, out kypulseO
 	case err != nil:
 		return errUnavailable
 	}
-	wire, sent, _ := composeSend(mailmsg.Message{
+	m := mailmsg.Message{
 		From:       out.from,
 		To:         recipients,
 		Subject:    kypulseSubjectPrefix + subject,
 		Body:       strings.ReplaceAll(text, "\n", "\r\n"),
 		Mode:       "plain",
 		AutoSource: "kypulse",
-	}, nil)
-	return out.send(ctx, recipients, wire, sent)
+	}.Stamp()
+	wire := m.Build()
+	if sentText != "" {
+		m.Body = strings.ReplaceAll(sentText, "\n", "\r\n")
+	}
+	return out.send(ctx, recipients, wire, m.Build())
 }
 
 // kypulseView is the settings answer. available: KyPulse is paired.
@@ -513,12 +547,16 @@ func (s *Server) mailKyPulseConfirmation(w http.ResponseWriter, r *http.Request,
 		writeITIP(w, http.StatusServiceUnavailable, "unavailable", "retry later")
 		return
 	}
-	link := s.pickupBaseURL() + "/kypulse/confirm?t=" + token
-	text := "KyPulse, a monitoring service, may send alerts from " + out.from + " to this address.\n\n" +
-		"To allow it, open the link below and press Confirm:\n\n" + link + "\n\n" +
-		"The link expires in 7 days. If you did not expect this, ignore this message: " +
-		"no alert is sent to this address unless it is confirmed.\n"
-	if f := s.sendKyPulseMail(r.Context(), u, out, "kypulse-confirm:"+u.ID+":"+nonce, []string{addr}, kypulseConfirmSubject, text); f != nil {
+	confirmText := func(link string) string {
+		return "KyPulse, a monitoring service, may send alerts from " + out.from + " to this address.\n\n" +
+			"To allow it, open the link below and press Confirm:\n\n" + link + "\n\n" +
+			"The link expires in 7 days. If you did not expect this, ignore this message: " +
+			"no alert is sent to this address unless it is confirmed.\n"
+	}
+	// The Sent copy leaves the link out: only the recipient may confirm.
+	text := confirmText(s.pickupBaseURL() + "/kypulse/confirm?t=" + token)
+	sentText := confirmText("(link withheld from your Sent copy: only the recipient can confirm)")
+	if f := s.sendKyPulseMail(r.Context(), u, out, "kypulse-confirm:"+u.ID+":"+nonce, []string{addr}, kypulseConfirmSubject, text, sentText); f != nil {
 		s.logger.Info("kypulse recipient changed", "actor", u.ID, "action", action, "result", "mail_"+f.code)
 		if f.retryAfter > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(f.retryAfter))

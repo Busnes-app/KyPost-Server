@@ -67,9 +67,11 @@ Out of scope: an attacker who already runs code in the container or holds both t
    carries an `Origin` header.
 6. **KyPulse → KyPost.** `POST /api/suite/kypulse/alert` takes no session: a `syncauth`
    signature under the secret KyIdentity's suite directory hands both apps, with a replay guard
-   (`backend/internal/suitepair`). It can only send a fixed plain-text template from a member's
+   (`backend/internal/suitepair`) and a durable per-event claim in the shared send ledger, so a
+   replay across pods or restarts sends nothing (`backend/internal/state/send_ledger.go`). It can only send a fixed plain-text template from a member's
    own outbox, after the member turned it on, to their own addresses or extra ones that
-   confirmed through a signed link (`GET` renders only, the `POST` confirms), at most 30 an hour
+   confirmed through a signed link (`GET` renders only, the `POST` confirms; the owner's Sent
+   copy withholds the link), at most 30 an hour
    per mailbox in the shared send ledger, on top of the sending quota. Nothing KyPulse sends
    reaches a header except the subject text (`backend/internal/api/kypulse_handlers.go`,
    `kypulse_handlers_test.go`).

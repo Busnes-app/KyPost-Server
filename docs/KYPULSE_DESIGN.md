@@ -12,8 +12,10 @@ KyPulse side's design is KyPulse `docs/superpowers/specs/2026-11-15-kypost-email
   KyPulse can at most mail a confirmed recipient of a member who opted in, under a
   `[KyPulse]` subject, at that rate.
 - **Forged or replayed requests.** `syncauth` v1 under the KyIdentity pair secret, event
-  type checked, replay guard; the secret is held in memory only.
-- **Confirmation links.** Opening a link only shows a page; the POST behind its button
+  type checked, replay guard; the secret is held in memory only. A durable claim per event
+  ID in the shared send ledger stops a replay that another pod or a restart would not
+  remember from sending twice.
+- **Confirmation links.** The owner's Sent copy withholds the link, so the owner cannot confirm for the recipient. Opening a link only shows a page; the POST behind its button
   confirms, so mail scanners confirm nothing. Links expire after 7 days, die once used, and
   are revoked when the address is removed.
 - **Header injection.** Only the subject text crosses into a header, after the fixed
@@ -28,7 +30,7 @@ KyPulse side's design is KyPulse `docs/superpowers/specs/2026-11-15-kypost-email
 | Where | What |
 |---|---|
 | Per-user settings (`kyPulse`) | switch; up to 10 extra recipients with confirmed flag, live link nonce, sent time |
-| Global store send admission | per-mailbox alert count (`kypulse-rate:`), shared across pods |
+| Global store send admission | per-mailbox alert count (`kypulse-rate:`) and a one-day claim per event ID (`kypulse-claim:`), shared across pods |
 | Normal outbox and Sent | each alert, like any send, charged to the sending quota |
 
 ## Routes
