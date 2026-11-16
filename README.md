@@ -67,6 +67,8 @@ KyPost is released under the [MIT License](LICENSE.txt).
 
 ## Documentation
 
+Read the [KyPost mdBook manual](https://busnes.app/manuals/kypost-server/) for the server and native clients.
+
 For Identity-first or Notes-only standalone installs, `bash scripts/ensure-network.sh` creates only the KyPost-owned shared bridge; no mail server is installed. See [network ownership and fixed-IP proxy setup](docs/Reverse_Proxy_Networking.md#when-the-network-already-exists).
 
 - [Running](docs/RUNNING.md) — Requirements, Quick Start, Ports. <a id="requirements"></a><a id="quick-start"></a><a id="ports"></a>
