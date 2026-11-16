@@ -55,6 +55,8 @@ Classification flow:
 
 ## Project Structure
 
+- `backend/internal/sso/hr_mailbox.go` and `backend/internal/api/hr_mailbox.go`: signed pre-identity HR address reservations in native authority storage. KyIdentity owns HR source mapping, account creation and email writeback. See [contract](NATIVE_PROVISIONING.md#hr-address-reservations).
+
 - `docker-compose.strong-crypto.yml`: optional strong-key profile, `GODEBUG=fips140=on` only; see [STRONG-CRYPTO.md](STRONG-CRYPTO.md).
 - `docker-compose.rspamd.yml`: optional pinned private scanner sidecar; fixed configuration in `scripts/rspamd/rspamd.conf`.
 - `docker-compose.receiving.yml`: optional controlled receiver supervision and explicit SMTP publish with operator-supplied read-only engine/TLS mounts.

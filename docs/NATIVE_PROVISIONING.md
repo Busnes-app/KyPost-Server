@@ -1373,3 +1373,58 @@ before public transport activation; the local receiving/selector checks above
 are implemented. Durable scoped client deltas and relay readiness remain
 separate work. This change adds system DNS TXT lookups, no dependency or secret,
 and no Android/Linux/iOS client wire change.
+
+## HR address reservations
+
+KyIdentity may call `POST /api/sync/hr-mailbox` before creating an employee's
+identity. Requires `KYPOST_NATIVE_MAIL=true`, enabled SSO with the configured
+issuer, a configured nonretired native domain and no restore hold. Authenticate
+with `ky-primitives/syncauth` using the existing pairing signing secret (or SSO
+client secret); event type must be exactly `hr.mailbox.reserve`. Ordinary directory
+handlers refuse this event purpose. Request and response use JSON over HTTPS:
+
+```json
+{"userId":"<future-KyIdentity-UUID>","preferredName":"alice.adams","domain":"example.com"}
+```
+
+```json
+{"userId":"<same-KyIdentity-UUID>","email":"alice.adams@example.com"}
+```
+
+The request body is capped at 4096 bytes and unknown fields are rejected. The
+preferred ASCII dot-atom name is at most 48 bytes. KyIdentity validates its narrower
+letter/digit/dot/underscore/hyphen contract. The allocator tries the lowercased
+preferred name, then `.2` through `.1000`, refusing exhaustion. Existing primary,
+alias, released and reserved addresses and retained directory primary emails are
+unavailable. Ownership is scoped to the configured issuer plus immutable subject,
+never to the display name or source HR UID. Existing directory subjects without
+an allocation cannot be adopted; administrator/legacy accounts cannot reserve one.
+
+An exact replay returns the same reserved address. A changed domain refuses.
+The API uses domain → directory fences and persists a disabled primary address
+with a private mailbox ID. It creates no directory grant, user account or mailbox
+storage. No DNS proof is required merely to reserve a name; normal activation still
+requires fresh domain proof and configured mail transport before live mail works.
+KyIdentity must use this confirmed email to create its pending SSO account, write
+back to HR and arrange manual activation and application assignment. Normal signed
+active directory provisioning then prepares/publishes that reserved mailbox and
+retains the same private mailbox ID. Do not use address reservation as proof that
+mail delivery is ready.
+
+Address-only reservations use the existing authority records: `revision=0`, empty
+`digest`/`source`, `status=pending`, `failure=hr_address_reserved`, inactive desired
+state and no legacy exception. Snapshot validation allows precisely this marked,
+unpublished state, refuses account/storage publication against it, and preserves
+normal owner/domain/path checks. Recovery includes the reservation in its digest
+without requesting authority for an identity that may not exist yet. Any retained
+directory subject still requires current evidence; no stored reservation authorizes
+access or bypasses a restore hold. The marker clears
+when ordinary provisioning reconciles its first directory revision. Addresses are
+retained after cancelled hires and connector disconnection, just like other native
+address ownership. There is no automatic address recycling.
+
+401 means unsigned/wrong-purpose/disabled-SSO, 400 malformed input, and 409 means
+native mode/domain/ownership/restore preconditions need attention. Repeating a
+request after a lost response is safe. Success and refusal log event identifiers;
+credentials are never logged. This is the KyPost half of the generic KyIdentity HR
+integration; it does not connect to Workday or hold HR writeback credentials.

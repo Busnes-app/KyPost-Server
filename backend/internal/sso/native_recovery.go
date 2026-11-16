@@ -133,11 +133,16 @@ func recoveryInputs(epoch string, settings SSOSettings, key []byte, accounts []u
 		}
 	}
 	for k, a := range ledger.Accounts {
-		if a.Owner.Issuer != settings.IssuerURL || k != directoryKey(a.Owner.Issuer, a.Owner.Subject) || !fsutil.SafePathComponent(a.Owner.Mailbox) || reservedIDs[a.Owner.Mailbox] || a.Revision <= 0 || a.Digest == "" {
+		if a.Owner.Issuer != settings.IssuerURL || k != directoryKey(a.Owner.Issuer, a.Owner.Subject) || !fsutil.SafePathComponent(a.Owner.Mailbox) || reservedIDs[a.Owner.Mailbox] || !a.hrReservation() && (a.Revision <= 0 || a.Digest == "") {
 			return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 		}
-		if err = add(a.Owner.Subject, a.Revision); err != nil {
-			return NativeRecoveryChallenge{}, nil, nil, err
+		// Address-only HR reservations have never authorized an account or
+		// storage. Keep their ownership in the digest, without requesting an
+		// identity revision that KyIdentity may not have created yet.
+		if !a.hrReservation() {
+			if err = add(a.Owner.Subject, a.Revision); err != nil {
+				return NativeRecoveryChallenge{}, nil, nil, err
+			}
 		}
 		reservations[k] = a
 		reservedIDs[a.Owner.Mailbox] = true
