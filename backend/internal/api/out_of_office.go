@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -87,6 +88,17 @@ func (s *Server) syncOOOCalendar(ctx context.Context, userID string, o config.Ou
 	if err != nil {
 		return "failed"
 	}
+	// Recorded before sending: whatever the answer, KyCalendar may now hold it.
+	remote, _ := body["comment_remote"].(string)
+	before, err := s.trackOOORemoteTexts(userID, func(texts []string) []string {
+		if remote != "" && !slices.Contains(texts, remote) && len(texts) < maxOOORemoteTexts {
+			texts = append(texts, remote)
+		}
+		return texts
+	})
+	if err != nil || remote != "" && !slices.Contains(before, remote) && len(before) >= maxOOORemoteTexts {
+		return "failed" // nothing sent that could not be revoked later
+	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	status, answer, err := s.kycal.Post(ctx, "/api/kypost/out-of-office", kycalendar.EventOOO, "kypost-ooo-"+id, body)
@@ -94,7 +106,30 @@ func (s *Server) syncOOOCalendar(ctx context.Context, userID string, o config.Ou
 		s.logger.Info("kycalendar out-of-office not taken", "user_id", userID, "result", strconv.Itoa(status)+" "+kycalendar.Outcome(answer))
 		return "failed"
 	}
+	if kycalendar.Outcome(answer) == "applied" {
+		// KyCalendar replaced what it held: forget texts superseded by this send,
+		// keeping any a concurrent save added since.
+		_, _ = s.trackOOORemoteTexts(userID, func(texts []string) []string {
+			return slices.DeleteFunc(texts, func(t string) bool { return t != remote && slices.Contains(before, t) })
+		})
+	}
 	return "synced"
+}
+
+// maxOOORemoteTexts bounds the remote comments kept for revocation; past it a
+// sync carrying a new text is refused rather than sent unrevocably.
+const maxOOORemoteTexts = 32
+
+// trackOOORemoteTexts updates the user's CalendarRemoteTexts and returns the
+// list as it was before.
+func (s *Server) trackOOORemoteTexts(userID string, change func([]string) []string) ([]string, error) {
+	var before []string
+	err := config.UpdateUserSettings(s.userSettingsPath(userID), func(st *config.UserSettings) error {
+		before = slices.Clone(st.OutOfOffice.CalendarRemoteTexts)
+		st.OutOfOffice.CalendarRemoteTexts = change(st.OutOfOffice.CalendarRemoteTexts)
+		return nil
+	})
+	return before, err
 }
 
 func midnight(t time.Time) bool { return t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 }
@@ -185,17 +220,25 @@ func (s *Server) resyncOOOCalendars() {
 		return
 	}
 	for _, u := range list {
-		if o, err := s.loadOutOfOffice(u.ID); err == nil && o.CalendarAway && o.RemoteMessage != "" {
+		if o, err := s.loadOutOfOffice(u.ID); err == nil && len(o.CalendarRemoteTexts) > 0 {
 			s.syncOOOCalendar(context.Background(), u.ID, o)
 		}
 	}
 }
 
 // stripRemoteOOOComment drops from a folded iCalendar object every COMMENT
-// whose text is the user's outside reply, for a REPLY sent while that reply
-// may not go out (KyCalendar may still hold a comment synced before).
-func stripRemoteOOOComment(ics []byte, remote string) []byte {
-	want := strings.ReplaceAll(remote, "\r\n", "\n")
+// whose text is one of the user's outside replies, for a REPLY sent while
+// they may not go out (KyCalendar may still hold one synced before).
+func stripRemoteOOOComment(ics []byte, texts []string) []byte {
+	var want []string
+	for _, t := range texts {
+		if t != "" {
+			want = append(want, strings.ReplaceAll(t, "\r\n", "\n"))
+		}
+	}
+	if len(want) == 0 {
+		return ics
+	}
 	lines := strings.Split(strings.TrimSuffix(string(ics), "\r\n"), "\r\n")
 	var out []string
 	for i := 0; i < len(lines); {
@@ -213,8 +256,8 @@ func stripRemoteOOOComment(ics []byte, remote string) []byte {
 }
 
 // isCommentWithText reports whether an unfolded content line is a COMMENT
-// whose TEXT value (RFC 5545 §3.3.11) is want.
-func isCommentWithText(line, want string) bool {
+// whose TEXT value (RFC 5545 §3.3.11) is one of want.
+func isCommentWithText(line string, want []string) bool {
 	name, _, _ := strings.Cut(line, ":")
 	name, _, _ = strings.Cut(name, ";")
 	if !strings.EqualFold(name, "COMMENT") {
@@ -227,7 +270,7 @@ func isCommentWithText(line, want string) bool {
 			quoted = !quoted
 		case r == ':' && !quoted:
 			v := strings.NewReplacer(`\n`, "\n", `\N`, "\n", `\,`, ",", `\;`, ";", `\\`, `\`).Replace(line[k+1:])
-			return v == want
+			return slices.Contains(want, v)
 		}
 	}
 	return false

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -75,7 +76,7 @@ func TestOutOfOfficeIsValidated(t *testing.T) {
 			t.Errorf("%s: %d %s, want 400", name, rec.Code, rec.Body.String())
 		}
 	}
-	if o, _ := srv.loadOutOfOffice(u.ID); o != (config.OutOfOffice{}) {
+	if o, _ := srv.loadOutOfOffice(u.ID); !reflect.DeepEqual(o, config.OutOfOffice{}) {
 		t.Fatalf("a refused PUT stored %+v", o)
 	}
 	// With outside replies off, the remote text is not needed to turn on.

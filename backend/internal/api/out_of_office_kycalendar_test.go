@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -151,15 +152,69 @@ func TestOutOfOfficeRemoteCommentRevoked(t *testing.T) {
 	mu.Unlock()
 
 	// KyCalendar still holds the old comment (say the resync failed).
+	escaped := `Away\, back Monday\; ask Sam\, please.\nThanks`
+	got2 := mailedReply(t, f, "ev-ooo-1", "COMMENT:"+escaped[:20]+"\r\n "+escaped[20:]+"\r\nCOMMENT:See you\r\n")
+	if strings.Contains(got2, "Away") || strings.Contains(got2, "back Monday") || !strings.Contains(got2, "COMMENT:See you") || !strings.Contains(got2, "PARTSTAT=ACCEPTED") {
+		t.Fatalf("reply mailed:\n%s", got2)
+	}
+}
+
+// A remote text changed, then cleared, while KyCalendar could not be reached
+// is still refused: KyCalendar may hold any text sent since its last answer.
+func TestOutOfOfficeRemoteCommentChangedWhileKyCalendarDown(t *testing.T) {
+	f := newKyCalFixture(t)
+	f.srv.cfgMu.Lock()
+	f.srv.cfg.OutOfOfficeRemote = true
+	f.srv.cfgMu.Unlock()
+	status := http.StatusOK
+	cal := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"outcome":"applied"}`))
+	}))
+	defer cal.Close()
+	base, _ := url.Parse(cal.URL)
+	f.srv.SetKyCalendar(kycalendar.New(base, kycalSecret, cal.Client().Transport))
+	save := func(remote, text, want string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"enabled": true, "start": "2026-12-01T05:00:00Z", "end": "2026-12-05T05:00:00Z", "localMessage": "Away",
+			"remote": remote, "remoteMessage": text, "calendarAway": true, "calendarTentative": true})
+		req := httptest.NewRequest(http.MethodPut, "/api/mail/out-of-office", bytes.NewReader(body))
+		authRequestAs(f.srv, req, f.userID)
+		rec := httptest.NewRecorder()
+		f.srv.routes().ServeHTTP(rec, req)
+		var v outOfOfficeView
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &v) != nil || v.CalendarSync != want {
+			t.Fatalf("save %q: %d %s", text, rec.Code, rec.Body.String())
+		}
+	}
+	save("on", "First text", "synced")
+	status = http.StatusInternalServerError
+	save("on", "Second text", "failed")
+	save("off", "", "failed")
+	for i, text := range []string{"First text", "Second text"} {
+		if got := mailedReply(t, f, "ev-down-"+strconv.Itoa(i), "COMMENT:"+text+"\r\n"); strings.Contains(got, text) {
+			t.Fatalf("stale %q mailed:\n%s", text, got)
+		}
+	}
+	// Once KyCalendar takes a state without a remote comment, nothing is kept.
+	status = http.StatusOK
+	save("off", "", "synced")
+	if o, err := f.srv.loadOutOfOffice(f.userID); err != nil || len(o.CalendarRemoteTexts) != 0 {
+		t.Fatalf("kept %v %v", o.CalendarRemoteTexts, err)
+	}
+}
+
+// mailedReply sends a REPLY carrying extra lines through the signed send route
+// and returns the calendar part as mailed.
+func mailedReply(t *testing.T, f *kycalFixture, eventID, extra string) string {
+	t.Helper()
 	if err := kycalendar.OpenInvitations(f.srv.userStateDir(f.userID)).Record("r1@x.test", "org@x.test"); err != nil {
 		t.Fatal(err)
 	}
-	escaped := `Away\, back Monday\; ask Sam\, please.\nThanks`
-	ics := strings.Replace(replyICS, "ORGANIZER:", "COMMENT:"+escaped[:20]+"\r\n "+escaped[20:]+"\r\nCOMMENT:See you\r\nORGANIZER:", 1)
 	reply := sendBody(func(b map[string]any) {
-		b["method"], b["ics"], b["recipients"] = "REPLY", ics, []string{"org@x.test"}
+		b["method"], b["ics"], b["recipients"] = "REPLY", strings.Replace(replyICS, "ORGANIZER:", extra+"ORGANIZER:", 1), []string{"org@x.test"}
 	})
-	if rec := signedSend(t, f.srv, kycalSecret, kycalendar.EventSend, "ev-ooo-1", reply); rec.Code != http.StatusAccepted {
+	if rec := signedSend(t, f.srv, kycalSecret, kycalendar.EventSend, eventID, reply); rec.Code != http.StatusAccepted {
 		t.Fatalf("reply: %d %s", rec.Code, rec.Body.String())
 	}
 	raw := <-f.delivered
@@ -169,15 +224,13 @@ func TestOutOfOfficeRemoteCommentRevoked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("calendar part: %v\n%s", err, raw)
 	}
-	if raw := string(decoded); strings.Contains(raw, "Away") || strings.Contains(raw, "back Monday") || !strings.Contains(raw, "COMMENT:See you") || !strings.Contains(raw, "PARTSTAT=ACCEPTED") {
-		t.Fatalf("reply mailed:\n%s", raw)
-	}
+	return string(decoded)
 }
 
 func TestStripRemoteOOOComment(t *testing.T) {
 	in := "BEGIN:VEVENT\r\nCOMMENT;LANGUAGE=\"en:gb\":Hi\\nthere\r\nComment:Hi\r\n \\nthere\r\nCOMMENT:Hi\r\nUID:x\r\nEND:VEVENT\r\n"
 	want := "BEGIN:VEVENT\r\nCOMMENT:Hi\r\nUID:x\r\nEND:VEVENT\r\n"
-	if got := string(stripRemoteOOOComment([]byte(in), "Hi\r\nthere")); got != want {
+	if got := string(stripRemoteOOOComment([]byte(in), []string{"", "Hi\r\nthere"})); got != want {
 		t.Fatalf("got %q", got)
 	}
 }

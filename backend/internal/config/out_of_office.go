@@ -38,6 +38,9 @@ type OutOfOffice struct {
 	// during it (docs/KYCALENDAR.md, Out of office).
 	CalendarAway      bool `yaml:"calendarAway,omitempty" json:"calendarAway"`
 	CalendarTentative bool `yaml:"calendarTentative,omitempty" json:"calendarTentative"`
+	// CalendarRemoteTexts are the remote comments KyCalendar may still hold:
+	// server-only, kept so a stale one can be refused at send time.
+	CalendarRemoteTexts []string `yaml:"calendarRemoteTexts,omitempty" json:"-"`
 }
 
 // RemoteMode is Remote with "" read as off.
@@ -103,7 +106,7 @@ func NormalizeOutOfOffice(prev, next OutOfOffice, remoteAllowed bool) (OutOfOffi
 			return prev, errors.New("write the message before turning the reply on")
 		}
 	}
-	out.Period = prev.Period
+	out.Period, out.CalendarRemoteTexts = prev.Period, prev.CalendarRemoteTexts
 	if out.Enabled && (!prev.Enabled || out.Start != prev.Start || out.End != prev.End || out.Period == "") {
 		out.Period = rand.Text()
 	}

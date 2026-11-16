@@ -197,8 +197,8 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 	if err != nil {
 		return refuse(http.StatusUnprocessableEntity, "bad_ics", err.Error())
 	}
-	if o := settings.OutOfOffice; req.Method == "REPLY" && o.RemoteMessage != "" && (!s.oooRemoteAllowed() || o.RemoteMode() != config.RemoteOn) {
-		ics = stripRemoteOOOComment(ics, o.RemoteMessage)
+	if o := settings.OutOfOffice; req.Method == "REPLY" && (!s.oooRemoteAllowed() || o.RemoteMode() != config.RemoteOn) {
+		ics = stripRemoteOOOComment(ics, append(o.CalendarRemoteTexts, o.RemoteMessage))
 	}
 	sender := strings.ToLower(envelopeFrom)
 	allowed := it.Attendees

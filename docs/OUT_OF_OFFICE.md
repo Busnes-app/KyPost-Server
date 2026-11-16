@@ -173,8 +173,10 @@ office").
   sends `comment_remote` only while its remote reply goes to everyone and the administrator
   allows it. KyCalendar never turns out-of-office on.
 - Turning the administrator switch off resends every calendar-tied state without the remote
-  comment, and a REPLY KyCalendar asks KyPost to mail loses any `COMMENT` that is the outside
-  reply while it may not go out (`stripRemoteOOOComment`).
+  comment, and a REPLY KyCalendar asks KyPost to mail loses any `COMMENT` that is an outside
+  reply KyCalendar may still hold while it may not go out (`stripRemoteOOOComment`). Those texts
+  are the server-only `calendarRemoteTexts`: added before each send, pruned after an `applied`
+  answer, at most 32 (past that a sync with a new text is refused, not sent).
 - An agent's save keeps the calendar settings as they are.
 
 ## Not built
