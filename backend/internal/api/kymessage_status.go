@@ -31,7 +31,8 @@ type personStatus struct {
 	Until string `json:"until,omitempty"`
 }
 
-// statusCache keeps KyMessages' answers by subject for statusCacheFor.
+// statusCache keeps KyMessages' answers for statusCacheFor, keyed by caller and subject:
+// KyMessages decides per caller, so one caller's answer never serves another.
 type statusCache struct {
 	mu sync.Mutex
 	m  map[string]struct {
@@ -40,14 +41,14 @@ type statusCache struct {
 	}
 }
 
-func (c *statusCache) get(sub string, now time.Time) (personStatus, bool) {
+func (c *statusCache) get(caller, sub string, now time.Time) (personStatus, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.m[sub]
+	e, ok := c.m[caller+"\x00"+sub]
 	return e.st, ok && now.Sub(e.at) < statusCacheFor
 }
 
-func (c *statusCache) put(sub string, st personStatus, now time.Time) {
+func (c *statusCache) put(caller, sub string, st personStatus, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.m == nil || len(c.m) > statusCacheMax {
@@ -56,7 +57,7 @@ func (c *statusCache) put(sub string, st personStatus, now time.Time) {
 			at time.Time
 		}{}
 	}
-	c.m[sub] = struct {
+	c.m[caller+"\x00"+sub] = struct {
 		st personStatus
 		at time.Time
 	}{st, now}
@@ -107,7 +108,7 @@ func (s *Server) handleKyMessageStatus(w http.ResponseWriter, r *http.Request) {
 	var ask []string
 	for _, a := range addrs {
 		if p, ok := known[a]; ok && p.Sub != "" {
-			if st, hit := s.kymessageStatus.get(p.Sub, now); hit {
+			if st, hit := s.kymessageStatus.get(u.ID, p.Sub, now); hit {
 				found[p.Sub] = st
 			} else if !slices.Contains(ask, p.Sub) {
 				ask = append(ask, p.Sub)
@@ -145,7 +146,7 @@ func (s *Server) handleKyMessageStatus(w http.ResponseWriter, r *http.Request) {
 				st.Until = p.Until
 			}
 			found[p.Sub] = st
-			s.kymessageStatus.put(p.Sub, st, now)
+			s.kymessageStatus.put(u.ID, p.Sub, st, now)
 		}
 	}
 	for _, a := range addrs {

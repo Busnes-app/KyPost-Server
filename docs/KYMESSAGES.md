@@ -113,8 +113,8 @@ Colleagues' coarse status from KyMessages (owner request 2026-11-15; KyMessages
 `docs/PRESENCE.md` owns the contract). `status` resolves the addresses with
 `suitedir.Resolve` like `people`, then posts `kypost.presence.lookup` to
 `POST /api/suite/presence/lookup` with `{"sub","issuer","subs"}`: subjects only, never an
-address. Answers are cached by subject for 60 seconds (`statusCache`), so a lookup asks
-KyMessages only for subjects not seen in the last minute. States are `available`, `busy`,
+address. Answers are cached per caller and subject for 60 seconds (`statusCache`): KyMessages decides
+per caller, so one caller's answer never serves another. States are `available`, `busy`,
 `in_a_meeting`, `away`, `out_of_office` and `unknown` (anything else reads unknown); `until`
 comes only with `in_a_meeting` and `out_of_office`. Only organisation people are answered.
 KyMessages unreachable or refusing: 502 `kymessage_unavailable`. The recipient autocomplete
