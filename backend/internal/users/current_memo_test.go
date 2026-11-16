@@ -2,8 +2,13 @@ package users
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 )
 
 // WithCurrentUsers reuses its last decode only for identical bytes: another
@@ -40,5 +45,49 @@ func TestCurrentUsersSnapshotIsFreshAndPrivate(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCurrentUsersSnapshotNestedFieldsArePrivate(t *testing.T) {
+	want := User{
+		ID: "test-user", Username: "original",
+		RecoveryCodesHash:   []string{"original-code"},
+		PGPWrappedEnvelopes: []WrappedEnvelope{{Slot: "recovery", Envelope: "original-envelope"}},
+		PGPKeyring:          &PGPKeyringState{Version: 1, MaterialGeneration: 1, KeyFingerprints: []string{"key"}, PrimaryFingerprints: []string{"primary"}},
+		SendQuota:           &config.SendQuota{MessagesPerHour: 10, RecipientsPerDay: 20},
+	}
+	for name, mutate := range map[string]func(*User){
+		"recovery codes":       func(u *User) { u.RecoveryCodesHash[0] = "changed" },
+		"wrapped envelopes":    func(u *User) { u.PGPWrappedEnvelopes[0].Envelope = "changed" },
+		"keyring pointer":      func(u *User) { u.PGPKeyring.MaterialGeneration++ },
+		"key fingerprints":     func(u *User) { u.PGPKeyring.KeyFingerprints[0] = "changed" },
+		"primary fingerprints": func(u *User) { u.PGPKeyring.PrimaryFingerprints[0] = "changed" },
+		"quota pointer":        func(u *User) { u.SendQuota.MessagesPerHour++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "users.json")
+			raw, err := json.Marshal(usersFile{Version: 1, Users: []User{want}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			s := newStore(path)
+			if err := s.WithCurrentUsers(context.Background(), func(all []User) error {
+				mutate(&all[0])
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.WithCurrentUsers(context.Background(), func(all []User) error {
+				if !reflect.DeepEqual(all[0], want) {
+					t.Error("callback mutation reached the next snapshot")
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

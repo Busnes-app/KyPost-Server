@@ -324,14 +324,14 @@ func (u User) HasServerReadableKey() bool {
 	return u.PGPProtection() == PGPProtectionServer
 }
 
-// clone returns a deep copy of u. Every read served out of the Store's cache
-// goes through this, and it must deep-copy every field a plain struct copy
-// would still share with the cache's backing array — currently
-// RecoveryCodesHash and PGPWrappedEnvelopes, both slices, so a shallow copy
-// would let a caller corrupt shared state. WrappedEnvelope is all
-// value-typed strings, so a shallow slices.Clone is enough for it — there is
-// nothing under it left to alias.
+// clone returns a deep copy of u for cached reads and authority snapshots.
+// Copy every mutable slice and pointer; WrappedEnvelope contains only values,
+// so cloning its slice leaves no nested aliases.
 func (u User) clone() User {
+	if u.SendQuota != nil {
+		quota := *u.SendQuota
+		u.SendQuota = &quota
+	}
 	if u.PGPKeyring != nil {
 		ring := *u.PGPKeyring
 		ring.KeyFingerprints = slices.Clone(ring.KeyFingerprints)
@@ -809,7 +809,11 @@ func (s *Store) WithCurrentUsers(ctx context.Context, action func([]User) error)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return action(slices.Clone(s.current))
+	snapshot := slices.Clone(s.current)
+	for i := range snapshot {
+		snapshot[i] = snapshot[i].clone()
+	}
+	return action(snapshot)
 }
 
 // withWriteLock is fsutil.WithFileLock through the gate, so a stream of
