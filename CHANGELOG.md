@@ -100,6 +100,12 @@ non-prerelease version.
 
 ### Fixed
 
+- KyAuth sign-in (`POST /api/auth/native/signon`) now requires proof of an
+  ephemeral app key the KyIdentity token names (`cnf`), so a token read off
+  the wire cannot be redeemed by anyone else; a failed proof does not
+  spend the token. Deploy after KyIdentity, KyAuth and the KyPost apps;
+  until they update, KyAuth sign-in fails closed. QR pairing is unaffected.
+
 - An invitation card answer from someone with no KyCalendar account no longer
   ends in "KyCalendar could not record the answer; try again" with no way out:
   KyCalendar's `no_user` now answers 409 `kycalendar_off`, so web and native

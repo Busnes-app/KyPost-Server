@@ -2,6 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,11 +26,51 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-func signOnRequest(idToken string) *http.Request {
-	body, _ := json.Marshal(map[string]string{"idToken": idToken})
+// signOnKey is the app key deviceClaims binds and signOnRequest proves.
+var signOnKey = mustP256Key()
+
+func mustP256Key() *ecdsa.PrivateKey {
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return k
+}
+
+func spkiB64(k *ecdsa.PrivateKey) string {
+	der, err := x509.MarshalPKIXPublicKey(k.Public())
+	if err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(der)
+}
+
+func spkiThumb(k *ecdsa.PrivateKey) string {
+	der, _ := base64.StdEncoding.DecodeString(spkiB64(k))
+	sum := sha256.Sum256(der)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func signProof(k *ecdsa.PrivateKey, origin, idToken string) string {
+	digest := sha256.Sum256(signOnProofMessage(origin, idToken))
+	sig, err := ecdsa.SignASN1(rand.Reader, k, digest[:])
+	if err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(sig)
+}
+
+func signOnBody(idToken, proofKey, proof string) *http.Request {
+	body, _ := json.Marshal(map[string]string{"idToken": idToken, "proofKey": proofKey, "proof": proof})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/native/signon", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+// signOnRequest is what an updated app sends: the token plus a valid proof
+// with signOnKey over this test server's origin.
+func signOnRequest(idToken string) *http.Request {
+	return signOnBody(idToken, spkiB64(signOnKey), signProof(signOnKey, "https://"+ssoTestHost, idToken))
 }
 
 // nativeSignOnServer serves https, as KyIdentity only issues https origins.
@@ -57,7 +103,8 @@ func registerWithPairingToken(t *testing.T, srv *Server, deepLink string) *httpt
 }
 
 func deviceClaims(extra map[string]any) map[string]any {
-	c := map[string]any{"sub": "sso-sub-12345", "preferred_username": "alice", "signon_method": "device", "origin": "https://" + ssoTestHost, "jti": "jti-1", "iat": time.Now().Unix()}
+	c := map[string]any{"sub": "sso-sub-12345", "preferred_username": "alice", "signon_method": "device", "origin": "https://" + ssoTestHost, "jti": "jti-1", "iat": time.Now().Unix(),
+		"cnf": map[string]any{"spki#S256": spkiThumb(signOnKey)}}
 	for k, v := range extra {
 		c[k] = v
 	}
@@ -472,5 +519,113 @@ func TestNativeSignOnRevokedDuringIssueTokenDead(t *testing.T) {
 		}
 	default:
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The spec's golden vector: a recorded signature must verify, and thumb and
+// message bytes must match exactly what every client computes.
+func TestSignOnProofGoldenVector(t *testing.T) {
+	const (
+		spki    = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYP7UuiVanTHJYet0xjVtaMBJuJI7Yfps5mliLmDyn7Z5A/4QCLi8maQa6elWKLxk8vGyDC1+n1F3o8KU1EYimQ=="
+		thumb   = "Wnp4zKSg9CDZvGK7Zpw8J1njn3I9OuENy-DwgVoH7NQ"
+		idToken = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2ln"
+		origin  = "https://relay.example.com"
+		sig     = "MEUCIAgEZ1PL1ngMWZe1DGinEVwy9mdQ12EGpwIQYjvApRVMAiEAg9zmYUWgIuQcNLh54gXJ+RVtc+vJZ3iy+N8jny2Ud0I="
+	)
+	if got, want := string(signOnProofMessage(origin, idToken)), "kypost-signon-pop/1\nhttps://relay.example.com\njJWmig6MLGIOyfYGNDGuWH3dGkbnpSqvek1tQ8PUgg8"; got != want {
+		t.Fatalf("message %q, want %q", got, want)
+	}
+	der, _ := base64.StdEncoding.DecodeString(spki)
+	if sum := sha256.Sum256(der); base64.RawURLEncoding.EncodeToString(sum[:]) != thumb {
+		t.Fatal("thumb mismatch")
+	}
+	if !verifySignOnProof(thumb, origin, idToken, spki, sig) {
+		t.Fatal("golden signature does not verify")
+	}
+	for name, args := range map[string][5]string{
+		"otherOrigin":  {thumb, "https://relay.example.org", idToken, spki, sig},
+		"otherToken":   {thumb, origin, idToken + "x", spki, sig},
+		"otherThumb":   {spkiThumb(signOnKey), origin, idToken, spki, sig},
+		"emptyProof":   {thumb, origin, idToken, spki, ""},
+		"emptyKey":     {thumb, origin, idToken, "", sig},
+		"urlSafeProof": {thumb, origin, idToken, spki, strings.NewReplacer("+", "-", "/", "_").Replace(sig)},
+	} {
+		if verifySignOnProof(args[0], args[1], args[2], args[3], args[4]) {
+			t.Errorf("%s verified", name)
+		}
+	}
+}
+
+// Every proof failure answers 403 before the jti is recorded, so the same
+// user can still redeem the token with the right proof afterwards.
+func TestNativeSignOnProofRefusalsLeaveJTIUnspent(t *testing.T) {
+	const mismatch = "the sign-in proof does not match"
+	origin := "https://" + ssoTestHost
+	other := mustP256Key()
+	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		cnf      any // nil keeps signOnKey's thumb; "" drops cnf
+		req      func(tok string) *http.Request
+		wantBody string
+	}{
+		"missingCnf": {cnf: "", req: signOnRequest, wantBody: "Update KyAuth and KyIdentity to sign in from this app."},
+		"noProof":    {req: func(tok string) *http.Request { return signOnBody(tok, "", "") }, wantBody: mismatch},
+		"otherKey": {req: func(tok string) *http.Request {
+			return signOnBody(tok, spkiB64(other), signProof(other, origin, tok))
+		}, wantBody: mismatch},
+		"signedByOtherKey": {req: func(tok string) *http.Request {
+			return signOnBody(tok, spkiB64(signOnKey), signProof(other, origin, tok))
+		}, wantBody: mismatch},
+		"otherOrigin": {req: func(tok string) *http.Request {
+			return signOnBody(tok, spkiB64(signOnKey), signProof(signOnKey, "https://evil.example", tok))
+		}, wantBody: mismatch},
+		"proofOverOtherToken": {req: func(tok string) *http.Request {
+			return signOnBody(tok, spkiB64(signOnKey), signProof(signOnKey, origin, tok+"x"))
+		}, wantBody: mismatch},
+		"badKeyBase64": {req: func(tok string) *http.Request {
+			return signOnBody(tok, "!!"+spkiB64(signOnKey), signProof(signOnKey, origin, tok))
+		}, wantBody: mismatch},
+		"badProofBase64": {req: func(tok string) *http.Request {
+			return signOnBody(tok, spkiB64(signOnKey), "!!"+signProof(signOnKey, origin, tok))
+		}, wantBody: mismatch},
+		"notSPKI": {req: func(tok string) *http.Request {
+			return signOnBody(tok, base64.StdEncoding.EncodeToString([]byte("not a key")), signProof(signOnKey, origin, tok))
+		}, wantBody: mismatch},
+		// Thumb, key and signature all agree; only the curve is wrong.
+		"p384Key": {cnf: map[string]any{"spki#S256": spkiThumb(p384)}, req: func(tok string) *http.Request {
+			return signOnBody(tok, spkiB64(p384), signProof(p384, origin, tok))
+		}, wantBody: mismatch},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, idp := nativeSignOnServer(t)
+			claims := deviceClaims(map[string]any{"jti": "jti-" + name})
+			switch tc.cnf {
+			case nil:
+			case "":
+				delete(claims, "cnf")
+			default:
+				claims["cnf"] = tc.cnf
+			}
+			idp.SetClaims(claims)
+			tok := idp.IDToken()
+			rec := httptest.NewRecorder()
+			srv.handleNativeSignOn(rec, tc.req(tok))
+			if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Fatalf("status %d body %q, want 403 %q", rec.Code, rec.Body.String(), tc.wantBody)
+			}
+			if tc.cnf != nil {
+				idp.SetClaims(deviceClaims(map[string]any{"jti": "jti-" + name}))
+				tok = idp.IDToken()
+			}
+			rec = httptest.NewRecorder()
+			srv.handleNativeSignOn(rec, signOnRequest(tok))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("right proof after a refusal: status %d body %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }

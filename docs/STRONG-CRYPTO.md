@@ -28,6 +28,7 @@ administrator's request.
 | `POW_SECRET` (proof-of-work CAPTCHA HMAC-SHA256) | 32 random bytes in `pow.key` | Under 16 bytes is refused; login CAPTCHA then fails closed. |
 | KyCalendar shared secret (`KYPOST_KYCALENDAR_SECRET_FILE`) | Operator-supplied | Under 32 bytes is refused at startup. |
 | OIDC ID tokens (browser sign-in, step-up, native sign-on) | Verified by `coreos/go-oidc`; RS/PS 256–512 and ES256–512 only, never HMAC | Every RSA key in the provider's JWKS must have at least 2048 modulus bits, or the whole set is refused and sign-in fails (`backend/internal/sso/jwks_strength.go`). |
+| Native sign-on proof of possession | ECDSA P-256 / SHA-256, ephemeral app key named by the token's `cnf.spki#S256` | Any other curve or key type is refused; thumb compared in constant time (`backend/internal/api/native_signon.go`). |
 | OIDC back-channel logout tokens | `ky-primitives/oidcverify`, RS256 | RSA keys under 2048 bits are refused by `oidcverify`. |
 | Server OpenPGP (legacy server-held keys, incoming encryption) | Existing user and contact keys | New encryption and signatures refuse an RSA primary or selected subkey under 2048 bits (go-crypto's own floor is 2047), naming the key fingerprint (`backend/internal/pgpmail/keyfloor.go`). Stored keys stay importable and old mail stays readable. |
 | Browser OpenPGP | Generates Curve25519 keys | RSA under 2048 bits refused for encryption, signing and signature trust ([PGP keys](PGP-KEYS.md)). |
