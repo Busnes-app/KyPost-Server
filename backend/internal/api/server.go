@@ -348,6 +348,11 @@ type Server struct {
 	tlsCertFile string
 	tlsKeyFile  string
 
+	// Pin sources beyond the served certificate (KYPOST_TLS_CERT_FILE,
+	// KYPOST_TLS_PIN_PROBE), resolved by Prepare — see pairingSPKIPin.
+	pinCertFile string
+	pinProbe    bool
+
 	// Negative cache for the outbound certificate probe behind the pairing
 	// link's pin — see probedSPKIPin. Only failures are remembered, and only
 	// so a deployment whose router will not hairpin does not pay the dial
@@ -1067,6 +1072,14 @@ func (s *Server) Prepare() {
 	if s.tlsConfig != nil {
 		s.httpServer.TLSConfig = s.tlsConfig
 		s.tlsCertFile, s.tlsKeyFile = certFile, keyFile
+	}
+
+	if s.pinCertFile, s.pinProbe, err = pinSourcesFromEnv(); err != nil {
+		s.prepareErr = err
+		return
+	}
+	if s.pinProbe && s.pinCertFile == "" {
+		s.logger.Warn("KYPOST_TLS_PIN_PROBE=true: pairing links and TLS pin rollover will pin whatever certificate this host's outbound connection to SERVER_BASE_URL is shown; anyone controlling that path with a certificate this host trusts can get their key accepted by paired devices. Prefer KYPOST_TLS_CERT_FILE where a certificate can be mounted")
 	}
 }
 

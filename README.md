@@ -8,7 +8,7 @@ KyIdentity, KyRecovery and the native clients are optional. Real mail access nee
 
 KyPost is self-hosted email. Use it as a web client for the IMAP account you already have, or let it host your mailboxes as well. It encrypts with OpenPGP, so you can exchange end-to-end encrypted mail with anyone who uses PGP; interoperability depends on the correspondent’s PGP implementation and needs a real send/receive check for your configuration. A local Ollama model sorts your unencrypted mail into labels without it leaving your server, and encrypted mail is never sent to the model. The iOS, Android and Linux phone apps get native push notifications.
 
-Hosting your own mailboxes is opt-in, and receiving mail for them is still in qualification. To rely on KyPost today, connect it to an existing IMAP server.
+Hosting your own mailboxes is opt-in, and receiving mail for them is still in qualification. To rely on KyPost today, connect it to an existing IMAP server. The bundled SMTP receiver has [configurable, bounded rate and concurrency limits](docs/RECEIVING_SETUP.md#receiver-sizing); defaults preserve existing installs and require sizing for larger mail volumes.
 
 KyPost polls unread mail, classifies each message, and applies IMAP keywords. It also gives you a web UI to read mail, change the configuration, manage notifications, view logs, and compose mail. Compose supports send and draft save.
 
@@ -66,6 +66,8 @@ KyPost is released under the [MIT License](LICENSE.txt).
 [![OctoCounts](https://api.octocounts.com/badge/Busnes-app/KyPost-Server/branch/main)](https://octocounts.com/github/Busnes-app/KyPost-Server/tree/main)
 
 ## Documentation
+
+Read the [KyPost mdBook manual](https://busnes.app/manuals/kypost-server/) for the server and native clients.
 
 For Identity-first or Notes-only standalone installs, `bash scripts/ensure-network.sh` creates only the KyPost-owned shared bridge; no mail server is installed. See [network ownership and fixed-IP proxy setup](docs/Reverse_Proxy_Networking.md#when-the-network-already-exists).
 

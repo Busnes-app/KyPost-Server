@@ -183,6 +183,7 @@ KYPOST_BIND=127.0.0.1
 TRUSTED_PROXY_CIDRS=10.89.0.10/32
 TRUSTED_PROXY_HEADER=cf-connecting-ip
 SERVER_BASE_URL=https://mail.example.com
+KYPOST_TLS_PIN_PROBE=true
 ```
 
 For B, C and D change `KYPOST_BIND` and `TRUSTED_PROXY_CIDRS` per the
@@ -206,12 +207,16 @@ Why each line:
   value also marks the session cookie `Secure` when no trusted proxy says
   otherwise. Details: [CONFIGURATION.md](../CONFIGURATION.md).
 
-Pairing QR certificate pin: with cloudflared there is no certificate file to
-mount, because the phone validates Cloudflare's edge certificate. When it builds
-each pairing QR, KyPost makes a verified TLS connection to `SERVER_BASE_URL` and
+Pairing QR certificate pin and TLS pin rollover: with cloudflared there is no
+certificate file to mount, because the phone validates Cloudflare's edge
+certificate. Set `KYPOST_TLS_PIN_PROBE=true` and KyPost makes a verified TLS
+connection to `SERVER_BASE_URL` for each pairing QR and rollover request and
 pins the certificate it gets back. Tunnel traffic leaves for Cloudflare's edge,
-so this works without NAT hairpinning. If the probe fails, the QR omits the pin
-and the app falls back to trust-on-first-use. See
+so this works without NAT hairpinning. It trusts this host's outbound path and
+CA store, which is why it is off by default and logs a warning. Without it,
+or if the probe fails, the QR omits the pin, the app falls back to
+trust-on-first-use, and phones need a new pairing link after Cloudflare renews
+its certificate. Topology D's self-signed hop certificate is never pinned. See
 [Certificate pinning in the pairing QR](../CLIENTS-AND-PUSH.md#certificate-pinning-in-the-pairing-qr).
 
 Every variable is explained in `.env.example`; the deeper rationale is in
@@ -293,6 +298,7 @@ it.
   the proxy and KyPost.
 - [ ] Topology D: the hop to KyPost uses `TLS_CERT_FILE` / `TLS_KEY_FILE`.
 - [ ] `SERVER_BASE_URL` is `https://` and matches the public hostname exactly.
+- [ ] `KYPOST_TLS_PIN_PROBE=true` if paired phones should pin and survive certificate renewals.
 - [ ] Tunnel token or credentials file is out of git and readable only by you.
 - [ ] The retired `TRUST_PROXY_HEADERS` is removed from `.env`.
 - [ ] [Step 6](#6-verify) passes.

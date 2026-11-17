@@ -287,6 +287,36 @@ Its manual pickup uses content/DKIM scanning without original peer metadata;
 provider bytes remain retained after refusal or import. Continuous hosted
 reception and provider cleanup are not implemented.
 
+## Receiver sizing
+
+The bundled receiver retains its conservative defaults (4 active transactions overall,
+2 per IP, 30/minute overall and 10/minute per IP). These are deployment settings,
+not a capacity claim. A provider can deliver mail for many users from one IP.
+Set both rate limits for the expected sustained traffic and burst volume; raising
+only the global limit can leave a large provider throttled. For example, a deployment
+expecting 100 messages/minute can start qualification with:
+
+```dotenv
+KYPOST_RECEIVING_RATE_PER_MINUTE=600
+KYPOST_RECEIVING_IP_RATE_PER_MINUTE=300
+```
+
+The example is an input to measurement, not a measured capacity result. Rates accept
+1–60,000, and `KYPOST_RECEIVING_CONCURRENCY` / `KYPOST_RECEIVING_IP_CONCURRENCY`
+accept 1–64. Zero, negative, malformed or excessive values refuse startup and emit
+no partial profile. Leave concurrency at its defaults until resources are sized:
+25 MiB RAM buffering plus a helper reading the same message can use roughly
+50 MiB per active transaction, before parsing and process overhead. Existing
+mailbox quotas, disk reserve, TLS, sender blocks and the 256-descriptor ceiling
+remain in force. Cloudflare pickup does not use these Maddy settings.
+
+Set the variables in `.env` (or your Compose override) and recreate the receiving
+container with the same receiving/Rspamd overlays you already use. The launcher
+regenerates the profile on startup and preserves the prior complete file if
+validation fails. For a standalone receiver, regenerate its config and restart
+Maddy after setting the variables. Measure accepted mail, temporary refusals and
+queue drain at the selected values before claiming a supported staff count.
+
 ## Fixed qualification policy and limits
 
 - STARTTLS is mandatory before MAIL/RCPT; TLS versions 1.2 and 1.3 only. Senders
@@ -313,8 +343,9 @@ reception and provider cleanup are not implemented.
   stored` (exit 11) at DATA. One accepted before this check is quarantined on
   import, where Server → Quarantine can discard it; Cloudflare pickup
   quarantines such mail too.
-- Four active transactions overall, two per IP; bursts of 30/minute overall
-  and 10/minute per IP. Limit waits are bounded by the engine's five-second
+- [Configurable transaction and rate limits](#receiver-sizing), defaulting to four
+  active transactions overall, two per IP, and bursts of 30/minute overall and
+  10/minute per IP. Limit waits are bounded by the engine's five-second
   acquisition timeout. Read/write/shutdown timeouts are 30 seconds. Active
   transaction limits do not bound idle sockets without the OS descriptor cap.
 - Only the verified mail domain is routed, with no SMTP AUTH, outbound queue

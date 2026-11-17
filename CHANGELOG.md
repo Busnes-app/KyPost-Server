@@ -18,6 +18,54 @@ non-prerelease version.
 
 ## Unreleased
 
+### Fixed
+
+- **The bundled SMTP receiver's rate and concurrency limits are configurable.**
+  Set `KYPOST_RECEIVING_RATE_PER_MINUTE` and `KYPOST_RECEIVING_IP_RATE_PER_MINUTE`
+  for expected mail volume; `KYPOST_RECEIVING_CONCURRENCY` and
+  `KYPOST_RECEIVING_IP_CONCURRENCY` separately bound active work. Positive integer
+  ranges are enforced before startup/profile output. Defaults remain 4/2 active
+  transactions and 30/10 per minute; existing installations keep their limits.
+  Recreate the container with its existing overlays after changing them. Size
+  memory before raising concurrency; this change makes no staff-capacity claim.
+
+
+### Upgrading: behind a reverse proxy or Cloudflare Tunnel, set a pin source
+
+**Deployments where KyPost does not terminate TLS itself lose the pairing-link
+certificate pin and signed TLS pin rollover until you set one of these.** Without
+one, new pairings fall back to trust-on-first-use and paired phones need a new
+pairing link after each certificate renewal. Nothing else changes and nothing is
+lost.
+
+- **Reverse proxy (Caddy, Traefik, nginx-proxy-manager):** mount the certificate
+  the proxy serves read-only and set `KYPOST_TLS_CERT_FILE` to its absolute path
+  (see the commented `front-tls` volume in `docker-compose.yml`).
+- **Cloudflare Tunnel, or no certificate to mount:** set
+  `KYPOST_TLS_PIN_PROBE=true` and read its trade-off in
+  [certificate pinning](docs/CLIENTS-AND-PUSH.md#certificate-pinning-in-the-pairing-qr).
+- **KyPost terminates TLS** (`TLS_CERT_FILE`) with a certificate naming the
+  `SERVER_BASE_URL` host: nothing to do. With a self-signed hop behind a front
+  (cloudflared topology D), set one of the two above; the hop certificate is no
+  longer pinned.
+
+### Security
+
+- The certificate pin in pairing links and the pin the relay identity key signs
+  for TLS pin rollover now come only from a certificate the operator vouched
+  for: the one KyPost serves, `KYPOST_TLS_CERT_FILE` (which must name the
+  `SERVER_BASE_URL` host and be within its validity, re-read on each use), or,
+  with the new opt-in `KYPOST_TLS_PIN_PROBE=true`, the leaf a verified outbound
+  connection to `SERVER_BASE_URL` is shown. Previously that outbound probe ran by
+  default and outranked everything, so a certificate this server's outbound
+  path was shown could be signed and published. A relative
+  `KYPOST_TLS_CERT_FILE` or a non-boolean `KYPOST_TLS_PIN_PROBE` refuses
+  startup; the opt-in without a file logs a warning.
+
+### Documentation
+
+- Link the published KyPost mdBook server/client manual from the README.
+
 ### Added
 
 - Open mail attachments in Euro-Office, like Outlook on the web: a received
