@@ -30,7 +30,7 @@ import (
 // commands run in process, unchanged.
 
 const (
-	receivingProtocol      = 1
+	receivingProtocol      = 2
 	receivingServeHandlers = 32
 	receivingHeaderBytes   = 64 << 10
 )
@@ -39,6 +39,9 @@ type receivingRequest struct {
 	V        int      `json:"v"`
 	Args     []string `json:"args"`
 	Deadline int64    `json:"deadline"` // Unix nanoseconds: the command's own 30-second budget
+	// Length is the message's byte count. EOF alone cannot tell a finished
+	// message from a helper killed mid-write, so the server requires exactly it.
+	Length int64 `json:"length"`
 }
 
 func receivingSocket() string {
@@ -70,7 +73,7 @@ func forwardReceiving(ctx context.Context, args []string, input *io.Reader) (err
 	if conn.SetDeadline(deadline.Add(5*time.Second)) != nil {
 		return refused, true
 	}
-	header, err := json.Marshal(receivingRequest{V: receivingProtocol, Args: args, Deadline: deadline.UnixNano()})
+	header, err := json.Marshal(receivingRequest{V: receivingProtocol, Args: args, Deadline: deadline.UnixNano(), Length: int64(len(body))})
 	if err != nil {
 		return refused, true
 	}
@@ -202,15 +205,31 @@ func (r *receivingRuntime) serveConn(conn *net.UnixConn) {
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	var input io.Reader = bytes.NewReader(nil)
-	if req.Args[0] == "accept" {
-		input = io.LimitReader(in, receivingLimits.MessageBytes+1)
+	body, ok := readReceivingBody(in, req.Args[0], req.Length)
+	if !ok {
+		return // a short, long or misdeclared message is never committed
 	}
-	err = r.run(ctx, req.Args, input)
+	err = r.run(ctx, req.Args, bytes.NewReader(body))
 	code = byte(receivingExit(err))
 	if err == nil {
 		code = 0
 	}
+}
+
+// readReceivingBody reads exactly the declared message and then requires EOF:
+// accept declares 1 to MessageBytes bytes, bind none.
+func readReceivingBody(in io.Reader, command string, length int64) ([]byte, bool) {
+	if command == "accept" && (length < 1 || length > receivingLimits.MessageBytes) || command == "bind" && length != 0 {
+		return nil, false
+	}
+	body := make([]byte, length)
+	if _, err := io.ReadFull(in, body); err != nil {
+		return nil, false
+	}
+	if n, err := in.Read(make([]byte, 1)); n != 0 || err != io.EOF {
+		return nil, false
+	}
+	return body, true
 }
 
 func sameUser(conn *net.UnixConn) bool {
