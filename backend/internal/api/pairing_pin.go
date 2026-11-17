@@ -23,12 +23,17 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 )
 
 const (
@@ -63,50 +68,128 @@ func spkiPin(leaf *x509.Certificate) string {
 	return "sha256/" + base64.StdEncoding.EncodeToString(sum[:])
 }
 
-// pairingSPKIPin is the pin to publish in the pairing link, or "".
+// pairingSPKIPin is the pin to publish in the pairing link and to sign for
+// rollover, or "".
 //
-// The probe comes first and the locally configured certificate is the fallback,
-// because the probe reads the certificate the device will actually be handed
-// and the local one is only an assumption about that. They differ whenever
-// something else terminates TLS in front of us — including a reverse proxy
-// configured to reach an HTTPS origin, where publishing our own leaf would fail
-// every new pairing closed.
+// Only a key the operator vouched for qualifies: a pin signed here makes
+// pinning devices accept that key, so it must not come from whatever an
+// outbound connection happens to be shown. In order:
+//
+//  1. KYPOST_TLS_CERT_FILE, the certificate the operator says devices are
+//     served. Set, it is the only source.
+//  2. KYPOST_TLS_PIN_PROBE=true, the operator's explicit acceptance of the
+//     probe, for fronts with no certificate to mount (Cloudflare Tunnel).
+//  3. The certificate this process serves, when it terminates TLS.
+//
+// The explicit settings outrank the served certificate because they exist for
+// a front that re-terminates TLS, where our own leaf is never what devices see.
+// File and served certificates must name SERVER_BASE_URL's host and be within
+// their validity.
 func (s *Server) pairingSPKIPin() string {
-	if pin := s.probedSPKIPin(); pin != "" {
+	base, err := url.Parse(s.serverBaseURL)
+	if err != nil || !strings.EqualFold(base.Scheme, "https") || base.Hostname() == "" {
+		return ""
+	}
+	host := base.Hostname()
+	if s.pinCertFile != "" {
+		pin, err := filePin(s.pinCertFile, host, time.Now())
+		if err != nil {
+			s.logger.Warn("pairing links and TLS pin rollover have no pin", "source", "KYPOST_TLS_CERT_FILE", "error", err.Error())
+		}
 		return pin
 	}
-	return leafSPKIPin(s.tlsConfig)
-}
-
-// leafSPKIPin reads the pin from the certificate this process serves, or ""
-// when it does not terminate TLS.
-//
-// Read live from GetCertificate on every call rather than cached at startup, so
-// a renewal that rotates the key is reflected in the next link generated — see
-// reloadingCertificate in tls.go.
-func leafSPKIPin(cfg *tls.Config) string {
-	if cfg == nil || cfg.GetCertificate == nil {
-		return ""
+	if s.pinProbe {
+		return s.probedSPKIPin()
 	}
-	cert, err := cfg.GetCertificate(&tls.ClientHelloInfo{})
-	if err != nil || cert == nil || len(cert.Certificate) == 0 {
-		return ""
-	}
-	leaf := cert.Leaf
+	leaf := servedLeaf(s.tlsConfig)
 	if leaf == nil {
-		if leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
-			return ""
-		}
+		return ""
+	}
+	if err := checkLeaf(leaf, host, time.Now()); err != nil {
+		s.logger.Info("pairing links and TLS pin rollover have no pin", "source", "TLS_CERT_FILE", "error", err.Error())
+		return ""
 	}
 	return spkiPin(leaf)
 }
 
-// probedSPKIPin reads the pin from the certificate SERVER_BASE_URL is actually
-// serving, or "".
+// servedLeaf is the certificate this process serves, or nil when it does not
+// terminate TLS.
 //
-// This is what covers the deployment this project documents: a reverse proxy on
-// kypost-net terminating TLS, where there is no certificate on our own disk to
-// read. With cloudflared there is not even one the operator could mount — the
+// Read live from GetCertificate on every call rather than cached at startup, so
+// a renewal that rotates the key is reflected in the next link generated — see
+// reloadingCertificate in tls.go.
+func servedLeaf(cfg *tls.Config) *x509.Certificate {
+	if cfg == nil || cfg.GetCertificate == nil {
+		return nil
+	}
+	cert, err := cfg.GetCertificate(&tls.ClientHelloInfo{})
+	if err != nil || cert == nil || len(cert.Certificate) == 0 {
+		return nil
+	}
+	if cert.Leaf != nil {
+		return cert.Leaf
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil
+	}
+	return leaf
+}
+
+// filePin is the pin of the first certificate (the leaf) in a PEM file, re-read
+// on each call so a renewal needs no restart.
+func filePin(path, host string, now time.Time) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	for rest := raw; ; {
+		var block *pem.Block
+		if block, rest = pem.Decode(rest); block == nil {
+			return "", errors.New("no certificate in the file")
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		leaf, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return "", err
+		}
+		if err := checkLeaf(leaf, host, now); err != nil {
+			return "", err
+		}
+		return spkiPin(leaf), nil
+	}
+}
+
+// checkLeaf refuses a certificate that does not name host or is not valid at
+// now: such a key is not what a device connecting to host is served.
+func checkLeaf(leaf *x509.Certificate, host string, now time.Time) error {
+	if err := leaf.VerifyHostname(host); err != nil {
+		return err
+	}
+	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+		return errors.New("the certificate is not currently valid")
+	}
+	return nil
+}
+
+// pinSourcesFromEnv reads KYPOST_TLS_CERT_FILE and KYPOST_TLS_PIN_PROBE. A
+// relative path or a non-boolean refuses startup.
+func pinSourcesFromEnv() (certFile string, probe bool, err error) {
+	certFile = strings.TrimSpace(os.Getenv("KYPOST_TLS_CERT_FILE"))
+	if certFile != "" && !filepath.IsAbs(certFile) {
+		return "", false, fmt.Errorf("KYPOST_TLS_CERT_FILE=%q must be an absolute path", certFile)
+	}
+	probe, err = config.EnvBool("KYPOST_TLS_PIN_PROBE")
+	return certFile, probe, err
+}
+
+// probedSPKIPin reads the pin from the certificate SERVER_BASE_URL is actually
+// serving, or "". Only with KYPOST_TLS_PIN_PROBE=true: it trusts this host's
+// outbound path and every CA in its trust store.
+//
+// With cloudflared there is no certificate the operator could mount — the
 // device validates a Cloudflare edge certificate — and the probe leaves the
 // host over anycast to the same edge, so it never depends on the router
 // hairpinning traffic back to itself.
@@ -155,7 +238,7 @@ func (s *Server) probedSPKIPin() string {
 // the app "this key, and refuse everything else" — asserting that on bytes
 // nobody authenticated is not a claim this server should make. The cost is that
 // a deployment fronted by a private CA gets no pin; that operator's answer is
-// TLS_CERT_FILE, which pins from the certificate on disk instead.
+// KYPOST_TLS_CERT_FILE, which pins from the certificate on disk instead.
 //
 // roots is nil in production, meaning the system pool. Tests inject the CA of
 // an httptest server so the success path can be exercised without the network.

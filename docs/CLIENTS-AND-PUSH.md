@@ -33,26 +33,43 @@ So the QR carries `pin`: the SHA-256 of your serving certificate's public key.
 The app pins the registration handshake to that one key *before* it sends
 anything, and refuses a certificate that does not match.
 
-**Set `SERVER_BASE_URL` to your public `https://` URL and this works with no
-further configuration.** At the moment it builds each QR, the server makes a
-verified TLS connection to that URL and reads the certificate you are actually
-serving — whether that is Caddy, Traefik, nginx-proxy-manager, a Cloudflare
-tunnel, or this server's own `TLS_CERT_FILE`. Because it is read fresh every
-time, certificate renewal needs no action from you.
+The same pin is what the relay identity key signs for
+[TLS pin rollover](API.md), so paired phones accept a renewed certificate
+without a new link. A pin the server publishes or signs makes phones trust that
+key, so it comes only from a certificate you vouched for. Set
+`SERVER_BASE_URL` to your public `https://` URL, then one of:
+
+1. **KyPost terminates TLS** (`TLS_CERT_FILE`/`TLS_KEY_FILE`) with a
+   certificate that names the `SERVER_BASE_URL` host: nothing more to set.
+2. **A proxy terminates TLS** (Caddy, Traefik, nginx-proxy-manager): mount the
+   certificate it serves read-only and set `KYPOST_TLS_CERT_FILE` to its
+   absolute path (PEM, leaf first; `fullchain.pem` works). It is re-read on
+   every QR and rollover request, so renewals need no restart. A file whose
+   leaf does not name the host or is expired gives no pin.
+3. **Cloudflare Tunnel**, or any front with no certificate you can mount: set
+   `KYPOST_TLS_PIN_PROBE=true`. The server then makes a verified TLS connection
+   to `SERVER_BASE_URL` and pins what it is shown. That trusts this host's
+   outbound path and every CA in its trust store: anyone who controls that path
+   and holds a certificate it trusts for your hostname gets their key accepted
+   by paired phones. The server logs a warning at startup for this reason.
+
+`KYPOST_TLS_CERT_FILE` outranks the probe, and both outrank KyPost's own
+certificate, because they exist for a front that re-terminates TLS, where
+KyPost's own leaf is never what phones see.
 
 Two things worth knowing:
 
 - **Behind a proxy, you are pinned to the proxy.** With Cloudflare in front,
   this closes the hostile-network hole between the phone and Cloudflare. It does
   not make the tunnel end to end; Cloudflare still terminates TLS.
-- **A private or self-signed CA gets no pin.** The server will not tell the app
-  "trust only this key" on the word of a certificate it could not verify. Use
-  `TLS_CERT_FILE`/`TLS_KEY_FILE` to terminate TLS here instead, and the pin is
-  read from that certificate directly.
+- **The probe refuses a private or self-signed CA.** Use `KYPOST_TLS_CERT_FILE`
+  with that certificate instead.
 
-A probe failure — an unreachable URL, a router that will not route your public
-hostname back to itself — simply omits `pin`, and pairing proceeds on trust on
-first use. It never breaks a pairing; it only declines to protect one.
+With none of these, or when the source fails — a refused file, an unreachable
+URL, a router that will not route your public hostname back to itself — the QR
+omits `pin` and pairing proceeds on trust on first use, and TLS pin rollover
+answers 503, so phones need a new pairing link after a certificate renewal. It
+never breaks a pairing; it only declines to protect one.
 Already-paired devices are unaffected. A missing `SERVER_BASE_URL` is the one
 case that is not merely unpinned: there is then no address to put in the QR at
 all, so pairing refuses rather than guessing one from the request.
