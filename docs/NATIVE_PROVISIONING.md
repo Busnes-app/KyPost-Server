@@ -486,7 +486,7 @@ KyIdentity primary ([spec](NATIVE_ADDRESSING_V2.md#mailbox-storage)).
 
 Allocation context is at most 30 seconds and never outlives the domain proof.
 Cancellable flock/mutex waits leave no abandoned waiter that acquires later.
-Legacy writers preserve blocking flock behavior. Open/fsync and read-only SQLite
+Legacy writers wait for their locks without cancellation (polling, never a blocking `flock(2)`). Open/fsync and read-only SQLite
 validation are not cancellable: healthy-volume qualification/watchdog and prompt
 revocation under stalled storage remain activation gates. No network lookup runs
 under directory/users locks. Instance-wide preparation serializes directory
