@@ -74,8 +74,8 @@ Client requirements:
   a private CA gets no pin, and that operator's answer is not a broken pairing.
   (`server_notifications.go:374-377` only sets it for `https://` endpoints.)
 - **A `pin` that does not match MUST fail closed.** Refuse to register. A pin
-  the client cannot vouch for is worse than none, so the server only publishes
-  pins it probed itself.
+  the client cannot vouch for is worse than none, so the server publishes only
+  pins from a certificate the operator vouched for (`pairing_pin.go`).
 - **Decode the value as a percent-encoded string.** It is base64, so it
   contains `+`, `/` and `=`. A bare `+` in a query string decodes to a space,
   which corrupts roughly half of all pins — and since a malformed pin fails

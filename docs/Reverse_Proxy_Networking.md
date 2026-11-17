@@ -185,28 +185,36 @@ projects, and the collision surfaces as the error above rather than as anything
 mentioning this file. `10.89.0.0/24` is outside that pool. Change it if it
 clashes with your own LAN or VPN routes.
 
-## The pairing QR reads your proxy's certificate
+## The pairing QR pins your proxy's certificate
 
 The mobile pairing QR carries a pin for the certificate the device will be
 handed, so the app can pin the registration handshake before it discloses the
 pairing token and its push credentials. See
 [Certificate pinning in the pairing QR](CLIENTS-AND-PUSH.md#certificate-pinning-in-the-pairing-qr).
 
-Your proxy holds that certificate, not this server — with `cloudflared` there is
-no file to mount at all, because the device validates a Cloudflare edge
-certificate. So the server reads it the same way the device will: at the moment
-it builds each QR, it makes a verified TLS connection to `SERVER_BASE_URL` and
-takes the leaf.
+Your proxy holds that certificate, not this server, and the same pin is what
+the relay identity key signs so paired phones survive a renewal. A pinned key is
+trusted by every phone, so the server takes it only from a source you chose:
 
-**Set `SERVER_BASE_URL` to your public `https://` URL.** That is the whole
-configuration, and pairing does not work without it. No URL that carries a
-credential is derived from the request's `Host` header — a caller who could
-steer that would be choosing which key the app pins, and where the pairing
-token is sent.
+- **A proxy with a certificate file** (Caddy, Traefik, nginx-proxy-manager):
+  mount what it serves read-only and set `KYPOST_TLS_CERT_FILE` to its absolute
+  path. It is re-read on use, so renewals need no restart. Its leaf must name
+  the `SERVER_BASE_URL` host and be within its validity.
+- **`cloudflared`**, with no file to mount because the device validates a
+  Cloudflare edge certificate: set `KYPOST_TLS_PIN_PROBE=true`. At each QR and
+  rollover request the server makes a verified TLS connection to
+  `SERVER_BASE_URL` and takes the leaf. That trusts this host's outbound path
+  and CA store, so it is off by default and warned about at startup.
 
-If your public hostname does not resolve back to the proxy from inside the
-server's network — a self-hosted proxy behind a consumer router with no NAT
-hairpinning is the usual case — the probe fails and the QR simply omits the pin,
-leaving pairing exactly as it was. Split-horizon DNS pointing the hostname at
-the proxy's LAN address fixes it; so does `cloudflared`, whose traffic leaves to
-the anycast edge and never needs to come back in.
+**Set `SERVER_BASE_URL` to your public `https://` URL** as well; pairing does not
+work without it. No URL that carries a credential is derived from the request's
+`Host` header — a caller who could steer that would be choosing which key the app
+pins, and where the pairing token is sent.
+
+With neither setting the QR omits the pin and pairing is trust-on-first-use. With
+the probe, if your public hostname does not resolve back to the proxy from inside
+the server's network — a self-hosted proxy behind a consumer router with no NAT
+hairpinning is the usual case — the probe fails and the QR omits the pin too.
+Split-horizon DNS fixes it; `cloudflared` traffic leaves to the anycast edge and
+never needs to come back in. A proxy with a certificate file is better served by
+`KYPOST_TLS_CERT_FILE`, which needs no outbound connection at all.

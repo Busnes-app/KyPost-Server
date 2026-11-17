@@ -106,6 +106,10 @@ services:
       # private key into a distributable layer.
       TLS_CERT_FILE: ${TLS_CERT_FILE:-}
       TLS_KEY_FILE: ${TLS_KEY_FILE:-}
+      # Pin source for pairing QRs and TLS pin rollover behind a proxy; see
+      # .env.example and the commented front-tls volume below.
+      KYPOST_TLS_CERT_FILE: ${KYPOST_TLS_CERT_FILE:-}
+      KYPOST_TLS_PIN_PROBE: ${KYPOST_TLS_PIN_PROBE:-}
       KYPOST_BIND: ${KYPOST_BIND:?set KYPOST_BIND in .env}
       ALLOW_INSECURE_HTTP: ${ALLOW_INSECURE_HTTP:-}
       TZ: ${TZ:-America/New_York}
@@ -172,6 +176,9 @@ services:
       # on disk), which matters because a restart logs every user out — sessions
       # are in-memory by design.
       # - /etc/letsencrypt/live/mail.example.com:/kypost/tls:ro
+      # Uncomment for KYPOST_TLS_CERT_FILE: the certificate your reverse proxy
+      # serves for SERVER_BASE_URL, read-only. Only the certificate is read.
+      # - /etc/letsencrypt/live/mail.example.com:/kypost/front-tls:ro
       - kypost_config:/kypost/config
       - kypost_private:/kypost/private
       - kypost_logs:/kypost/logs

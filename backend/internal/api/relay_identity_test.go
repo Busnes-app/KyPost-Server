@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // The cross-language vector: kypost-android's TlsPinRolloverTest verifies this
@@ -42,6 +43,7 @@ func TestNativeTLSPinSignsTheServedLeaf(t *testing.T) {
 	srv := newTestServer(t)
 	srv.serverBaseURL = baseURL
 	srv.pinProbeRoots = roots
+	srv.pinProbe = true
 	srv.relayIdentity = vectorKey()
 
 	rec := httptest.NewRecorder()
@@ -73,8 +75,13 @@ func TestNativeTLSPinRefusesWithoutAKeyOrAPin(t *testing.T) {
 	baseURL, _, roots := tlsOrigin(t)
 	for name, setup := range map[string]func(*Server){
 		"no identity key": func(s *Server) { s.serverBaseURL, s.pinProbeRoots, s.relayIdentity = baseURL, roots, nil },
-		"no servable pin": func(s *Server) { s.serverBaseURL, s.relayIdentity = closedHTTPSOrigin(t), vectorKey() },
-		"http base url":   func(s *Server) { s.serverBaseURL, s.relayIdentity = "http://relay.example.com", vectorKey() },
+		"no servable pin": func(s *Server) {
+			s.serverBaseURL, s.relayIdentity, s.pinProbe = closedHTTPSOrigin(t), vectorKey(), true
+		},
+		// The probe reaches a host-valid leaf under a trusted CA, but nobody
+		// opted into trusting it: nothing is signed.
+		"probe not opted in": func(s *Server) { s.serverBaseURL, s.pinProbeRoots, s.relayIdentity = baseURL, roots, vectorKey() },
+		"http base url":      func(s *Server) { s.serverBaseURL, s.relayIdentity = "http://relay.example.com", vectorKey() },
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := newTestServer(t)
@@ -85,6 +92,38 @@ func TestNativeTLSPinRefusesWithoutAKeyOrAPin(t *testing.T) {
 				t.Fatalf("status = %d, want 503", rec.Code)
 			}
 		})
+	}
+}
+
+// TestNativeTLSPinSignsOnlyTheFile: with KYPOST_TLS_CERT_FILE set, the leaf
+// the probe is shown — host-valid, under a CA this server trusts — is not what
+// gets signed.
+func TestNativeTLSPinSignsOnlyTheFile(t *testing.T) {
+	baseURL, probedPin, roots := tlsOrigin(t)
+	srv := newTestServer(t)
+	srv.serverBaseURL, srv.pinProbeRoots, srv.pinProbe = baseURL, roots, true
+	srv.pinCertFile = filepath.Join(t.TempDir(), "front.pem")
+	want := writeLeafPEM(t, srv.pinCertFile, time.Now().Add(-time.Hour), time.Now().Add(time.Hour), "127.0.0.1")
+	srv.relayIdentity = vectorKey()
+
+	rec := httptest.NewRecorder()
+	srv.handleNativeTLSPin(rec, httptest.NewRequest(http.MethodGet, "/api/notifications/native/tls-pin", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	var body struct {
+		Host, Pin, Signature string
+		IssuedAt             int64
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Pin == probedPin || body.Pin != want {
+		t.Fatalf("signed pin %q, want the file's %q (probed %q)", body.Pin, want, probedPin)
+	}
+	sig, _ := base64.StdEncoding.DecodeString(body.Signature)
+	if !ed25519.Verify(srv.relayIdentity.Public().(ed25519.PublicKey), tlsPinStatement(body.Host, body.Pin, body.IssuedAt), sig) {
+		t.Fatal("signature does not verify over the returned statement")
 	}
 }
 
