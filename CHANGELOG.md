@@ -20,6 +20,9 @@ non-prerelease version.
 
 ### Fixed
 
+- The mailbox cleanup regression waits for asynchronous handle closure as well
+  as the final reference release, avoiding a race in the CI leak assertion.
+
 - **The bundled SMTP receiver's rate and concurrency limits are configurable.**
   Set `KYPOST_RECEIVING_RATE_PER_MINUTE` and `KYPOST_RECEIVING_IP_RATE_PER_MINUTE`
   for expected mail volume; `KYPOST_RECEIVING_CONCURRENCY` and
