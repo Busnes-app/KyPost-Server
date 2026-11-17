@@ -26,6 +26,14 @@ non-prerelease version.
 
 ### Fixed
 
+- Failure of the optional receiving accelerator leaves the API, daemon and SMTP
+  receiver running with in-process checks after bounded retries; core program
+  failures still restart the container. After repairing the cause, restart
+  `receiving-server` through Supervisor. No data or configuration migration.
+
+- The mailbox cleanup regression waits for asynchronous handle closure as well
+  as the final reference release, avoiding a race in the CI leak assertion.
+
 - **The bundled SMTP receiver's rate and concurrency limits are configurable.**
   Set `KYPOST_RECEIVING_RATE_PER_MINUTE` and `KYPOST_RECEIVING_IP_RATE_PER_MINUTE`
   for expected mail volume; `KYPOST_RECEIVING_CONCURRENCY` and

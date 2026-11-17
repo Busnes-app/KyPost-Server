@@ -460,7 +460,9 @@ func TestOpenClientSharesHeldAdmission(t *testing.T) {
 		heldAdmissions.Lock()
 		users = second.users
 		heldAdmissions.Unlock()
-		if users == 0 {
+		// Cleanup drops the last user before closing the handles, outside the
+		// pool lock. Wait for both rather than racing that asynchronous close.
+		if users == 0 && second.mail.Ping() != nil {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)

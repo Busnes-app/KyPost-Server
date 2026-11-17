@@ -126,7 +126,7 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 		if e != nil {
 			return "", e
 		}
-		e = file.Sync()
+		e = fsutil.Sync(file)
 		closeErr := file.Close()
 		if e != nil {
 			return "", e

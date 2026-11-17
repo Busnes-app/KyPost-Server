@@ -167,6 +167,7 @@ COPY scripts /opt/kypost/scripts
 RUN chmod +x /opt/kypost/scripts/*.sh
 
 ENV CONFIG_DIR=/kypost/config
+# SecretsUsedInArgOrEnv false positive: SECRET_DIR is a directory path, never a credential.
 ENV SECRET_DIR=/kypost/private
 ENV LOG_DIR=/kypost/logs
 ENV STATE_DIR=/kypost/state

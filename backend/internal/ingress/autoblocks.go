@@ -27,6 +27,8 @@ const (
 	// EvidenceDamagedFile is the last unreadable evidence file, set aside so
 	// counting restarts; backups skip it.
 	EvidenceDamagedFile = "sender-evidence.damaged.json"
+	// ServerSocketFile is the receiving server's socket in the holding root.
+	ServerSocketFile = "receiver.sock"
 )
 
 const (
