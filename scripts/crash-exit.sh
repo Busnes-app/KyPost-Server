@@ -36,6 +36,17 @@ while IFS= read -r header; do
 		payload=$(dd bs=1 count="$length" 2>/dev/null)
 	fi
 
+	# This accelerator is optional: commands use the in-process path when its
+	# socket is absent. Leave it FATAL after bounded retries, without taking
+	# the API, daemon and receiver down with it. Keep listening for core failures.
+	case " $payload " in
+		*" processname:receiving-server "*)
+			printf '%s\n' "supervisord: optional receiving-server entered FATAL; checks will run in process: $payload" >&2
+			printf 'RESULT 2\nOKREADY\n'
+			continue
+			;;
+	esac
+
 	printf '%s\n' "supervisord: program entered FATAL, stopping the container so it can be restarted: $payload" >&2
 
 	# Acknowledge before exiting, so supervisord does not log a protocol error on

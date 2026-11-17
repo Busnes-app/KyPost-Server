@@ -180,6 +180,10 @@ docker compose exec kypost-server supervisorctl -c /etc/supervisord.conf status 
 and answers its per-recipient and per-message checks from one warm process
 over the owner-only socket `STATE_DIR/receiving/receiver.sock`. If it is not
 running, each check runs in its own process with the same result, more slowly.
+If its bounded startup retries are exhausted, Supervisor leaves only this
+accelerator FATAL and logs the fallback; the container and receiver stay up.
+After fixing the cause, restart it with
+`docker compose exec kypost-server supervisorctl -c /etc/supervisord.conf restart receiving-server`.
 
 Before every start, the unprivileged launcher checks the exact qualified engine
 hash and regenerates configuration through the production storage, TLS and

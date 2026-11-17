@@ -20,6 +20,11 @@ non-prerelease version.
 
 ### Fixed
 
+- Failure of the optional receiving accelerator leaves the API, daemon and SMTP
+  receiver running with in-process checks after bounded retries; core program
+  failures still restart the container. After repairing the cause, restart
+  `receiving-server` through Supervisor. No data or configuration migration.
+
 - The mailbox cleanup regression waits for asynchronous handle closure as well
   as the final reference release, avoiding a race in the CI leak assertion.
 

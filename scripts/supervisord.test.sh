@@ -13,7 +13,7 @@ set -euo pipefail
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$root_dir/supervisord.conf" <<'PY'
-import collections, configparser, sys
+import collections, configparser, pathlib, subprocess, sys
 
 path = sys.argv[1]
 cfg = configparser.ConfigParser(strict=True, inline_comment_prefixes=(";",))
@@ -33,4 +33,34 @@ if shared:
     sys.exit(1)
 
 print(f"ok: {len(cfg.sections())} sections, {len(owners)} distinct log files")
+
+# Replace only the final signal in the test copy, so this check cannot kill
+# the host's PID 1. Everything else uses the real listener and event protocol.
+listener = pathlib.Path(path).parent / "scripts" / "crash-exit.sh"
+script = listener.read_text()
+signal = "kill -TERM 1"
+assert script.count(signal) == 1, "review the listener's shutdown stub"
+script = script.replace(signal, "printf 'container stopped\\n' >&2")
+
+def fatal(name):
+    payload = f"processname:{name} groupname:{name} from_state:BACKOFF"
+    return f"ver:3.0 eventname:PROCESS_STATE_FATAL len:{len(payload)}\n{payload}"
+
+for name in ("api", "daemon", "receiver", "ollama", "ollama-model", "receiving-server-other"):
+    result = subprocess.run(
+        ["sh", "-c", script], input=fatal("receiving-server") + fatal(name),
+        capture_output=True, text=True, check=True, timeout=5,
+    )
+    assert result.stdout == "READY\nRESULT 2\nOKREADY\nRESULT 2\nOK", (
+        "optional receiving-server must acknowledge FATAL and keep listening", result
+    )
+    assert result.stderr.count("container stopped\n") == 1, result
+    assert f"processname:{name} " in result.stderr, result
+
+result = subprocess.run(
+    ["sh", "-c", script], input=fatal("receiving-server"),
+    capture_output=True, text=True, check=True, timeout=5,
+)
+assert "container stopped" not in result.stderr, result
+print("ok: optional accelerator FATAL keeps the container up; core FATAL still stops it")
 PY
