@@ -11,6 +11,8 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // EnableNativeMail is startup-only, before request/background goroutines start.
@@ -90,6 +92,10 @@ var openNativeMailClient = mailbox.OpenClient
 // past the container's task limit, and Go aborts when it cannot start a thread.
 var nativeOpenSlots = make(chan struct{}, 8)
 
+// nativeOpens joins concurrent opens of one mailbox and source, so one account
+// takes at most one slot; each caller was admitted before it got here.
+var nativeOpens singleflight.Group
+
 func openNativeSlot(dir string, owner mailbox.Owner, limits mailbox.Limits, from, source string, admit func(context.Context, *mailbox.Prepared) error) (*mailbox.Client, error) {
 	nativeOpenSlots <- struct{}{}
 	defer func() { <-nativeOpenSlots }()
@@ -110,21 +116,24 @@ func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Clie
 		return entry.client, true, nil
 	}
 	// Opened off userMu, which every request's per-user stores wait on: an open
-	// checks and reads the mailbox. A concurrent open of the same mailbox may
-	// win the insert below; the loser is freed by its runtime cleanup.
-	client, err := openNativeSlot(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context, held *mailbox.Prepared) error {
-		current, _, err := sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID, held)
-		if err != nil {
-			return err
-		}
-		if current.Source != a.Source {
-			return sso.ErrNativeProvisioning
-		}
-		return nil
+	// checks and reads the mailbox. An open for another source may win the
+	// insert below; the loser is freed by its runtime cleanup.
+	opened, err, _ := nativeOpens.Do(key+"\x00"+a.Source, func() (any, error) {
+		return openNativeSlot(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context, held *mailbox.Prepared) error {
+			current, _, err := sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID, held)
+			if err != nil {
+				return err
+			}
+			if current.Source != a.Source {
+				return sso.ErrNativeProvisioning
+			}
+			return nil
+		})
 	})
 	if err != nil {
 		return nil, true, err
 	}
+	client := opened.(*mailbox.Client)
 	s.userMu.Lock()
 	defer s.userMu.Unlock()
 	if entry, ok := s.userMail[key]; ok {

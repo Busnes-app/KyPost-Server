@@ -351,6 +351,38 @@ func TestNativeClientOpensOffTheUserLock(t *testing.T) {
 // At most cap(nativeOpenSlots) opens run at once: each holds an OS thread in
 // file locks and fsync, and the container's task limit is finite.
 func TestNativeClientOpensAreBounded(t *testing.T) {
+	var entered atomic.Int32
+	release := make(chan struct{})
+	open := openNativeMailClient
+	openNativeMailClient = func(string, mailbox.Owner, mailbox.Limits, string, string, func(context.Context, *mailbox.Prepared) error) (*mailbox.Client, error) {
+		entered.Add(1)
+		<-release
+		return nil, errors.New("not opened")
+	}
+	t.Cleanup(func() { openNativeMailClient = open })
+	slots := int32(cap(nativeOpenSlots))
+	done := make(chan struct{}, slots+1)
+	for range slots + 1 {
+		go func() {
+			_, _ = openNativeSlot("", mailbox.Owner{}, mailbox.Limits{}, "", "", nil)
+			done <- struct{}{}
+		}()
+	}
+	waitFor(t, func() bool { return entered.Load() >= slots })
+	time.Sleep(100 * time.Millisecond) // room for an unbounded extra open to arrive
+	if n := entered.Load(); n != slots {
+		close(release)
+		t.Fatalf("%d opens ran at once, want %d", n, slots)
+	}
+	close(release)
+	for range slots + 1 {
+		<-done
+	}
+}
+
+// Concurrent requests for one mailbox share one open, so one account cannot
+// fill every slot.
+func TestNativeClientOpensOfOneMailboxAreShared(t *testing.T) {
 	s := newNativeRuntimeServer(t)
 	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "runtime-create", 1, runtimeDirectoryUser(true)))
 	u, err := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
@@ -366,27 +398,44 @@ func TestNativeClientOpensAreBounded(t *testing.T) {
 		return open(dir, owner, limits, from, source, admit)
 	}
 	t.Cleanup(func() { openNativeMailClient = open })
-	slots := int32(cap(nativeOpenSlots))
-	done := make(chan error, slots+1)
-	for range slots + 1 {
+	const callers = 9
+	clients := make(chan any, callers)
+	for range callers {
 		go func() {
-			_, err := s.userMailClient(u.ID)
-			done <- err
+			c, err := s.userMailClient(u.ID)
+			if err != nil {
+				clients <- err
+				return
+			}
+			clients <- c
 		}()
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for entered.Load() < slots && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	time.Sleep(100 * time.Millisecond) // room for an unbounded extra open to arrive
-	if n := entered.Load(); n != slots {
-		close(release)
-		t.Fatalf("%d opens ran at once, want %d", n, slots)
-	}
+	waitFor(t, func() bool { return entered.Load() >= 1 })
+	time.Sleep(100 * time.Millisecond) // room for a duplicate open to arrive
+	n := entered.Load()
 	close(release)
-	for range slots + 1 {
-		if err := <-done; err != nil {
+	var first any
+	for range callers {
+		c := <-clients
+		if err, ok := c.(error); ok {
 			t.Fatal(err)
+		}
+		if first == nil {
+			first = c
+		} else if c != first {
+			t.Fatal("callers got different clients")
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d opens for one mailbox, want 1", n)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !cond(); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached in 5s")
 		}
 	}
 }

@@ -59,7 +59,7 @@ require (
 	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sync v0.25.0
 	golang.org/x/time v0.16.0 // indirect
 	// Keep libc paired with the version required by modernc.org/sqlite.
 	modernc.org/libc v1.80.1 // indirect
