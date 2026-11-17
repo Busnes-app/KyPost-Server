@@ -77,7 +77,7 @@ func TestCreateInitialIsCrashDurable(t *testing.T) {
 	// The file's own bytes must reach the disk before the name that points at
 	// them, or a crash leaves a users.json that exists and does not parse —
 	// which does not re-bootstrap, it refuses to start.
-	fileSync := posOf("tmp.Sync")
+	fileSync := posOf("fsutil.Sync") // the temp file, through the process-wide fsync bound
 	link := posOf("os.Link")
 	dirSync := posOf("fsutil.SyncDir")
 

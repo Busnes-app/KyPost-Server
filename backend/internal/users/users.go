@@ -920,7 +920,7 @@ func (s *Store) createInitial(f usersFile) (won bool, err error) {
 	// have not — leaving a users.json that exists and is empty, which is worse
 	// than one that is missing: the missing one re-bootstraps, the empty one
 	// fails to parse and the server will not start.
-	if err := tmp.Sync(); err != nil {
+	if err := fsutil.Sync(tmp); err != nil {
 		_ = tmp.Close()
 		return false, err
 	}

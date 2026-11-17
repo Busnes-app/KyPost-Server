@@ -57,7 +57,7 @@ func AtomicWriteFile(path string, payload []byte, perm os.FileMode) error {
 		_ = tmp.Close()
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := Sync(tmp); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -68,6 +68,22 @@ func AtomicWriteFile(path string, payload []byte, perm os.FileMode) error {
 		return err
 	}
 	return SyncDir(dir)
+}
+
+// syncSlots bounds this process's concurrent fsyncs. An fsync holds an OS
+// thread until the disk answers; a burst of them took the API past its
+// container task limit, where Go aborts (fatal error: newosproc). Waiters
+// beyond the bound are goroutines, not threads.
+var syncSlots = make(chan struct{}, 32)
+
+// syncFile is (*os.File).Sync; tests slow it down.
+var syncFile = (*os.File).Sync
+
+// Sync is f.Sync within the process-wide fsync bound.
+func Sync(f *os.File) error {
+	syncSlots <- struct{}{}
+	defer func() { <-syncSlots }()
+	return syncFile(f)
 }
 
 // SyncDir fsyncs a directory so a rename or link into it is durable. A failure
@@ -84,7 +100,7 @@ func SyncDir(dir string) error {
 		return nil
 	}
 	defer d.Close()
-	if err := d.Sync(); err != nil {
+	if err := Sync(d); err != nil {
 		return fmt.Errorf("sync dir %s: %w", dir, err)
 	}
 	return nil
