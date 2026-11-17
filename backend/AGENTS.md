@@ -10,6 +10,13 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ## Local Contracts
 
+- Bundled SMTP admission limits are the four `config.Receiving*` IntEnv values: concurrency
+  1–64 (global/IP defaults 4/2), rate/minute 1–60,000 (defaults 30/10). `CheckEnv`
+  rejects bad settings at startup; `app.receivingRuntime.writeConfig` validates them
+  before output. Keep Compose, `.env.example` and receiver-sizing docs aligned.
+  `TestNativeReceivingConfigUsesConfiguredLimits` checks generated output and malformed
+  refusal; `TestNativeReceivingMaddyRuntime/configured-limits` checks the real pinned engine.
+
 - HR address reservations: `sso/hr_mailbox.go` and `api/hr_mailbox.go` implement the signed `hr.mailbox.reserve` boundary at `POST /api/sync/hr-mailbox`. Reserve a disabled primary for the stable issuer/subject before the identity exists; no directory grant, user publication, storage or live route. The explicit `hr_address_reserved` marker, revision zero and empty digest/source identify this pre-directory state for snapshot/recovery validation. Normal signed provisioning consumes it; keep address ownership across retries and restore. `TestHR*` covers ordering, collision, snapshot preservation and activation. Operator/wire contract: `docs/NATIVE_PROVISIONING.md#hr-address-reservations` (repository root).
 
 - Every store keeps its SQLite path as its name; on Postgres `dbbackend` maps it to a schema. Opens that may create a database go to Postgres whenever it is configured; opens of an existing one (`OpenExisting`, read-only and helper opens) follow `dbbackend.Held`: on Postgres every path under STATE_DIR/CONFIG_DIR is Postgres (catalogued or not, and a catalog error fails the open, never falls back), and only paths outside them and `backup-scratch` are SQLite files (restore staging, capsule members, snapshots). Restore staging, the drill and capsule validation stay SQLite on both backends. SQL that differs gets a per-backend text at the call site; the translator only takes rules true token by token.

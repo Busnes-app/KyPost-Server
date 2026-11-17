@@ -70,12 +70,18 @@ func TestNativeReceivingCommandHelper(t *testing.T) {
 }
 
 func TestNativeReceivingMaddyRuntime(t *testing.T) {
-	for _, mode := range []string{"direct", "launcher", "supervised", "supervised_partial", "rspamd"} {
+	for _, mode := range []string{"direct", "configured-limits", "launcher", "supervised", "supervised_partial", "rspamd"} {
 		t.Run(mode, func(t *testing.T) { testNativeReceivingMaddyRuntime(t, mode) })
 	}
 }
 
 func testNativeReceivingMaddyRuntime(t *testing.T, mode string) {
+	if mode == "configured-limits" {
+		t.Setenv("KYPOST_RECEIVING_CONCURRENCY", "8")
+		t.Setenv("KYPOST_RECEIVING_IP_CONCURRENCY", "4")
+		t.Setenv("KYPOST_RECEIVING_RATE_PER_MINUTE", "600")
+		t.Setenv("KYPOST_RECEIVING_IP_RATE_PER_MINUTE", "300")
+	}
 	if mode == "rspamd" {
 		if os.Getenv("RSPAMD_PROOF") != "true" {
 			t.Skip("set RSPAMD_PROOF=true for actual sidecar qualification")
@@ -323,7 +329,8 @@ with open(sys.argv[2], "w") as out:
 	}
 	var rejection *textproto.Error
 	// Limits apply to active MAIL transactions, including transactions that
-	// have not bound a recipient. A third transaction from this IP must refuse.
+	// have not bound a recipient. The configured per-IP ceiling must refuse
+	// the next transaction even when the global ceiling has room.
 	newTLSClient := func() *smtp.Client {
 		t.Helper()
 		c, err := smtp.Dial(address)
@@ -336,18 +343,29 @@ with open(sys.argv[2], "w") as out:
 		}
 		return c
 	}
-	second, third := newTLSClient(), newTLSClient()
-	if err := second.Mail(""); err != nil {
-		t.Fatal(err)
+	ipConcurrency := 2
+	if mode == "configured-limits" {
+		ipConcurrency = 4
 	}
-	if err := third.Mail(""); !errors.As(err, &rejection) || rejection.Code < 400 || rejection.Code >= 500 {
-		t.Fatalf("third concurrent IP transaction must be temporarily refused: %v", err)
+	var peers []*smtp.Client
+	for i := 1; i < ipConcurrency; i++ {
+		peer := newTLSClient()
+		if err := peer.Mail(""); err != nil {
+			t.Fatalf("transaction %d below the per-IP ceiling was refused: %v", i+1, err)
+		}
+		peers = append(peers, peer)
 	}
-	if err := second.Reset(); err != nil {
-		t.Fatal(err)
+	extra := newTLSClient()
+	if err := extra.Mail(""); !errors.As(err, &rejection) || rejection.Code < 400 || rejection.Code >= 500 {
+		t.Fatalf("transaction above the per-IP ceiling must be temporarily refused: %v", err)
 	}
-	_ = second.Close()
-	_ = third.Close()
+	for _, peer := range peers {
+		if err := peer.Reset(); err != nil {
+			t.Fatal(err)
+		}
+		_ = peer.Close()
+	}
+	_ = extra.Close()
 	// A blocked sender is refused permanently at RCPT, before any binding.
 	if _, err := ingress.NewBlocks(filepath.Join(r.stateDir, "receiving")).Put(context.Background(), ingress.SenderBlock{Kind: "domain", Value: "blocked.test", Source: "manual", Actor: "test", Reason: "spam"}, nil, time.Now()); err != nil {
 		t.Fatal(err)
@@ -608,7 +626,11 @@ with open(sys.argv[2], "w") as out:
 		t.Fatal(err)
 	}
 	shm := filepath.Join(r.stateDir, "receiving", "ingress.db-shm")
-	if err := os.Truncate(shm, 1<<30); err != nil {
+	// Admission's physical allowance includes four payload budgets and per-record
+	// overhead. The old fixed 1 GiB probe is below the current 512 MiB payload
+	// budget's allowance and no longer creates pressure.
+	pressureSize := 4*receivingLimits.PayloadBytes + int64(receivingLimits.Records)*(32<<10) + receivingLimits.MessageBytes
+	if err := os.Truncate(shm, pressureSize); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.Mail(""); err != nil {
@@ -680,6 +702,9 @@ with open(sys.argv[2], "w") as out:
 	for range 11 {
 		err := rateClient.Mail("")
 		if err != nil {
+			if mode == "configured-limits" {
+				t.Fatalf("raised per-IP rate refused a burst above the old limit: %v", err)
+			}
 			if !errors.As(err, &rejection) || rejection.Code < 400 || rejection.Code >= 500 {
 				t.Fatalf("burst exhaustion must be temporary refusal: %v", err)
 			}
@@ -690,8 +715,8 @@ with open(sys.argv[2], "w") as out:
 			t.Fatal(err)
 		}
 	}
-	if !rateRefused {
-		t.Fatal("configured per-IP burst limit never refused")
+	if mode != "configured-limits" && !rateRefused {
+		t.Fatal("default per-IP burst limit never refused")
 	}
 	if container != "" {
 		// Close the test sockets, then prove the actual image process groups stop.

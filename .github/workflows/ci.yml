@@ -70,6 +70,20 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Bundled receiver default and configured limits
+        run: |
+          set -euo pipefail
+          receiver="$RUNNER_TEMP/receiving-engine"
+          mkdir -p "$receiver"
+          curl --fail --location --retry 3 \
+            https://github.com/foxcpp/maddy/releases/download/v0.9.5/maddy-0.9.5-x86_64-linux-musl.tar.zst \
+            -o "$receiver/maddy.tar.zst"
+          printf '%s  %s\n' 665cb3ffc43dcad0b904bb2792f31cd1025e484b0bacaf4ece06e2bd0091d5e2 "$receiver/maddy.tar.zst" | sha256sum -c -
+          tar --zstd -xf "$receiver/maddy.tar.zst" -C "$receiver" ./maddy-0.9.5-x86_64-linux-musl/maddy
+          MADDY_PROOF_BINARY="$receiver/maddy-0.9.5-x86_64-linux-musl/maddy" \
+            go test -race -count=1 -timeout=5m ./internal/app \
+              -run '^TestNativeReceivingMaddyRuntime/(direct|configured-limits)$'
+
       # The release binary must not depend on where it is built: build it the way the
       # Dockerfile does (no .git in the context, -trimpath) from two directories and require
       # identical bytes. docs/VERIFYING-RELEASES.md tells users how to repeat this.
