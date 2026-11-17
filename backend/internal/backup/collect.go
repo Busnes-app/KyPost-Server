@@ -41,7 +41,7 @@ func snapshotDatabase(name string) bool {
 func skip(name string) bool {
 	// The Cloudflare host record is this host's live marker: a restore must start fenced.
 	// A restore qualification or release proves one restore, never a later one.
-	return name == "supervisor.sock" || name == mailbox.OutboundIdleFile || name == mailbox.OutboundIdleFile+".tmp" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || name == bulkManifestName || name == sso.NativeRestoreQualificationFile || name == sso.NativeRestoreReleasedFile || strings.HasPrefix(name, cfreceiving.HostFile) || name == ingress.EvidenceDamagedFile || strings.HasSuffix(name, ".lock") ||
+	return name == "supervisor.sock" || name == mailbox.OutboundIdleFile || name == mailbox.OutboundIdleFile+".tmp" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || name == bulkManifestName || name == sso.NativeRestoreQualificationFile || name == sso.NativeRestoreReleasedFile || strings.HasPrefix(name, cfreceiving.HostFile) || name == ingress.EvidenceDamagedFile || name == ingress.ServerSocketFile || strings.HasSuffix(name, ".lock") ||
 		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, ".v2-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
 }
 
