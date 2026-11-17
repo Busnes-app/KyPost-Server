@@ -173,8 +173,13 @@ qualification and the DNS precautions above.
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.receiving.yml config -q
 docker compose -f docker-compose.yml -f docker-compose.receiving.yml up -d
-docker compose exec kypost-server supervisorctl -c /etc/supervisord.conf status receiver
+docker compose exec kypost-server supervisorctl -c /etc/supervisord.conf status receiver receiving-server
 ```
+
+`receiving-server` (`kypost-server receiving serve`) starts with the receiver
+and answers its per-recipient and per-message checks from one warm process
+over the owner-only socket `STATE_DIR/receiving/receiver.sock`. If it is not
+running, each check runs in its own process with the same result, more slowly.
 
 Before every start, the unprivileged launcher checks the exact qualified engine
 hash and regenerates configuration through the production storage, TLS and
@@ -290,7 +295,7 @@ reception and provider cleanup are not implemented.
 - Maximum message 25 MiB (including receiver-added headers), headers 128 KiB,
   recipients 100. RAM buffering avoids temporary payload spool files; up to
   four active messages can consume roughly 100 MiB in the receiver, and as
-  much again in the helpers reading them, plus parsing/process overhead.
+  much again in `receiving-server` (or the helpers) reading them.
 - A recipient mailbox without room for one more 25 MiB message under its
   [quota](NATIVE_PROVISIONING.md#mailbox-quotas) (mail waiting in the buffer
   counted) answers `452 4.2.2 Mailbox full` (helper exit 9) at RCPT, for that

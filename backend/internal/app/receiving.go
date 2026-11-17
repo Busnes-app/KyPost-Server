@@ -107,6 +107,27 @@ func (e *receivingCommandError) Unwrap() error { return e.err }
 func (e *receivingCommandError) ExitCode() int { return e.code }
 
 func runReceivingCommand(args []string, input io.Reader) error {
+	if err := checkReceivingArgs(args); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if args[0] != "init" {
+		if err, served := forwardReceiving(ctx, args, &input); served {
+			return err
+		}
+	}
+	r, err := openReceivingRuntime(ctx, args[0] == "init")
+	if err != nil {
+		logReceiving(args, false, err)
+		return &receivingCommandError{err: err, code: receivingExit(err)}
+	}
+	defer r.holding.Close()
+	return r.run(ctx, args, input)
+}
+
+// checkReceivingArgs validates a receiving command line before any state opens.
+func checkReceivingArgs(args []string) error {
 	if len(args) == 0 || (args[0] != "init" && args[0] != "bind" && args[0] != "accept") ||
 		(args[0] == "init" && len(args) != 1) || (args[0] == "bind" && len(args) != 4) || (args[0] == "accept" && len(args) != 3 && len(args) != 5) {
 		return errors.New("usage: receiving init | receiving bind <receiver-id> <sender> <recipient> | receiving accept <receiver-id> <sender> [<peer-ip> <helo>]")
@@ -132,24 +153,33 @@ func runReceivingCommand(args []string, input io.Reader) error {
 			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	r, err := openReceivingRuntime(ctx, args[0] == "init")
+	return nil
+}
+
+// run executes a checked command on an open runtime: in this process, or in
+// the receiving server for a forwarded one.
+func (r *receivingRuntime) run(ctx context.Context, args []string, input io.Reader) error {
+	var err error
 	replayed := false
-	if err == nil {
-		defer r.holding.Close()
-		// Archived is terminal, so checking first cannot mislabel new mail.
-		if args[0] != "init" {
-			d, errGet := r.holding.Get(ctx, r.gatewayID(), args[1])
-			replayed = errGet == nil && d.State == "archived"
-		}
-		switch args[0] {
-		case "bind":
-			err = r.bind(ctx, args[1], args[2], args[3])
-		case "accept":
-			err = r.accept(ctx, args[1], args[2], input, args[3:]...)
-		}
+	// Archived is terminal, so checking first cannot mislabel new mail.
+	if args[0] != "init" {
+		d, errGet := r.holding.Get(ctx, r.gatewayID(), args[1])
+		replayed = errGet == nil && d.State == "archived"
 	}
+	switch args[0] {
+	case "bind":
+		err = r.bind(ctx, args[1], args[2], args[3])
+	case "accept":
+		err = r.accept(ctx, args[1], args[2], input, args[3:]...)
+	}
+	logReceiving(args, replayed, err)
+	if err != nil {
+		return &receivingCommandError{err: err, code: receivingExit(err)}
+	}
+	return nil
+}
+
+func logReceiving(args []string, replayed bool, err error) {
 	result := "committed"
 	if err != nil {
 		result = "refused"
@@ -161,10 +191,6 @@ func runReceivingCommand(args []string, input io.Reader) error {
 		correlation = args[1]
 	}
 	slog.Info("receiving operation", "actor", receivingGateway, "task_id", "native-receiving", "action", args[0], "target", "holding-store", "result", result, "correlation_id", correlation)
-	if err != nil {
-		return &receivingCommandError{err: err, code: receivingExit(err)}
-	}
-	return nil
 }
 
 // receivingExit is the helper's exit code for a refusal; receiving_config.go
@@ -498,6 +524,45 @@ func (r *receivingRuntime) frozenAuthority(ctx context.Context, shared bool, d i
 	})
 }
 
+// readReceivingMessage reads accept's message, bounded by ctx and the message
+// limit. A pipe from the SMTP engine gets a kernel-backed read deadline.
+func readReceivingMessage(ctx context.Context, input io.Reader) ([]byte, error) {
+	if file, ok := input.(*os.File); ok {
+		info, err := file.Stat()
+		if err != nil {
+			return nil, err
+		}
+		// Regular files have bounded reads but retain the filesystem-stall
+		// ceiling. SMTP helper stdin is a pipe and must support a real deadline.
+		if !info.Mode().IsRegular() {
+			deadline, _ := ctx.Deadline()
+			// Inherited blocking stdin is not registered with Go's poller.
+			// Reopen the Linux pipe through its descriptor so os.Open supplies
+			// the pollable handle needed for a kernel-backed read deadline.
+			if info.Mode()&os.ModeNamedPipe == 0 {
+				return nil, errors.New("receiving stdin must be a pipe or regular file")
+			}
+			pipe, err := os.Open("/proc/self/fd/" + strconv.FormatUint(uint64(file.Fd()), 10))
+			if err != nil {
+				return nil, err
+			}
+			defer pipe.Close()
+			if err := pipe.SetReadDeadline(deadline); err != nil {
+				return nil, errors.New("receiving stdin cannot enforce its deadline; configure a supported pipe")
+			}
+			input = pipe
+		}
+	}
+	raw, err := io.ReadAll(io.LimitReader(input, receivingLimits.MessageBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || int64(len(raw)) > receivingLimits.MessageBytes {
+		return nil, ingress.ErrCapacity
+	}
+	return raw, nil
+}
+
 func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input io.Reader, peer ...string) error {
 	enabled, err := receivingRspamdEnabled()
 	if err != nil {
@@ -508,38 +573,9 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if file, ok := input.(*os.File); ok {
-		info, err := file.Stat()
-		if err != nil {
-			return err
-		}
-		// Regular files have bounded reads but retain the filesystem-stall
-		// ceiling. SMTP helper stdin is a pipe and must support a real deadline.
-		if !info.Mode().IsRegular() {
-			deadline, _ := ctx.Deadline()
-			// Inherited blocking stdin is not registered with Go's poller.
-			// Reopen the Linux pipe through its descriptor so os.Open supplies
-			// the pollable handle needed for a kernel-backed read deadline.
-			if info.Mode()&os.ModeNamedPipe == 0 {
-				return errors.New("receiving stdin must be a pipe or regular file")
-			}
-			pipe, err := os.Open("/proc/self/fd/" + strconv.FormatUint(uint64(file.Fd()), 10))
-			if err != nil {
-				return err
-			}
-			defer pipe.Close()
-			if err := pipe.SetReadDeadline(deadline); err != nil {
-				return errors.New("receiving stdin cannot enforce its deadline; configure a supported pipe")
-			}
-			input = pipe
-		}
-	}
-	raw, err := io.ReadAll(io.LimitReader(input, receivingLimits.MessageBytes+1))
+	raw, err := readReceivingMessage(ctx, input)
 	if err != nil {
 		return err
-	}
-	if len(raw) == 0 || int64(len(raw)) > receivingLimits.MessageBytes {
-		return ingress.ErrCapacity
 	}
 	d, err := r.holding.Get(ctx, r.gatewayID(), id)
 	if err != nil {
