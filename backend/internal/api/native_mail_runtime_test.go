@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -344,5 +345,48 @@ func TestNativeClientOpensOffTheUserLock(t *testing.T) {
 	close(release)
 	if err := <-opened; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// At most cap(nativeOpenSlots) opens run at once: each holds an OS thread in
+// file locks and fsync, and the container's task limit is finite.
+func TestNativeClientOpensAreBounded(t *testing.T) {
+	s := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "runtime-create", 1, runtimeDirectoryUser(true)))
+	u, err := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entered atomic.Int32
+	release := make(chan struct{})
+	open := openNativeMailClient
+	openNativeMailClient = func(dir string, owner mailbox.Owner, limits mailbox.Limits, from, source string, admit func(context.Context, *mailbox.Prepared) error) (*mailbox.Client, error) {
+		entered.Add(1)
+		<-release
+		return open(dir, owner, limits, from, source, admit)
+	}
+	t.Cleanup(func() { openNativeMailClient = open })
+	slots := int32(cap(nativeOpenSlots))
+	done := make(chan error, slots+1)
+	for range slots + 1 {
+		go func() {
+			_, err := s.userMailClient(u.ID)
+			done <- err
+		}()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for entered.Load() < slots && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond) // room for an unbounded extra open to arrive
+	if n := entered.Load(); n != slots {
+		close(release)
+		t.Fatalf("%d opens ran at once, want %d", n, slots)
+	}
+	close(release)
+	for range slots + 1 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
 	}
 }

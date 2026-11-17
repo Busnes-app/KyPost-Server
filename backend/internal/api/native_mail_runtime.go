@@ -85,6 +85,17 @@ func (s *Server) nativeMailboxAssignment(ctx context.Context, userID, mailboxID 
 // openNativeMailClient is mailbox.OpenClient; tests slow it down.
 var openNativeMailClient = mailbox.OpenClient
 
+// nativeOpenSlots bounds concurrent client opens. Each blocks in file locks
+// and fsync, holding an OS thread; unbounded at 3,000 staff they took the API
+// past the container's task limit, and Go aborts when it cannot start a thread.
+var nativeOpenSlots = make(chan struct{}, 8)
+
+func openNativeSlot(dir string, owner mailbox.Owner, limits mailbox.Limits, from, source string, admit func(context.Context, *mailbox.Prepared) error) (*mailbox.Client, error) {
+	nativeOpenSlots <- struct{}{}
+	defer func() { <-nativeOpenSlots }()
+	return openNativeMailClient(dir, owner, limits, from, source, admit)
+}
+
 // The client cache is keyed by mailbox ID (a primary's is its user ID).
 func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Client, bool, error) {
 	a, native, err := s.nativeMailboxAssignment(context.Background(), userID, mailboxID)
@@ -101,7 +112,7 @@ func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Clie
 	// Opened off userMu, which every request's per-user stores wait on: an open
 	// checks and reads the mailbox. A concurrent open of the same mailbox may
 	// win the insert below; the loser is freed by its runtime cleanup.
-	client, err := openNativeMailClient(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context, held *mailbox.Prepared) error {
+	client, err := openNativeSlot(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context, held *mailbox.Prepared) error {
 		current, _, err := sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID, held)
 		if err != nil {
 			return err
