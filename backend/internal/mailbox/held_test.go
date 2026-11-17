@@ -455,17 +455,19 @@ func TestOpenClientSharesHeldAdmission(t *testing.T) {
 		t.Fatal("reopened admission refused the valid copy:", err)
 	}
 	c, c2 = nil, nil // their cleanups release the shared handles
-	for range 100 {
+	// The last release drops users under the pool lock and closes after it.
+	closed := false
+	for range 500 {
 		runtime.GC()
 		heldAdmissions.Lock()
 		users = second.users
 		heldAdmissions.Unlock()
-		if users == 0 {
+		if closed = users == 0 && second.mail.Ping() != nil; closed {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if users != 0 || second.mail.Ping() == nil {
+	if !closed {
 		t.Fatal("released handles left open")
 	}
 }
