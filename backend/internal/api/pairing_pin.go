@@ -26,6 +26,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -94,15 +95,18 @@ func (s *Server) pairingSPKIPin() string {
 	if s.pinCertFile != "" {
 		pin, err := filePin(s.pinCertFile, host, time.Now())
 		if err != nil {
-			s.logger.Warn("pairing links and TLS pin rollover have no pin", "source", "KYPOST_TLS_CERT_FILE", "error", err.Error())
+			s.warnNoPin(err)
 		}
 		return pin
 	}
 	if s.pinProbe {
 		return s.probedSPKIPin()
 	}
+	// Behind a trusted proxy the leaf devices see is the front's, not ours: a
+	// served certificate naming the public host (an origin certificate, a
+	// self-signed hop made for that name) would pin a key no device is shown.
 	leaf := servedLeaf(s.tlsConfig)
-	if leaf == nil {
+	if leaf == nil || len(trustedProxyNets) > 0 {
 		return ""
 	}
 	if err := checkLeaf(leaf, host, time.Now()); err != nil {
@@ -111,6 +115,27 @@ func (s *Server) pairingSPKIPin() string {
 	}
 	return spkiPin(leaf)
 }
+
+// pinFileWarnEvery bounds the no-pin warning for KYPOST_TLS_CERT_FILE: the
+// tls-pin route is public, and many clients must not turn a bad file into a
+// log flood.
+const pinFileWarnEvery = 5 * time.Minute
+
+func (s *Server) warnNoPin(err error) {
+	s.pinProbeMu.Lock()
+	due := time.Since(s.pinFileWarnedAt) >= pinFileWarnEvery
+	if due {
+		s.pinFileWarnedAt = time.Now()
+	}
+	s.pinProbeMu.Unlock()
+	if due {
+		s.logger.Warn("pairing links and TLS pin rollover have no pin", "source", "KYPOST_TLS_CERT_FILE", "error", err.Error())
+	}
+}
+
+// errNotValidNow is checkLeaf's refusal of a certificate outside its validity:
+// at startup a warning (a renewal may be on its way), not a refusal.
+var errNotValidNow = errors.New("the certificate is not currently valid")
 
 // servedLeaf is the certificate this process serves, or nil when it does not
 // terminate TLS.
@@ -139,7 +164,13 @@ func servedLeaf(cfg *tls.Config) *x509.Certificate {
 // filePin is the pin of the first certificate (the leaf) in a PEM file, re-read
 // on each call so a renewal needs no restart.
 func filePin(path, host string, now time.Time) (string, error) {
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	// A certificate chain is a few KiB; the cap keeps a wrong path from being read whole.
+	raw, err := io.ReadAll(io.LimitReader(f, 1<<20))
 	if err != nil {
 		return "", err
 	}
@@ -169,7 +200,7 @@ func checkLeaf(leaf *x509.Certificate, host string, now time.Time) error {
 		return err
 	}
 	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
-		return errors.New("the certificate is not currently valid")
+		return errNotValidNow
 	}
 	return nil
 }

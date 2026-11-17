@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -352,6 +353,8 @@ type Server struct {
 	// KYPOST_TLS_PIN_PROBE), resolved by Prepare — see pairingSPKIPin.
 	pinCertFile string
 	pinProbe    bool
+	// pinFileWarnedAt rate-limits the no-pin warning (warnNoPin), under pinProbeMu.
+	pinFileWarnedAt time.Time
 
 	// Negative cache for the outbound certificate probe behind the pairing
 	// link's pin — see probedSPKIPin. Only failures are remembered, and only
@@ -1077,6 +1080,19 @@ func (s *Server) Prepare() {
 	if s.pinCertFile, s.pinProbe, err = pinSourcesFromEnv(); err != nil {
 		s.prepareErr = err
 		return
+	}
+	// A typo, an unreadable file or one for another host is a configuration
+	// error: refuse startup rather than silently pairing without a pin. An
+	// expired or not-yet-valid one may be mid-renewal, so only warn.
+	if s.pinCertFile != "" {
+		if base, perr := url.Parse(s.serverBaseURL); perr == nil && base.Hostname() != "" {
+			if _, ferr := filePin(s.pinCertFile, base.Hostname(), time.Now()); errors.Is(ferr, errNotValidNow) {
+				s.logger.Warn("KYPOST_TLS_CERT_FILE is not currently valid; pairing links have no pin until it is renewed", "path", s.pinCertFile)
+			} else if ferr != nil {
+				s.prepareErr = fmt.Errorf("KYPOST_TLS_CERT_FILE %s: %w", s.pinCertFile, ferr)
+				return
+			}
+		}
 	}
 	if s.pinProbe && s.pinCertFile == "" {
 		s.logger.Warn("KYPOST_TLS_PIN_PROBE=true: pairing links and TLS pin rollover will pin whatever certificate this host's outbound connection to SERVER_BASE_URL is shown; anyone controlling that path with a certificate this host trusts can get their key accepted by paired devices. Prefer KYPOST_TLS_CERT_FILE where a certificate can be mounted")

@@ -33,9 +33,10 @@ lost.
   `KYPOST_TLS_PIN_PROBE=true` and read its trade-off in
   [certificate pinning](docs/CLIENTS-AND-PUSH.md#certificate-pinning-in-the-pairing-qr).
 - **KyPost terminates TLS** (`TLS_CERT_FILE`) with a certificate naming the
-  `SERVER_BASE_URL` host: nothing to do. With a self-signed hop behind a front
-  (cloudflared topology D), set one of the two above; the hop certificate is no
-  longer pinned.
+  `SERVER_BASE_URL` host and no `TRUSTED_PROXY_CIDRS`: nothing to do. Behind
+  any trusted proxy (including a self-signed hop behind cloudflared topology D),
+  KyPost's own certificate is never pinned, since devices see the front's: set
+  one of the two above.
 
 ### Security
 

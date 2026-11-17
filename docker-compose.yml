@@ -177,8 +177,12 @@ services:
       # are in-memory by design.
       # - /etc/letsencrypt/live/mail.example.com:/kypost/tls:ro
       # Uncomment for KYPOST_TLS_CERT_FILE: the certificate your reverse proxy
-      # serves for SERVER_BASE_URL, read-only. Only the certificate is read.
-      # - /etc/letsencrypt/live/mail.example.com:/kypost/front-tls:ro
+      # serves for SERVER_BASE_URL, read-only. Only its first certificate is
+      # used; mount a file without the private key. certbot's live/ files are
+      # symlinks into ../../archive, so mount the whole /etc/letsencrypt and set
+      # KYPOST_TLS_CERT_FILE=/kypost/front-tls/live/mail.example.com/fullchain.pem,
+      # or copy fullchain.pem here from a deploy hook that also reloads the proxy.
+      # - /etc/letsencrypt:/kypost/front-tls:ro
       - kypost_config:/kypost/config
       - kypost_private:/kypost/private
       - kypost_logs:/kypost/logs

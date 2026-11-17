@@ -216,7 +216,8 @@ so this works without NAT hairpinning. It trusts this host's outbound path and
 CA store, which is why it is off by default and logs a warning. Without it,
 or if the probe fails, the QR omits the pin, the app falls back to
 trust-on-first-use, and phones need a new pairing link after Cloudflare renews
-its certificate. Topology D's self-signed hop certificate is never pinned. See
+its certificate. Topology D's self-signed hop certificate is never pinned,
+because `TRUSTED_PROXY_CIDRS` names cloudflared. See
 [Certificate pinning in the pairing QR](../CLIENTS-AND-PUSH.md#certificate-pinning-in-the-pairing-qr).
 
 Every variable is explained in `.env.example`; the deeper rationale is in

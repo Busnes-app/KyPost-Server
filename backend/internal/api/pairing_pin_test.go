@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 )
 
 // tlsOrigin starts an HTTPS server and returns its URL, its leaf pin, and a
@@ -275,6 +277,34 @@ func TestPrepareRefusesARelativePinCertFile(t *testing.T) {
 	}
 }
 
+func TestPrepareChecksThePinCertFile(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	t.Setenv("SERVER_BASE_URL", "https://relay.example.com")
+	for name, c := range map[string]struct {
+		write  func(path string)
+		refuse bool
+	}{
+		"missing":       {func(string) {}, true},
+		"another host":  {func(p string) { writeLeafPEM(t, p, now.Add(-time.Hour), now.Add(time.Hour), "other.example.com") }, true},
+		"not PEM":       {func(p string) { _ = os.WriteFile(p, []byte("not a certificate"), 0o600) }, true},
+		"expired, warn": {func(p string) { writeLeafPEM(t, p, now.Add(-2*time.Hour), now.Add(-time.Hour), "relay.example.com") }, false},
+		"valid":         {func(p string) { writeLeafPEM(t, p, now.Add(-time.Hour), now.Add(time.Hour), "relay.example.com") }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".pem")
+			c.write(path)
+			t.Setenv("KYPOST_TLS_CERT_FILE", path)
+			srv := newTestServer(t)
+			srv.Prepare()
+			refused := srv.prepareErr != nil && strings.Contains(srv.prepareErr.Error(), "KYPOST_TLS_CERT_FILE")
+			if refused != c.refuse {
+				t.Fatalf("prepareErr = %v, want refused=%v", srv.prepareErr, c.refuse)
+			}
+		})
+	}
+}
+
 // TestPairingSPKIPinSources is the regression for signing an unvouched key. The
 // probe here reaches a different leaf that is valid for the host under a CA
 // this server trusts — what an interceptor of the server's own outbound path
@@ -333,7 +363,14 @@ func TestPairingSPKIPinSources(t *testing.T) {
 	t.Run("the opt-in uses the probed leaf", func(t *testing.T) {
 		srv, probedPin := probed(t)
 		srv.pinProbe = true
-		srv.tlsConfig = localCfg
+		// A served certificate valid for the same host, so only the order decides.
+		ipCert, ipKey := filepath.Join(dir, "ip.pem"), filepath.Join(dir, "ip.key")
+		writeKeypair(t, ipCert, ipKey, "127.0.0.1")
+		ipCfg, err := newTLSConfig(ipCert, ipKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.tlsConfig = ipCfg
 		if got := srv.pairingSPKIPin(); got != probedPin {
 			t.Errorf("pairingSPKIPin() = %q, want the probed %q", got, probedPin)
 		}
@@ -345,6 +382,31 @@ func TestPairingSPKIPinSources(t *testing.T) {
 		srv.tlsConfig = localCfg
 		if got := srv.pairingSPKIPin(); got != localPin {
 			t.Errorf("pairingSPKIPin() = %q, want the served %q", got, localPin)
+		}
+	})
+
+	t.Run("the file outranks the served certificate", func(t *testing.T) {
+		srv := newTestServer(t)
+		srv.serverBaseURL = "https://relay.example.com"
+		srv.tlsConfig = localCfg
+		srv.pinCertFile = filepath.Join(dir, "front-relay.pem")
+		want := writeLeafPEM(t, srv.pinCertFile, now.Add(-time.Hour), now.Add(time.Hour), "relay.example.com")
+		if got := srv.pairingSPKIPin(); got != want || got == localPin {
+			t.Errorf("pairingSPKIPin() = %q, want the file's %q", got, want)
+		}
+	})
+
+	t.Run("not the served certificate behind a trusted proxy", func(t *testing.T) {
+		// The front re-terminates TLS: devices see its leaf, never ours, even
+		// when ours names the public host.
+		_, proxy, _ := net.ParseCIDR("10.0.0.0/8")
+		SetTrustedProxies(config.TrustedProxies{Nets: []*net.IPNet{proxy}, Header: "X-Forwarded-For"})
+		t.Cleanup(func() { SetTrustedProxies(config.TrustedProxies{Header: "X-Forwarded-For"}) })
+		srv := newTestServer(t)
+		srv.serverBaseURL = "https://relay.example.com"
+		srv.tlsConfig = localCfg
+		if got := srv.pairingSPKIPin(); got != "" {
+			t.Errorf("pairingSPKIPin() = %q, want empty", got)
 		}
 	})
 

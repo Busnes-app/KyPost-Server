@@ -69,7 +69,12 @@ With none of these, or when the source fails — a refused file, an unreachable
 URL, a router that will not route your public hostname back to itself — the QR
 omits `pin` and pairing proceeds on trust on first use, and TLS pin rollover
 answers 503, so phones need a new pairing link after a certificate renewal. It
-never breaks a pairing; it only declines to protect one.
+never breaks a pairing; it only declines to protect one. KyPost's own served
+certificate counts only when `TRUSTED_PROXY_CIDRS` is empty: behind a proxy,
+devices are shown the proxy's certificate, so pinning ours would break pairing.
+Change `KYPOST_TLS_CERT_FILE` only when the proxy reloads (a certbot deploy hook
+that copies the chain, then reloads), or new pairings pin a key the proxy does
+not serve yet.
 Already-paired devices are unaffected. A missing `SERVER_BASE_URL` is the one
 case that is not merely unpinned: there is then no address to put in the QR at
 all, so pairing refuses rather than guessing one from the request.

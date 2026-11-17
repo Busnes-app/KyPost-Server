@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,6 +45,9 @@ func writeKeypair(t *testing.T, certPath, keyPath, cn string) *big.Int {
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IsCA:         true,
+	}
+	if ip := net.ParseIP(cn); ip != nil {
+		tmpl.IPAddresses = []net.IP{ip}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {
