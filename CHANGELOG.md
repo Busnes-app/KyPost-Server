@@ -18,6 +18,18 @@ non-prerelease version.
 
 ## Unreleased
 
+### Fixed
+
+- **The bundled SMTP receiver's rate and concurrency limits are configurable.**
+  Set `KYPOST_RECEIVING_RATE_PER_MINUTE` and `KYPOST_RECEIVING_IP_RATE_PER_MINUTE`
+  for expected mail volume; `KYPOST_RECEIVING_CONCURRENCY` and
+  `KYPOST_RECEIVING_IP_CONCURRENCY` separately bound active work. Positive integer
+  ranges are enforced before startup/profile output. Defaults remain 4/2 active
+  transactions and 30/10 per minute; existing installations keep their limits.
+  Recreate the container with its existing overlays after changing them. Size
+  memory before raising concurrency; this change makes no staff-capacity claim.
+
+
 ### Upgrading: behind a reverse proxy or Cloudflare Tunnel, set a pin source
 
 **Deployments where KyPost does not terminate TLS itself lose the pairing-link

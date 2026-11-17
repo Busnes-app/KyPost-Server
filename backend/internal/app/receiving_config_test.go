@@ -4,6 +4,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -18,6 +19,47 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func TestNativeReceivingConfigUsesConfiguredLimits(t *testing.T) {
+	r, _ := receivingFixture(t)
+	cert, key, leaf := receivingTestCertificate(t, t.TempDir())
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]string{
+		"KYPOST_RECEIVING_CONCURRENCY":        "8",
+		"KYPOST_RECEIVING_IP_CONCURRENCY":     "4",
+		"KYPOST_RECEIVING_RATE_PER_MINUTE":    "600",
+		"KYPOST_RECEIVING_IP_RATE_PER_MINUTE": "300",
+	}
+	for name, value := range settings {
+		t.Setenv(name, value)
+	}
+	render := func() (string, error) {
+		var output bytes.Buffer
+		err := r.writeConfig(context.Background(), executable, "127.0.0.1:2525", leaf.DNSNames[0], cert, key, "", &output)
+		return output.String(), err
+	}
+	output, err := render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"all concurrency 8", "ip concurrency 4", "all rate 600 1m", "ip rate 300 1m"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("generated profile lacks %q", want)
+		}
+	}
+	for name, valid := range settings {
+		for _, invalid := range []string{"0", "-1", "1000001", "1\ninclude attacker", "invalid"} {
+			t.Setenv(name, invalid)
+			if output, err := render(); err == nil || !strings.Contains(err.Error(), name) || output != "" {
+				t.Fatalf("%s=%q produced configuration: %v %q", name, invalid, err, output)
+			}
+		}
+		t.Setenv(name, valid)
+	}
+}
 
 func TestNativeReceivingConfigRefusesUnsafeInputs(t *testing.T) {
 	r, _ := receivingFixture(t)

@@ -82,12 +82,16 @@ type IntEnv struct {
 
 // Integer environment variables, declared once so CheckEnv and every reader agree.
 var (
-	WebPort                 = IntEnv{"WEB_PORT", 5866, 1, 65535}
-	SMTPPort                = IntEnv{"SMTP_PORT", 587, 1, 65535}
-	PoWMaxNumber            = IntEnv{"POW_MAX_NUMBER", 0, 1, math.MaxInt32} // 0: captcha's own default
-	UnhealthyRestartSeconds = IntEnv{"UNHEALTHY_RESTART_SECONDS", 300, 1, math.MaxInt32}
-	ClassifyConcurrency     = IntEnv{"CLASSIFY_CONCURRENCY", 1, 1, 1024}
-	ClassifyPaceMS          = IntEnv{"CLASSIFY_PACE_MS", 0, 0, 3_600_000}
+	WebPort                  = IntEnv{"WEB_PORT", 5866, 1, 65535}
+	SMTPPort                 = IntEnv{"SMTP_PORT", 587, 1, 65535}
+	PoWMaxNumber             = IntEnv{"POW_MAX_NUMBER", 0, 1, math.MaxInt32} // 0: captcha's own default
+	UnhealthyRestartSeconds  = IntEnv{"UNHEALTHY_RESTART_SECONDS", 300, 1, math.MaxInt32}
+	ClassifyConcurrency      = IntEnv{"CLASSIFY_CONCURRENCY", 1, 1, 1024}
+	ClassifyPaceMS           = IntEnv{"CLASSIFY_PACE_MS", 0, 0, 3_600_000}
+	ReceivingConcurrency     = IntEnv{"KYPOST_RECEIVING_CONCURRENCY", 4, 1, 64}
+	ReceivingIPConcurrency   = IntEnv{"KYPOST_RECEIVING_IP_CONCURRENCY", 2, 1, 64}
+	ReceivingRatePerMinute   = IntEnv{"KYPOST_RECEIVING_RATE_PER_MINUTE", 30, 1, 60_000}
+	ReceivingIPRatePerMinute = IntEnv{"KYPOST_RECEIVING_IP_RATE_PER_MINUTE", 10, 1, 60_000}
 )
 
 // Get reads e. A set but malformed or out-of-range value is an error naming the variable.
@@ -120,7 +124,7 @@ func EnvBool(key string) (bool, error) {
 // processes refuse the same bad value at startup instead of defaulting.
 func CheckEnv() error {
 	var bad []string
-	for _, e := range []IntEnv{WebPort, SMTPPort, PoWMaxNumber, UnhealthyRestartSeconds, ClassifyConcurrency, ClassifyPaceMS} {
+	for _, e := range []IntEnv{WebPort, SMTPPort, PoWMaxNumber, UnhealthyRestartSeconds, ClassifyConcurrency, ClassifyPaceMS, ReceivingConcurrency, ReceivingIPConcurrency, ReceivingRatePerMinute, ReceivingIPRatePerMinute} {
 		if _, err := e.Get(); err != nil {
 			bad = append(bad, err.Error())
 		}

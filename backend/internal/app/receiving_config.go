@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -77,6 +78,22 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 // writeConfig renders the profile after the runtime's storage, TLS and fresh
 // domain checks. Every configured domain is a Maddy destination.
 func (r *receivingRuntime) writeConfig(ctx context.Context, executable, address, host, certPath, keyPath, spamArgs string, output io.Writer) error {
+	concurrency, err := config.ReceivingConcurrency.Get()
+	if err != nil {
+		return err
+	}
+	ipConcurrency, err := config.ReceivingIPConcurrency.Get()
+	if err != nil {
+		return err
+	}
+	rate, err := config.ReceivingRatePerMinute.Get()
+	if err != nil {
+		return err
+	}
+	ipRate, err := config.ReceivingIPRatePerMinute.Get()
+	if err != nil {
+		return err
+	}
 	for _, path := range []string{executable, r.stateDir, certPath, keyPath} {
 		// Maddy expands {env:...} even inside quotes and only escapes quotes.
 		if !filepath.IsAbs(path) || len(path) > 4096 || strings.ContainsAny(path, "\\\"{}$") || strings.ContainsFunc(path, unicode.IsControl) {
@@ -165,10 +182,10 @@ smtp tcp://%s {
     shutdown_timeout 30s
     max_logged_rcpt_errors 0
     limits {
-        all concurrency 4
-        ip concurrency 2
-        all rate 30 1m
-        ip rate 10 1m
+        all concurrency %d
+        ip concurrency %d
+        all rate %d 1m
+        ip rate %d 1m
     }
     check {
         require_tls
@@ -196,7 +213,7 @@ smtp tcp://%s {
     destination %s { deliver_to dummy }
     default_destination { reject }
 }
-`, host, r.stateDir, r.stateDir, certPath, keyPath, address, executable, executable, spamArgs, strings.Join(destinations, " "))
+`, host, r.stateDir, r.stateDir, certPath, keyPath, address, concurrency, ipConcurrency, rate, ipRate, executable, executable, spamArgs, strings.Join(destinations, " "))
 	// Output is a historical configuration, not continuing authority. Never hold
 	// the domain fence across an operator's potentially blocked output pipe.
 	release()

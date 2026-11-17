@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+func TestCheckEnvRefusesInvalidReceivingLimits(t *testing.T) {
+	for _, name := range []string{"KYPOST_RECEIVING_CONCURRENCY", "KYPOST_RECEIVING_IP_CONCURRENCY", "KYPOST_RECEIVING_RATE_PER_MINUTE", "KYPOST_RECEIVING_IP_RATE_PER_MINUTE"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "0")
+			if err := CheckEnv(); err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("startup accepted an unbounded receiver limit: %v", err)
+			}
+		})
+	}
+}
+
 func TestIntEnvRefusesMalformedValues(t *testing.T) {
 	for value, want := range map[string]int{"": 5866, "  ": 5866, "8080": 8080, " 9000 ": 9000, "abc": -1, "0": -1, "65536": -1, "-1": -1, "80.5": -1} {
 		t.Setenv("WEB_PORT", value)
