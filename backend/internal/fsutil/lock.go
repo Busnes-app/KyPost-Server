@@ -82,16 +82,16 @@ func lockSibling(ctx context.Context, path, suffix string, how int) (release fun
 	if err != nil {
 		return nil, fmt.Errorf("open lock file for %s: %w", path, err)
 	}
+	// Never a blocking flock: it holds an OS thread for the whole wait, and
+	// enough waiters behind a busy fence take the process past its task
+	// limit, where Go aborts. Poll instead, backing off to 16 ms.
+	wait := time.Millisecond
 	for {
 		if err = ctx.Err(); err != nil {
 			_ = f.Close()
 			return nil, err
 		}
-		flags := how
-		if ctx.Done() != nil {
-			flags |= syscall.LOCK_NB
-		}
-		err = syscall.Flock(int(f.Fd()), flags)
+		err = syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
 		if err == nil {
 			break
 		}
@@ -99,7 +99,8 @@ func lockSibling(ctx context.Context, path, suffix string, how int) (release fun
 			_ = f.Close()
 			return nil, fmt.Errorf("lock %s: %w", path, err)
 		}
-		timer := time.NewTimer(time.Millisecond)
+		timer := time.NewTimer(wait)
+		wait = min(2*wait, 16*time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
