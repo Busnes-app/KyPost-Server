@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Refresh compatible dependency versions and lockfiles. Rebuild or install the updated application; no database, configuration, account or key migration is required.
+
 ### Fixed
 
 - **The bundled SMTP receiver's rate and concurrency limits are configurable.**
