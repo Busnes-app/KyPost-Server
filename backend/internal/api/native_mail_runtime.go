@@ -82,6 +82,9 @@ func (s *Server) nativeMailboxAssignment(ctx context.Context, userID, mailboxID 
 	return sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID, nil)
 }
 
+// openNativeMailClient is mailbox.OpenClient; tests slow it down.
+var openNativeMailClient = mailbox.OpenClient
+
 // The client cache is keyed by mailbox ID (a primary's is its user ID).
 func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Client, bool, error) {
 	a, native, err := s.nativeMailboxAssignment(context.Background(), userID, mailboxID)
@@ -90,11 +93,15 @@ func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Clie
 	}
 	key := a.Owner.Mailbox
 	s.userMu.Lock()
-	defer s.userMu.Unlock()
-	if entry, ok := s.userMail[key]; ok && entry.updatedAt == a.Source {
+	entry, ok := s.userMail[key]
+	s.userMu.Unlock()
+	if ok && entry.updatedAt == a.Source {
 		return entry.client, true, nil
 	}
-	client, err := mailbox.OpenClient(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context, held *mailbox.Prepared) error {
+	// Opened off userMu, which every request's per-user stores wait on: an open
+	// checks and reads the mailbox. A concurrent open of the same mailbox may
+	// win the insert below; the loser is freed by its runtime cleanup.
+	client, err := openNativeMailClient(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context, held *mailbox.Prepared) error {
 		current, _, err := sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID, held)
 		if err != nil {
 			return err
@@ -107,7 +114,12 @@ func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Clie
 	if err != nil {
 		return nil, true, err
 	}
+	s.userMu.Lock()
+	defer s.userMu.Unlock()
 	if entry, ok := s.userMail[key]; ok {
+		if entry.updatedAt == a.Source {
+			return entry.client, true, nil
+		}
 		closeMailClient(entry.client)
 	}
 	s.retainMailClient(key, &serverMailEntry{client: client, updatedAt: a.Source})

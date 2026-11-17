@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -300,5 +301,48 @@ func TestNativeClientAdmitsItsOpenStorage(t *testing.T) {
 		if _, err = client.ListLabels(ctx); !errors.Is(err, mailbox.ErrPreparation) {
 			t.Fatalf("mailbox %q: open client accepted replaced state.db: %v", id, err)
 		}
+	}
+}
+
+// A slow mailbox open no longer holds userMu, which every request's per-user
+// stores wait on.
+func TestNativeClientOpensOffTheUserLock(t *testing.T) {
+	s := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "runtime-create", 1, runtimeDirectoryUser(true)))
+	u, err := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opening, release := make(chan struct{}), make(chan struct{})
+	open := openNativeMailClient
+	openNativeMailClient = func(dir string, owner mailbox.Owner, limits mailbox.Limits, from, source string, admit func(context.Context, *mailbox.Prepared) error) (*mailbox.Client, error) {
+		close(opening)
+		<-release
+		return open(dir, owner, limits, from, source, admit)
+	}
+	t.Cleanup(func() { openNativeMailClient = open })
+	opened := make(chan error, 1)
+	go func() {
+		_, err := s.userMailClient(u.ID)
+		opened <- err
+	}()
+	<-opening
+	stored := make(chan error, 1)
+	go func() {
+		_, err := s.userStore(u.ID)
+		stored <- err
+	}()
+	select {
+	case err := <-stored:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("a per-user store waited for another request's mailbox open")
+	}
+	close(release)
+	if err := <-opened; err != nil {
+		t.Fatal(err)
 	}
 }
