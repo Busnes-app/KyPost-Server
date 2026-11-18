@@ -14,10 +14,11 @@ const BODY_WARNING =
   "Only new mail is encrypted: unread inbox mail KyPost has not processed yet. Existing mail is not swept. Save anyway?";
 
 function providerName(issuer?: string): string {
+  if (!issuer) return "your sign-in provider";
   try {
-    return issuer ? new URL(issuer).host : "your sign-in provider";
+    return new URL(issuer).host;
   } catch {
-    return issuer ?? "your sign-in provider";
+    return issuer;
   }
 }
 
