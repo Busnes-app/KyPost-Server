@@ -44,7 +44,7 @@ it("Required incoming mail also requires the key and warns before saving", async
   expect(container.textContent).toMatch(/doesn't sweep existing mail/);
 
   fireEvent.click(screen.getByRole("button", { name: "Save encryption policy" }));
-  expect(confirm.mock.calls[0][0]).toMatch(/search, Sieve body rules and AI labels.*only headers/);
+  expect(confirm.mock.calls[0][0]).toMatch(/Server search and body filter \(Sieve\) rules will only be able to use headers.*AI labels are applied as mail arrives, before it is encrypted/);
   expect(putJSON).not.toHaveBeenCalled();
 
   fireEvent.click(screen.getByRole("button", { name: "Save encryption policy" }));

@@ -38,7 +38,7 @@ it("required setup cannot be skipped or finished without recovery", async () => 
   expect(screen.getByText(/mail keys, incoming default true/)).toBeTruthy();
   expect(screen.getByText(/Mail is encrypted to your key as soon as it arrives/)).toBeTruthy();
   expect(screen.getByText(/we can't stop the sending server from seeing it/)).toBeTruthy();
-  expect(screen.getByText(/Search, filters and AI labels can only use what we see before encrypting \(headers\)/)).toBeTruthy();
+  expect(screen.getByText(/Server search and body filter rules can only use headers once mail is encrypted; AI labels are applied as mail arrives, before it is encrypted\./)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
   expect((await screen.findByRole("alert")).textContent).toMatch(/Store a recovery copy first/);
   expect(refresh).toHaveBeenCalled();

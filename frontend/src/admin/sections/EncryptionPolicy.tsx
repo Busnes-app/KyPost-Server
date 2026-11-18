@@ -10,7 +10,7 @@ type PolicyView = { key: KeyPolicy; incoming: IncomingPolicy; genericProvider: b
 const ROUTE = "/api/admin/encryption-policy";
 
 const BODY_WARNING =
-  "Server-side search, Sieve body rules and AI labels will no longer be able to read message bodies, only headers. " +
+  "Server search and body filter (Sieve) rules will only be able to use headers once mail is encrypted; AI labels are applied as mail arrives, before it is encrypted. " +
   "Only new mail is encrypted: unread inbox mail KyPost has not processed yet. Existing mail is not swept. Save anyway?";
 
 function providerName(issuer?: string): string {

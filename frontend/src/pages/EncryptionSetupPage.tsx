@@ -74,7 +74,7 @@ export function EncryptionSetupPage({ onRefresh }: { onRefresh: () => Promise<vo
           <ul>
             <li>Mail is encrypted to your key as soon as it arrives. It&apos;s stored encrypted, and only your devices can read it.</li>
             <li>Senders who don&apos;t use encryption send it to us in plaintext. We encrypt it on arrival; we can&apos;t stop the sending server from seeing it.</li>
-            <li>Search, filters and AI labels can only use what we see before encrypting (headers), unless your device does them.</li>
+            <li>Server search and body filter rules can only use headers once mail is encrypted; AI labels are applied as mail arrives, before it is encrypted.</li>
           </ul>
           <p>{incomingRequired ? "" : "You can change this later in Security → Encryption."}</p>
         </li>
