@@ -56,7 +56,7 @@ try:
     assert set(workers) == {"normal"} and workers["normal"]["bind_socket"] == "127.0.0.1:11333"
     modules = run(dump + ["-m"]).decode().splitlines()
     enabled = next(line for line in modules if line.startswith("Modules enabled:")).partition(":")[2]
-    assert set(enabled.strip().split(", ")) == {"mid", "chartable", "dkim", "maillist", "spf", "once_received", "hfilter", "mime_types", "dmarc", "regexp"}
+    assert set(enabled.strip().split(", ")) == {"mid", "chartable", "dkim", "maillist", "spf", "once_received", "hfilter", "mime_types", "dmarc", "regexp", "settings"}
     deadline = time.monotonic() + 30
     while True:
         ping = subprocess.run(["docker", "exec", name, "rspamc", "-h", "127.0.0.1:11333", "-t", "2", "-E"], capture_output=True, timeout=5)
