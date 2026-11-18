@@ -567,7 +567,8 @@ func TestSubaddress(t *testing.T) {
 		t.Fatalf("round trip %+v, %v", parsed.Match, err)
 	}
 	user, err := ParseRuleText("require [\"subaddress\"];\nif address :contains :user [\"from\", \"cc\"] \"bob\" { keep; }\n", Rule{Name: "u"})
-	if err != nil || user.Match.Conditions[0].Group == nil || user.Match.Conditions[0].Group.Conditions[1].Part != "user" || user.Match.Conditions[0].Group.Conditions[1].Comparator != "contains" {
+	// A lone multi-field test becomes the rule's anyof match itself.
+	if err != nil || user.Match.Op != "anyof" || len(user.Match.Conditions) != 2 || user.Match.Conditions[1].Field != "cc" || user.Match.Conditions[1].Part != "user" || user.Match.Conditions[1].Comparator != "contains" {
 		t.Fatalf("tag order or field list %+v, %v", user.Match, err)
 	}
 	for _, bad := range []string{

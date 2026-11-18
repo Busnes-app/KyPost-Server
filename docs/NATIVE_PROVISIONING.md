@@ -435,7 +435,7 @@ recorded as `address_conflict`.
   itself; the Cloudflare Worker routes the base address and freezes it in the
   envelope (`docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md`). On by default; a user's
   `refusePlusAddresses` setting (`PUT /api/addresses/plus`) refuses tagged mail
-  with the unknown-recipient answer (Maddy exit 1 / 550, Worker "Address
+  with the unknown-recipient answer (Maddy `bind` exit 3 / 550, Worker "Address
   refused" through the route's `noPlus`). `/api/mail/send` and scheduled sends
   accept `From: base+tag@` when the base is an owned active address and plus
   addressing is on; the outbox fences it by the base address's generation.

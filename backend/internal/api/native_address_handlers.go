@@ -50,11 +50,11 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 // handleNativeMailAddressRelease reserves an alias; the record is never deleted.
 func (s *Server) handleNativeMailAddressRelease(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	var body struct{}
-	if !s.nativeDomainGate(w, r, &body) {
+	if s.refuseMasked(w, r.PathValue("address")) {
 		return
 	}
-	if s.refuseMasked(w, r.PathValue("address")) {
+	var body struct{}
+	if !s.nativeDomainGate(w, r, &body) {
 		return
 	}
 	// The audit names the mailbox that held the address, never the address.
@@ -68,21 +68,22 @@ func (s *Server) handleNativeMailAddressRelease(w http.ResponseWriter, r *http.R
 
 func (s *Server) handleNativeMailAddressReassign(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if s.refuseMasked(w, r.PathValue("address")) {
+		return
+	}
 	var body struct {
 		Mailbox string `json:"mailbox"`
 	}
 	if !s.nativeDomainGate(w, r, &body) {
 		return
 	}
-	if s.refuseMasked(w, r.PathValue("address")) {
-		return
-	}
 	x, err := s.ssoLifecycle.ReassignNativeAddress(r.Context(), s.stateDir, r.PathValue("address"), body.Mailbox)
 	s.answerNativeAddress(w, r, "reassign_alias", body.Mailbox, x, err)
 }
 
-// refuseMasked answers 409 for a user's masked address: its owner pauses or
-// deletes it, and a deleted one is never reissued. It reports whether it wrote.
+// refuseMasked answers 409 for a user's masked address, before any step-up:
+// its owner pauses or deletes it, and a deleted one is never reissued. It
+// reports whether it wrote.
 func (s *Server) refuseMasked(w http.ResponseWriter, address string) bool {
 	held, err := s.maskedHeld(address)
 	if err != nil {
