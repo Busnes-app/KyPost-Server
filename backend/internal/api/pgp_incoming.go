@@ -51,7 +51,7 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !req.Enabled && s.encryptionPolicy().Incoming == policyRequired {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "incoming_encryption_required", "message": "Required by your administrator."})
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "Encrypting incoming mail is required by your administrator.", "code": "incoming_encryption_required"})
 			return
 		}
 		if req.Enabled {

@@ -122,8 +122,8 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 		ok, err := s.detectKySignOn(r.Context(), req)
 		if !ok {
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":   "encryption_policy_required",
-				"message": "Lower " + p.requiredNames() + " from Required first (Server → Security). " + needsKySignOn(req, err),
+				"error": "Lower " + p.requiredNames() + " from Required first (Server → Security). " + needsKySignOn(req, err),
+				"code":  "encryption_policy_required",
 			})
 			return
 		}

@@ -259,7 +259,7 @@ func (s *Server) handleEncryptionPolicyPut(w http.ResponseWriter, r *http.Reques
 	if req.anyRequired() && cfg.Enabled && !cfg.KySignOn {
 		ok, err := s.detectKySignOn(r.Context(), cfg)
 		if !ok {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "kysignon_required", "message": needsKySignOn(cfg, err)})
+			writeJSON(w, http.StatusConflict, map[string]any{"error": needsKySignOn(cfg, err), "code": "kysignon_required"})
 			return
 		}
 		cfg.KySignOn = true
