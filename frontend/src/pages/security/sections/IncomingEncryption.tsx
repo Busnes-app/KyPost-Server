@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useEffectEvent, useState, type FormEvent } from "react";
 import { getIncomingEncryption, setIncomingEncryption, type IncomingEncryptionPreference, type PGPIdentity } from "../../../api/pgp";
 import { useAuth } from "../../../auth";
 import { toErrorMessage } from "../../../api/client";
@@ -17,10 +17,15 @@ export function IncomingEncryption({ identity, clientProtected, defaultOn = fals
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
+  // Preselected once, from the policy at load; later policy reads do not reset a choice.
+  const loaded = useEffectEvent((value: IncomingEncryptionPreference) => {
+    setPreference(value);
+    setEnabled(value.enabled || defaultOn || required);
+  });
   useEffect(() => {
     let active = true;
     getIncomingEncryption().then((value) => {
-      if (active) { setPreference(value); setEnabled(value.enabled || defaultOn || required); }
+      if (active) loaded(value);
     }).catch((error: unknown) => {
       if (active) setMessage(toErrorMessage(error, "Could not load incoming encryption preference"));
     });
