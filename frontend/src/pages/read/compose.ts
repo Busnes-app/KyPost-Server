@@ -8,7 +8,7 @@
 
 import { processEmailHtml } from "../../lib/emailHtml";
 import { displayBody } from "./body";
-import { firstAddressFromText, listAddressesFromText } from "../../lib/addressText";
+import { firstAddressFromText, listAddressesFromText, plusBase } from "../../lib/addressText";
 import type { DecryptedView, InboxEmail } from "./types";
 import { formatTimestamp } from "./format";
 
@@ -83,6 +83,21 @@ export function buildForwardBody(email: InboxEmail, decrypted?: DecryptedView): 
     `<p><strong>To:</strong> ${escapeHtml(sentTo)}</p>`,
     rendered
   ].join("");
+}
+
+/**
+ * The address a reply sends from: the first of the user's own addresses the
+ * message went to (To, then Cc), a plus-tagged one included when its base is
+ * theirs, so a reply to a masked or plus address never reveals the primary.
+ * "" keeps the default.
+ */
+export function replyFromAddress(email: InboxEmail, own: string[]): string {
+  const mine = new Set(own.map((a) => a.toLowerCase()));
+  for (const address of [...listAddressesFromText(email.sentTo ?? ""), ...listAddressesFromText(email.cc ?? "")]) {
+    const lower = address.toLowerCase();
+    if (mine.has(lower) || mine.has(plusBase(lower))) return lower;
+  }
+  return "";
 }
 
 export function buildReplyAllRecipients(email: InboxEmail): { to: string; cc: string } {

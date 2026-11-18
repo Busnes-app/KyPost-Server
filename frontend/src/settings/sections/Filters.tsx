@@ -23,6 +23,9 @@ const FIELD_OPTIONS = ["from", "to", "cc", "bcc", "subject", "body", "keyword", 
 const COMPARATOR_OPTIONS = ["contains", "is", "matches", "regex"] as const;
 // "exists" compiles to a Sieve exists test, which only headers have.
 const EXISTS_FIELDS: readonly string[] = ["from", "to", "cc", "bcc", "subject", "header"];
+// Plus-address parts (Sieve subaddress) apply to address fields only.
+const ADDRESS_FIELDS: readonly string[] = ["from", "to", "cc", "bcc"];
+const PART_LABELS = { "": "whole address", user: "name before +", detail: "tag after +" } as const;
 const ACTION_TYPE_OPTIONS = ACTION_TYPES;
 
 function actionNeedsValue(type: string): boolean {
@@ -39,7 +42,7 @@ function summarizeCondition(c: Condition): string {
     return "(" + c.group.conditions.map(summarizeCondition).join(joiner) + ")";
   }
   const neg = c.negate ? "NOT " : "";
-  const field = c.field === "header" ? `header ${c.header ?? ""}` : c.field;
+  const field = c.field === "header" ? `header ${c.header ?? ""}` : c.part ? `${c.field} ${PART_LABELS[c.part]}` : c.field;
   return `${neg}${field} ${c.comparator}${c.value ? ` "${c.value}"` : ""}`;
 }
 
@@ -417,7 +420,8 @@ export function Filters() {
                                 field: e.target.value,
                                 ...(c.comparator === "exists" && !EXISTS_FIELDS.includes(e.target.value)
                                   ? { comparator: "contains" }
-                                  : {})
+                                  : {}),
+                                ...(ADDRESS_FIELDS.includes(e.target.value) ? {} : { part: undefined })
                               })
                             }
                           >
@@ -436,6 +440,19 @@ export function Filters() {
                               placeholder="X-Spam-Flag"
                             />
                           )}
+                          {ADDRESS_FIELDS.includes(c.field ?? "") && c.comparator !== "exists" && (
+                            <select
+                              aria-label="Address part"
+                              value={c.part ?? ""}
+                              onChange={(e) => updateDraftCondition(i, { part: (e.target.value || undefined) as Condition["part"] })}
+                            >
+                              {(Object.keys(PART_LABELS) as (keyof typeof PART_LABELS)[]).map((p) => (
+                                <option key={p} value={p}>
+                                  {PART_LABELS[p]}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                           <select
                             value={c.comparator}
                             onChange={(e) => updateDraftCondition(i, { comparator: e.target.value })}
@@ -445,7 +462,7 @@ export function Filters() {
                                 {c2}
                               </option>
                             ))}
-                            {EXISTS_FIELDS.includes(c.field ?? "") && (
+                            {EXISTS_FIELDS.includes(c.field ?? "") && !c.part && (
                               <option value="exists">exists</option>
                             )}
                           </select>

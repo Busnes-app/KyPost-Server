@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildReplyBody, buildForwardBody, buildReplyAllRecipients, ensureSubjectPrefix, escapeHtml } from "./compose";
+import { buildReplyBody, buildForwardBody, buildReplyAllRecipients, ensureSubjectPrefix, escapeHtml, replyFromAddress } from "./compose";
+import { plusBase } from "../../lib/addressText";
 import type { DecryptedView, InboxEmail } from "./types";
 
 function email(over: Partial<InboxEmail> = {}): InboxEmail {
@@ -131,5 +132,19 @@ describe("quoting a locally decrypted message", () => {
   it("ignores a decrypted view that only carries an error", () => {
     const out = buildReplyBody(email({ body: "server body" }), decryptedView({ error: "could not decrypt" }));
     expect(out).toContain("server body");
+  });
+});
+
+describe("replyFromAddress", () => {
+  const own = ["bob@example.com", "quiet.otter.4821@example.com"];
+  it("answers from the own address the message went to, tag included", () => {
+    expect(replyFromAddress(email({ sentTo: "Quiet <Quiet.Otter.4821@example.com>" }), own)).toBe("quiet.otter.4821@example.com");
+    expect(replyFromAddress(email({ sentTo: "carol@example.com", cc: "bob+shop@example.com" }), own)).toBe("bob+shop@example.com");
+    expect(replyFromAddress(email({ sentTo: "eve+bob@example.com" }), own)).toBe("");
+    expect(replyFromAddress(email({ sentTo: "" }), own)).toBe("");
+  });
+  it("finds the base of a plus address", () => {
+    expect(plusBase("a+b+c@x.test")).toBe("a@x.test");
+    expect(plusBase("a@x+y.test")).toBe("a@x+y.test");
   });
 });

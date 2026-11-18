@@ -64,7 +64,8 @@ import {
   escapeHtml,
   buildReplyBody,
   buildForwardBody,
-  buildReplyAllRecipients
+  buildReplyAllRecipients,
+  replyFromAddress
 } from "./read/compose";
 
 // Visible-tab inbox refresh; the cursor makes each one a cheap delta.
@@ -1494,9 +1495,12 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     }
   }
 
+  const ownAddresses = () => mailboxes.find((m) => (box ? m.id === box : m.kind === "primary"))?.addresses ?? [];
+
   function replyToSelectedEmail() {
     if (!selected || !onOpenDraft) return;
     openDraft({
+      from: replyFromAddress(selected, ownAddresses()),
       sentTo: firstAddressFromText(selected.sender || ""),
       subject: ensureSubjectPrefix(selected.subject, "Re:"),
       intent: "reply",
@@ -1519,7 +1523,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   // Title from the subject; attendees From, To and Cc minus the user's own addresses.
   function replyWithMeeting() {
     if (!selected) return;
-    const own = new Set([...(mailboxes.find((m) => (box ? m.id === box : m.kind === "primary"))?.addresses ?? []), ...(box ? [] : [accountAddress()])]
+    const own = new Set([...ownAddresses(), ...(box ? [] : [accountAddress()])]
       .map((a) => a.toLowerCase()));
     const { to, cc } = buildReplyAllRecipients(selected);
     openNewMeeting(calendarOrigin, {
@@ -1532,6 +1536,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     if (!selected || !onOpenDraft) return;
     const recipients = buildReplyAllRecipients(selected);
     openDraft({
+      from: replyFromAddress(selected, ownAddresses()),
       sentTo: recipients.to,
       cc: recipients.cc,
       subject: ensureSubjectPrefix(selected.subject, "Re:"),

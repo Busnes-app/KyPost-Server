@@ -23,6 +23,7 @@ import { isUnlocked } from "../lib/keyVault";
 import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "../lib/pgpClient";
 import { sealPickup } from "../lib/pickupCrypto";
 import { mailboxName, type UserMailbox } from "../app/mailboxes";
+import { plusBase } from "../lib/addressText";
 import type { ComposeAttachment, DraftComposePayload } from "../app/types";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -348,7 +349,11 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   }
 
   const mailboxOf = (id: string) => mailboxes.find((m) => (id ? m.id === id : m.kind === "primary"));
-  const composeFromChoices = mailboxOf(composeMailbox)?.addresses ?? [];
+  // A reply from a plus address of this mailbox joins the choices.
+  const boxAddresses = mailboxOf(composeMailbox)?.addresses ?? [];
+  const composeFromChoices = composeFrom && !boxAddresses.includes(composeFrom) && boxAddresses.includes(plusBase(composeFrom))
+    ? [...boxAddresses, composeFrom]
+    : boxAddresses;
 
   /** Pins compose to the selected mailbox, sending from its primary address. */
   function pinComposeMailbox(id = selectedMailboxId()) {
@@ -432,7 +437,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // The snapshot's body carries whatever signature it was written with.
       stopSignature();
       pinComposeMailbox(snapshot.mailbox);
-      if (box) setComposeFrom(box.addresses.includes(snapshot.from) ? snapshot.from : box.addresses[0] ?? "");
+      if (box) setComposeFrom(box.addresses.includes(plusBase(snapshot.from)) ? snapshot.from : box.addresses[0] ?? "");
       setComposeTo(parseRecipientField(snapshot.to));
       setComposeCc(parseRecipientField(snapshot.cc));
       setComposeBcc(parseRecipientField(snapshot.bcc));
@@ -452,6 +457,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeSignOverridden.current = false;
     setComposeSign(isClientProtected() && isUnlocked());
     pinComposeMailbox(payload.mailbox);
+    if (payload.from && mailboxOf(payload.mailbox ?? selectedMailboxId())?.addresses.includes(plusBase(payload.from))) setComposeFrom(payload.from);
     setComposeTo(parseRecipientField(payload.sentTo ?? ""));
     setComposeCc(parseRecipientField(payload.cc ?? ""));
     setComposeBcc(parseRecipientField(payload.bcc ?? ""));
