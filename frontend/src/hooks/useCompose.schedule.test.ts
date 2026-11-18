@@ -127,7 +127,6 @@ describe("scheduled send", () => {
 
   it("a scheduled send is not delayed on top", async () => {
     session.clientProtected = false;
-    getSendDelay.mockResolvedValueOnce(30);
     const result = composeTo(false);
     await act(() => result.current.sendComposeEmail(sendAt));
     const body = postJSON.mock.calls[0][1] as Record<string, unknown>;

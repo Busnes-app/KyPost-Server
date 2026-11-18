@@ -599,7 +599,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	// The Send delay holds the message as a scheduled one going out at the end
 	// of the delay. A calendar reply answers now and a one-time link is mailed
 	// at send time, so neither is held; a chosen sendAt is never delayed more.
-	if req.SendDelay && req.SendAt.IsZero() && req.CalendarReply == nil && !(req.Encrypt && req.AllowPickupFallback) {
+	if req.SendDelay && req.SendAt.IsZero() && req.CalendarReply == nil && (!req.Encrypt || !req.AllowPickupFallback) {
 		delay, err := s.sendDelay(ac.UserID)
 		if err != nil {
 			http.Error(w, "your send delay setting could not be read; nothing was sent", http.StatusServiceUnavailable)
