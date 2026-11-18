@@ -40,6 +40,11 @@ func TestMain(m *testing.M) {
 	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 1 << 50, 1 << 50, nil }
 	// As the api and daemon run: admissions share held mailbox handles.
 	mailbox.HoldAdmissionHandles(mailbox.MaxHeldAdmissions())
+	// The shipped policy sends every keyless account through encryption setup
+	// and holds its mail; the package's other tests are not about that. The
+	// encryption setup tests save the policy they test, and
+	// TestShippedEncryptionPolicyRequiresAKey checks the shipped default.
+	defaultEncryptionPolicy = EncryptionPolicy{Key: policyOptional, Incoming: policyOn}
 	code := m.Run()
 	restoreIterations()
 	restoreParams()

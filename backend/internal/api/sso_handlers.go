@@ -105,9 +105,29 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 
 	// A blank secret keeps the stored one, but only for the issuer and client it
 	// was issued for: a changed destination never receives the old secret.
+	s.encPolicyMu.Lock()
+	defer s.encPolicyMu.Unlock()
 	stored := s.ssoStore.Load()
-	if req.ClientSecret == "" && req.IssuerURL == stored.IssuerURL && req.ClientID == stored.ClientID {
+	sameProvider := req.IssuerURL == stored.IssuerURL && req.ClientID == stored.ClientID
+	if req.ClientSecret == "" && sameProvider {
 		req.ClientSecret = stored.ClientSecret
+	}
+
+	// KySignOn is the server's finding, never the request's. While the
+	// encryption policy is Required, only a provider discovery shows to be
+	// KySignOn may be enabled: anyone else's SSO-only users could not create
+	// the key the policy demands. Refused, never quietly lowered.
+	req.KySignOn = req.Enabled && sameProvider && stored.KySignOn
+	if p := s.encryptionPolicy(); req.Enabled && p.anyRequired() {
+		ok, err := s.detectKySignOn(r.Context(), req)
+		if !ok {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":   "encryption_policy_required",
+				"message": "Lower " + p.requiredNames() + " from Required first (Server → Security). " + needsKySignOn(req, err),
+			})
+			return
+		}
+		req.KySignOn = true
 	}
 
 	if err := s.ssoStore.Save(req); err != nil {

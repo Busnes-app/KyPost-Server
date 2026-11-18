@@ -44,7 +44,9 @@ func TestAdminMutationsRequireStepUp(t *testing.T) {
 		{"DELETE", u + "/imap-config", nil, 200},
 		{"PUT", u + "/carddav-client", map[string]any{"serverUrl": dav.URL + "/dav/", "username": "m", "password": "dav-pw"}, 200},
 		{"DELETE", u + "/carddav-client", nil, 200},
+		{"PUT", u + "/key-setup", map[string]any{"required": true}, 200},
 		{"PUT", "/api/admin/sso", map[string]any{"enabled": false, "clientId": "stepup"}, 200},
+		{"PUT", "/api/admin/encryption-policy", map[string]any{"key": "optional", "incoming": "off"}, 200},
 	} {
 		body := map[string]any{}
 		for k, v := range c.body {

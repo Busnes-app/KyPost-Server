@@ -127,7 +127,8 @@ func runApplySetup(args []string, stdin io.Reader, stdout io.Writer) error {
 		if ssoExists {
 			data, _, e := setupExisting(ssoPath)
 			var prior sso.SSOSettings
-			if e != nil || setupDecode(data, &prior) != nil || prior != *b.SSO {
+			// The API records KySignOn after discovery; a bundle never carries it.
+			if e != nil || setupDecode(data, &prior) != nil || withoutKySignOn(prior) != *b.SSO {
 				return errors.New("existing SSO settings differ; setup preserves them, use protected Server SSO settings to change them")
 			}
 			settings = prior
@@ -265,12 +266,17 @@ func setupDecode(raw []byte, out any) error {
 	}
 	return nil
 }
+func withoutKySignOn(s sso.SSOSettings) sso.SSOSettings {
+	s.KySignOn = false
+	return s
+}
+
 func validateSetup(b setupBundle) error {
 	if b.Version != 1 || b.SSO == nil && b.PairingSecret == "" && len(b.Domains) == 0 && b.Recovery == nil {
 		return errors.New("setup requires version 1 and at least one documented setup section")
 	}
-	if b.SSO != nil && (!b.SSO.Enabled || b.SSO.AllowInsecureIssuer || !strings.HasPrefix(b.SSO.IssuerURL, "https://") || sso.ValidateIssuerURL(b.SSO.IssuerURL, false) != nil || strings.TrimSpace(b.SSO.ClientID) == "" || len(b.SSO.ClientID) > 512 || len(b.SSO.ClientSecret) > 4096 || strings.ContainsAny(b.SSO.ClientID+b.SSO.ClientSecret, "\r\n\x00")) {
-		return errors.New("setup SSO requires enabled HTTPS, a client ID and bounded credentials")
+	if b.SSO != nil && (b.SSO.KySignOn || !b.SSO.Enabled || b.SSO.AllowInsecureIssuer || !strings.HasPrefix(b.SSO.IssuerURL, "https://") || sso.ValidateIssuerURL(b.SSO.IssuerURL, false) != nil || strings.TrimSpace(b.SSO.ClientID) == "" || len(b.SSO.ClientID) > 512 || len(b.SSO.ClientSecret) > 4096 || strings.ContainsAny(b.SSO.ClientID+b.SSO.ClientSecret, "\r\n\x00")) {
+		return errors.New("setup SSO requires enabled HTTPS, a client ID and bounded credentials, without kySignOn (the server detects it)")
 	}
 	if b.PairingSecret != "" && (len(b.PairingSecret) < 32 || len(b.PairingSecret) > 4096 || strings.TrimSpace(b.PairingSecret) != b.PairingSecret || strings.ContainsAny(b.PairingSecret, "\r\n\x00")) {
 		return errors.New("pairingSecret must match the retained effective runtime secret, with 32 to 4096 characters")

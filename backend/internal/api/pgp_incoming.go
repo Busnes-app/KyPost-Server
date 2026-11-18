@@ -50,6 +50,10 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid incoming encryption preference", http.StatusBadRequest)
 			return
 		}
+		if !req.Enabled && s.encryptionPolicy().Incoming == policyRequired {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "incoming_encryption_required", "message": "Required by your administrator."})
+			return
+		}
 		if req.Enabled {
 			if owns, err := s.ownsActiveExtraMailbox(ac.UserID); err != nil {
 				http.Error(w, "cannot verify your mailboxes; incoming encryption was not enabled", http.StatusServiceUnavailable)

@@ -64,6 +64,9 @@ type User struct {
 	DeactivatedAt      string           `json:"deactivatedAt,omitempty"`
 	// SendQuota overrides the install-wide quota for this account; nil uses it.
 	SendQuota *config.SendQuota `json:"sendQuota,omitempty"`
+	// KeySetupRequired is an administrator's "Require key setup": the account
+	// must create or import its own PGP key whatever the server policy says.
+	KeySetupRequired bool `json:"keySetupRequired,omitempty"`
 
 	// TOTPSecretEnc is a cryptutil envelope sealed with the dedicated TOTP key,
 	// set at enrollment; TOTPEnabled flips true on confirmation. Never exposed
@@ -367,12 +370,13 @@ type Public struct {
 	// revocation keeps the subject so directory sync can still address the
 	// account. A viewer shown the subject with no flag would read a revoked
 	// link as live. See User.SSOLinkRevokedAt.
-	SSOLinkRevoked  bool              `json:"ssoLinkRevoked,omitempty"`
-	SendQuota       *config.SendQuota `json:"sendQuota,omitempty"`
-	PGPFingerprint  string            `json:"pgpFingerprint,omitempty"`
-	PGPKeyID        string            `json:"pgpKeyId,omitempty"`
-	PGPKeySource    string            `json:"pgpKeySource,omitempty"`
-	PGPKeyCreatedAt string            `json:"pgpKeyCreatedAt,omitempty"`
+	SSOLinkRevoked   bool              `json:"ssoLinkRevoked,omitempty"`
+	SendQuota        *config.SendQuota `json:"sendQuota,omitempty"`
+	KeySetupRequired bool              `json:"keySetupRequired,omitempty"`
+	PGPFingerprint   string            `json:"pgpFingerprint,omitempty"`
+	PGPKeyID         string            `json:"pgpKeyId,omitempty"`
+	PGPKeySource     string            `json:"pgpKeySource,omitempty"`
+	PGPKeyCreatedAt  string            `json:"pgpKeyCreatedAt,omitempty"`
 	// PGPKeyProtection tells the client whether it must unwrap the private
 	// key itself ("client") or whether this is a legacy server-held key
 	// ("server") the UI should prompt the user to migrate.
@@ -403,6 +407,7 @@ func (u User) Public() Public {
 		PGPKeyCreatedAt:    u.PGPKeyCreatedAt,
 		PGPKeyProtection:   u.PGPProtection(),
 		SendQuota:          u.SendQuota,
+		KeySetupRequired:   u.KeySetupRequired,
 		NeedsPasswordReset: u.NeedsPasswordReset(),
 	}
 }
@@ -1684,6 +1689,14 @@ func (s *Store) SetRole(id string, role Role) (User, error) {
 func (s *Store) SetSendQuota(id string, q *config.SendQuota) (User, error) {
 	return s.mutate(id, func(u *User) error {
 		u.SendQuota = q
+		return nil
+	})
+}
+
+// SetKeySetupRequired sets or clears an administrator's key-setup requirement.
+func (s *Store) SetKeySetupRequired(id string, required bool) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		u.KeySetupRequired = required
 		return nil
 	})
 }

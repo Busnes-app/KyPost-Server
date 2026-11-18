@@ -26,6 +26,7 @@ import (
 // reads the struct and fails when one is missing, rather than trusting the next
 // person to remember.
 var lockRank = map[string]int{
+	"encPolicyMu":   0,
 	"cfgMu":         1,
 	"sessMu":        2,
 	"pairingMu":     3,
