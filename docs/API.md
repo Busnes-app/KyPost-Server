@@ -13,7 +13,7 @@ Auth:
 - `GET /api/auth/captcha-config`
 - `GET /api/auth/pow-challenge` (`CAPTCHA_PROVIDER=pow` only)
 - `GET /api/auth/csrf`
-- `GET /api/auth/me` (includes `hasPassword`, false for an SSO-only account)
+- `GET /api/auth/me` (includes `hasPassword`, false for an SSO-only account, and `encryptionSetup` `{required, offered, hasKey, hasRecovery, incomingEnabled, keyPolicy, incomingPolicy}`; see [first sign-in setup](E2E_PGP.md#first-sign-in-setup))
 - `POST /api/auth/logout`
 - `GET|POST /api/auth/password` (read a private password-change snapshot, then atomically commit credential and optional PGP rewrap; forced resets preserve the previous sealed key for recovery)
 - `POST /api/auth/step-up` (body `{authSecret, code}`: re-confirms the account credential, and a second factor when one is enrolled, before the Security page renders; a session signed in through KySignOn confirms with KySignOn instead, see below)
@@ -29,6 +29,7 @@ Single Sign-On (OpenID Connect):
 - `POST /api/auth/oidc/backchannel-logout` — OpenID Connect back-channel logout receiver. Register it at the provider (KySignOn: the client's *back-channel logout URI*). The `logout_token` is verified against the issuer's JWKS, admitted once durably, and ends the session it names, or every session of the subject when it names none. Needs an `https` issuer.
 - `POST /api/settings/sso/unlink`
 - `GET|PUT /api/admin/sso` (admin only. The provider configuration. The client secret is write-only: responses carry `clientSecretSet`, and a blank secret on `PUT` keeps the stored one only for the same issuer and client ID. `PUT` needs the step-up below. Saving a different issuer revokes every account link made at another provider; those users link again. `adminGroup` is the exact group or realm role that makes a generic provider's new account an administrator; empty, none does.)
+- `GET|PUT /api/admin/encryption-policy` (admin only. `{key: required|optional, incoming: required|on|off}`, default `required`/`on`; responses add `genericProvider` and `issuer`. `incoming: required` also sets `key: required`. `PUT` needs the step-up below and is audited; Required is refused with `409 {"code":"kysignon_required"}` while the SSO provider is not KySignOn. [Contract](E2E_PGP.md#first-sign-in-setup).) `PUT /api/admin/sso` enabling a provider that is not KySignOn while either setting is Required answers `409 {"code":"encryption_policy_required"}` naming what to lower.
 - `GET|PUT /api/admin/rate-limit-networks` (admin only. Office networks whose requests skip the per-address sign-in limits; see [SECURITY.md](../SECURITY.md#office-networks-rate-limit-allowlist). Returns `{networks, environment, exempted}`: the stored list and `RATE_LIMIT_EXEMPT_CIDRS`, both comma-separated and canonical, and the requests that skipped a limit since the last change or restart. `PUT {"networks":"203.0.113.0/24,2001:db8:1::/48"}` (empty clears) needs the step-up below; an invalid entry, a range broader than /16 or /48, loopback or more than 256 networks is refused with 400 and the reason. Takes effect at once and is logged.)
 - `POST /api/calendar/itip/send` — KyCalendar asks KyPost to mail an iTIP REQUEST, CANCEL or REPLY from the user's own mailbox. No session: a `syncauth` signature under the shared KyCalendar secret, event type `kycalendar.itip.send`. 404 when KyCalendar is not configured. Answers `202 {"outcome":"sent"}` or `{"error","code"}`; codes and checks in [KYCALENDAR.md](KYCALENDAR.md#send-kycalendar--kypost).
 - `POST /api/sync/hr-mailbox` — signed `hr.mailbox.reserve` request from the configured KyIdentity issuer. Reserves a native work-email address for a future immutable SSO subject, with no account/access grant. See [request, response and retry contract](NATIVE_PROVISIONING.md#hr-address-reservations).
@@ -54,6 +55,7 @@ User management (admin only). Every non-GET route needs a step-up bound to the e
 - `POST /api/users/{id}/deactivate`
 - `POST /api/users/{id}/reactivate`
 - `POST /api/users/{id}/clear-mfa`
+- `PUT /api/users/{id}/key-setup` (body `{"required":true|false}`: "Require key setup", sends the user through encryption setup at their next sign-in whatever the policy; sets a flag only, audited; users list shows `keySetupRequired`)
 - `PUT /api/users/{id}/send-quota` (body `{"sendQuota":{"messagesPerHour","recipientsPerDay"}}` overrides the account's sending quota; `{"sendQuota":null}` returns it to the install-wide one)
 - `GET|PUT|DELETE /api/users/{id}/imap-config` (assign a user's IMAP/SMTP credentials; `managed: true` locks the user's own route)
 - `GET|PUT|DELETE /api/users/{id}/carddav-client` (same for the outbound CardDAV client)
@@ -173,7 +175,8 @@ PGP:
 
 PGP key discovery and device enrollment:
 
-- `GET|PUT /api/pgp/incoming` — caller-only incoming-encryption preference; PUT requires fresh account confirmation and enabling requires backup acknowledgment and current `expectedRevision`.
+- `GET|PUT /api/pgp/incoming` — caller-only incoming-encryption preference; PUT requires fresh account confirmation and enabling requires backup acknowledgment and current `expectedRevision`. Under a Required incoming policy, disabling is `409 {"code":"incoming_encryption_required"}`.
+- Encryption setup: while an account owes [first sign-in setup](E2E_PGP.md#first-sign-in-setup), mailbox routes and `/mcp` answer `403 {"error":"encryption_setup_required","message":…}` to its devices and agent tokens and to browser sessions signed in while it was owed. Native clients tell the user to finish setup on the web and stop syncing until a request succeeds.
 - `GET|PUT /api/pgp/discovery/settings`
 - `GET /api/pgp/discovery/suppressions` and `DELETE /api/pgp/discovery/suppressions/{email}`
 - `POST /api/pgp/discovery/suppress-contact`

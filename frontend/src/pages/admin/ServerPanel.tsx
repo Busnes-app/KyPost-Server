@@ -2,6 +2,7 @@ import { PanelTabs } from "../../components/PanelTabs";
 import { ApplicationRuntime } from "../../admin/sections/ApplicationRuntime";
 import { SSOConfig } from "../../admin/sections/SSOConfig";
 import { OfficeNetworks } from "../../admin/sections/OfficeNetworks";
+import { EncryptionPolicy } from "../../admin/sections/EncryptionPolicy";
 import { KyCalendarStatus } from "../../admin/sections/KyCalendarStatus";
 import { KyDriveStatus } from "../../admin/sections/KyDriveStatus";
 import { KyMessagesStatus } from "../../admin/sections/KyMessagesStatus";
@@ -41,6 +42,7 @@ export function ServerPanel() {
           { id: "runtime", label: "Application", body: <ApplicationRuntime /> },
           { id: "backup", label: "Backup", body: <Backup /> },
           { id: "sso", label: "Single Sign-On (SSO)", body: <SSOConfig /> },
+          { id: "security", label: "Security", body: <EncryptionPolicy /> },
           { id: "office-networks", label: "Office networks", body: <OfficeNetworks /> },
           { id: "kycalendar", label: "KyCalendar", body: <KyCalendarStatus /> },
           { id: "kydrive", label: "KyDrive", body: <KyDriveStatus /> },

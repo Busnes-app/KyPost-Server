@@ -5,6 +5,7 @@ import {
   listUsers,
   resetUserPassword,
   setUserRole,
+  setUserKeySetupRequired,
   setUserSendQuota,
   userAction,
   type AdminConfirm,
@@ -190,6 +191,18 @@ export function Users() {
     });
   }
 
+  function toggleKeySetup(user: ManagedUser) {
+    const next = !user.keySetupRequired;
+    void withRowBusy(user, async (confirm) => {
+      await setUserKeySetupRequired(confirm, user.id, next);
+      setStatus(
+        next
+          ? `${user.username} must create or import an encryption key at their next sign-in. Their key is made on their own device; you never see it.`
+          : `${user.username} is no longer individually required to set up a key; the server policy still applies.`
+      );
+    });
+  }
+
   function clearMFA(user: ManagedUser) {
     const confirmed = window.confirm(
       `Clear two-factor authentication for ${user.username}? They will need to re-enroll.`
@@ -327,6 +340,11 @@ export function Users() {
                                     password change required
                                   </span>
                                 ) : null}
+                                {user.keySetupRequired ? (
+                                  <span className="users-pw-flag" title="Must finish encryption setup at next sign-in">
+                                    key setup required
+                                  </span>
+                                ) : null}
                               </span>
                             </div>
                           </div>
@@ -373,6 +391,15 @@ export function Users() {
                               disabled={busy}
                             >
                               {assignId === user.id ? "Hide Mailbox" : "Mailbox"}
+                            </button>
+                            <button
+                              type="button"
+                              className="users-action"
+                              onClick={() => toggleKeySetup(user)}
+                              disabled={busy || !unlocked}
+                              title={user.pgpFingerprint ? "This user has a key" : "This user has no key yet"}
+                            >
+                              {user.keySetupRequired ? "Stop Requiring Key Setup" : "Require Key Setup"}
                             </button>
                             {user.totpEnabled ? (
                               <button

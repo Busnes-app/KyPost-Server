@@ -243,10 +243,101 @@ specifically rather than reporting a generic decryption failure.
   browser-sealed path above. Legacy server-custody accounts must migrate
   before encrypted sending.
 
+## First sign-in setup
+
+The browser generates or imports the key exactly as above; this adds only who
+must do it and what is withheld until they have. An administrator can require
+it but can never generate, see or hold a user's key: "Require" means the user
+must create or import one on their own device.
+
+**Complete** means a client-protected key (`pgpKeyProtection: client` with a
+password envelope) and a `recovery` envelope slot, which the web client stores
+only after the user confirms saving the recovery secret. A legacy server-custody
+key is not complete; setup offers its migration. Under a Required incoming
+policy, incoming encryption must also be on, except for an owner of an active
+additional mailbox, who cannot turn it on (it covers only the primary).
+
+**Policy** (Admin → Server → Security, `GET|PUT /api/admin/encryption-policy`,
+stored in `state.db` setting `encryption_policy`):
+
+| Setting | Values | Default |
+|---|---|---|
+| Encryption key | `required`, `optional` | `required` |
+| Encrypt incoming mail | `required`, `on`, `off` | `on` |
+
+`required` incoming also sets the key to `required`. `on`/`off` only preselect
+the setup step's choice. Only new mail is encrypted, as described below; a
+Required policy never sweeps existing mail. An unreadable stored policy falls
+back to the default. `PUT /api/users/{id}/key-setup` (`{"required":bool}`) is
+"Require key setup" for one account, whatever the policy. Both writes take the
+admin step-up and record a `started` row before, and the outcome after, in the
+server audit log (`admin.encryption_policy`, `admin.require_key_setup`); an
+audit log that cannot take the row refuses the change.
+
+**Who is held.** An account owes setup when the key policy or incoming policy
+is Required, or its own flag is set, and it is not complete. Under Optional and
+without a key it is offered the step once (`offered`), with "Not now"
+remembered in that browser. An account that could not finish setup is never
+held or offered it: an SSO-only account (no local credential) is held only
+through KySignOn, the one provider whose step-up can confirm its key writes
+(`requirePGPStepUp`). A browser session is judged by how it signed in
+(`Session.SSOKySignOn`); a device by the configured provider (below).
+
+**What is withheld.** A browser session signed in while setup was owed
+(`Session.KeySetupGate`) gets no mail until setup is complete; one signed in
+earlier is not cut off by a later policy change, so nothing in progress is lost,
+and is held from its next sign-in. A paired device or agent token is checked on
+every request. Every mailbox-admitted route (inbox, folders, actions, bodies,
+attachments, search, drafts, send, scheduled, export and import, flag links)
+and the MCP endpoint answer:
+
+```
+403 {"error":"encryption_setup_required","message":"Finish email encryption setup in KyPost on the web before using mail here."}
+```
+
+Native clients must show that the user has to finish setup on the web (or on an
+enrolled device that can run it) and stop syncing until a later request
+succeeds; they must not retry around it or treat it as a sign-out, and they
+keep unsent mail. Key, bootstrap, enrollment and settings routes stay open so
+setup can be done. Incoming mail is still received and stored; only access is
+withheld. `GET /api/auth/me` reports `encryptionSetup`
+(`required, offered, hasKey, hasRecovery, incomingEnabled, keyPolicy,
+incomingPolicy`) for the web client's setup page.
+
+Under a Required incoming policy, `PUT /api/pgp/incoming` with
+`enabled:false` is `409 {"code":"incoming_encryption_required"}` and Security →
+Encryption shows the switch locked.
+
+**Generic OIDC guard.** Required is refused while SSO uses a provider that is
+not KySignOn (`409 {"code":"kysignon_required"}`), and saving SSO settings
+for such a provider while either setting is Required is refused with the
+settings to lower named (`409 {"code":"encryption_policy_required"}`). Never
+silently lowered. An install that already had a generic provider when it
+upgraded keeps the default Required; its SSO-only users are skipped as above,
+password users are still held, and the admin page asks for Optional.
+
+**Detecting KySignOn** happens at configuration time from the issuer's OIDC
+discovery document (`sso.Provider.KySignOn`): it must advertise
+`urn:kysignon:acr:password` in `acr_values_supported` and `roles` in
+`claims_supported`. That is the exact capability the guard protects: a PGP
+step-up asks for that ACR (`AuthCodeURL`) and `FreshProof` accepts it, and the
+`roles` claim is what marks a session as KySignOn's. KyIdentity publishes both;
+Authentik and Keycloak publish neither by default. The KySignOn preset in the
+admin UI only fills fields in the browser and is never stored, so it cannot be
+the signal, and a per-token check (`SSOTokenClaims.KySignOn`) would only answer
+after someone's sign-in had already failed. The result is stored as
+`SSOSettings.KySignOn`, written only by the server: when SSO settings are saved
+under a Required policy, when a Required policy is saved, when an administrator
+opens the policy page, and once at API start for settings saved before detection
+existed. A discovery failure counts as not KySignOn. An operator who points a
+generic provider's discovery at KySignOn's ACR misconfigures it on purpose and
+its SSO-only users then meet `kysignon_required` at key creation.
+
 ## Incoming mail encryption (opt-in)
 
-Incoming encryption defaults off for every user, including users with a PGP key.
-Security → Encryption offers a per-user preference. Only unread INBOX mail not already
+Incoming encryption is a per-user preference in Security → Encryption, on by
+default in the first sign-in step and Required where the administrator says so
+(above). Nothing turns it on without the user's confirmed request. Only unread INBOX mail not already
 processed by KyPost is eligible; this does not sweep historical or read mail.
 For opt-in native mailboxes, the polling mailbox is INBOX and leftover IMAP
 configuration is ignored; primary key User IDs come from admitted domain
@@ -266,7 +357,8 @@ enabling) the current `expectedRevision`, plus the existing fresh account
 credential or action-bound KySignOn step-up. Enabling requires an active,
 unexpired, unrevoked client-protected public key with a stored wrapped private
 key and an explicit saved-private-key-backup acknowledgment. Neither an admin
-setting nor the presence of a key enables it automatically.
+setting nor the presence of a key enables it automatically; a Required policy
+holds the account's mail until the user turns it on.
 
 The daemon checks rules, mailbox capabilities and exact ciphertext size before
 classification or a replacement job. Rule values are normalized and validated
