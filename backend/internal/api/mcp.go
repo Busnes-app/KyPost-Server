@@ -853,6 +853,22 @@ func threadIDs(h map[string][]string) map[string]bool {
 	return out
 }
 
+// sentFoldersBesides is where your own replies to mail in folder live: the
+// folders with the RFC 6154 \Sent role other than folder, else "Sent".
+func sentFoldersBesides(ctx context.Context, client imapadapter.Client, folder string) []string {
+	var out []string
+	for path, role := range specialUseOf(ctx, client) {
+		if strings.EqualFold(strings.TrimPrefix(role, `\`), "sent") && path != folder {
+			out = append(out, path)
+		}
+	}
+	if len(out) == 0 && folder != "Sent" {
+		out = append(out, "Sent")
+	}
+	slices.Sort(out)
+	return out
+}
+
 func baseSubject(subject string) string {
 	for {
 		trimmed := replyPrefix.ReplaceAllString(subject, "")
@@ -912,15 +928,7 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 	var others []member
 	subject := baseSubject(strings.Join(root["Subject"], " "))
 	if len(ids) > 0 && subject != "" {
-		folders := []string{folder}
-		for path, role := range specialUseOf(ctx, client) {
-			if strings.EqualFold(strings.TrimPrefix(role, `\`), "sent") && path != folder {
-				folders = append(folders, path)
-			}
-		}
-		if len(folders) == 1 && folder != "Sent" {
-			folders = append(folders, "Sent")
-		}
+		folders := append([]string{folder}, sentFoldersBesides(ctx, client, folder)...)
 		for order, f := range folders {
 			candidates, err := client.SearchMessages(ctx, f, "subject", subject, maxAgentList, 0)
 			if err != nil {
