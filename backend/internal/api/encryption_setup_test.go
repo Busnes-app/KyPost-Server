@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
@@ -24,6 +25,15 @@ func savePolicy(t *testing.T, srv *Server, p EncryptionPolicy) {
 	t.Helper()
 	raw, _ := json.Marshal(p)
 	if err := srv.globalStore.SetSetting(encryptionPolicySetting, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withAuditLog gives the server the audit log NewServer opens in production.
+func withAuditLog(t *testing.T, srv *Server) {
+	t.Helper()
+	var err error
+	if srv.backup, err = backup.New(backup.Dirs{Config: srv.configDir, State: srv.stateDir, Secret: srv.configDir}, config.BackupConfig{Keep: 1}, srv.globalStore, "test"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -232,7 +242,8 @@ func TestRequiredIncomingEncryption(t *testing.T) {
 // Each change is audited.
 func TestEncryptionPolicyRequiredNeedsKySignOn(t *testing.T) {
 	srv, idp := setupSSOTestServer(t)
-	admin := setupUser(t, srv, "admin")
+	withAuditLog(t, srv)
+	admin := setupUser(t, srv, "policy-admin")
 	for _, body := range []EncryptionPolicy{{Key: policyRequired, Incoming: policyOn}, {Key: policyOptional, Incoming: policyRequired}} {
 		rec := adminPut(srv, admin, srv.handleEncryptionPolicyPut, "/api/admin/encryption-policy", "", body)
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "Needs KySignOn: users signing in through 127.0.0.1") {
@@ -275,7 +286,7 @@ func TestSSOSwitchToGenericProviderRefusedWhileRequired(t *testing.T) {
 	generic := ssotest.New(t, "generic")
 	settings := srv.ssoStore.Load()
 
-	savePolicy(t, srv, EncryptionPolicy{Key: policyOptional, Incoming: policyRequired})
+	savePolicy(t, srv, EncryptionPolicy{Key: policyRequired, Incoming: policyRequired})
 	put := func(cfg sso.SSOSettings) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(cfg)
 		rec := httptest.NewRecorder()
@@ -289,7 +300,7 @@ func TestSSOSwitchToGenericProviderRefusedWhileRequired(t *testing.T) {
 	switched := settings
 	switched.IssuerURL, switched.ClientID, switched.KySignOn = generic.URL(), generic.ClientID, true
 	rec := put(switched)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "Lower Encrypt incoming mail from Required first") {
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "Lower Encryption key and Encrypt incoming mail from Required first") {
 		t.Fatalf("switch to a generic provider under Required: %d %s", rec.Code, rec.Body)
 	}
 	if strings.Contains(rec.Body.String(), "could not confirm") {
@@ -340,6 +351,7 @@ func TestSetupSkipsSSOOnlyAccountsOfAGenericProvider(t *testing.T) {
 // Require key setup sets a flag; no administrator route returns key material.
 func TestAdminRequireKeySetupNeverExposesKeyMaterial(t *testing.T) {
 	srv, admin, member := adminAndMember(t)
+	withAuditLog(t, srv)
 	completeKeySetup(t, srv, member.ID)
 
 	rec := adminPut(srv, admin, srv.handleUserKeySetup, "/api/users/"+member.ID+"/key-setup", member.ID, map[string]any{"required": true})

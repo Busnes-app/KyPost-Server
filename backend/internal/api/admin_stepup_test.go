@@ -16,6 +16,7 @@ import (
 // the acting admin's step-up and runs with it.
 func TestAdminMutationsRequireStepUp(t *testing.T) {
 	srv, admin, member := adminAndMember(t)
+	withAuditLog(t, srv)
 	allowLoopbackOutboundForTest(t)
 	dav := httptest.NewServer(http.NotFoundHandler())
 	defer dav.Close()
