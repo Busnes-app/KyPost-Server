@@ -327,9 +327,9 @@ admin UI only fills fields in the browser and is never stored, so it cannot be
 the signal, and a per-token check (`SSOTokenClaims.KySignOn`) would only answer
 after someone's sign-in had already failed. The result is stored as
 `SSOSettings.KySignOn`, written only by the server: when SSO settings are saved
-under a Required policy, when a Required policy is saved, when an administrator
-opens the policy page, and once at API start for settings saved before detection
-existed. A discovery failure counts as not KySignOn. An operator who points a
+under a Required policy, when a Required policy is saved, and once at API start
+for settings saved before detection existed; opening the policy page re-checks
+without writing. A discovery failure counts as not KySignOn. An operator who points a
 generic provider's discovery at KySignOn's ACR misconfigures it on purpose and
 its SSO-only users then meet `kysignon_required` at key creation.
 

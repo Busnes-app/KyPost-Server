@@ -231,8 +231,14 @@ func encryptionPolicyView(p EncryptionPolicy, cfg sso.SSOSettings) map[string]an
 	return view
 }
 
+// handleEncryptionPolicyGet reports the policy and whether Required is
+// available. Settings not yet marked KySignOn are checked by discovery but not
+// rewritten: a GET changes nothing, and saving Required records the answer.
 func (s *Server) handleEncryptionPolicyGet(w http.ResponseWriter, r *http.Request) {
-	cfg := s.refreshSSOKySignOn(r.Context())
+	cfg := s.ssoStore.Load()
+	if cfg.Enabled && !cfg.KySignOn {
+		cfg.KySignOn, _ = s.detectKySignOn(r.Context(), cfg)
+	}
 	writeJSON(w, http.StatusOK, encryptionPolicyView(s.encryptionPolicy(), cfg))
 }
 
