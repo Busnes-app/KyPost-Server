@@ -231,7 +231,7 @@ for the sender to retry. Existing committed/imported obligations are not rescann
 The ordinary IMAP path and client API are unchanged.
 
 The overlay enables strict `KYPOST_RECEIVING_RSPAMD=true` and pins official Rspamd
-3.14.3 by digest. The nonroot scanner shares KyPost's network namespace, listens
+4.3.0 by digest. The nonroot scanner shares KyPost's network namespace, listens
 only on loopback11333, publishes no ports and has no KyPost data/key mounts.
 Controller/proxy are absent. It can nevertheless reach other KyPost loopback
 services and sees raw mail, envelope and receiver-supplied connection metadata.
