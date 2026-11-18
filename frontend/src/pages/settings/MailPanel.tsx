@@ -8,6 +8,7 @@ import { KyCalendar } from "../../settings/sections/KyCalendar";
 import { KyPulse } from "../../settings/sections/KyPulse";
 import { ReadingPane } from "../../settings/sections/ReadingPane";
 import { Signatures } from "../../settings/sections/Signatures";
+import { SendDelay } from "../../settings/sections/SendDelay";
 import { OutOfOffice } from "../../settings/sections/OutOfOffice";
 
 /**
@@ -17,7 +18,7 @@ import { OutOfOffice } from "../../settings/sections/OutOfOffice";
  *
  * Import and export live under Security, behind its re-authentication.
  *
- * Tabbed rather than stacked — nine sections, each with its own save action,
+ * Tabbed rather than stacked — eleven sections, each with its own save action,
  * is more than one scroll can present clearly.
  */
 export function MailPanel() {
@@ -25,7 +26,7 @@ export function MailPanel() {
     <section className="panel">
       <div className="config-header">
         <h2 className="visually-hidden">Mail</h2>
-        <p>Your mail server, where messages open, mailbox storage, the addresses you send as and their signatures, your out-of-office reply, KyCalendar invitations, KyPulse alerts, contact sync and mailbox rules.</p>
+        <p>Your mail server, where messages open, mailbox storage, the addresses you send as and their signatures, your send delay, your out-of-office reply, KyCalendar invitations, KyPulse alerts, contact sync and mailbox rules.</p>
       </div>
       <PanelTabs
         ariaLabel="Mail sections"
@@ -35,6 +36,7 @@ export function MailPanel() {
           { id: "storage", label: "Storage", body: <MailStorage /> },
           { id: "send-as", label: "Send-as addresses", body: <SendAs /> },
           { id: "signatures", label: "Signatures", body: <Signatures /> },
+          { id: "send-delay", label: "Send delay", body: <SendDelay /> },
           { id: "out-of-office", label: "Out of office", body: <OutOfOffice /> },
           { id: "kycalendar", label: "KyCalendar", body: <KyCalendar /> },
           { id: "kypulse", label: "KyPulse", body: <KyPulse /> },

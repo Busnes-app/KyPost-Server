@@ -419,9 +419,11 @@ export function sendClientEncryptedMail(payload: {
   materialGeneration?: number;
   /** Schedules the send (RFC 3339); every delivery must already be dated then. */
   sendAt?: string;
-  /** The encrypted draft a scheduled send returns to Drafts if it cannot go out. */
+  /** The encrypted draft a scheduled or held send returns to Drafts if it cannot go out. */
   draftCopy?: string;
-}, headers: Record<string, string> = {}): Promise<{ ok?: boolean; scheduled?: boolean; sentSaved?: boolean; warning?: string }> {
+  /** Hold it for the account's Send delay; needs draftCopy, and deliveries dated now. */
+  sendDelay?: boolean;
+}, headers: Record<string, string> = {}): Promise<{ ok?: boolean; scheduled?: boolean; delayed?: boolean; id?: string; sendAt?: string; sentSaved?: boolean; warning?: string }> {
   return postJSON("/api/mail/send-pgp", payload, headers);
 }
 

@@ -28,6 +28,13 @@ vi.mock("../api/pgp", () => ({
 }));
 vi.mock("../api/sendas", () => ({ listSendAsAliases: async () => [] }));
 
+const getSendDelay = vi.fn(async () => 0);
+const cancelScheduled = vi.fn(async (_mailbox: string, _id: string): Promise<{ ok: boolean; warning?: string }> => ({ ok: true }));
+vi.mock("../api/scheduled", () => ({
+  getSendDelay: () => getSendDelay(),
+  cancelScheduled: (mailbox: string, id: string) => cancelScheduled(mailbox, id)
+}));
+
 const session = { clientProtected: false };
 vi.mock("../lib/pgpSession", () => ({
   accountAddress: () => "alice@example.com",
@@ -113,8 +120,96 @@ describe("scheduled send", () => {
     expect(buildEncryptedDeliveries.mock.calls[0][0].date).toBeUndefined();
     const request = sendClientEncryptedMail.mock.calls[0][0];
     expect(request.sendAt).toBeUndefined();
+    expect(request.sendDelay).toBeUndefined();
     expect(request.draftCopy).toBeUndefined();
     expect(buildEncryptedDraft).not.toHaveBeenCalled();
+  });
+
+  it("a scheduled send is not delayed on top", async () => {
+    session.clientProtected = false;
+    getSendDelay.mockResolvedValueOnce(30);
+    const result = composeTo(false);
+    await act(() => result.current.sendComposeEmail(sendAt));
+    const body = postJSON.mock.calls[0][1] as Record<string, unknown>;
+    expect(body.sendAt).toBe(sendAt.toISOString());
+    expect(body.sendDelay).toBeUndefined();
+    expect(getSendDelay).not.toHaveBeenCalled();
+  });
+});
+
+describe("send delay", () => {
+  const heldAnswer = (seconds: number) => ({ scheduled: true, delayed: true, id: "held-1", sendAt: new Date(Date.now() + seconds * 1000).toISOString() });
+
+  it("asks the server to hold a plain send, then Cancel sending reopens it", async () => {
+    session.clientProtected = false;
+    getSendDelay.mockResolvedValueOnce(20);
+    postJSON.mockResolvedValueOnce(heldAnswer(20));
+    const result = composeTo(false);
+    const before = Date.now();
+    await act(() => result.current.sendComposeEmail());
+    const body = postJSON.mock.calls[0][1] as Record<string, unknown>;
+    expect(body.sendDelay).toBe(true);
+    expect(body.sendAt).toBeUndefined();
+    const held = result.current.composeHeld!;
+    expect(held.id).toBe("held-1");
+    expect(held.endsAt).toBeGreaterThan(before);
+    expect(held.endsAt).toBeLessThanOrEqual(Date.now() + 20_000);
+    expect(result.current.composeOpen).toBe(false);
+
+    await act(() => result.current.cancelHeldSend());
+    expect(cancelScheduled).toHaveBeenCalledWith("", "held-1");
+    expect(result.current.composeHeld).toBeNull();
+    expect(result.current.composeOpen).toBe(true);
+    expect(result.current.composeSubject).toBe("later");
+    expect(JSON.stringify(result.current.composeTo)).toContain("bob@example.com");
+    expect(result.current.composeNotice).toMatch(/^Sending canceled\. Edit it and send again\. A copy is in Drafts\.$/);
+    expect(result.current.composeNotice.toLowerCase()).not.toContain("undo");
+  });
+
+  it("with the delay Off sends at once and asks for no hold", async () => {
+    session.clientProtected = false;
+    postJSON.mockResolvedValueOnce({ ok: true } as never);
+    const result = composeTo(false);
+    await act(() => result.current.sendComposeEmail());
+    expect((postJSON.mock.calls[0][1] as Record<string, unknown>).sendDelay).toBeUndefined();
+    expect(result.current.composeHeld).toBeNull();
+  });
+
+  it("holds a browser-encrypted send with its encrypted draft, dated now, and restores Encrypt on cancel", async () => {
+    session.clientProtected = true;
+    getSendDelay.mockResolvedValueOnce(10);
+    sendClientEncryptedMail.mockResolvedValueOnce(heldAnswer(10));
+    const result = composeTo(true);
+    await act(() => result.current.sendComposeEmail());
+    const request = sendClientEncryptedMail.mock.calls[0][0];
+    expect(request.sendDelay).toBe(true);
+    expect(request.sendAt).toBeUndefined();
+    expect(request.draftCopy).toBe("draft-ciphertext");
+    expect(buildEncryptedDeliveries.mock.calls[0][0].date).toBeUndefined();
+    expect(buildEncryptedDraft.mock.calls[0][0].date).toBeUndefined();
+    await act(() => result.current.cancelHeldSend());
+    expect(result.current.composeEncrypt).toBe(true);
+  });
+
+  it("says it is too late when release already started", async () => {
+    session.clientProtected = false;
+    getSendDelay.mockResolvedValueOnce(10);
+    postJSON.mockResolvedValueOnce(heldAnswer(10));
+    cancelScheduled.mockRejectedValueOnce(new HttpError("request failed: 409", 409, {}));
+    const result = composeTo(false);
+    await act(() => result.current.sendComposeEmail());
+    await act(() => result.current.cancelHeldSend());
+    expect(result.current.composeHeld?.late).toBe(true);
+    expect(result.current.composeOpen).toBe(false);
+  });
+
+  it("sends nothing when the delay cannot be read", async () => {
+    session.clientProtected = false;
+    getSendDelay.mockRejectedValueOnce(new Error("The Send delay setting could not be read. Reload and try again."));
+    const result = composeTo(false);
+    await act(() => result.current.sendComposeEmail());
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(result.current.composeError).toBe("Send failed: The Send delay setting could not be read. Reload and try again.");
   });
 });
 

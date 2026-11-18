@@ -3,6 +3,7 @@ import { ContactPickerModal } from "./ContactPickerModal";
 import { PgpUnlockDialog } from "./PgpUnlockDialog";
 import { RecipientField } from "./RecipientField";
 import { ScheduleDialog } from "./ScheduleDialog";
+import { SendHoldBar } from "./SendHoldBar";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import type { Compose } from "../hooks/useCompose";
 import { contactToToken } from "../lib/recipients";
@@ -24,7 +25,8 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
     composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
-    closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, drive
+    closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, drive,
+    composeHeld, cancelHeldSend, dismissHeldSend
   } = compose;
   const uploading = drive.driveUploads.length > 0;
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
@@ -280,6 +282,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
             </footer>
           </section>
       </dialog>
+      {composeHeld ? <SendHoldBar key={composeHeld.id} held={composeHeld} onCancel={() => void cancelHeldSend()} onDismiss={dismissHeldSend} /> : null}
       <ContactPickerModal
         isOpen={contactPickerOpen}
         onClose={() => setContactPickerOpen(false)}

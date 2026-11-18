@@ -88,7 +88,7 @@ lost.
 
 - Send delay (Settings → Mail → Send delay): Off by default, or 10, 20, 30, 60
   or 90 seconds. Send holds the message on the server for that long, and
-  compose shows "Sending in Ns" with **Cancel sending**, which returns it to
+  the web app shows "Sending in Ns" with **Cancel sending**, which returns it to
   Drafts uncharged to the sending quota. Built on scheduled send, so the hold
   survives a closed tab or a restart. API: `GET|PUT /api/mail/send-delay` and
   opt-in `sendDelay` on the send routes; clients that do not send it are
