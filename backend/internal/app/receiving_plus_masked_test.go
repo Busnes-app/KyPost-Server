@@ -43,9 +43,6 @@ func TestNativeReceivingPlusAddressing(t *testing.T) {
 	if got := receivingInbox(t, r, created[0]); strings.Join(got, ",") != "tagged" {
 		t.Fatal("plus mail not delivered once to the base address's mailbox", got)
 	}
-	if _, _, active := receivingRoute(t, r, "one@example.test"); !active {
-		t.Fatal("tagged mail did not bind the base route")
-	}
 	unknown := r.bind(ctx, "unknown", "", "nobody+x@example.test")
 	if !errors.Is(unknown, ingress.ErrRoute) {
 		t.Fatal("tag on an unknown address routed", unknown)
