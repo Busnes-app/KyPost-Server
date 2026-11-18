@@ -86,6 +86,15 @@ lost.
 
 ### Added
 
+- Send delay (Settings → Mail → Send delay): Off by default, or 10, 20, 30, 60
+  or 90 seconds. Send holds the message on the server for that long, and
+  compose shows "Sending in Ns" with **Cancel sending**, which returns it to
+  Drafts uncharged to the sending quota. Built on scheduled send, so the hold
+  survives a closed tab or a restart. API: `GET|PUT /api/mail/send-delay` and
+  opt-in `sendDelay` on the send routes; clients that do not send it are
+  unchanged. Scheduled mail is now released within 5 seconds of its time
+  (was 30).
+
 - Open mail attachments in Euro-Office, like Outlook on the web: a received
   docx, xlsx, pptx, odt, ods, odp, csv or pdf attachment whose type matches its
   name has **Open** (read-only, through a 24-hour KyDrive viewing copy only the

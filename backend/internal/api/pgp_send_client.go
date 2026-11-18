@@ -77,7 +77,11 @@ type clientEncryptedSendRequest struct {
 	// if it cannot go out.
 	SendAt    string `json:"sendAt,omitempty"`
 	DraftCopy string `json:"draftCopy,omitempty"`
+	// SendDelay asks for the user's Send delay, held like a scheduled send
+	// but dated when Send was pressed; it needs DraftCopy too.
+	SendDelay bool `json:"sendDelay,omitempty"`
 	sendAt    time.Time
+	delayed   bool
 	// ReplyToMessageID and ReplyToMailbox thread a reply exactly as on
 	// /api/mail/send: the server reads the original and adds the outer
 	// In-Reply-To and References to every delivery and the Sent copy.
@@ -189,8 +193,16 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 			req.SentCopy = threaded
 		}
 	}
-	if req.SendAt != "" {
-		if msg := validateScheduledPGP(&req, time.Now()); msg != "" {
+	var delay time.Duration
+	if req.SendDelay && req.SendAt == "" {
+		var err error
+		if delay, err = s.sendDelay(ac.UserID); err != nil {
+			http.Error(w, "your send delay setting could not be read; nothing was sent", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	if req.SendAt != "" || delay > 0 {
+		if msg := validateScheduledPGP(&req, time.Now(), delay); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
@@ -382,12 +394,18 @@ func (s *Server) deliverIMAP(ctx context.Context, userID string, a smtpAccount, 
 	return failed, true, nil
 }
 
-// validateScheduledPGP checks a scheduled client-encrypted send and records its
-// time; it returns the refusal, or "" when the request can be scheduled.
-func validateScheduledPGP(req *clientEncryptedSendRequest, now time.Time) string {
-	at, err := parseSendAt(req.SendAt, now)
-	if err != nil {
-		return err.Error()
+// validateScheduledPGP checks a scheduled client-encrypted send, or one held
+// for delay, and records its time; it returns the refusal, or "" when the
+// request can be scheduled.
+func validateScheduledPGP(req *clientEncryptedSendRequest, now time.Time, delay time.Duration) string {
+	// A held send goes out after the delay but is dated now, when it was sent.
+	at, dated, wantDate := now.Add(delay), now, "the time it was sent"
+	if delay == 0 {
+		var err error
+		if at, err = parseSendAt(req.SendAt, now); err != nil {
+			return err.Error()
+		}
+		dated, wantDate = at, "the scheduled send time"
 	}
 	// A draft needs a To; Bcc-only mail could not be returned to Drafts.
 	if len(req.To) == 0 {
@@ -406,11 +424,11 @@ func validateScheduledPGP(req *clientEncryptedSendRequest, now time.Time) string
 			return fmt.Sprintf("delivery %d: %s", i, err)
 		}
 		date, err := mail.ParseDate(hdr.Get("Date"))
-		if err != nil || date.Sub(at).Abs() > time.Minute {
-			return fmt.Sprintf("delivery %d: Date must be the scheduled send time", i)
+		if err != nil || date.Sub(dated).Abs() > time.Minute {
+			return fmt.Sprintf("delivery %d: Date must be %s", i, wantDate)
 		}
 	}
-	req.sendAt = at
+	req.sendAt, req.delayed = at, delay > 0
 	return ""
 }
 

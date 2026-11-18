@@ -811,6 +811,8 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mail/send-as/{id}/confirm", s.withAuth(s.handleSendAsConfirm))
 	mux.HandleFunc("GET /api/mail/signatures", s.withMailAuth(s.handleSignatures))
 	mux.HandleFunc("PUT /api/mail/signatures", s.withAuth(s.handleSignatures))
+	mux.HandleFunc("GET /api/mail/send-delay", s.withMailAuth(s.handleSendDelay))
+	mux.HandleFunc("PUT /api/mail/send-delay", s.withAuth(s.handleSendDelay))
 	mux.HandleFunc("GET /api/mail/out-of-office", s.withMailAuth(s.handleOutOfOffice))
 	mux.HandleFunc("PUT /api/mail/out-of-office", s.withAuth(s.handleOutOfOffice))
 	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.withMailbox(s.handleMailAttachmentList)))
@@ -1527,6 +1529,9 @@ type mailRequest struct {
 	CalendarReply    []byte
 	// SendAt, when set, schedules the send instead (send only; drafts ignore it).
 	SendAt time.Time
+	// SendDelay asks for the user's Send delay; a client that never sets it
+	// keeps sending at once. Delayed is set when the hold applies.
+	SendDelay, Delayed bool
 }
 
 // Size limits for one outgoing message.

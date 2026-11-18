@@ -8,8 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +30,13 @@ import (
 )
 
 const (
-	maxScheduledPending    = 50
-	scheduledMinLead       = time.Minute
-	scheduledMaxLead       = 366 * 24 * time.Hour
-	scheduledRetryWindow   = time.Hour
-	scheduledRetryDelay    = 5 * time.Minute
-	scheduledSweepInterval = 30 * time.Second
+	maxScheduledPending  = 50
+	scheduledMinLead     = time.Minute
+	scheduledMaxLead     = 366 * 24 * time.Hour
+	scheduledRetryWindow = time.Hour
+	scheduledRetryDelay  = 5 * time.Minute
+	// Short enough that a Send delay ends close to its countdown.
+	scheduledSweepInterval = 5 * time.Second
 	scheduledRetention     = 30 * 24 * time.Hour
 	// One user's pending sealed total, so scheduled mail cannot become
 	// unbounded storage outside every quota.
@@ -77,6 +80,8 @@ type scheduledJob struct {
 	Username, RequestedFrom string
 	Sent                    *imapadapter.DraftMessage
 	Draft                   imapadapter.DraftMessage
+	// Delayed marks a Send delay hold rather than a chosen send time.
+	Delayed bool
 }
 
 // scheduledSummary is what the owner sees in the list: no more than the
@@ -84,6 +89,57 @@ type scheduledJob struct {
 type scheduledSummary struct {
 	Subject string   `json:"subject"`
 	To      []string `json:"to"`
+	Delayed bool     `json:"delayed,omitempty"`
+}
+
+// sendDelayChoices are the Send delay settings in seconds; 0 is Off.
+var sendDelayChoices = []int{0, 10, 20, 30, 60, 90}
+
+// sendDelay reads the user's Send delay. An unreadable setting is an error,
+// never Off: someone who chose a delay must not get an immediate send.
+func (s *Server) sendDelay(userID string) (time.Duration, error) {
+	settings, err := config.LoadUserSettings(s.userSettingsPath(userID))
+	if err != nil {
+		return 0, err
+	}
+	if !slices.Contains(sendDelayChoices, settings.SendDelay) {
+		return 0, errors.New("send delay setting is not one of the choices")
+	}
+	return time.Duration(settings.SendDelay) * time.Second, nil
+}
+
+// handleSendDelay reads (any mail client) or sets (web session) the caller's
+// Send delay, {"seconds": 0|10|20|30|60|90}.
+func (s *Server) handleSendDelay(w http.ResponseWriter, r *http.Request) {
+	ac, ok := authFromContext(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if r.Method == http.MethodPut {
+		var req struct {
+			Seconds int `json:"seconds"`
+		}
+		dec := json.NewDecoder(io.LimitReader(r.Body, 1<<10))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil || !slices.Contains(sendDelayChoices, req.Seconds) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "send delay must be off, or 10, 20, 30, 60 or 90 seconds"})
+			return
+		}
+		if err := config.UpdateUserSettings(s.userSettingsPath(ac.UserID), func(settings *config.UserSettings) error {
+			settings.SendDelay = req.Seconds
+			return nil
+		}); err != nil {
+			http.Error(w, "failed to save the send delay", http.StatusInternalServerError)
+			return
+		}
+	}
+	delay, err := s.sendDelay(ac.UserID)
+	if err != nil {
+		http.Error(w, "failed to read the send delay", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"seconds": int(delay / time.Second)})
 }
 
 // parseSendAt reads an optional RFC 3339 sendAt; empty means send now.
@@ -167,15 +223,15 @@ func scheduledDraft(w http.ResponseWriter, req mailRequest, u users.User, encryp
 	return imapadapter.DraftMessage{To: req.To, CC: req.CC, BCC: req.BCC, Subject: req.Subject, Body: req.Body, Mode: req.Mode, Attachments: req.Attachments}, true
 }
 
-// scheduleClientPGP freezes a browser-encrypted send; its draft is the
-// browser's draftCopy.
+// scheduleClientPGP freezes a browser-encrypted send, or holds it for the
+// Send delay; its draft is the browser's draftCopy.
 func (s *Server) scheduleClientPGP(w http.ResponseWriter, r *http.Request, ac AuthContext, u users.User, req clientEncryptedSendRequest, native bool, from, username string, deliveries []mailbox.OutboundDelivery, nativeSent []byte, sent *imapadapter.DraftMessage) {
 	job, ok := outboundJob(w, ac, u, from, deliveries, nativeSent, true, req.MaterialGeneration, 0)
 	if !ok {
 		return
 	}
 	draft := imapadapter.DraftMessage{To: req.To, Subject: pgpmail.OuterPlaceholderSubject, Raw: []byte(strings.TrimSpace(req.DraftCopy))}
-	s.scheduleSend(w, r, ac, u, req.sendAt, scheduledJob{Native: native, Job: job, Username: username, RequestedFrom: req.From, Sent: sent, Draft: draft}, pgpmail.OuterPlaceholderSubject, req.To)
+	s.scheduleSend(w, r, ac, u, req.sendAt, scheduledJob{Native: native, Job: job, Username: username, RequestedFrom: req.From, Sent: sent, Draft: draft, Delayed: req.delayed}, pgpmail.OuterPlaceholderSubject, req.To)
 }
 
 // scheduleSend seals j and stores it to go out at sendAt.
@@ -202,7 +258,7 @@ func (s *Server) scheduleSend(w http.ResponseWriter, r *http.Request, ac AuthCon
 		j.Job.FromGeneration = fromAddress.Generation
 	}
 	sealed, err := sealScheduled(key, j)
-	summary, summaryErr := sealScheduled(key, scheduledSummary{Subject: subject, To: to})
+	summary, summaryErr := sealScheduled(key, scheduledSummary{Subject: subject, To: to, Delayed: j.Delayed})
 	if err != nil || summaryErr != nil {
 		http.Error(w, "scheduled send unavailable; send now or retry later", http.StatusServiceUnavailable)
 		return
@@ -224,7 +280,7 @@ func (s *Server) scheduleSend(w http.ResponseWriter, r *http.Request, ac AuthCon
 		http.Error(w, "scheduled send unavailable; send now or retry later", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"scheduled": true, "id": id, "sendAt": sendAt.UTC().Format(time.RFC3339)})
+	writeJSON(w, http.StatusAccepted, map[string]any{"scheduled": true, "id": id, "sendAt": sendAt.UTC().Format(time.RFC3339), "delayed": j.Delayed})
 }
 
 // handleScheduledList lists the selected mailbox's scheduled mail.
@@ -249,7 +305,7 @@ func (s *Server) handleScheduledList(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		var sum scheduledSummary
 		_ = openScheduled(key, row.Summary, &sum)
-		out = append(out, map[string]any{"id": row.ID, "status": row.Status, "reason": row.Reason, "sendAt": time.Unix(row.SendAt, 0).UTC().Format(time.RFC3339), "subject": sum.Subject, "to": sum.To})
+		out = append(out, map[string]any{"id": row.ID, "status": row.Status, "reason": row.Reason, "sendAt": time.Unix(row.SendAt, 0).UTC().Format(time.RFC3339), "subject": sum.Subject, "to": sum.To, "delayed": sum.Delayed})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"scheduled": out})
 }
@@ -442,6 +498,11 @@ func (s *Server) dispatchScheduled(ctx context.Context, j scheduledJob, now func
 		err := s.nativeOutbound().Queue(ctx, j.Mailbox, j.ID, j.Job)
 		switch {
 		case err == nil:
+			if j.Delayed {
+				// A held send is due now, not at the outbox worker's next pass;
+				// that pass retries whatever this attempt leaves queued.
+				_ = s.nativeOutbound().Recover(ctx, j.Mailbox, j.ID)
+			}
 			return "queued", "handed to the outbox for delivery"
 		case errors.Is(err, sso.ErrNativeOutboundStale):
 			return state.ScheduledReturning, reasonSender

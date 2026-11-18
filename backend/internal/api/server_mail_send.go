@@ -98,7 +98,8 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		CalendarReply *struct {
 			ICS string `json:"ics"`
 		} `json:"calendarReply"`
-		SendAt string `json:"sendAt"`
+		SendAt    string `json:"sendAt"`
+		SendDelay bool   `json:"sendDelay"`
 	}
 	// Check the declared size before reading, so an oversized send says so.
 	// Without this the LimitReader below just truncates the JSON mid-value and
@@ -190,6 +191,7 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		ReplyToMessageID:    strings.TrimSpace(raw.ReplyToMessageID),
 		ReplyToMailbox:      strings.TrimSpace(raw.ReplyToMailbox),
 		SendAt:              sendAt,
+		SendDelay:           raw.SendDelay,
 	}, "", nil
 }
 
@@ -594,6 +596,19 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
+	// The Send delay holds the message as a scheduled one going out at the end
+	// of the delay. A calendar reply answers now and a one-time link is mailed
+	// at send time, so neither is held; a chosen sendAt is never delayed more.
+	if req.SendDelay && req.SendAt.IsZero() && req.CalendarReply == nil && !(req.Encrypt && req.AllowPickupFallback) {
+		delay, err := s.sendDelay(ac.UserID)
+		if err != nil {
+			http.Error(w, "your send delay setting could not be read; nothing was sent", http.StatusServiceUnavailable)
+			return
+		}
+		if delay > 0 {
+			req.SendAt, req.Delayed = time.Now().Add(delay), true
+		}
+	}
 	a, native, admissionErr := s.nativeMailboxAssignment(r.Context(), ac.UserID, ac.Mailbox)
 	if admissionErr != nil {
 		http.Error(w, "native mailbox unavailable; preserve mail and repair account authority", http.StatusServiceUnavailable)
@@ -661,9 +676,14 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A scheduled message is dated when it goes out; Stamp keeps a set Date.
+	// A scheduled message is dated when it goes out, a held one when Send was
+	// pressed; Stamp keeps a set Date and dates a zero one now.
+	date := req.SendAt
+	if req.Delayed {
+		date = time.Time{}
+	}
 	msg, sentCopySource, recipients := composeSend(mailmsg.Message{
-		Date:        req.SendAt,
+		Date:        date,
 		From:        headerFrom,
 		To:          toList,
 		CC:          ccList,
@@ -737,7 +757,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		j := scheduledJob{Native: native, Job: job, Username: accountAddr, RequestedFrom: req.From, Draft: draft}
+		j := scheduledJob{Native: native, Job: job, Username: accountAddr, RequestedFrom: req.From, Draft: draft, Delayed: req.Delayed}
 		if sent, save := sentCopyDraftForSend(toList, ccList, bccList, sentCopy); save {
 			j.Sent = &sent
 		}
@@ -821,7 +841,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	}
 	// The pickup fallback stores plaintext and mails a link at send time;
 	// neither belongs in a frozen job.
-	if !req.SendAt.IsZero() && len(plan.withoutKeyEmails) > 0 {
+	// A held send falls through to the ordinary refusals below, whose retry
+	// with allowPickupFallback is not held.
+	if !req.SendAt.IsZero() && !req.Delayed && len(plan.withoutKeyEmails) > 0 {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "scheduled mail cannot use one-time links; add recipient PGP keys or send it now", "pickupFallbackAvailable": false})
 		return
 	}
