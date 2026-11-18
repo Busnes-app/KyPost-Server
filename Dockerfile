@@ -33,7 +33,7 @@ RUN cd backend && CGO_ENABLED=0 go build -trimpath \
 	-ldflags="-X github.com/Busnes-app/kypost-server/backend/internal/appversion.release=${VERSION}" \
 	-o /app/bin/kypost-server ./cmd/main.go
 
-FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS frontend-builder
+FROM node:26.13.1-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS frontend-builder
 WORKDIR /frontend
 # `npm ci` and a required, non-globbed lockfile. `npm install` re-resolves
 # every caret range at build time, so two builds of the same commit can ship
