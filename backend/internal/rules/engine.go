@@ -3,6 +3,7 @@ package rules
 import (
 	"context"
 	"fmt"
+	"net/mail"
 	"net/textproto"
 	"regexp"
 	"sort"
@@ -257,6 +258,19 @@ func conditionMatches(ctx context.Context, c Condition, input EvalInput) (matche
 				break
 			}
 		}
+	} else if c.Part != "" {
+		result = false
+		for _, part := range addressParts(fieldValue(input, c.Field), c.Part) {
+			matched, ok := matchesValue(c.Comparator, part, c.Value)
+			if !ok {
+				evaluable = false
+				break
+			}
+			if matched {
+				result = true
+				break
+			}
+		}
 	} else {
 		result, evaluable = matchesValue(c.Comparator, fieldValue(input, c.Field), c.Value)
 	}
@@ -264,6 +278,28 @@ func conditionMatches(ctx context.Context, c Condition, input EvalInput) (matche
 		return false, false
 	}
 	return result != c.Negate, true
+}
+
+// addressParts lists one RFC 5233 part of each address in a header value:
+// "user" is the local part before the first +, "detail" what follows it
+// (addresses without a + have no detail). An unparseable list has none.
+func addressParts(value, part string) []string {
+	list, err := mail.ParseAddressList(value)
+	if err != nil {
+		return nil
+	}
+	parts := []string{}
+	for _, a := range list {
+		local := a.Address[:max(strings.LastIndexByte(a.Address, '@'), 0)]
+		user, detail, tagged := strings.Cut(local, "+")
+		switch {
+		case part == "user":
+			parts = append(parts, user)
+		case tagged:
+			parts = append(parts, detail)
+		}
+	}
+	return parts
 }
 
 func fieldValue(input EvalInput, field string) string {

@@ -322,3 +322,27 @@ func TestOutOfOfficeLocalNeedsEstablishedDomain(t *testing.T) {
 		})
 	}
 }
+
+// Mail to a masked address never gets an automatic reply (it would come from
+// the account address); a plus tag on an own address still does.
+func TestOOOMaskedAndPlusAddresses(t *testing.T) {
+	own := map[string]bool{"bob@x.test": true}
+	settings := config.UserSettings{MaskedAddresses: []config.MaskedAddress{{Address: "quiet.otter.4821@x.test", State: "active"}}}
+	nativeOwn(own, map[string]sso.NativeAddress{
+		"quiet.otter.4821@x.test": {Mailbox: "m", State: "active"},
+		"sales@x.test":            {Mailbox: "m", State: "active"},
+		"paused@x.test":           {Mailbox: "m", State: "reserved"},
+		"theirs@x.test":           {Mailbox: "other", State: "active"},
+	}, "m", settings)
+	if len(own) != 2 || !own["sales@x.test"] {
+		t.Fatalf("own %v", own)
+	}
+	masked := strings.Replace(oooBase, "To: bob@x.test", "To: quiet.otter.4821@x.test", 1)
+	if _, reason := oooEligible(oooHeader(t, masked), own); reason != "not_addressed" {
+		t.Fatal("masked address answered", reason)
+	}
+	tagged := strings.Replace(oooBase, "To: bob@x.test", "To: Bob+Lists@x.test", 1)
+	if _, reason := oooEligible(oooHeader(t, tagged), own); reason != "" {
+		t.Fatal("plus address not answered", reason)
+	}
+}

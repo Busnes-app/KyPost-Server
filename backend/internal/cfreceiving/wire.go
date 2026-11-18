@@ -90,7 +90,8 @@ func (m Material) signed(field, context string, payload []byte) ([]byte, error) 
 }
 
 // Route is one published address with the owner it was frozen to. Only
-// address, generation and maxBytes reach the Worker.
+// address, generation, maxBytes and noPlus reach the Worker. NoPlus refuses
+// plus-tagged mail to the address (the owner turned plus addressing off).
 type Route struct {
 	Address    string `json:"address"`
 	Generation int64  `json:"generation"`
@@ -98,6 +99,7 @@ type Route struct {
 	Issuer     string `json:"issuer"`
 	Subject    string `json:"subject"`
 	Mailbox    string `json:"mailbox"`
+	NoPlus     bool   `json:"noPlus,omitempty"`
 }
 
 // Block is a blocked sender address or domain; Until nil never expires.
@@ -176,10 +178,13 @@ func ValidBlock(b Block) bool {
 	return (b.Address == "") != (b.Domain == "") && value == LowerASCII(value) && sender != "" && ValidSender(sender) && (b.Until == nil || *b.Until >= 1)
 }
 
+// wireRoute omits noPlus unless set, so a table without a plus refusal stays
+// readable by a Worker that predates plus addressing.
 type wireRoute struct {
 	Address    string `json:"address"`
 	Generation int64  `json:"generation"`
 	MaxBytes   int64  `json:"maxBytes"`
+	NoPlus     bool   `json:"noPlus,omitempty"`
 }
 
 type wireTable struct {
@@ -197,7 +202,7 @@ func newWireTable(revision, issuedAt int64, routes []Route) (wireTable, error) {
 			return table, errors.New("invalid route for the Worker")
 		}
 		seen[r.Address] = true
-		table.Routes = append(table.Routes, wireRoute{r.Address, r.Generation, r.MaxBytes})
+		table.Routes = append(table.Routes, wireRoute{r.Address, r.Generation, r.MaxBytes, r.NoPlus})
 	}
 	if len(routes) > maxRoutes {
 		return table, errors.New("routing table exceeds the Worker's limits")

@@ -182,9 +182,11 @@ func (s *LifecycleStore) nativeMailboxListing(id string, pending error) (NativeM
 	return NativeMailbox{}, ErrNativeProvisioning
 }
 
+// canonicalNativeAddress admits an address to issue: never one with a "+",
+// which plus addressing reads as a tag (PlusBase).
 func canonicalNativeAddress(address string) (string, error) {
 	address, err := nativeAddress(address, AddressDomain(address))
-	if err != nil || !nativeDomain(AddressDomain(address)) {
+	if err != nil || !nativeDomain(AddressDomain(address)) || PlusBase(address) != address {
 		return "", ErrNativeAddressInvalid
 	}
 	return address, nil

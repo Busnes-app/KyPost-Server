@@ -120,6 +120,7 @@ func (s *Server) StartNativeProvisioning(ctx context.Context) {
 			if err := s.ssoLifecycle.ReconcileNativeAddresses(ctx); err != nil {
 				s.logger.Error("native address reconcile pending", "error", err.Error())
 			}
+			s.sweepMaskedAddresses(ctx)
 		}
 		if settings.Enabled {
 			subjects, err := s.ssoLifecycle.NativeDirectoryRepairSubjects(ctx, settings.IssuerURL, s.users)

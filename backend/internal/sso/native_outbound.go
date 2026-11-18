@@ -122,7 +122,8 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 					if a, err = life.admitNativeMailbox(ctx, r, s.StateRoot, current.Issuer, u, mailboxID, nil); err != nil {
 						return err
 					}
-					x, ok, err := r.Address(from)
+					// A plus-tagged From sends as its base address's record.
+					x, ok, err := r.Address(PlusBase(from))
 					if err != nil {
 						return err
 					}

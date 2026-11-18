@@ -176,8 +176,12 @@ func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
 
 // AddNativeAlias gives an everyday identity's mailbox a new address. Records
 // are never deleted, so an address the ledger has ever held is refused; a
-// released one comes back only through ReassignNativeAddress.
+// released one comes back only through ReassignNativeAddress. A local part
+// with a "+" is never issued: plus addressing reads it as a tag.
 func (s *LifecycleStore) AddNativeAlias(ctx context.Context, stateRoot, mailboxID, address string) (NativeAddress, error) {
+	if strings.Contains(address, "@") && PlusBase(address) != address {
+		return NativeAddress{}, ErrNativeAddressInvalid
+	}
 	return s.changeNativeAddress(ctx, stateRoot, address, func(f nativeAssignments, domains NativeDomainSet, directory map[string]DirectoryState, x nativeLedgerAddress, exists bool) (nativeLedgerAddress, error) {
 		if exists {
 			return x, ErrNativeAddressConflict

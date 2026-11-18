@@ -495,3 +495,27 @@ test("sender blocks match KyPost's Go matcher (blocks.json)", async () => {
     assert.deepEqual(m.rejected, {blocked: ["Sender blocked"], allowed: [], refused: ["Address refused"]}[result], sender);
   }
 });
+
+test("plus addressing routes the part before + and freezes it; noPlus refuses tags", async () => {
+  const f = await fixture();
+  const routes = [{address: "one@example.test", generation: 3, maxBytes: 1024}, {address: "two@other.test", generation: 1, maxBytes: 64, noPlus: true}];
+  assert.equal(await install(f, table({routes})), 204);
+  const tagged = mail({to: "One+Receipts+2@example.test"});
+  await worker.email(tagged, f.env);
+  assert.deepEqual(tagged.rejected, []);
+  const [key] = inbox(f.env);
+  const got = await call(f.env, "GET", `/messages/${key.slice(6)}`);
+  assert.equal(JSON.parse(Buffer.from(got.headers.get("X-KyPost-Envelope"), "base64url").toString()).recipient, "one@example.test");
+  for (const to of ["two+x@other.test", "+x@example.test", "one+x@other.test"]) {
+    const refused = mail({to});
+    await worker.email(refused, f.env);
+    assert.deepEqual(refused.rejected, ["Address refused"], to);
+  }
+  const plain = mail({to: "two@other.test", rawSize: 10, raw: new Blob([enc.encode("Subject: x")]).stream()});
+  await worker.email(plain, f.env);
+  assert.deepEqual(plain.rejected, []);
+  // noPlus is accepted only as true, so older tables stay valid and nothing else slips in.
+  for (const noPlus of [false, 1, "true"]) {
+    assert.equal(await install(f, table({revision: Date.now() + 1, routes: [{address: "one@example.test", generation: 3, maxBytes: 1024, noPlus}]})), 400, String(noPlus));
+  }
+});

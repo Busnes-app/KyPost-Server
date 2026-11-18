@@ -368,7 +368,9 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 	}
 	byMailbox := map[string][]string{}
 	for address, x := range addresses {
-		if x.State == "active" && set.Domains[sso.AddressDomain(address)].Established && cfreceiving.ValidAddress(address) {
+		// A ledger address holding a + is unreachable: the Worker routes the
+		// part before it, as bind does.
+		if x.State == "active" && set.Domains[sso.AddressDomain(address)].Established && cfreceiving.ValidAddress(address) && sso.PlusBase(address) == address {
 			byMailbox[x.Mailbox] = append(byMailbox[x.Mailbox], address)
 		}
 	}
@@ -395,14 +397,23 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 				}
 				// A failed read publishes no fresh route for this mailbox, so
 				// all keep their previous one.
+				settings, err := config.LoadUserSettings(config.UserSettingsPath(r.configDir, a.UserID()))
+				if err != nil {
+					return err
+				}
 				admitted := []cfreceiving.Route{}
 				for _, address := range fresh {
 					x, err := r.life.NativeAddress(address)
 					if err != nil {
 						return err
 					}
+					// A paused or expired masked address keeps no previous route either.
+					if settings.RefusesAddress(address, false, l.now()) {
+						added[address] = true
+						continue
+					}
 					if x.State == "active" && x.Mailbox == id {
-						admitted = append(admitted, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: min(receivingLimits.MessageBytes, a.Limits.MessageBytes, cfreceiving.MaxMessageBytes), Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox})
+						admitted = append(admitted, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: min(receivingLimits.MessageBytes, a.Limits.MessageBytes, cfreceiving.MaxMessageBytes), Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox, NoPlus: settings.RefusePlusAddresses})
 					}
 				}
 				for _, route := range admitted {

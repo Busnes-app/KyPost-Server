@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Hosted mailboxes get plus addressing (`you+tag@domain` reaches `you@domain`, replies send from the tagged address, rules can test the tag) and user-made masked and disposable addresses (Settings → Mail → Masked & plus addresses). Masked addresses stay off until an administrator ticks a domain under Admin → Server → Mail addresses. Cloudflare receiving operators redeploy `receiving-worker/continuous.mjs` for plus addressing; until then tagged mail is refused there as before, and a user turning plus addressing off makes the older Worker refuse new routing tables. No data migration.
+
 - Keep SQLite `v1.62.0` with its upstream-required libc `v1.80.1` and memory `v1.12.1`; defer independent updates of those runtime dependencies.
 
 - Prepare application version `0.6.1` (from `0.6.0`) for the compatible dependency refresh. Rebuild or install the updated application; this version bump requires no additional data, account, key or configuration migration.

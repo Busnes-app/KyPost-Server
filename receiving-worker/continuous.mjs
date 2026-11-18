@@ -137,7 +137,9 @@ export function validTable(t) {
       !Array.isArray(t.blockedSenders) || t.blockedSenders.length > limits.blocks) return false;
   const seen = new Set();
   for (const r of t.routes) {
-    if (!exactKeys(r, ["address", "generation", "maxBytes"]) || !addressOk(r.address) || seen.has(r.address) ||
+    // noPlus appears only as true: a table without it still suits an older Worker.
+    if (!(exactKeys(r, ["address", "generation", "maxBytes"]) || exactKeys(r, ["address", "generation", "maxBytes", "noPlus"]) && r.noPlus === true) ||
+        !addressOk(r.address) || seen.has(r.address) ||
         !isInt(r.generation) || !isInt(r.maxBytes) || r.maxBytes > limits.messageBytes) return false;
     seen.add(r.address);
   }
@@ -288,13 +290,17 @@ export default {
     const now = Date.now();
     if (sender && blocked(table, sender, now)) { message.setReject("Sender blocked"); return; }
     if (now - table.issuedAt > limits.maxAgeMs) { message.setReject("Routing unavailable"); return; }
-    const route = table.routes.find(r => r.address === recipient);
+    // Plus addressing: the part before the first + alone selects the route,
+    // which is what the envelope freezes; a noPlus route refuses tagged mail.
+    const sign = recipient.lastIndexOf("@"), plus = recipient.slice(0, sign).indexOf("+");
+    const target = plus < 0 ? recipient : recipient.slice(0, plus) + recipient.slice(sign);
+    const route = table.routes.find(r => r.address === target && (target === recipient || !r.noPlus));
     if (!route) { message.setReject("Address refused"); return; }
     if (!(message.rawSize <= route.maxBytes)) { message.setReject("Message too large"); return; }
     const raw = await readBounded(message.raw, route.maxBytes);
     if (!raw || raw.byteLength === 0) { message.setReject(raw ? "Empty message" : "Message too large"); return; }
     const id = uuidv7(now), digest = hex(await sha256(raw));
-    const envelope = JSON.stringify({id, sender, recipient, generation: route.generation,
+    const envelope = JSON.stringify({id, sender, recipient: route.address, generation: route.generation,
       tableRevision: table.revision, capturedAt: now, size: raw.byteLength, digest});
     if (enc.encode(envelope).length > limits.envelopeBytes) { message.setReject("Address refused"); return; }
     const stored = await env.MAIL.put(INBOX + id, raw, {

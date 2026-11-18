@@ -97,7 +97,7 @@ drive reserve stops pickup until space is freed.
   tableRevision, capturedAt, size, digest}` to R2 key `inbox/<uuidv7>` with
   `If-None-Match: *`, awaited before success. Storage failure throws rather than
   rejecting (temporary-failure behaviour to be qualified).
-- **Routing table** `{revision, issuedAt, routes: [{address, generation, maxBytes}],
+- **Routing table** `{revision, issuedAt, routes: [{address, generation, maxBytes, noPlus?}],
   blockedSenders: [{address or domain, until}]}`,
   signed by KyPost with an Ed25519 key; the Worker holds only the public key.
   Revision is KyPost's millisecond clock; the Worker refuses revisions not greater
@@ -178,8 +178,11 @@ the verifier checks the bytes it received and no canonical JSON form exists.
 Both bodies are objects with exactly those two keys. Payload JSON has exactly the
 listed keys:
 
-- **table**: `{"revision", "issuedAt", "routes": [{"address", "generation", "maxBytes"}],
-  "blockedSenders": [{"address", "until"} | {"domain", "until"}]}`. `revision`,
+- **table**: `{"revision", "issuedAt", "routes": [{"address", "generation", "maxBytes", "noPlus"?}],
+  "blockedSenders": [{"address", "until"} | {"domain", "until"}]}`. `noPlus` is
+  present only as `true` (the owner refuses plus addresses), so a table without
+  it stays valid for a Worker that predates plus addressing; redeploy the Worker
+  before a user turns plus addressing off, or that table is refused. `revision`,
   `issuedAt`, `generation`: safe integers ≥ 1. `maxBytes`: 1 to 26214400. `until`:
   safe integer or `null` (no expiry). Route addresses are lowercase printable
   ASCII `local@domain` (internationalized domains as A-labels, `xn--…`), at most 254
@@ -206,7 +209,11 @@ senders at RCPT, so every sender either profile accepts can be blocked. `receivi
 fixture both sides test against. Read `routes.json` (absent → reject; storage error → throw); each isolate
 keeps the parsed table and revalidates it on every message with a conditional get on
 its etag, so a new table applies to the next message. Sender address or domain blocked with `until` null or in the future →
-reject. `now - issuedAt` over 14 days → reject. Recipient not in `routes` → reject.
+reject. `now - issuedAt` over 14 days → reject. Plus addressing: the recipient's part
+before the first `+` in the local part, with the domain, is the route address looked up
+(`one+tag@x` → `one@x`); a tagged recipient whose route has `noPlus` → reject. Route
+address not in `routes` → reject. The envelope `recipient` is the route address, so
+KyPost never sees the tag.
 Announced or actual size over the route's `maxBytes`, or empty → reject. None of these
 reads the body except the actual-size check. Otherwise put `inbox/<uuid>` with
 `If-None-Match: *`, the SHA-256 checksum and the envelope, awaited; a failed put or a

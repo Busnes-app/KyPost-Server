@@ -22,6 +22,9 @@ func (s *LifecycleStore) ReserveHRAddress(ctx context.Context, root, issuer, sub
 		return "", err
 	}
 	preferred = strings.ToLower(preferred)
+	if strings.Contains(preferred, "+") {
+		return "", ErrNativeProvisioning
+	}
 	if _, err := nativeAddress(preferred+"@"+domain, domain); err != nil {
 		return "", err
 	}

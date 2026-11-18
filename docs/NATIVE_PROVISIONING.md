@@ -425,6 +425,52 @@ recorded as `address_conflict`.
   monotonic. Roll back by restoring the pre-upgrade backup.
 - The recovery authority digest includes every address record.
 
+## Plus addressing and masked addresses
+
+- **Plus addressing** (RFC 5233). Receiving reads `local+tag@domain` as
+  `local@domain` (`sso.PlusBase`: the part before the first `+` alone decides,
+  so a tag never selects another address) for primaries, aliases and masked
+  addresses alike, and binds the delivery to that base address: routes,
+  bindings, import and quarantine never see the tag. Maddy `bind` does this
+  itself; the Cloudflare Worker routes the base address and freezes it in the
+  envelope (`docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md`). On by default; a user's
+  `refusePlusAddresses` setting (`PUT /api/addresses/plus`) refuses tagged mail
+  with the unknown-recipient answer (Maddy exit 1 / 550, Worker "Address
+  refused" through the route's `noPlus`). `/api/mail/send` and scheduled sends
+  accept `From: base+tag@` when the base is an owned active address and plus
+  addressing is on; the outbox fences it by the base address's generation.
+  New aliases, extra mailboxes and HR reservations refuse a local part holding
+  `+`; a ledger address that already holds one is unreachable and never
+  published to the Worker.
+- **Masked and disposable addresses** are ledger `alias` records on the user's
+  primary mailbox, made by its owner with `POST /api/addresses/masked` on a
+  domain the administrator listed (`masked_address_domains` in root `state.db`
+  meta, `PUT /api/admin/masked-domains`; none listed is off). The owner's
+  record (`maskedAddresses` in the user's `config.yaml`: note, state
+  `active|paused|deleted`, `expiresAt` for disposable) and the ledger together
+  decide: mail flows only while the record is live (active, not expired) and
+  the ledger address is `active`. Pause and delete reserve the ledger address
+  (the released-alias mechanism, generation + 1); resume reassigns it to the
+  same mailbox. The record closes before the ledger and opens after it, under
+  the user's settings lock (order settings → domains → directory), so a crash
+  between the two leaves mail refused. A record whose ledger address never
+  appeared, or whose disposable lifetime ended, becomes `deleted` in the API
+  worker's minute pass, which also reserves any non-active record's ledger
+  address. Both receiving profiles refuse a paused, expired or deleted address
+  exactly as an unknown one (same exit code and SMTP reply; the Worker table
+  simply omits it, with no fallback to an earlier route). A deleted address is
+  never reissued: the ledger never deletes records, and the administrator
+  release and reassign routes answer 409 for any address a user's record
+  holds. Limits: 100 not deleted per user, 20 created in any 24 hours.
+- **Sending as a masked address**: From and the envelope sender are the masked
+  address, the Message-ID domain is its domain, DKIM signs `d=` that domain
+  with no `i=`, and no Reply-To, Sender or Autocrypt header names the primary
+  (`TestMaskedSendLeaksNoPrimaryAddress`, `TestDKIMSignatureCarriesNoIdentity`).
+  Out-of-office never answers mail sent only to a masked address, since its
+  reply comes from the account address. The web client replies from the own
+  address (masked or plus-tagged) the message was sent to. Mail from masked
+  addresses counts toward the owner's sending quota.
+
 ## Extra mailboxes
 
 Administrators give an everyday identity further mailboxes beside the

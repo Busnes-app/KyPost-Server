@@ -53,6 +53,10 @@ type Condition struct {
 	// when Group is set.
 	Comparator string `json:"comparator,omitempty"`
 	Value      string `json:"value,omitempty"`
+	// Part tests one RFC 5233 subaddress part of each address in a from, to,
+	// cc or bcc field: "user" (before the first +) or "detail" (after it; an
+	// address without one never matches). Empty tests the whole field.
+	Part string `json:"part,omitempty"`
 }
 
 // Action is one effect to apply when a rule matches.
