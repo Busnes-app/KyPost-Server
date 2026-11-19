@@ -3,7 +3,8 @@ import { deleteJSON, getJSON, postJSON, toErrorMessage } from "../../api/client"
 import { getMailDefaults } from "../../api/mailDefaults";
 import type { IMAPConfigStatus, IMAPForm } from "../../pages/config/settings";
 
-export function EmailServer() {
+/** onSaved: called after the account is saved (encryption setup reloads its addresses). */
+export function EmailServer({ onSaved }: { onSaved?: () => void } = {}) {
   const [imapStatus, setImapStatus] = useState<IMAPConfigStatus | null>(null);
   const [imapForm, setImapForm] = useState<IMAPForm>({
     host: "",
@@ -56,6 +57,7 @@ export function EmailServer() {
       setImapStatus(result);
       setImapForm((prev) => ({ ...prev, password: "" }));
       setImapMessage("IMAP configuration saved.");
+      onSaved?.();
     } catch (error: unknown) {
       const message = toErrorMessage(error, "unknown error");
       setImapMessage(`Failed to save IMAP config: ${message}`);

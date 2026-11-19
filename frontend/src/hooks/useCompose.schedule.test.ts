@@ -36,11 +36,11 @@ vi.mock("../api/scheduled", () => ({
   cancelScheduled: (mailbox: string, id: string) => cancelScheduled(mailbox, id)
 }));
 
-const session: { clientProtected: boolean; custody?: string } = { clientProtected: false };
+const session: { clientProtected: boolean; custody?: string; locked?: boolean } = { clientProtected: false };
 vi.mock("../lib/pgpSession", () => ({
   accountAddress: () => "alice@example.com",
   isClientProtected: () => session.clientProtected,
-  needsUnlock: () => false,
+  needsUnlock: () => session.locked ?? false,
   pgpCustody: () => session.custody ?? (session.clientProtected ? "client" : "none"),
   pgpSessionState: () => ({ bootstrap: { keyring: { materialGeneration: 1 } } }),
   subscribePGPSession: () => () => {}
@@ -71,6 +71,7 @@ function deferred<T>() {
 
 afterEach(() => {
   session.custody = undefined;
+  session.locked = undefined;
   // Leftover one-shot answers must not leak into the next test.
   getSendDelay.mockReset().mockResolvedValue(0);
   cancelScheduled.mockReset().mockResolvedValue({ ok: true });
@@ -299,6 +300,37 @@ describe("send delay", () => {
     expect(body.sendDelay).toBeUndefined();
     expect(body.pgpDraft).toBeUndefined();
     expect(buildEncryptedDraft).not.toHaveBeenCalled();
+  });
+
+  it("with the key locked, shows only the unlock prompt and holds the send once unlocked", async () => {
+    session.clientProtected = false;
+    session.custody = "client";
+    session.locked = true;
+    getSendDelay.mockResolvedValue(10);
+    postJSON.mockResolvedValueOnce(heldAnswer(10));
+    const result = composeTo(false);
+    await act(() => result.current.sendComposeEmail());
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(result.current.composeUnlockOpen).toBe(true);
+    expect(result.current.composeError).toBe("");
+    session.locked = false;
+    act(() => result.current.settleSendAfterUnlock(true));
+    await waitFor(() => expect(result.current.composeHolds).toHaveLength(1));
+    expect((postJSON.mock.calls[0][1] as Record<string, unknown>).sendDelay).toBe(true);
+    expect(postJSON).toHaveBeenCalledTimes(1);
+    expect(result.current.composeError).toBe("");
+  });
+
+  it("a canceled unlock sends nothing and says so", async () => {
+    session.clientProtected = true;
+    session.locked = true;
+    getSendDelay.mockResolvedValue(10);
+    const result = composeTo(true);
+    await act(() => result.current.sendComposeEmail());
+    act(() => result.current.settleSendAfterUnlock(false));
+    expect(result.current.composeError).toBe("Not sent: your PGP key is still locked.");
+    act(() => result.current.settleSendAfterUnlock(true));
+    expect(sendClientEncryptedMail).not.toHaveBeenCalled();
   });
 
   it("sends nothing when the delay cannot be read", async () => {

@@ -74,6 +74,8 @@ export type MailKeysProps = {
   setRecoverySecret?: (secret: string) => void;
   /** First sign-in setup: preselect "Encrypt incoming mail". */
   incomingDefaultOn?: boolean;
+  /** Called after the incoming encryption choice is saved. */
+  onIncomingSaved?: () => void;
 };
 
 export function MailKeys({
@@ -86,7 +88,8 @@ export function MailKeys({
   setRecoveryBackup = noop,
   recoverySecret = "",
   setRecoverySecret = noop,
-  incomingDefaultOn = false
+  incomingDefaultOn = false,
+  onIncomingSaved
 }: MailKeysProps = {}) {
   const { userId, hasPassword, ssoSession } = useAuth();
   const [askPassword, passwordPrompt] = usePasswordPrompt();
@@ -445,6 +448,10 @@ export function MailKeys({
         await putRecoveryEnvelope(recoveryBackup.envelope, password, recoveryBackup.fingerprint, preparedRecovery.expectedRevision);
       }
       await loadPGPSession();
+      if (!mounted.current) return;
+      // Stored: the one-time secret box has done its job.
+      setRecoverySecret("");
+      setRecoveryBackup(null);
       setPgpStatus("Recovery copy saved on the server. Keep the file and secret for server loss or identity deletion.");
     } catch (err) {
       setPgpStatus(`Server recovery storage could not be confirmed: ${toErrorMessage(err, "try again")}. Keep this file and secret; the server may already hold the new copy.`);
@@ -703,7 +710,6 @@ export function MailKeys({
   return (
     <>
       {passwordPrompt}
-      <IncomingEncryption identity={incomingIdentity} clientProtected={pgpSession?.bootstrap?.protection === "client"} defaultOn={incomingDefaultOn} />
       <div
         className={`sec-card ${
           keyCustody === "client" ? "sec-card-on" : keyCustody === "server" ? "sec-card-risk" : ""
@@ -1041,7 +1047,7 @@ export function MailKeys({
                     Copy secret
                   </button>
                   {recoveryBackup && pgpSession?.bootstrap?.protection === "client" ? (
-                    <button type="button" disabled={pgpBusy} onClick={() => void handleStoreRecoveryBackup()}>
+                    <button type="button" className="sec-action-primary" disabled={pgpBusy} onClick={() => void handleStoreRecoveryBackup()}>
                       I saved the secret — store server copy
                     </button>
                   ) : null}
@@ -1049,7 +1055,7 @@ export function MailKeys({
                     try { saveRecoveryBackup(recoveryBackup, recoveryBackup.fingerprint, recoverySecret, preparedRecovery.expectedRevision); }
                     catch (err) { setPgpStatus(`Download failed: ${toErrorMessage(err, "try again")}`); }
                   }}>Download file again</button> : null}
-                  <button type="button" disabled={pgpBusy} onClick={() => { setRecoverySecret(""); setRecoveryBackup(null); }}>I saved the file and secret</button>
+                  <button type="button" className="sec-action-quiet" disabled={pgpBusy} onClick={() => { setRecoverySecret(""); setRecoveryBackup(null); }}>Close without a server copy</button>
                 </div>
               </div>
             ) : null}
@@ -1211,6 +1217,8 @@ export function MailKeys({
           </div>
         ) : null}
       </div>
+      {/* After the key: incoming encryption needs one. */}
+      <IncomingEncryption identity={incomingIdentity} clientProtected={pgpSession?.bootstrap?.protection === "client"} defaultOn={incomingDefaultOn} onSaved={onIncomingSaved} />
     </>
   );
 }
