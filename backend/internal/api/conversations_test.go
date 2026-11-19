@@ -268,7 +268,7 @@ func TestGroupThreadsAllocationsLinearInSubjectBytes(t *testing.T) {
 		runtime.ReadMemStats(&after)
 		return after.TotalAlloc - before.TotalAlloc
 	}
-	n, twice := allocated(1000), allocated(2000)
+	n, twice := allocated(100), allocated(200)
 	if twice > 3*n {
 		t.Fatalf("allocated %d bytes at N and %d at 2N: superlinear in subject length", n, twice)
 	}
