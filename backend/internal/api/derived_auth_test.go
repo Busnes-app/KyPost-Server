@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -495,5 +496,42 @@ func TestPasswordChangeCannotUndoAConcurrentReset(t *testing.T) {
 		if after, _ := srv.users.Get(u.ID); !after.MustChangePassword {
 			t.Fatalf("round %d: a password change overwrote the admin reset that landed during it", round)
 		}
+	}
+}
+
+// A credential change signs the user's other sessions out before it writes, so a revocation
+// that fails (possible on PostgreSQL) leaves nothing changed rather than a new password beside
+// a stolen session. Shown by a change whose write is then refused: the other session is
+// already gone, the caller's own is kept.
+func TestPasswordChangeSignsOthersOutBeforeWriting(t *testing.T) {
+	srv := newTestServer(t)
+	const oldPw = "correct-horse-battery-staple"
+	u, err := srv.users.Create(context.Background(), "revoke-first", oldPw, users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{"mine", "stolen"} {
+		srv.sessMu.Lock()
+		srv.sessions[token] = Session{UserID: u.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), CSRFToken: "c"}
+		srv.sessMu.Unlock()
+	}
+	raw, _ := json.Marshal(map[string]any{"oldAuthSecret": testAuthSecret(srv, u.Username, oldPw), "newAuthSecret": "not-a-derived-secret", "newLoginSalt": "c2FsdA=="})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(raw))
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: "mine"})
+	rec := httptest.NewRecorder()
+	srv.handleChangePassword(rec, req.WithContext(context.WithValue(req.Context(), authContextKey{},
+		AuthContext{UserID: u.ID, Username: u.Username, Role: users.RoleUser})))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed new secret: %d %s", rec.Code, rec.Body.String())
+	}
+	if after, _ := srv.users.Get(u.ID); after.PasswordHash != u.PasswordHash {
+		t.Fatal("a refused change replaced the credential")
+	}
+	srv.sessMu.Lock()
+	_, stolen := srv.sessions["stolen"]
+	_, mine := srv.sessions["mine"]
+	srv.sessMu.Unlock()
+	if stolen || !mine {
+		t.Fatalf("before the write: other session live=%v, own session live=%v; want signed out, kept", stolen, mine)
 	}
 }

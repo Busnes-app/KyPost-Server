@@ -806,6 +806,18 @@ func currentSessionToken(r *http.Request) string {
 	return ""
 }
 
+// revokeSessionsFirst signs userID out everywhere but keepToken before a credential change
+// is written, answering 503 when it cannot: on PostgreSQL the revocation can fail, and failing
+// after the change would leave a stolen session working. The change revokes again once
+// written, which also ends any session signed in with the old credential meanwhile.
+func (s *Server) revokeSessionsFirst(w http.ResponseWriter, userID, keepToken string) bool {
+	if err := s.revokeUserSessions(userID, keepToken); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"code": "unavailable", "error": "nothing was changed: other sessions could not be signed out first; try again"})
+		return false
+	}
+	return true
+}
+
 // revokeUserSessions deletes every live session belonging to userID, except
 // keepToken if non-empty (the caller's own session, when the caller and the
 // affected account are the same). Called after a password change/reset or MFA
@@ -1045,6 +1057,9 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	iterations := req.NewIterations
 	if iterations <= 0 {
 		iterations = users.LoginIterations()
+	}
+	if !s.revokeSessionsFirst(w, u.ID, currentSessionToken(r)) {
+		return
 	}
 	// One mutation for the credential and the PGP envelope, or neither.
 	var updated users.User

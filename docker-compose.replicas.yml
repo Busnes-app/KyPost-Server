@@ -30,6 +30,10 @@ services:
       TRUSTED_PROXY_CIDRS: ${KYPOST_PROXY_IP:?Set KYPOST_PROXY_IP to the proxy address inside KYPOST_REPLICA_SUBNET}/32${KYPOST_EDGE_TRUSTED_PROXY:+,${KYPOST_EDGE_TRUSTED_PROXY}/32}
       # One shared Ollama service; the replicas start none of their own.
       OLLAMA_BASE_URL: http://ollama:11434
+      # HAProxy talks plain HTTP to the replicas and publishes cleartext: TLS ends in a proxy
+      # in front of it. A replica with a certificate would fail every readiness check.
+      TLS_CERT_FILE: ${TLS_CERT_FILE:+${KYPOST_TLS_WITH_REPLICAS:?TLS_CERT_FILE cannot be used with docker-compose.replicas.yml - HAProxy publishes cleartext and speaks HTTP to the replicas; end TLS in a proxy in front of HAProxy and unset TLS_CERT_FILE (docs/RUNNING.md, Replicas on one host)}}
+      TLS_KEY_FILE: ""
     # The three data volumes are shared: every replica on this host mounts the same ones
     # (checked at startup through replica-volume.id). Logs and the model cache are not.
     volumes: !override
@@ -92,7 +96,7 @@ services:
     # default, and non-loopback cleartext needs ALLOW_INSECURE_HTTP=true (checked by the
     # replicas at startup, which see the same value).
     ports:
-      - "${KYPOST_BIND:?set KYPOST_BIND in .env — 127.0.0.1 for a proxy on this host, your LAN IP for a proxy elsewhere, or 0.0.0.0 to deliberately publish on every interface (cleartext unless TLS_CERT_FILE is set)}:5866:5866"
+      - "${KYPOST_BIND:?set KYPOST_BIND in .env — 127.0.0.1 for a proxy on this host, your LAN IP for a proxy elsewhere, or 0.0.0.0 to deliberately publish on every interface (always cleartext with replicas)}:5866:5866"
     networks:
       kypost-net:
         ipv4_address: ${KYPOST_IP:-10.89.0.5}

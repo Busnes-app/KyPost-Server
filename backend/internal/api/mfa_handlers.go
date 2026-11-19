@@ -219,6 +219,9 @@ func (s *Server) handleMFADisable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.revokeSessionsFirst(w, u.ID, currentSessionToken(r)) {
+		return
+	}
 	if _, err := s.users.DisableTOTP(u.ID); err != nil {
 		http.Error(w, "failed to disable two-factor auth", http.StatusInternalServerError)
 		return
@@ -242,6 +245,9 @@ func (s *Server) handleMFARecoveryCodesRegenerate(w http.ResponseWriter, r *http
 	codes, hashes, err := s.newRecoveryCodes(r.Context())
 	if err != nil {
 		http.Error(w, "failed to generate recovery codes", http.StatusInternalServerError)
+		return
+	}
+	if !s.revokeSessionsFirst(w, u.ID, currentSessionToken(r)) {
 		return
 	}
 	if _, err := s.users.ReplaceRecoveryCodes(u.ID, hashes); err != nil {

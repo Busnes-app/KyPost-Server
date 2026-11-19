@@ -96,6 +96,12 @@ edge = proxy["environment"].get("KYPOST_EDGE_TRUSTED_PROXY")
 assert edge == "255.255.255.255", f"with no edge set HAProxy must trust no source, got {edge}"
 print("PASS replicas: HAProxy keeps forwarded client headers only from the edge proxy")
 
+# TLS ends in front of HAProxy: a certificate on the replicas is refused, by name.
+result = compose(files, base_env | required | {"TLS_CERT_FILE": "/kypost/config/tls/cert.pem"})
+assert result.returncode != 0 and "TLS_CERT_FILE cannot be used with docker-compose.replicas.yml" in result.stderr, f"TLS_CERT_FILE rendered with replicas: {result.stderr}"
+assert app["environment"].get("TLS_CERT_FILE", "") == "", "replicas would serve TLS that HAProxy cannot read"
+print("PASS replicas: TLS_CERT_FILE is refused with a message")
+
 for overlay in ["docker-compose.receiving.yml", "docker-compose.rspamd.yml", "docker-compose.lan-dns.yml"]:
     chain = ["docker-compose.yml", overlay, "docker-compose.replicas.yml"]
     extra = {"KYPOST_RECEIVING_HOSTNAME": "mx.example.test", "KYPOST_SMTP_BIND": "127.0.0.1", "KYPOST_SMTP_PORT": "25",

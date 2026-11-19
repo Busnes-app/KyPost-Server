@@ -254,6 +254,9 @@ volumes it is unproven. So KyPost refuses, at startup and before listening:
 - a proof-of-work key that cannot be kept in `SECRET_DIR` (each replica would refuse the
   others' challenges).
 
+Compose itself refuses `TLS_CERT_FILE` with the overlay: HAProxy publishes cleartext and
+speaks plain HTTP to the replicas, so TLS ends in a proxy in front of HAProxy.
+
 Separate hosts, separate volumes, NFS/RWX volumes and multi-node Kubernetes are refused or
 unsupported. KyPost has no IMAP, submission or LMTP server and no search index, so nothing
 else is per container.
