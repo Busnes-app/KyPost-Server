@@ -427,9 +427,13 @@ recorded as `address_conflict`.
 
 ## Plus addressing and masked addresses
 
-- **Plus addressing** (RFC 5233). An active ledger address that holds a `+`
-  (a KyIdentity primary such as `john+work@`, or an alias issued before `+`
-  was refused) matches exactly and keeps receiving. Otherwise receiving reads
+- **Plus addressing** (RFC 5233). A ledger address that holds a `+` (a
+  KyIdentity primary such as `john+work@`, or an alias issued before `+` was
+  refused) matches exactly in any state: active, it keeps receiving and
+  sending for its own mailbox; disabled or reserved, it is refused like an
+  unknown address and never falls to the base address's owner, for receiving,
+  `From`, scheduled sends and the outbox alike, and the Worker table carries
+  it as a `refused` route. Only with no ledger record does receiving read
   `local+tag@domain` as `local@domain` (`sso.LifecycleStore.NativeAddressFor`;
   the part before the first `+`) for primaries, aliases and masked addresses
   alike, and binds the delivery to the resolved address: routes, bindings,
@@ -470,9 +474,12 @@ recorded as `address_conflict`.
   address, the Message-ID domain is its domain, DKIM signs `d=` that domain
   with no `i=`, and no Reply-To, Sender or Autocrypt header names the primary
   (`TestMaskedSendLeaksNoPrimaryAddress`, `TestDKIMSignatureCarriesNoIdentity`).
-  Out-of-office never answers mail sent only to a masked address, since its
-  reply comes from the account address. The web client replies from the own
-  address (masked or plus-tagged) the message was sent to. Mail from masked
+  Out-of-office never answers mail whose delivery receipt names a masked
+  address (even when To/Cc names a regular alias), since its reply comes from
+  the account address. The web client replies from the address the receipt
+  names (`deliveredTo` on `/api/mail/body`, keeping a tag the headers show);
+  when none is the user's own it leaves From empty and refuses to send until
+  the user picks one, never defaulting to the primary. Mail from masked
   addresses counts toward the owner's sending quota.
 
 ## Extra mailboxes

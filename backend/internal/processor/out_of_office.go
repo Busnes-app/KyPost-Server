@@ -192,6 +192,22 @@ func (p *Poller) outOfOfficeReply(ctx context.Context, uc userCtx, msg imapadapt
 	skip := func(reason string) {
 		p.log.Info("out-of-office reply not sent", "user_id", uc.id, "message_id", msg.ID, "reason", reason)
 	}
+	// Native mail delivered to a masked address never answers: the reply
+	// comes from the account address. The receipt, not the headers (which
+	// may also name a regular alias), says where it was delivered.
+	if len(msg.DeliveredTo) > 0 {
+		settings, err := config.LoadUserSettings(config.UserSettingsPath(p.configDir, uc.id))
+		if err != nil {
+			skip("settings_unreadable")
+			return
+		}
+		for _, address := range msg.DeliveredTo {
+			if _, masked := settings.Masked(address); masked {
+				skip("masked_recipient")
+				return
+			}
+		}
+	}
 	uid, err := strconv.Atoi(strings.TrimSpace(msg.ID))
 	if err != nil {
 		return

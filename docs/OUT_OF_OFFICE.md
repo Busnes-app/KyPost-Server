@@ -38,6 +38,7 @@ be abused in these ways:
   - None of the user's own addresses is in To or Cc. A plus address of an own
     address (`you+tag@`) counts as that address; a masked address never counts,
     because the reply comes from the account address and would reveal it.
+  - Native mail whose delivery receipt names a masked address, whatever To/Cc say.
   - There is no single From address, or no well-formed `Message-ID`.
 
   Every reply carries `Auto-Submitted: auto-replied`, `In-Reply-To`, `References`, and

@@ -346,3 +346,26 @@ func TestOOOMaskedAndPlusAddresses(t *testing.T) {
 		t.Fatal("plus address not answered", reason)
 	}
 }
+
+// A native delivery whose receipt names a masked address gets no reply even
+// when To names a regular owned address; the same mail delivered to the
+// regular address is answered.
+func TestOutOfOfficeSkipsMaskedDelivery(t *testing.T) {
+	h := newOOOHarness(t)
+	h.member = true
+	if err := config.UpdateUserSettings(config.UserSettingsPath(h.p.configDir, h.userID), func(s *config.UserSettings) error {
+		s.MaskedAddresses = []config.MaskedAddress{{Address: "quiet.otter.4821@x.test", State: "active"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for delivered, want := range map[string]int{"quiet.otter.4821@x.test": 0, "bob@x.test": 1} {
+		h.queued = nil
+		uc := h.ctx(t, oooOn(), []byte(oooBase+"\r\nhi\r\n"))
+		uc.mailbox = h.userID
+		h.p.outOfOfficeReply(t.Context(), uc, imapadapter.Message{ID: "1", DeliveredTo: []string{delivered}}, "bob@x.test")
+		if len(h.queued) != want {
+			t.Fatalf("delivered to %s: %d replies, want %d", delivered, len(h.queued), want)
+		}
+	}
+}
