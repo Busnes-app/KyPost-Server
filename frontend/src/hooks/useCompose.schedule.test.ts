@@ -321,6 +321,22 @@ describe("send delay", () => {
     expect(result.current.composeError).toBe("");
   });
 
+  it("resumes with what compose holds when unlocked, not what it held at Send", async () => {
+    session.clientProtected = false;
+    session.custody = "client";
+    session.locked = true;
+    getSendDelay.mockResolvedValue(10);
+    postJSON.mockResolvedValueOnce(heldAnswer(10));
+    const result = composeTo(false);
+    await act(() => result.current.sendComposeEmail());
+    const settle = result.current.settleSendAfterUnlock; // as the dialog captured it at submit
+    act(() => result.current.setComposeTo({ tokens: [], draft: "carol@example.com" }));
+    session.locked = false;
+    act(() => settle(true));
+    await waitFor(() => expect(postJSON).toHaveBeenCalledTimes(1));
+    expect((postJSON.mock.calls[0][1] as Record<string, unknown>).to).toBe("carol@example.com");
+  });
+
   it("a canceled unlock sends nothing and says so", async () => {
     session.clientProtected = true;
     session.locked = true;

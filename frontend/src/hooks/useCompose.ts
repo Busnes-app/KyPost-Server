@@ -1183,12 +1183,17 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     });
   }
 
+  // The newest render's send: an unlock that settles later must send what
+  // compose holds now, never the state from when the prompt opened.
+  const sendNow = useRef(sendComposeEmail);
+  useEffect(() => { sendNow.current = sendComposeEmail; });
+
   /** The unlock prompt closed: continue the send that opened it, or drop it. */
   function settleSendAfterUnlock(unlocked: boolean) {
     const pending = sendAfterUnlock.current;
     sendAfterUnlock.current = null;
     if (!pending) return;
-    if (unlocked) void sendComposeEmail(pending.sendAt, pending.driveChecked);
+    if (unlocked) void sendNow.current(pending.sendAt, pending.driveChecked);
     else setComposeError("Not sent: your PGP key is still locked.");
   }
 
