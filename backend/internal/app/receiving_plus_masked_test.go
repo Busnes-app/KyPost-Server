@@ -157,15 +157,7 @@ func TestNativeReceivingKeepsExistingPlusAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal("provisioning a + primary", err)
 	}
-	// A + alias as an earlier release could issue it, written past the store.
-	for _, q := range []string{
-		"INSERT INTO addresses(address, mailbox, kind, state, generation) VALUES ('one+legacy@example.test', '" + created[0].ID + "', 'alias', 'active', 1)",
-		"INSERT INTO address_history(address, generation, mailbox) VALUES ('one+legacy@example.test', 1, '" + created[0].ID + "')",
-	} {
-		if err := ssotest.DamageAuthority(r.configDir, q); err != nil {
-			t.Fatal(err)
-		}
-	}
+	legacyPlusAlias(t, r.configDir, "one+legacy@example.test", created[0].ID)
 	// two+x has no exact record: the base two@ receives it.
 	receive(t, r, "john-primary", "john+work@example.test")
 	receive(t, r, "legacy-alias", "One+Legacy@example.test")
@@ -193,5 +185,54 @@ func TestNativeReceivingKeepsExistingPlusAddresses(t *testing.T) {
 	}
 	if got := receivingInbox(t, r, created[0]); len(got) != 2 {
 		t.Fatal("tagged legacy alias", got)
+	}
+}
+
+// legacyPlusAlias writes a + alias as an earlier release could issue it.
+func legacyPlusAlias(t *testing.T, configDir, address, mailboxID string) {
+	t.Helper()
+	for _, q := range []string{
+		"INSERT INTO addresses(address, mailbox, kind, state, generation) VALUES ('" + address + "', '" + mailboxID + "', 'alias', 'active', 1)",
+		"INSERT INTO address_history(address, generation, mailbox) VALUES ('" + address + "', 1, '" + mailboxID + "')",
+	} {
+		if err := ssotest.DamageAuthority(configDir, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// two+legacy@ belongs to one, two@ to two. Once two+legacy@ is reserved its
+// mail is refused, never handed to two, and the Worker table refuses it.
+func TestInactiveLegacyPlusAddressKeepsItsOwner(t *testing.T) {
+	e := cfFixture(t)
+	r, created := e.r, e.users
+	ctx := context.Background()
+	legacyPlusAlias(t, r.configDir, "two+legacy@example.test", created[0].ID)
+	receive(t, r, "live", "two+legacy@example.test")
+	if err := r.importDelivery(ctx, "live"); err != nil {
+		t.Fatal(err)
+	}
+	if got := receivingInbox(t, r, created[0]); strings.Join(got, ",") != "live" {
+		t.Fatal("active legacy address", got)
+	}
+	if _, err := r.life.ReleaseNativeAlias(ctx, r.stateDir, "two+legacy@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.bind(ctx, "after", "", "two+legacy@example.test"); !errors.Is(err, ingress.ErrRoute) {
+		t.Fatal("reserved legacy address fell back to its base", err)
+	}
+	if got := receivingInbox(t, r, created[1]); len(got) != 0 {
+		t.Fatal("base owner received", got)
+	}
+	routes, err := e.l.buildRoutes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := false
+	for _, route := range routes {
+		refused = refused || route.Address == "two+legacy@example.test" && route.Refused
+	}
+	if !refused {
+		t.Fatalf("no refusal published for the reserved legacy address: %+v", routes)
 	}
 }

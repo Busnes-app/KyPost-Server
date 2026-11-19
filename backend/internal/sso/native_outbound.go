@@ -123,9 +123,9 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 						return err
 					}
 					// A plus-tagged From sends as its base address's record,
-					// unless the full address is itself active (NativeAddressFor).
+					// unless the ledger holds the full address (NativeAddressFor).
 					x, ok, err := r.Address(from)
-					if err == nil && (!ok || x.State != "active") && PlusBase(from) != from {
+					if err == nil && !ok && PlusBase(from) != from {
 						x, ok, err = r.Address(PlusBase(from))
 					}
 					if err != nil {

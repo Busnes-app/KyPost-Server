@@ -178,10 +178,12 @@ the verifier checks the bytes it received and no canonical JSON form exists.
 Both bodies are objects with exactly those two keys. Payload JSON has exactly the
 listed keys:
 
-- **table**: `{"revision", "issuedAt", "routes": [{"address", "generation", "maxBytes", "noPlus"?}],
+- **table**: `{"revision", "issuedAt", "routes": [{"address", "generation", "maxBytes", "noPlus"? | "refused"?}],
   "blockedSenders": [{"address", "until"} | {"domain", "until"}]}`. `noPlus` is
-  present only as `true` (the owner refuses plus addresses), so a table without
-  it stays valid for a Worker that predates plus addressing; redeploy the Worker
+  present only as `true` (the owner refuses plus addresses). `refused`, also only
+  `true` and never with `noPlus`, marks an inactive address holding a `+`: the
+  Worker rejects it rather than routing it to the part before the `+`. A table
+  without either stays valid for a Worker that predates plus addressing; redeploy the Worker
   before a user turns plus addressing off, or that table is refused. `revision`,
   `issuedAt`, `generation`: safe integers ≥ 1. `maxBytes`: 1 to 26214400. `until`:
   safe integer or `null` (no expiry). Route addresses are lowercase printable
@@ -210,7 +212,7 @@ fixture both sides test against. Read `routes.json` (absent → reject; storage 
 keeps the parsed table and revalidates it on every message with a conditional get on
 its etag, so a new table applies to the next message. Sender address or domain blocked with `until` null or in the future →
 reject. `now - issuedAt` over 14 days → reject. Plus addressing: a route for the full recipient
-wins (an address that itself holds `+`); otherwise the part before the first `+` in the
+wins (an address that itself holds `+`), and a `refused` one → reject; otherwise the part before the first `+` in the
 local part, with the domain, is the route address looked up (`one+tag@x` → `one@x`), and
 a base route with `noPlus` → reject. No route → reject. The envelope `recipient` is the route address, so
 KyPost never sees the tag.

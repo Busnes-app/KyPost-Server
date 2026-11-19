@@ -137,8 +137,9 @@ export function validTable(t) {
       !Array.isArray(t.blockedSenders) || t.blockedSenders.length > limits.blocks) return false;
   const seen = new Set();
   for (const r of t.routes) {
-    // noPlus appears only as true: a table without it still suits an older Worker.
-    if (!(exactKeys(r, ["address", "generation", "maxBytes"]) || exactKeys(r, ["address", "generation", "maxBytes", "noPlus"]) && r.noPlus === true) ||
+    // noPlus and refused appear only as true: a table without them still suits an older Worker.
+    const flag = ["noPlus", "refused"].find(k => Object.hasOwn(r ?? {}, k));
+    if (!(flag ? exactKeys(r, ["address", "generation", "maxBytes", flag]) && r[flag] === true : exactKeys(r, ["address", "generation", "maxBytes"])) ||
         !addressOk(r.address) || seen.has(r.address) ||
         !isInt(r.generation) || !isInt(r.maxBytes) || r.maxBytes > limits.messageBytes) return false;
     seen.add(r.address);
@@ -291,13 +292,14 @@ export default {
     if (sender && blocked(table, sender, now)) { message.setReject("Sender blocked"); return; }
     if (now - table.issuedAt > limits.maxAgeMs) { message.setReject("Routing unavailable"); return; }
     // Plus addressing: a route for the full address wins (one issued before +
-    // was refused); otherwise the part before the first + selects it, and that
-    // is what the envelope freezes. A noPlus route refuses tagged mail.
+    // was refused, or a refused one that is no longer active); otherwise the
+    // part before the first + selects it, and that is what the envelope
+    // freezes. A noPlus route refuses tagged mail.
     const sign = recipient.lastIndexOf("@"), plus = recipient.slice(0, sign).indexOf("+");
     const base = plus < 0 ? recipient : recipient.slice(0, plus) + recipient.slice(sign);
     const route = table.routes.find(r => r.address === recipient) ??
       (base === recipient ? undefined : table.routes.find(r => r.address === base && !r.noPlus));
-    if (!route) { message.setReject("Address refused"); return; }
+    if (!route || route.refused) { message.setReject("Address refused"); return; }
     if (!(message.rawSize <= route.maxBytes)) { message.setReject("Message too large"); return; }
     const raw = await readBounded(message.raw, route.maxBytes);
     if (!raw || raw.byteLength === 0) { message.setReject(raw ? "Empty message" : "Message too large"); return; }

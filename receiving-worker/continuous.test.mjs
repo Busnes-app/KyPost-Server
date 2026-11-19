@@ -536,3 +536,17 @@ test("a route for the full + address wins over its base, even when the base refu
   await worker.email(tagged, f.env);
   assert.deepEqual(tagged.rejected, ["Address refused"]);
 });
+
+test("a refused full + address never falls back to its base", async () => {
+  const f = await fixture();
+  const routes = [{address: "a+b@example.test", generation: 4, maxBytes: 1, refused: true}, {address: "a@example.test", generation: 1, maxBytes: 1024}];
+  assert.equal(await install(f, table({routes})), 204);
+  const m = mail({to: "a+b@example.test"});
+  await worker.email(m, f.env);
+  assert.deepEqual(m.rejected, ["Address refused"]);
+  assert.deepEqual(inbox(f.env), []);
+  for (const bad of [false, "yes"]) {
+    assert.equal(await install(f, table({revision: Date.now() + 1, routes: [{address: "a+b@example.test", generation: 4, maxBytes: 1, refused: bad}]})), 400);
+  }
+  assert.equal(await install(f, table({revision: Date.now() + 2, routes: [{address: "a+b@example.test", generation: 4, maxBytes: 1, refused: true, noPlus: true}]})), 400);
+});

@@ -82,13 +82,14 @@ func (s *LifecycleStore) NativeAddress(address string) (a NativeAddress, err err
 }
 
 // NativeAddressFor resolves a recipient or From under plus addressing: the
-// full address when it is an active ledger address (one issued before new
-// addresses refused "+"), otherwise the part before the first +. tagged
-// reports that the tag was dropped; no record is the zero value.
+// full address whenever the ledger holds it, in any state (one issued before
+// new addresses refused "+" keeps its owner, and an inactive one refuses
+// rather than falling to the base's owner); otherwise the part before the
+// first +. tagged reports that the tag was dropped; no record is the zero value.
 func (s *LifecycleStore) NativeAddressFor(address string) (x NativeAddress, tagged bool, err error) {
 	x, err = s.NativeAddress(address)
 	base := PlusBase(address)
-	if err != nil || x.State == "active" || base == address {
+	if err != nil || x.Address != "" || base == address {
 		return x, false, err
 	}
 	x, err = s.NativeAddress(base)

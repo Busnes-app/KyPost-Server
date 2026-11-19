@@ -18,6 +18,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -287,5 +288,48 @@ func TestMaskedDomainsUnreadableStoreAnswers503(t *testing.T) {
 	s.globalStore = good
 	if v, err := good.Setting(maskedDomainsSetting); err != nil || v != "example.test" {
 		t.Fatal("stored list changed", v, err)
+	}
+}
+
+// two+legacy@ (an alias of one, issued before + was refused) never lets two,
+// the owner of two@, send as it, active or not.
+func TestLegacyPlusAddressFromKeepsItsOwner(t *testing.T) {
+	s, one, _ := maskedFixture(t)
+	two := scimUser("native-runtime-two", "runtime-two", true)
+	two["emails"] = []map[string]any{{"value": "two@example.test", "primary": true}}
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "legacy-two", 1, two))
+	second, err := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		"INSERT INTO addresses(address, mailbox, kind, state, generation) VALUES ('two+legacy@example.test', '" + one.ID + "', 'alias', 'active', 1)",
+		"INSERT INTO address_history(address, generation, mailbox) VALUES ('two+legacy@example.test', 1, '" + one.ID + "')",
+	} {
+		if err := ssotest.DamageAuthority(s.configDir, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sendAs := func(userID string) int {
+		req := httptest.NewRequest("POST", "/api/mail/send", strings.NewReader(`{"to":"visible@outside.test","subject":"s","body":"b","from":"two+legacy@example.test"}`))
+		req.Header.Set("Content-Type", "application/json")
+		authRequestAs(s, req, userID)
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, req)
+		return w.Code
+	}
+	if code := sendAs(second.ID); code != 403 {
+		t.Fatal("base owner sent as another mailbox's legacy address", code)
+	}
+	if code := sendAs(one.ID); code != 503 {
+		t.Fatal("owner refused its active legacy address", code)
+	}
+	if _, err := s.ssoLifecycle.ReleaseNativeAlias(context.Background(), s.stateDir, "two+legacy@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{one.ID, second.ID} {
+		if code := sendAs(id); code != 403 {
+			t.Fatal("reserved legacy address sent", id, code)
+		}
 	}
 }

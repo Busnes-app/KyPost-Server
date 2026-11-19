@@ -429,6 +429,13 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 			}
 		}
 	}
+	// An inactive address holding a + is refused outright: without its own
+	// route the Worker would hand its mail to the base address's owner.
+	for address, x := range addresses {
+		if x.State != "active" && sso.PlusBase(address) != address && set.Domains[sso.AddressDomain(address)].Established && cfreceiving.ValidAddress(address) {
+			routes = append(routes, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: 1, Mailbox: x.Mailbox, Refused: true})
+		}
+	}
 	slices.SortFunc(routes, func(a, b cfreceiving.Route) int { return strings.Compare(a.Address, b.Address) })
 	return routes, nil
 }
