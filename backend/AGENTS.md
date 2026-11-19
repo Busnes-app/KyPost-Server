@@ -218,7 +218,8 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 | `kydrive/` | KyDrive pairing (kycalendar's, sender only), signed client, ticket upload and answer-origin check ([contract](../docs/KYDRIVE.md)) |
 | `suitepair/` | One suite-app pairing parameterised by peer (`Peer{ID, Name, Env}`): kycalendar's `FromEnv`, `Run`, guarded dial, no redirects, bounded answers, signed `Post`, receiver `Verify`/`Forget` with replay guard; `FromKyIdentity` for a KyIdentity-only peer. Used for KyMessages and KyPulse ([contract](../docs/KYPULSE.md)) ([contract](../docs/KYMESSAGES.md)); kycalendar and kydrive still carry their own copies |
 | `kycalendar/` | KyCalendar pairing: env config or KyIdentity suite-directory resolution, signed client and replay guard, per-user invitation provenance and flagged-mail references ([contract](../docs/KYCALENDAR.md)) |
-| `state/` | Per-user checkpoint, processed-set, decisions, subscriptions, devices; instantiated per user directory |
+| `state/` | Per-user checkpoint, processed-set, decisions, subscriptions, devices; instantiated per user directory. The global `state.db` also holds the PostgreSQL replicas' shared coordination (`coordination.go`, `instances.go`): database-time `security_windows`, `spent_challenges`, `replay_ids`, `sessions`, `auth_challenges`, `import_jobs`, `replica_instances`; `WithLock` (session advisory lock on a discarded connection, 2 s acquisition, 1 s probe; a flock beside `state.db` on SQLite), `Serialized`, `RegisterInstance`/`LiveInstances` (liveness is a held session advisory lock) and the SQLite `server-instance.lock` (`HoldInstance`). The tables exist in every state.db; only the global one on PostgreSQL is written |
+| `worker/` | Role election (`daemon`, `api-sweepers`, `mail-runtime`): `Run` holds the role's lock and runs its jobs on one process at a time, with an ownership grace above the probe bound on PostgreSQL; see [internal/worker/AGENTS.md](internal/worker/AGENTS.md) |
 | `contacts/` | Per-user address book (`contacts.json`); monotonic `Rev`/tombstoned deletes double as the CardDAV ETag/sync-token and the mobile-sync cursor; instantiated per user directory |
 | `mailcache/` | Per-user, per-mailbox mail metadata cache (`mailcache.json`); not permanent like `contacts/` — represents only the current top-N window, warmed by both `api/` (live-fetch fallback) and `processor/` (opportunistic, INBOX-only); instantiated per user directory in both processes |
 | `fsutil/` | Shared atomic file write + UUIDv4 helpers. Directories are created `0700` to match the `0600` secrets written into them; an already-existing directory keeps its mode |
@@ -588,6 +589,8 @@ This list is the CI gate. `ci-backend-checks` runs the static steps, the release
 - `internal/cfreceiving/` — continuous Cloudflare wire contract: credentials, signed documents, Worker client and pickup state. See [internal/cfreceiving/AGENTS.md](internal/cfreceiving/AGENTS.md).
 
 - `internal/ingress/` — durable receiving buffer, envelope ownership, receipts and claims; selected by opt-in app commands/import. See [internal/ingress/AGENTS.md](internal/ingress/AGENTS.md).
+
+- `internal/worker/` — role election for background work on replicas. See [internal/worker/AGENTS.md](internal/worker/AGENTS.md).
 
 - `internal/backup/` — KyRecovery adapter and verification recipe; see [internal/backup/AGENTS.md](internal/backup/AGENTS.md)
 

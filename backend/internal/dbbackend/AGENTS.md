@@ -6,7 +6,7 @@ Chooses where every store keeps its databases: SQLite files (default) or one Pos
 
 ## Ownership
 
-`dbbackend.go` (selection, startup checks, schema names, catalog, opens, staging for mailbox preparation), `copy.go` (the SQLite↔Postgres table copy, export, import, fingerprint, row counts), `testing.go` (the test hook), and `pgdialect/` (KyIdentity's translator and `kypg` driver).
+`dbbackend.go` (selection, startup checks, schema names, catalog, opens, staging for mailbox preparation), `copy.go` (the SQLite↔Postgres table copy, export, import, fingerprint, row counts), `testing.go` (the test hook), and `pgdialect/` (KyIdentity's translator and `kypg` driver), and `pgtest/` (test-only: a freezable TCP relay for outage tests).
 
 ## Local Contracts
 

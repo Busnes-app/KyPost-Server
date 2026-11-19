@@ -289,6 +289,47 @@ CREATE TABLE IF NOT EXISTS ooo_senders (
 	period TEXT NOT NULL,
 	at     INTEGER NOT NULL
 );
+
+-- What PostgreSQL replicas share beyond the data (coordination.go). Written only
+-- in the global state.db and only on PostgreSQL; SQLite keeps this in memory.
+-- Times are database milliseconds.
+CREATE TABLE IF NOT EXISTS security_windows (key TEXT PRIMARY KEY, hits INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS security_windows_expiry ON security_windows(expires_at);
+CREATE TABLE IF NOT EXISTS spent_challenges (salt TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS spent_challenges_expiry ON spent_challenges(expires_at);
+CREATE TABLE IF NOT EXISTS replay_ids (id TEXT PRIMARY KEY, attempt TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS replay_ids_expiry ON replay_ids(expires_at);
+CREATE TABLE IF NOT EXISTS sessions (
+	token_hash  TEXT PRIMARY KEY,
+	user_id     TEXT NOT NULL,
+	sso_subject TEXT NOT NULL DEFAULT '',
+	data        TEXT NOT NULL,
+	expires_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS session_revocations (user_id TEXT PRIMARY KEY, gen INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS auth_challenges (
+	key        TEXT PRIMARY KEY,
+	user_id    TEXT NOT NULL DEFAULT '',
+	data       BLOB NOT NULL,
+	expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS auth_challenges_expiry ON auth_challenges(expires_at);
+CREATE TABLE IF NOT EXISTS import_jobs (
+	user_id     TEXT PRIMARY KEY,
+	instance_id TEXT NOT NULL,
+	data        TEXT NOT NULL,
+	cancel      INTEGER NOT NULL DEFAULT 0,
+	updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS replica_instances (
+	instance_id TEXT PRIMARY KEY,
+	boot_id     TEXT NOT NULL,
+	volume_id   TEXT NOT NULL,
+	role        TEXT NOT NULL,
+	started_at  INTEGER NOT NULL
+);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {
