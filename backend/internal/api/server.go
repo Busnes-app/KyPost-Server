@@ -52,7 +52,7 @@ import (
 
 // Server holds the HTTP surface and its process-wide state.
 //
-// LOCK ORDER: cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
+// LOCK ORDER: encPolicyMu before cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
 // pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu before importMu. Never the reverse.
 // The sso-lifecycle file lock (sso.LifecycleStore) ranks before all of them and
 // is not modelled by lockRank or TestLockOrderIsRespected: hold no Server mutex
@@ -85,6 +85,13 @@ type Server struct {
 	cfgMu           sync.RWMutex
 	cfg             config.Config
 	onConfigUpdated func(config.Config)
+
+	// encPolicyMu serializes the encryption policy with the SSO provider it
+	// depends on, so a Required save and a switch to a generic provider cannot
+	// both pass their checks. Held across discovery: both are admin writes.
+	encPolicyMu sync.Mutex
+	// kySignOnChecked: issuer+client → last discovery recheck (ssoKySignOn).
+	kySignOnChecked sync.Map
 
 	// sessMu guards sessions only.
 	sessMu sync.RWMutex
@@ -705,6 +712,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/sso", s.withAdmin(s.handleAdminSSOGet))
 	mux.HandleFunc("PUT /api/admin/sso", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminSSOPut))))
 	mux.HandleFunc("GET /api/admin/rate-limit-networks", s.withAdmin(s.handleExemptNetworksGet))
+	mux.HandleFunc("GET /api/admin/encryption-policy", s.withAdmin(s.handleEncryptionPolicyGet))
+	mux.HandleFunc("PUT /api/admin/encryption-policy", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleEncryptionPolicyPut))))
 	mux.HandleFunc("PUT /api/admin/rate-limit-networks", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleExemptNetworksPut))))
 	mux.HandleFunc("POST /api/sync/webhook", withTokenAuth(s.handleSyncWebhook))
 	mux.HandleFunc("POST /api/sync/hr-mailbox", withTokenAuth(s.handleHRMailbox))
@@ -715,6 +724,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mail/flags/{ref}", s.withMailAuth(s.handleFlagRef))
 	mux.HandleFunc("GET /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
 	mux.HandleFunc("PUT /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
+	mux.HandleFunc("GET /api/settings/mail", s.withAuth(s.handleMailSettings))
+	mux.HandleFunc("PUT /api/settings/mail", s.withAuth(s.handleMailSettings))
 	mux.HandleFunc("POST /api/suite/kypulse/alert", withPublicRoute(s.handleKyPulseAlert))
 	mux.HandleFunc("GET /api/settings/kypulse", s.withAuth(s.handleKyPulseSettings))
 	mux.HandleFunc("PUT /api/settings/kypulse", s.withAuth(s.handleKyPulseSettings))
@@ -747,6 +758,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/users/{id}/deactivate", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersDeactivate))))
 	mux.HandleFunc("POST /api/users/{id}/reactivate", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersReactivate))))
 	mux.HandleFunc("POST /api/users/{id}/clear-mfa", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersClearMFA))))
+	mux.HandleFunc("PUT /api/users/{id}/key-setup", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUserKeySetup))))
 	mux.HandleFunc("PUT /api/users/{id}/send-quota", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUserSendQuota))))
 	mux.HandleFunc("GET /api/users/{id}/imap-config", s.withAdmin(s.handleAdminUserIMAPConfig))
 	mux.HandleFunc("PUT /api/users/{id}/imap-config", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminUserIMAPConfig))))
@@ -782,6 +794,7 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/import/imap/{token}/folders", s.withMailAuth(s.handleIMAPImportFolders))
 	mux.HandleFunc("POST /api/import/imap/{token}/start", s.withMailAuth(s.handleIMAPImportRun))
 	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.withMailbox(s.handleInbox)))
+	mux.HandleFunc("GET /api/inbox/conversations", s.withMailAuth(s.withMailbox(s.handleInboxConversations)))
 	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
 	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
 	mux.HandleFunc("PUT /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
@@ -1024,6 +1037,10 @@ func (s *Server) Prepare() {
 		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
 	}
 	s.bindUnboundSSOLinks()
+	// Settings saved before KySignOn detection carry no mark; confirm it once.
+	if cfg := s.ssoStore.Load(); cfg.Enabled && !cfg.KySignOn {
+		go s.refreshSSOKySignOn(context.Background())
+	}
 	port, portErr := config.WebPort.Get()
 	// Timeouts are set explicitly because net/http's zero values mean "no limit":
 	// without them a connection that dribbles one header line every few seconds is

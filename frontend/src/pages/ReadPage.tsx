@@ -30,6 +30,8 @@ import { useReadingPane } from "./read/readingPane";
 import { SnoozeDialog } from "./read/SnoozeDialog";
 import { FlagDialog } from "./read/FlagDialog";
 import { sortTime } from "../lib/snooze";
+import { ConversationCards } from "./read/ConversationCards";
+import { conversationOf, groupRows, openTarget, rowCount, rowIds, rowNewest, rowSenders, type Conversation, type ListRow, type SentMember } from "./read/conversations";
 
 import type {
   InboxEmail,
@@ -161,6 +163,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   const [keywordDraft, setKeywordDraft] = useState("");
   const [availableKeywords, setAvailableKeywords] = useState<string[]>([]);
   const emailReaderDialogRef = useRef<HTMLDialogElement | null>(null);
+  const readerTitleRef = useRef<HTMLHeadingElement | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   // run-4 finding M7: this used to be a bare boolean, cleared by
   // openEmailDetails. That made the opt-in correct only for messages opened
@@ -215,6 +218,10 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   const flagKey = (folder: string, id: string) => `${folder}\n${id}`;
   // Wake time per row of the Snoozed folder, for its "until" label.
   const [snoozeUntil, setSnoozeUntil] = useState<Record<string, string>>({});
+  // Settings → Mail → Conversations, stored per user; off until the answer arrives.
+  const [conversationsOn, setConversationsOn] = useState(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const grouping = conversationsOn && !isDraftMailbox;
   // The mailbox the inbox listing actually used. loadInbox omits the parameter
   // entirely when this is empty and lets the server resolve the account's
   // configured folder, so anything that must describe the SAME message has to
@@ -413,6 +420,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
 
   const swipeSessionRef = useRef<{
     messageId: string;
+    // Everything the row stands for: a conversation row swipes all of it.
+    ids: string[];
     startX: number;
     startY: number;
     width: number;
@@ -748,12 +757,41 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     [visibleRows, selectedMessageIds]
   );
 
+  const loadedById = useMemo(() => new Map(Object.values(byTab).flat().map((m) => [m.messageId, m])), [byTab]);
+  // Grouping only changes when the listed messages do, not on every refresh.
+  const loadedKey = useMemo(() => [...loadedById.keys()].sort().join("\n"), [loadedById]);
+  useEffect(() => {
+    let live = true;
+    getJSON<{ conversations: boolean }>("/api/settings/mail").then(
+      (s) => { if (live) setConversationsOn(s.conversations === true); },
+      () => {}
+    );
+    return () => { live = false; };
+  }, []);
+  useEffect(() => {
+    if (!grouping || !loadedKey) {
+      setConversations([]);
+      return;
+    }
+    let live = true;
+    getJSON<{ conversations: Conversation[] }>(`/api/inbox/conversations?limit=500${mailbox ? `&mailbox=${encodeURIComponent(mailbox)}` : ""}`).then(
+      (r) => { if (live) setConversations(r.conversations ?? []); },
+      // A failed grouping leaves the list ungrouped, never wrong.
+      () => { if (live) setConversations([]); }
+    );
+    return () => { live = false; };
+  }, [grouping, loadedKey, mailbox]);
+  const listRows = useMemo<ListRow[]>(
+    () => (grouping ? groupRows(visibleRows, conversations, loadedById) : visibleRows.map((lead) => ({ lead, members: [lead] }))),
+    [grouping, visibleRows, conversations, loadedById]
+  );
+
   const { currentPage, setCurrentPage, totalPages, pageItems: pageRows } = usePagination(
-    visibleRows,
+    listRows,
     EMAILS_PER_PAGE
   );
 
-  const allRowsSelected = pageRows.length > 0 && pageRows.every((row) => selectedMessageIds.includes(row.messageId));
+  const allRowsSelected = pageRows.length > 0 && pageRows.every((row) => rowIds(row).every((id) => selectedMessageIds.includes(id)));
   const updatedLabel = formatUpdatedLabel(lastLoadedAt, Date.now());
 
   const allFlagged = selectedMessageIds.length > 0 && selectedMessageIds.every((id) => flagged.has(flagKey(mailbox, id)));
@@ -816,20 +854,29 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   // Sender name (address on hover), subject and snippet, then the time: one line,
   // or two beside the reading pane and on phones. Unread rows mark the sender and
   // bold the subject.
-  function messageUnit(item: InboxEmail, open: () => void) {
+  // A conversation row rolls up its senders, count, newest time and unread,
+  // attachment and flag state from all its messages.
+  function messageUnit(item: InboxEmail, open: () => void, row?: ListRow) {
+    const count = row ? rowCount(row) : 1;
+    const group = row && count > 1 ? row : undefined;
+    const at = group ? rowNewest(group) : item.atUtc;
     return (
       <button type="button" className="inbox-unit" onClick={open}>
-        <span className="inbox-from" title={item.sender || undefined}>{senderName(item.sender)}</span>
+        {group ? <span className="visually-hidden">Conversation, {count} messages.</span> : null}
+        <span className="inbox-from" title={group ? undefined : item.sender || undefined}>
+          {group ? rowSenders(group) : senderName(item.sender)}
+          {group ? <span className="inbox-thread-count" aria-hidden="true">{count}</span> : null}
+        </span>
         <span className="inbox-line">
-          {item.hasAttachments ? <span className="inbox-attachment-icon" title="Has attachments" role="img" aria-label="Has attachments"><PaperclipIcon /></span> : null}
+          {(group ? group.members.some((m) => m.hasAttachments) : item.hasAttachments) ? <span className="inbox-attachment-icon" title="Has attachments" role="img" aria-label="Has attachments"><PaperclipIcon /></span> : null}
           <span className="inbox-subject">{item.subject || "(no subject)"}</span>
           {(item.keywords ?? []).map((kw) => (
             <span key={kw} className="inbox-keyword-chip">{kw}</span>
           ))}
           {item.preview ? <span className="inbox-snippet">{item.preview}</span> : null}
         </span>
-        <time className="inbox-time" dateTime={item.atUtc} title={formatTimestamp(item.atUtc)}>
-          {formatInboxListTime(item.atUtc)}{snoozeBadge(item)}{flagBadge(item)}
+        <time className="inbox-time" dateTime={at} title={formatTimestamp(at)}>
+          {formatInboxListTime(at)}{snoozeBadge(item)}{flagBadge(row ? rowIds(row) : [item.messageId])}
         </time>
       </button>
     );
@@ -858,8 +905,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   });
   useEffect(() => loadFlags(), []);
 
-  function flagBadge(item: InboxEmail) {
-    return flagged.has(flagKey(mailbox, item.messageId)) ? <span className="inbox-flag-mark"><FlagIcon />Flagged</span> : null;
+  function flagBadge(ids: string[]) {
+    return ids.some((id) => flagged.has(flagKey(mailbox, id))) ? <span className="inbox-flag-mark"><FlagIcon />Flagged</span> : null;
   }
 
   function snooze(wakeAt: string) {
@@ -882,8 +929,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     return `${label} ${sortDirection === "asc" ? "↑" : "↓"}`;
   }
 
-  function dragMessagePayload(item: InboxEmail): string {
-    const dragged = selectedMessageIds.includes(item.messageId) ? selectedMessageIds : [item.messageId];
+  function dragMessagePayload(ids: string[]): string {
+    const dragged = ids.every((id) => selectedMessageIds.includes(id)) ? selectedMessageIds : ids;
     // The folder exactly as listed: "" is the account's default folder, which
     // the server resolves. A literal "INBOX" there moved INBOX's same UID.
     return JSON.stringify({
@@ -1122,25 +1169,21 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     delete swipeLiveRef.current[messageId];
   }
 
-  function markSwipeRemoved(messageId: string, removed: boolean) {
+  function markSwipeRemoved(ids: string[], removed: boolean) {
     setSwipeRemovedIds((current) => {
-      if (removed) {
-        if (current.includes(messageId)) {
-          return current;
-        }
-        return [...current, messageId];
-      }
-      return current.filter((id) => id !== messageId);
+      const rest = current.filter((id) => !ids.includes(id));
+      return removed ? [...rest, ...ids] : rest;
     });
   }
 
-  function handleSwipeStart(messageId: string, event: TouchEvent<HTMLTableRowElement>) {
+  function handleSwipeStart(messageId: string, ids: string[], event: TouchEvent<HTMLTableRowElement>) {
     if (!isTouchSwipeEnabled || actionLoading) {
       return;
     }
     const touch = event.touches[0];
     swipeSessionRef.current = {
       messageId,
+      ids,
       startX: touch.clientX,
       startY: touch.clientY,
       width: Math.max(event.currentTarget.clientWidth, 1),
@@ -1223,7 +1266,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     }
 
     // Ask before the row animates away: a declined Trash delete must snap back.
-    if (!state.armed || (state.tone === "delete" && !confirmPermanentDelete(1))) {
+    if (!state.armed || (state.tone === "delete" && !confirmPermanentDelete(session.ids.length))) {
       setSwipeRows((current) => ({
         ...current,
         [session.messageId]: {
@@ -1248,14 +1291,14 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     }));
 
     window.setTimeout(() => {
-      markSwipeRemoved(session.messageId, true);
+      markSwipeRemoved(session.ids, true);
       setRefillAnimationTick((tick) => tick + 1);
     }, 170);
 
     const action: InboxAction = state.tone === "delete" ? "delete" : "archive";
-    const ok = await applyInboxAction(action, [session.messageId], { confirmed: true });
+    const ok = await applyInboxAction(action, session.ids, { confirmed: true });
     if (!ok) {
-      markSwipeRemoved(session.messageId, false);
+      markSwipeRemoved(session.ids, false);
       setSwipeRows((current) => ({
         ...current,
         [session.messageId]: {
@@ -1302,7 +1345,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      for (const message of pageRows) {
+      for (const message of pageRows.map(openTarget)) {
         if (cancelled) return;
         // Encrypted rows have no server-side body; the payload is fetched on open.
         if (message.body === undefined && !message.pgpEncrypted) {
@@ -1607,6 +1650,22 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     document.body.appendChild(frame);
   }
 
+  // The open message's conversation, oldest first with replies from Sent, split
+  // around the open message: read ones stay collapsed, one is open at a time.
+  const openConversation = grouping && selected ? conversationOf(selected.messageId, conversations) : undefined;
+  const threadAll: Array<InboxEmail | SentMember> = openConversation
+    ? [...openConversation.messageIds.flatMap((id) => loadedById.get(id) ?? []), ...(openConversation.sent ?? [])].sort(
+        (a, b) => Date.parse(a.atUtc) - Date.parse(b.atUtc)
+      )
+    : [];
+  const threadOpenAt = threadAll.findIndex((m) => !("mailbox" in m) && m.messageId === selected?.messageId);
+  const thread = threadOpenAt < 0 ? [] : threadAll;
+  // The card clicked becomes the open message, so focus moves to its title.
+  function openFromThread(message: InboxEmail) {
+    void openEmailDetails(message);
+    readerTitleRef.current?.focus();
+  }
+
   return (
     <section className="panel read-page-panel">
       <header className="ky-page-head">
@@ -1809,11 +1868,11 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                           className="inbox-checkbox"
                           checked={allRowsSelected}
                           ref={(element) => {
-                            if (element) element.indeterminate = !allRowsSelected && pageRows.some((row) => selectedMessageIds.includes(row.messageId));
+                            if (element) element.indeterminate = !allRowsSelected && pageRows.some((row) => rowIds(row).some((id) => selectedMessageIds.includes(id)));
                           }}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              const ids = pageRows.map((row) => row.messageId);
+                              const ids = pageRows.flatMap(rowIds);
                               setSelectedMessageIds((current) => {
                                 const merged = new Set(current);
                                 ids.forEach((id) => merged.add(id));
@@ -1821,7 +1880,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                               });
                               return;
                             }
-                            const pageIDs = new Set(pageRows.map((row) => row.messageId));
+                            const pageIDs = new Set(pageRows.flatMap(rowIds));
                             setSelectedMessageIds((current) => current.filter((id) => !pageIDs.has(id)));
                           }}
                           aria-label="Select all emails in page"
@@ -1877,8 +1936,11 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                   </tr>
                 </thead>
                 <tbody className={`inbox-body-refill-${refillAnimationTick % 2}`}>
-                  {pageRows.map((item) => {
-                    const isRead = item.status === "read";
+                  {pageRows.map((row) => {
+                    const item = row.lead;
+                    const ids = rowIds(row);
+                    const count = rowCount(row);
+                    const isRead = row.members.every((m) => m.status === "read");
                     const swipeState = swipeRows[item.messageId];
                     const swipeClass = swipeState
                       ? [
@@ -1893,18 +1955,18 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                       : "";
                     return (
                     <tr
-                      key={`${item.messageId}-${item.atUtc}`}
+                      key={row.conversation?.id ?? `${item.messageId}-${item.atUtc}`}
                       draggable={!isTouchSwipeEnabled}
                       onDragStart={(event) => {
-                        event.dataTransfer.setData("application/x-kypost-mailbox", dragMessagePayload(item));
+                        event.dataTransfer.setData("application/x-kypost-mailbox", dragMessagePayload(ids));
                         event.dataTransfer.effectAllowed = "move";
                       }}
-                      onTouchStart={(event) => handleSwipeStart(item.messageId, event)}
+                      onTouchStart={(event) => handleSwipeStart(item.messageId, ids, event)}
                       onTouchMove={handleSwipeMove}
                       onTouchEnd={() => void handleSwipeEnd()}
                       onTouchCancel={() => void handleSwipeEnd()}
                       className={`inbox-row ${isRead ? "" : "inbox-row-unread"} ${swipeClass}`.trim()}
-                      data-open={selected?.messageId === item.messageId || undefined}
+                      data-open={(selected !== null && ids.includes(selected.messageId)) || undefined}
                       style={swipeState ? { transform: `translateX(${swipeState.offset}px)` } : undefined}
                     >
                       <td className="inbox-cell inbox-col-select">
@@ -1912,15 +1974,15 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                           <input
                             type="checkbox"
                             className="inbox-checkbox"
-                            checked={selectedMessageIds.includes(item.messageId)}
+                            checked={ids.every((id) => selectedMessageIds.includes(id))}
                             onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedMessageIds((current) => (current.includes(item.messageId) ? current : [...current, item.messageId]));
-                                return;
-                              }
-                              setSelectedMessageIds((current) => current.filter((id) => id !== item.messageId));
+                              // A conversation row selects all of it, so list actions act on the whole conversation.
+                              setSelectedMessageIds((current) => {
+                                const rest = current.filter((id) => !ids.includes(id));
+                                return e.target.checked ? [...rest, ...ids] : rest;
+                              });
                             }}
-                            aria-label={`Select email ${item.subject || item.messageId}`}
+                            aria-label={count > 1 ? `Select conversation ${item.subject || item.messageId}, ${count} messages` : `Select email ${item.subject || item.messageId}`}
                           />
                         </label>
                       </td>
@@ -1938,8 +2000,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                           if (swipeClickSuppressRef.current.has(item.messageId)) {
                             return;
                           }
-                          void openEmailDetails(item);
-                        })}
+                          void openEmailDetails(openTarget(row));
+                        }, row)}
                       </td>
                     </tr>
                   )})}
@@ -1978,7 +2040,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
               </button>
             ) : null}
             <div className="email-reader-head">
-              <h2 id="email-reader-title" className="email-reader-title">
+              <h2 id="email-reader-title" className="email-reader-title" ref={readerTitleRef} tabIndex={-1}>
                 {decrypted[decryptedKey(selected.messageId)]?.subject ?? selected.subject ?? "(no subject)"}
               </h2>
               <button type="button" className="btn-ghost icon-button email-reader-close" aria-label="Close" title="Close" onClick={() => setSelected(null)}>
@@ -2041,6 +2103,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
             </div>
 
             <div className="email-reader-content">
+              {thread.length > 1 ? <p className="conversation-count">{thread.length} messages in this conversation</p> : null}
+              <ConversationCards items={thread.slice(0, threadOpenAt)} onOpen={openFromThread} />
               {/*
                 Sits above the PGP badge because it is the more urgent thing to
                 read: PGP describes how a message was protected, this says the
@@ -2331,6 +2395,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                   </button>
                 </div>
               </div>
+              <ConversationCards items={thread.slice(threadOpenAt + 1)} onOpen={openFromThread} />
             </div>
           </div>
         ) : null}

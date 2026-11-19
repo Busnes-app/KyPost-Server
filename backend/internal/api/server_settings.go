@@ -381,3 +381,39 @@ func (s *Server) handleSignatures(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, prefs)
 	}
 }
+
+// handleMailSettings reads and sets the caller's mail view settings:
+// {"conversations": bool}, on until they turn it off. Clients that group call
+// GET /api/inbox/conversations; /api/inbox does not change either way.
+func (s *Server) handleMailSettings(w http.ResponseWriter, r *http.Request) {
+	ac, ok := authFromContext(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	path := s.userSettingsPath(ac.UserID)
+	if r.Method == http.MethodPut {
+		var req struct {
+			Conversations *bool `json:"conversations"`
+		}
+		dec := json.NewDecoder(io.LimitReader(r.Body, 1<<10))
+		dec.DisallowUnknownFields()
+		if dec.Decode(&req) != nil || req.Conversations == nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := config.UpdateUserSettings(path, func(st *config.UserSettings) error {
+			st.Conversations = req.Conversations
+			return nil
+		}); err != nil {
+			http.Error(w, "failed to save settings", http.StatusInternalServerError)
+			return
+		}
+	}
+	settings, err := config.LoadUserSettings(path)
+	if err != nil {
+		http.Error(w, "failed to read settings", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversations": settings.Conversations == nil || *settings.Conversations})
+}

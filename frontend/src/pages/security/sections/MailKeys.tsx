@@ -72,6 +72,8 @@ export type MailKeysProps = {
   setRecoveryBackup?: (backup: PreparedRecoveryBackup | null) => void;
   recoverySecret?: string;
   setRecoverySecret?: (secret: string) => void;
+  /** First sign-in setup: preselect "Encrypt incoming mail". */
+  incomingDefaultOn?: boolean;
 };
 
 export function MailKeys({
@@ -83,7 +85,8 @@ export function MailKeys({
   recoveryBackup: preparedRecovery = null,
   setRecoveryBackup = noop,
   recoverySecret = "",
-  setRecoverySecret = noop
+  setRecoverySecret = noop,
+  incomingDefaultOn = false
 }: MailKeysProps = {}) {
   const { userId, hasPassword, ssoSession } = useAuth();
   const [askPassword, passwordPrompt] = usePasswordPrompt();
@@ -695,7 +698,7 @@ export function MailKeys({
   return (
     <>
       {passwordPrompt}
-      <IncomingEncryption identity={pgpIdentity} clientProtected={pgpSession?.bootstrap?.protection === "client"} />
+      <IncomingEncryption identity={pgpIdentity} clientProtected={pgpSession?.bootstrap?.protection === "client"} defaultOn={incomingDefaultOn} />
       <div
         className={`sec-card ${
           keyCustody === "client" ? "sec-card-on" : keyCustody === "server" ? "sec-card-risk" : ""

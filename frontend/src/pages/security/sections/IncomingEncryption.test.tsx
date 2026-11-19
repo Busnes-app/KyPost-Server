@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IncomingEncryption } from "./IncomingEncryption";
 import { getIncomingEncryption, setIncomingEncryption, type PGPIdentity } from "../../../api/pgp";
 
-const auth = vi.hoisted(() => ({ ssoSession: false, hasPassword: true as boolean | undefined }));
+const auth = vi.hoisted(() => ({ ssoSession: false, hasPassword: true as boolean | undefined, encryptionSetup: undefined as { incomingPolicy: string } | undefined }));
 vi.mock("../../../auth", () => ({ useAuth: () => auth }));
 vi.mock("../../../api/pgp", () => ({ getIncomingEncryption: vi.fn(), setIncomingEncryption: vi.fn() }));
 const identity: PGPIdentity = { pgpRevision: 4, fingerprint: "fingerprint", keyId: "key", publicKey: "public", source: "generated", createdAt: "now" };
 afterEach(cleanup);
 beforeEach(() => {
-  vi.clearAllMocks(); auth.ssoSession = false; auth.hasPassword = true;
+  vi.clearAllMocks(); auth.ssoSession = false; auth.hasPassword = true; auth.encryptionSetup = undefined;
   vi.mocked(getIncomingEncryption).mockResolvedValue({ enabled: false, pending: false });
   vi.mocked(setIncomingEncryption).mockResolvedValue(undefined);
 });
@@ -64,5 +64,17 @@ describe("incoming encryption opt-in", () => {
     render(<IncomingEncryption identity={null} clientProtected={false} />);
     await screen.findByText(/An incoming replacement is pending/);
     expect((screen.getByLabelText("Encrypt incoming mail after classification") as HTMLInputElement).disabled).toBe(true);
+  });
+  it("shows Required incoming encryption as locked", async () => {
+    auth.encryptionSetup = { incomingPolicy: "required" };
+    vi.mocked(getIncomingEncryption).mockResolvedValue({ enabled: true, pending: false });
+    render(<IncomingEncryption identity={identity} clientProtected />);
+    expect((await screen.findByRole("status")).textContent).toMatch(/Required by your administrator/);
+    expect(screen.queryByRole("button", { name: "Save incoming encryption" })).toBeNull();
+  });
+  it("starts checked when setup turns it on by default", async () => {
+    render(<IncomingEncryption identity={identity} clientProtected defaultOn />);
+    const enabled = await screen.findByLabelText("Encrypt incoming mail after classification");
+    await waitFor(() => expect((enabled as HTMLInputElement).checked).toBe(true));
   });
 });
