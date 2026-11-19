@@ -205,9 +205,15 @@ func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 	if err := state.FenceRestoredAgentTokens(filepath.Join(staging, "state")); err != nil {
 		return fmt.Errorf("cannot revoke restored AI agent tokens; preserve private staging %s for inspection: %w", stage, err)
 	}
+	if err := state.ResetReplicaState(filepath.Join(staging, "state")); err != nil {
+		return fmt.Errorf("cannot clear the restored deployment's sessions and replica records; preserve private staging %s for inspection: %w", stage, err)
+	}
 	// Every hold and revocation above ran on the staged SQLite files; Postgres gets them
 	// as they are now, in one transaction, and the published tree holds no copy.
 	if dbbackend.Postgres() {
+		if err := backup.RefusePinWithoutKey(filepath.Join(staging, "state")); err != nil {
+			return fmt.Errorf("restore into Postgres refused; preserve private staging %s for inspection: %w", stage, err)
+		}
 		roots := []backup.Root{{Dir: filepath.Join(staging, "config"), Prefix: "config"}, {Dir: filepath.Join(staging, "state"), Prefix: "state"}}
 		if _, err := backup.ImportDatabases(context.Background(), roots, stage); err != nil {
 			return fmt.Errorf("restore into Postgres failed; preserve private staging %s for inspection: %w", stage, err)

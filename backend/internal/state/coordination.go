@@ -7,8 +7,10 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
@@ -326,4 +328,55 @@ func HoldInstance(stateDir string, exclusive bool) (release func(), err error) {
 		return nil, err
 	}
 	return func() { _ = f.Close() }, nil
+}
+
+// ResetReplicaState clears, in a restore's staged SQLite global state.db, what belonged to
+// the old deployment's live processes: sessions and their revocation marks, one-time
+// authority, rate windows, registered instances, import jobs, the shared configuration
+// record, the volume ID, the SSO epoch and the revocation sequence. Spent challenges and
+// replay IDs still inside their window are kept (they only refuse); expired ones go. A
+// capsule older than these tables has nothing to clear.
+func ResetReplicaState(stateDir string) (err error) {
+	path := filepath.Join(stateDir, "state.db")
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return err
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(absolute); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: absolute}).String()+"?mode=rw&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	for _, table := range []string{"sessions", "session_revocations", "auth_challenges", "security_windows", "replica_instances", "import_jobs", "spent_challenges", "replay_ids"} {
+		var n int
+		if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			continue
+		}
+		q := `DELETE FROM ` + table
+		if table == "spent_challenges" || table == "replay_ids" {
+			q += ` WHERE expires_at <= ` + strconv.FormatInt(now, 10)
+		}
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM meta WHERE key IN ('replica_config_fingerprint', 'replica_volume_id', 'sso_epoch', 'session_revocation_seq')`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

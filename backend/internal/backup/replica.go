@@ -7,11 +7,13 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -216,7 +218,14 @@ func (s *Service) SyncRecoveryKey() error {
 	case !pinned:
 		return fmt.Errorf("%w: a record exists without a pin", ErrAnchor)
 	case !recorded:
-		return fmt.Errorf("%w: the pin has no sealed record; pin the key again", ErrAnchor)
+		// A pin migrated or restored from SQLite, or one whose record write failed: record it
+		// from recovery.pub if that file is the pinned key. A database writer cannot place
+		// the file, so it cannot substitute a key this way.
+		k, err := recoveryclient.LoadRecoveryKey(s.dirs.State, f)
+		if err != nil {
+			return fmt.Errorf("%w: the pin has no sealed record and recovery.pub is not the pinned key; pin the key again", ErrAnchor)
+		}
+		return s.recordAnchor(k)
 	}
 	k, err := s.openAnchor(sealed, keyID)
 	if err != nil {
@@ -266,6 +275,37 @@ func pinTopology(f recoveryclient.Settings, k recoveryclient.RecoveryKey) error 
 	n, _ := f.Get("kyrecovery_total_shares")
 	if t != strconv.Itoa(k.Threshold) || n != strconv.Itoa(k.TotalShares) {
 		return ErrTopologyPinned
+	}
+	return nil
+}
+
+// RefusePinWithoutKey refuses a stopped SQLite install (a migration source or restore
+// staging) whose global state.db pins a recovery key that recovery.pub does not hold: the
+// pin could never be honoured, and nothing has been copied yet.
+func RefusePinWithoutKey(stateDir string) error {
+	path := filepath.Join(stateDir, "state.db")
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	db, err := dbbackend.OpenSQLiteFile(path, "mode=ro&immutable=1")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var id string
+	err = db.QueryRow(`SELECT value FROM meta WHERE key = 'kyrecovery_key_id'`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(recoveryclient.RecoveryKeyPath(stateDir))
+	if err != nil {
+		return fmt.Errorf("a recovery key is pinned (%s) but %s is missing; restore it before copying", id, recoveryclient.RecoveryKeyPath(stateDir))
+	}
+	if pk, err := recoverykey.ParsePublicKey(raw); err != nil || pk.ID() != id {
+		return fmt.Errorf("a recovery key is pinned (%s) but %s holds another; restore the right file before copying", id, recoveryclient.RecoveryKeyPath(stateDir))
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -350,5 +351,55 @@ func TestFrozenDatabaseBoundsTheLock(t *testing.T) {
 	won, err := a.WithLock(ctx, "role:other", func(context.Context) error { return nil })
 	if took := time.Since(start); took > 3*time.Second || won || !errors.Is(err, ErrLockAcquire) {
 		t.Fatalf("acquisition against a frozen database: won=%v err=%v after %v", won, err, took)
+	}
+}
+
+// AC25: a restore clears the old deployment's live records and keeps only refusals still in
+// their window.
+func TestResetReplicaStateKeepsOnlyLiveRefusals(t *testing.T) {
+	dbbackend.SetURLForTest(t, "") // restore staging is always SQLite
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Hour).UnixMilli()
+	for _, q := range []string{
+		`INSERT INTO sessions VALUES ('h', 'u', '', '{}', 9999999999999)`,
+		`INSERT INTO session_revocations VALUES ('u', 1)`,
+		`INSERT INTO auth_challenges VALUES ('k', 'u', X'00', 9999999999999)`,
+		`INSERT INTO security_windows VALUES ('k', 1, 9999999999999)`,
+		`INSERT INTO replica_instances VALUES ('i', 'b', 'v', 'api', 1)`,
+		`INSERT INTO import_jobs VALUES ('u', 'i', '{}', 0, 1)`,
+		`INSERT INTO spent_challenges VALUES ('live', ` + strconv.FormatInt(future, 10) + `), ('old', 1)`,
+		`INSERT INTO replay_ids VALUES ('live', 'a', ` + strconv.FormatInt(future, 10) + `), ('old', 'a', 1)`,
+		`INSERT INTO meta VALUES ('replica_config_fingerprint', '{}'), ('replica_volume_id', 'v'), ('sso_epoch', '3'), ('kyrecovery_key_id', 'kept')`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	_ = s.Close()
+	if err := ResetReplicaState(dir); err != nil {
+		t.Fatal(err)
+	}
+	s, err = New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for table, want := range map[string]int{"sessions": 0, "session_revocations": 0, "auth_challenges": 0, "security_windows": 0, "replica_instances": 0, "import_jobs": 0, "spent_challenges": 1, "replay_ids": 1} {
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&n); err != nil || n != want {
+			t.Errorf("%s: %d rows (%v), want %d", table, n, err, want)
+		}
+	}
+	for _, k := range []string{"replica_config_fingerprint", "replica_volume_id", "sso_epoch"} {
+		if _, err := s.Setting(k); !errors.Is(err, ErrNotFound) {
+			t.Errorf("meta %s survived the restore", k)
+		}
+	}
+	if v, _ := s.Setting("kyrecovery_key_id"); v != "kept" {
+		t.Error("the restore cleared the recovery pin")
 	}
 }
