@@ -206,8 +206,9 @@ provider rewrites other records. Full domain rules: [native provisioning](../NAT
   are held permanently, never deleted.
 - **Release** an alias: it becomes reserved, delivery and sending from it stop
   at once, delivered mail stays. **Reassign** a reserved alias to a chosen
-  mailbox. Aliases cannot contain `+`: plus addressing (`you+tag@`, on by
-  default) delivers those to `you@`.
+  mailbox. New aliases cannot contain `+`: plus addressing (`you+tag@`, on by
+  default) delivers those to `you@`. Addresses that already hold a `+`,
+  including KyIdentity primaries, keep receiving exactly.
 - **Masked addresses** (same tab): tick the domains users may make their own
   masked and disposable addresses on; none ticked keeps the feature off. Users
   manage them under Settings → Mail → Masked & plus addresses; you cannot

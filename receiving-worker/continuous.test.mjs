@@ -519,3 +519,20 @@ test("plus addressing routes the part before + and freezes it; noPlus refuses ta
     assert.equal(await install(f, table({revision: Date.now() + 1, routes: [{address: "one@example.test", generation: 3, maxBytes: 1024, noPlus}]})), 400, String(noPlus));
   }
 });
+
+test("a route for the full + address wins over its base, even when the base refuses tags", async () => {
+  const f = await fixture();
+  const routes = [{address: "john+work@example.test", generation: 2, maxBytes: 1024}, {address: "john@example.test", generation: 1, maxBytes: 1024, noPlus: true}];
+  assert.equal(await install(f, table({routes})), 204);
+  const exact = mail({to: "John+Work@example.test"});
+  await worker.email(exact, f.env);
+  assert.deepEqual(exact.rejected, []);
+  const [key] = inbox(f.env);
+  const got = await call(f.env, "GET", `/messages/${key.slice(6)}`);
+  const envelope = JSON.parse(Buffer.from(got.headers.get("X-KyPost-Envelope"), "base64url").toString());
+  assert.equal(envelope.recipient, "john+work@example.test");
+  assert.equal(envelope.generation, 2);
+  const tagged = mail({to: "john+other@example.test"});
+  await worker.email(tagged, f.env);
+  assert.deepEqual(tagged.rejected, ["Address refused"]);
+});

@@ -81,6 +81,20 @@ func (s *LifecycleStore) NativeAddress(address string) (a NativeAddress, err err
 	return a, nil
 }
 
+// NativeAddressFor resolves a recipient or From under plus addressing: the
+// full address when it is an active ledger address (one issued before new
+// addresses refused "+"), otherwise the part before the first +. tagged
+// reports that the tag was dropped; no record is the zero value.
+func (s *LifecycleStore) NativeAddressFor(address string) (x NativeAddress, tagged bool, err error) {
+	x, err = s.NativeAddress(address)
+	base := PlusBase(address)
+	if err != nil || x.State == "active" || base == address {
+		return x, false, err
+	}
+	x, err = s.NativeAddress(base)
+	return x, true, err
+}
+
 // NativeMailboxes lists mailboxes, sorted, with their addresses sorted.
 func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
 	f, err := s.loadNative()

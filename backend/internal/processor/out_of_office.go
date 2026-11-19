@@ -115,7 +115,8 @@ func oooEligible(h mail.Header, own map[string]bool) (oooOriginal, string) {
 	for _, field := range []string{"To", "Cc"} {
 		list, _ := h.AddressList(field)
 		for _, a := range list {
-			addressed = addressed || own[sso.PlusBase(strings.ToLower(a.Address))]
+			lower := strings.ToLower(a.Address)
+			addressed = addressed || own[lower] || own[sso.PlusBase(lower)]
 		}
 	}
 	if !addressed {

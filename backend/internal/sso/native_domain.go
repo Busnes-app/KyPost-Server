@@ -101,7 +101,8 @@ func AddressDomain(address string) string {
 }
 
 // PlusBase drops an RFC 5233 "+detail" from address: the part before the
-// first + alone names the recipient, so a tag never selects another address.
+// first +. Resolve recipients with NativeAddressFor, which prefers an exact
+// active address issued before + was refused.
 func PlusBase(address string) string {
 	at := strings.LastIndexByte(address, '@')
 	if at < 0 {

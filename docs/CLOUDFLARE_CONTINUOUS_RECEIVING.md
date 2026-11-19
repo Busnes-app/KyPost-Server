@@ -209,10 +209,10 @@ senders at RCPT, so every sender either profile accepts can be blocked. `receivi
 fixture both sides test against. Read `routes.json` (absent → reject; storage error → throw); each isolate
 keeps the parsed table and revalidates it on every message with a conditional get on
 its etag, so a new table applies to the next message. Sender address or domain blocked with `until` null or in the future →
-reject. `now - issuedAt` over 14 days → reject. Plus addressing: the recipient's part
-before the first `+` in the local part, with the domain, is the route address looked up
-(`one+tag@x` → `one@x`); a tagged recipient whose route has `noPlus` → reject. Route
-address not in `routes` → reject. The envelope `recipient` is the route address, so
+reject. `now - issuedAt` over 14 days → reject. Plus addressing: a route for the full recipient
+wins (an address that itself holds `+`); otherwise the part before the first `+` in the
+local part, with the domain, is the route address looked up (`one+tag@x` → `one@x`), and
+a base route with `noPlus` → reject. No route → reject. The envelope `recipient` is the route address, so
 KyPost never sees the tag.
 Announced or actual size over the route's `maxBytes`, or empty → reject. None of these
 reads the body except the actual-size check. Otherwise put `inbox/<uuid>` with

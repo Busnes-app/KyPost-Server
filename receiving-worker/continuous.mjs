@@ -290,11 +290,13 @@ export default {
     const now = Date.now();
     if (sender && blocked(table, sender, now)) { message.setReject("Sender blocked"); return; }
     if (now - table.issuedAt > limits.maxAgeMs) { message.setReject("Routing unavailable"); return; }
-    // Plus addressing: the part before the first + alone selects the route,
-    // which is what the envelope freezes; a noPlus route refuses tagged mail.
+    // Plus addressing: a route for the full address wins (one issued before +
+    // was refused); otherwise the part before the first + selects it, and that
+    // is what the envelope freezes. A noPlus route refuses tagged mail.
     const sign = recipient.lastIndexOf("@"), plus = recipient.slice(0, sign).indexOf("+");
-    const target = plus < 0 ? recipient : recipient.slice(0, plus) + recipient.slice(sign);
-    const route = table.routes.find(r => r.address === target && (target === recipient || !r.noPlus));
+    const base = plus < 0 ? recipient : recipient.slice(0, plus) + recipient.slice(sign);
+    const route = table.routes.find(r => r.address === recipient) ??
+      (base === recipient ? undefined : table.routes.find(r => r.address === base && !r.noPlus));
     if (!route) { message.setReject("Address refused"); return; }
     if (!(message.rawSize <= route.maxBytes)) { message.setReject("Message too large"); return; }
     const raw = await readBounded(message.raw, route.maxBytes);

@@ -427,21 +427,25 @@ recorded as `address_conflict`.
 
 ## Plus addressing and masked addresses
 
-- **Plus addressing** (RFC 5233). Receiving reads `local+tag@domain` as
-  `local@domain` (`sso.PlusBase`: the part before the first `+` alone decides,
-  so a tag never selects another address) for primaries, aliases and masked
-  addresses alike, and binds the delivery to that base address: routes,
-  bindings, import and quarantine never see the tag. Maddy `bind` does this
-  itself; the Cloudflare Worker routes the base address and freezes it in the
-  envelope (`docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md`). On by default; a user's
+- **Plus addressing** (RFC 5233). An active ledger address that holds a `+`
+  (a KyIdentity primary such as `john+work@`, or an alias issued before `+`
+  was refused) matches exactly and keeps receiving. Otherwise receiving reads
+  `local+tag@domain` as `local@domain` (`sso.LifecycleStore.NativeAddressFor`;
+  the part before the first `+`) for primaries, aliases and masked addresses
+  alike, and binds the delivery to the resolved address: routes, bindings,
+  import and quarantine never see the tag. Maddy `bind` does this itself; the
+  Cloudflare Worker matches a full-address route first, then the base, and
+  freezes the route address in the envelope
+  (`docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md`). On by default; a user's
   `refusePlusAddresses` setting (`PUT /api/addresses/plus`) refuses tagged mail
   with the unknown-recipient answer (Maddy `bind` exit 3 / 550, Worker "Address
   refused" through the route's `noPlus`). `/api/mail/send` and scheduled sends
   accept `From: base+tag@` when the base is an owned active address and plus
-  addressing is on; the outbox fences it by the base address's generation.
-  New aliases, extra mailboxes and HR reservations refuse a local part holding
-  `+`; a ledger address that already holds one is unreachable and never
-  published to the Worker.
+  addressing is on; the outbox fences it by the resolved address's
+  generation. New aliases, masked addresses and administrator-created
+  mailboxes refuse a local part holding `+`; KyIdentity primaries (directory
+  events and HR reservations) are taken as KyIdentity sends them. Existing
+  `+` addresses need no migration.
 - **Masked and disposable addresses** are ledger `alias` records on the user's
   primary mailbox, made by its owner with `POST /api/addresses/masked` on a
   domain the administrator listed (`masked_address_domains` in root `state.db`

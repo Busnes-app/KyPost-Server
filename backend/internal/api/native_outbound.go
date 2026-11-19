@@ -162,8 +162,7 @@ func (s *Server) nativeFrom(a sso.NativeAssignment, requested string) (string, b
 	}
 	// A plus-tagged From (a reply to user+tag@) is its base address's to use,
 	// unless the owner refuses plus addresses; a masked one only while live.
-	base := sso.PlusBase(requested)
-	x, err := s.ssoLifecycle.NativeAddress(base)
+	x, tagged, err := s.ssoLifecycle.NativeAddressFor(requested)
 	if err != nil || x.Mailbox != a.Owner.Mailbox || x.State != "active" {
 		return requested, false, err
 	}
@@ -171,7 +170,7 @@ func (s *Server) nativeFrom(a sso.NativeAssignment, requested string) (string, b
 	if err != nil {
 		return requested, false, err
 	}
-	return requested, !settings.RefusesAddress(base, base != requested, time.Now()), nil
+	return requested, !settings.RefusesAddress(x.Address, tagged, time.Now()), nil
 }
 
 // refuseNativeFrom answers an unusable From; it reports whether it wrote.

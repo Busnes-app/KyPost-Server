@@ -4,14 +4,19 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func setAddressSettings(t *testing.T, r *receivingRuntime, userID string, mutate func(*config.UserSettings)) {
@@ -129,5 +134,64 @@ func TestCloudflareRoutesPlusAndMasked(t *testing.T) {
 		if route.NoPlus != (route.Mailbox == e.users[0].ID) {
 			t.Fatalf("noPlus on the wrong routes: %+v", routes)
 		}
+	}
+}
+
+// Addresses holding a + from before plus addressing keep receiving: a full
+// active address wins over its base. A KyIdentity primary holding + still
+// provisions; a tag on an address with no exact match reaches the base.
+func TestNativeReceivingKeepsExistingPlusAddresses(t *testing.T) {
+	r, created := receivingFixture(t)
+	ctx := context.Background()
+	const issuer = "https://identity.example.test"
+	raw := []byte(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"john","externalId":"john","userName":"john","active":true,"emails":[{"value":"john+work@example.test","primary":true}],"meta":{"version":"W/\"1\""}}`)
+	var resource sso.DirectoryUser
+	if err := json.Unmarshal(raw, &resource); err != nil {
+		t.Fatal(err)
+	}
+	ev := syncauth.Event{ID: "create-john", Type: "user.created", At: time.Now()}
+	if _, err := r.life.ApplyDirectoryUser(issuer, ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return false, nil }); err != nil {
+		t.Fatal("directory event with a + primary", err)
+	}
+	john, err := r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "john", r.domains, r.accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000})
+	if err != nil {
+		t.Fatal("provisioning a + primary", err)
+	}
+	// A + alias as an earlier release could issue it, written past the store.
+	for _, q := range []string{
+		"INSERT INTO addresses(address, mailbox, kind, state, generation) VALUES ('one+legacy@example.test', '" + created[0].ID + "', 'alias', 'active', 1)",
+		"INSERT INTO address_history(address, generation, mailbox) VALUES ('one+legacy@example.test', 1, '" + created[0].ID + "')",
+	} {
+		if err := ssotest.DamageAuthority(r.configDir, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// two+x has no exact record: the base two@ receives it.
+	receive(t, r, "john-primary", "john+work@example.test")
+	receive(t, r, "legacy-alias", "One+Legacy@example.test")
+	receive(t, r, "base", "two+x@example.test")
+	for _, id := range []string{"john-primary", "legacy-alias", "base"} {
+		if err := r.importDelivery(ctx, id); err != nil {
+			t.Fatal(id, err)
+		}
+	}
+	for u, want := range map[string]string{john.ID: "john-primary", created[0].ID: "legacy-alias", created[1].ID: "base"} {
+		var user users.User
+		for _, c := range append(created, john) {
+			if c.ID == u {
+				user = c
+			}
+		}
+		if got := receivingInbox(t, r, user); strings.Join(got, ",") != want {
+			t.Fatal("delivered", got, "want", want)
+		}
+	}
+	// A tag on the legacy alias resolves to its base (one@), not the alias.
+	receive(t, r, "tag-on-legacy", "one+legacy+x@example.test")
+	if err := r.importDelivery(ctx, "tag-on-legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if got := receivingInbox(t, r, created[0]); len(got) != 2 {
+		t.Fatal("tagged legacy alias", got)
 	}
 }

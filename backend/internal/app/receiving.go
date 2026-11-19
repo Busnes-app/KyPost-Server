@@ -422,13 +422,20 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	if err != nil || parsed.Name != "" || parsed.Address != recipient {
 		return ingress.ErrRoute
 	}
-	// Plus addressing: the part before + alone decides, and mail binds to
-	// that address, so routes, bindings and import never see the tag.
-	tagged := strings.ToLower(recipient)
-	recipient = sso.PlusBase(tagged)
+	// Plus addressing: an active full address wins; otherwise the part before
+	// + decides, and mail binds to that address, so routes, bindings and
+	// import never see the tag. The domain is the same either way.
+	recipient = strings.ToLower(recipient)
 	proofs, err := r.verifyDomains(ctx, []string{recipient})
 	if err != nil {
 		return err
+	}
+	x, tagged, err := r.life.NativeAddressFor(recipient)
+	if err != nil {
+		return err
+	}
+	if x.Address != "" {
+		recipient = x.Address
 	}
 	a, found, err := r.life.NativeAssignmentForAddress(proofs[0].Issuer, recipient)
 	if err != nil {
@@ -445,7 +452,7 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	}
 	// So is a refused plus tag or a paused or expired masked address: the
 	// sender learns nothing an unknown address would not tell them.
-	if refused, err := r.refusesAddress(a.UserID(), recipient, tagged != recipient); err != nil || refused {
+	if refused, err := r.refusesAddress(a.UserID(), recipient, tagged); err != nil || refused {
 		return cmp.Or(err, ingress.ErrRoute)
 	}
 	return r.withAuthority(ctx, true, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {

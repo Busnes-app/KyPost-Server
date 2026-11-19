@@ -368,9 +368,9 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 	}
 	byMailbox := map[string][]string{}
 	for address, x := range addresses {
-		// A ledger address holding a + is unreachable: the Worker routes the
-		// part before it, as bind does.
-		if x.State == "active" && set.Domains[sso.AddressDomain(address)].Established && cfreceiving.ValidAddress(address) && sso.PlusBase(address) == address {
+		// An active address holding a + (issued before + was refused) is
+		// published: the Worker matches a full address before the part before +.
+		if x.State == "active" && set.Domains[sso.AddressDomain(address)].Established && cfreceiving.ValidAddress(address) {
 			byMailbox[x.Mailbox] = append(byMailbox[x.Mailbox], address)
 		}
 	}
