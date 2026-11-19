@@ -95,6 +95,7 @@ beforeEach(async () => {
     if (url.startsWith("/api/inbox/folders")) return { folders: [] };
     if (url.startsWith("/api/contacts/search")) return { contacts: [] };
     if (url.startsWith("/api/sendas")) return { aliases: [] };
+    if (url === "/api/mail/send-delay") return { seconds: 0 };
     return {};
   });
 });

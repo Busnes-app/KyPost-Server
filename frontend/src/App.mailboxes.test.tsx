@@ -74,6 +74,7 @@ beforeEach(() => {
     if (url.startsWith("/api/mail/attachment?")) return { ok: true, status: 200, headers: { get: () => "application/pdf" }, blob: async () => new Blob(["pdf"]), arrayBuffer: async () => new TextEncoder().encode("pdf").buffer } as unknown as Response;
     if (url.startsWith("/api/mail/body?")) return json(200, { body: "draft body", bodyMode: "plain" });
     if (url === "/api/mail/send") return json(200, { ok: true });
+    if (url === "/api/mail/send-delay") return json(200, { seconds: 0 });
     if (url.startsWith("/api/contacts/search?")) return json(200, { contacts: [] });
     return json(200, {});
   }));

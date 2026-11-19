@@ -77,7 +77,12 @@ type clientEncryptedSendRequest struct {
 	// if it cannot go out.
 	SendAt    string `json:"sendAt,omitempty"`
 	DraftCopy string `json:"draftCopy,omitempty"`
+	// SendDelay asks for the user's Send delay, held like a scheduled send
+	// but dated when Send was pressed (unchecked, as for an immediate send);
+	// it needs DraftCopy too.
+	SendDelay bool `json:"sendDelay,omitempty"`
 	sendAt    time.Time
+	delayed   bool
 	// ReplyToMessageID and ReplyToMailbox thread a reply exactly as on
 	// /api/mail/send: the server reads the original and adds the outer
 	// In-Reply-To and References to every delivery and the Sent copy.
@@ -104,6 +109,9 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if refuseOtherSession(w, r, ac) {
+		return
+	}
 	var req clientEncryptedSendRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxClientCiphertextBytes)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -189,8 +197,16 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 			req.SentCopy = threaded
 		}
 	}
-	if req.SendAt != "" {
-		if msg := validateScheduledPGP(&req, time.Now()); msg != "" {
+	var delay time.Duration
+	if req.SendDelay && req.SendAt == "" {
+		var err error
+		if delay, err = s.sendDelay(ac.UserID); err != nil {
+			http.Error(w, "your send delay setting could not be read; nothing was sent", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	if req.SendAt != "" || delay > 0 {
+		if msg := validateScheduledPGP(&req, time.Now(), delay); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
@@ -382,12 +398,19 @@ func (s *Server) deliverIMAP(ctx context.Context, userID string, a smtpAccount, 
 	return failed, true, nil
 }
 
-// validateScheduledPGP checks a scheduled client-encrypted send and records its
-// time; it returns the refusal, or "" when the request can be scheduled.
-func validateScheduledPGP(req *clientEncryptedSendRequest, now time.Time) string {
-	at, err := parseSendAt(req.SendAt, now)
-	if err != nil {
-		return err.Error()
+// validateScheduledPGP checks a scheduled client-encrypted send, or one held
+// for delay, and records its time; it returns the refusal, or "" when the
+// request can be scheduled.
+func validateScheduledPGP(req *clientEncryptedSendRequest, now time.Time, delay time.Duration) string {
+	// A held send goes out after the delay, dated by the browser when Send was
+	// pressed; like an immediate send its Date is not checked against this
+	// clock. A scheduled one must be dated at its send time.
+	at := now.Add(delay)
+	if delay == 0 {
+		var err error
+		if at, err = parseSendAt(req.SendAt, now); err != nil {
+			return err.Error()
+		}
 	}
 	// A draft needs a To; Bcc-only mail could not be returned to Drafts.
 	if len(req.To) == 0 {
@@ -398,7 +421,7 @@ func validateScheduledPGP(req *clientEncryptedSendRequest, now time.Time) string
 	}
 	for i, delivery := range req.Deliveries {
 		ciphertext := strings.TrimSpace(delivery.Ciphertext)
-		if ciphertext == "" {
+		if ciphertext == "" || delay > 0 {
 			continue
 		}
 		hdr, err := deliveryHeaders(ciphertext)
@@ -410,7 +433,7 @@ func validateScheduledPGP(req *clientEncryptedSendRequest, now time.Time) string
 			return fmt.Sprintf("delivery %d: Date must be the scheduled send time", i)
 		}
 	}
-	req.sendAt = at
+	req.sendAt, req.delayed = at, delay > 0
 	return ""
 }
 

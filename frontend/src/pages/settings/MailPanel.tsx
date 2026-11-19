@@ -10,6 +10,7 @@ import { KyPulse } from "../../settings/sections/KyPulse";
 import { ReadingPane } from "../../settings/sections/ReadingPane";
 import { Conversations } from "../../settings/sections/Conversations";
 import { Signatures } from "../../settings/sections/Signatures";
+import { SendDelay } from "../../settings/sections/SendDelay";
 import { OutOfOffice } from "../../settings/sections/OutOfOffice";
 
 /**
@@ -39,6 +40,7 @@ export function MailPanel() {
           { id: "send-as", label: "Send-as addresses", body: <SendAs /> },
           { id: "addresses", label: "Masked & plus addresses", body: <Addresses /> },
           { id: "signatures", label: "Signatures", body: <Signatures /> },
+          { id: "send-delay", label: "Send delay", body: <SendDelay /> },
           { id: "out-of-office", label: "Out of office", body: <OutOfOffice /> },
           { id: "kycalendar", label: "KyCalendar", body: <KyCalendar /> },
           { id: "kypulse", label: "KyPulse", body: <KyPulse /> },

@@ -46,6 +46,15 @@ describe("ScheduledPage", () => {
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
   });
 
+  it("marks a Send delay hold and offers Cancel sending for it", async () => {
+    list = [{ ...waiting, delayed: true }, returned];
+    render(<ScheduledPage />);
+    const row = (await screen.findByText("quarterly report")).closest("tr")!;
+    expect(row.textContent).toContain("Send delay");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel sending" }));
+    expect(fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[0]).toBe("/api/scheduled/row-1/cancel");
+  });
+
   it("shows the server's refusal when the row is already sending", async () => {
     cancelAnswer = () => json({ error: "this message is no longer waiting and cannot be canceled", status: "sending" }, 409);
     render(<ScheduledPage />);

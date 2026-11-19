@@ -348,6 +348,9 @@ export function App() {
       if (auth?.userId) {
         clearDraftSnapshot(auth.userId);
       }
+      // A held send's copy for reopening is the same kind of buffer. The
+      // server still holds and sends it.
+      compose.resetHeldSends();
       setAuth({ authenticated: false });
     }
   }
