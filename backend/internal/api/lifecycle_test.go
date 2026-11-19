@@ -208,3 +208,29 @@ func TestDrainingRefusesNewBackupWork(t *testing.T) {
 		}
 	}
 }
+
+// AC20: an unreadable backup status answers 503, never paired:false or key_pinned:false.
+func TestUnreadableBackupStatusIsNotUnpaired(t *testing.T) {
+	srv := newTestServer(t)
+	srv.backup, _ = backup.New(backup.Dirs{Config: srv.configDir, State: srv.stateDir, Secret: srv.configDir}, config.BackupConfig{Keep: 1}, srv.globalStore, "test")
+	admin, err := srv.users.Create(context.Background(), "status-admin", "long-password-for-backup", users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := mintSessionForTest(srv, admin.ID)
+	get := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/backup/status", nil)
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := get(); rec.Code != http.StatusOK {
+		t.Fatalf("status: %d %s", rec.Code, rec.Body.String())
+	}
+	_ = srv.globalStore.Close()
+	rec := get()
+	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "paired") || strings.Contains(rec.Body.String(), "keyId") {
+		t.Fatalf("unreadable status: %d %s", rec.Code, rec.Body.String())
+	}
+}

@@ -296,11 +296,20 @@ func backupLoop(ctx context.Context, svc *backup.Service, logger *logging.Logger
 func scheduledRun(ctx context.Context, svc *backup.Service, logger *logging.Logger) {
 	runCtx, cancel := context.WithTimeout(ctx, svc.RunBudget())
 	defer cancel()
-	if err := svc.Audit("admin.backup_intent", "kypost-scheduler", "run", "started", nil); err != nil {
+	errNoIntent := errors.New("backup intent audit unavailable")
+	res, err := svc.RunIfDue(runCtx, func() error {
+		if err := svc.Audit("admin.backup_intent", "kypost-scheduler", "run", "started", nil); err != nil {
+			return errNoIntent
+		}
+		return nil
+	})
+	switch {
+	case errors.Is(err, backup.ErrNotDue), errors.Is(err, recoveryclient.ErrInProgress):
+		return // another process made this capsule, or is making it
+	case errors.Is(err, errNoIntent):
 		logger.Error("backup intent audit unavailable")
 		return
 	}
-	res, err := svc.Run(runCtx)
 	action, outcome, details := recoveryclient.Outcome(res, err)
 	if aerr := svc.Audit(action, "kypost-scheduler", res.Manifest.CapsuleID, outcome, details); aerr != nil {
 		logger.Error("backup audit write failed", "error", aerr.Error())

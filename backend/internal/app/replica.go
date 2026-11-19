@@ -43,6 +43,15 @@ func startReplica(ctx context.Context, d runDeps, role string) (id string, relea
 	if err == nil {
 		err = api.CheckSharedPoWKey()
 	}
+	if err == nil {
+		// A replica whose recovery.pub went missing rewrites it from the sealed record; a
+		// mismatch is reported here and refuses every run until it is resolved.
+		if svc, serr := newBackupService(d.store); serr == nil {
+			if serr := svc.SyncRecoveryKey(); serr != nil {
+				d.logger.Error("recovery key check failed; backups are refused until it is resolved", "error", serr.Error())
+			}
+		}
+	}
 	if err != nil {
 		release()
 		return "", nil, err
