@@ -491,7 +491,14 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // The snapshot's body carries whatever signature it was written with.
       stopSignature();
       pinComposeMailbox(snapshot.mailbox);
-      if (box) setComposeFrom(box.addresses.includes(plusBase(snapshot.from)) ? snapshot.from : box.addresses[0] ?? "");
+      // A saved From that is empty (a reply whose receiving address was
+      // unknown) or no longer this mailbox's (a masked address since paused
+      // or deleted) is chosen again, never replaced by the primary.
+      if (box) {
+        const usable = snapshot.from !== "" && (box.addresses.includes(snapshot.from) || box.addresses.includes(plusBase(snapshot.from)));
+        setComposeFrom(usable ? snapshot.from : "");
+        setComposeFromRequired(!usable);
+      }
       setComposeTo(parseRecipientField(snapshot.to));
       setComposeCc(parseRecipientField(snapshot.cc));
       setComposeBcc(parseRecipientField(snapshot.bcc));
