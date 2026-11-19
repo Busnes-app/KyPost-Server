@@ -27,6 +27,9 @@ import (
 )
 
 type Message struct {
+	// DeliveredTo is a native message's frozen envelope recipients (the
+	// receipt); nil for external IMAP, which has no trusted equivalent.
+	DeliveredTo []string
 	// ParseError marks retained raw mail whose MIME cannot be interpreted.
 	// Process it as an explicit permanent failure, without classifier/encryption.
 	ParseError bool
@@ -128,6 +131,8 @@ type UnreadMessage struct {
 // the sender, plus whether the message carries attachments, all from one
 // GetEmails parse.
 type MessageContent struct {
+	// DeliveredTo is as Message.DeliveredTo.
+	DeliveredTo []string
 	// ParseError permits one malformed UID without failing a whole body batch.
 	ParseError bool
 	Body       string

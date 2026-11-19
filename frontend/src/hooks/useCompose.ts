@@ -61,6 +61,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const [composeMailbox, setComposeMailbox] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeFrom, setComposeFrom] = useState("");
+  // A reply whose receiving address is unknown: the user picks From, never the primary by default.
+  const [composeFromRequired, setComposeFromRequired] = useState(false);
   const [sendAsOptions, setSendAsOptions] = useState<SendAsAlias[]>([]);
   const [composeTo, setComposeTo] = useState<RecipientFieldState>({ tokens: [], draft: "" });
   const [composeCc, setComposeCc] = useState<RecipientFieldState>({ tokens: [], draft: "" });
@@ -177,6 +179,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   function resetComposeForm() {
     stopSignature();
     setComposeFrom("");
+    setComposeFromRequired(false);
     setComposeTo({ tokens: [], draft: "" });
     setComposeCc({ tokens: [], draft: "" });
     setComposeBcc({ tokens: [], draft: "" });
@@ -363,7 +366,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
 
   // Compose opened before the list arrived has no From yet. Only the list's arrival fills it.
   const fillMissingFrom = useEffectEvent(() => {
-    if (composeOpen && !composeFrom) setComposeFrom(mailboxOf(composeMailbox)?.addresses[0] ?? "");
+    if (composeOpen && !composeFrom && !composeFromRequired) setComposeFrom(mailboxOf(composeMailbox)?.addresses[0] ?? "");
   });
   useEffect(() => {
     fillMissingFrom();
@@ -457,7 +460,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeSignOverridden.current = false;
     setComposeSign(isClientProtected() && isUnlocked());
     pinComposeMailbox(payload.mailbox);
-    if (payload.from && mailboxOf(payload.mailbox ?? selectedMailboxId())?.addresses.includes(plusBase(payload.from))) setComposeFrom(payload.from);
+    const choices = mailboxOf(payload.mailbox ?? selectedMailboxId())?.addresses ?? [];
+    setComposeFromRequired(payload.from === null);
+    if (payload.from === null) setComposeFrom("");
+    else if (payload.from && (choices.includes(payload.from) || choices.includes(plusBase(payload.from)))) setComposeFrom(payload.from);
     setComposeTo(parseRecipientField(payload.sentTo ?? ""));
     setComposeCc(parseRecipientField(payload.cc ?? ""));
     setComposeBcc(parseRecipientField(payload.bcc ?? ""));
@@ -851,6 +857,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       setComposeError("TO is required.");
       return;
     }
+    if (composeFromRequired && !composeFrom) {
+      setComposeError("Choose the address to reply from: KyPost could not tell which of your addresses received this message.");
+      return;
+    }
     setComposeSending(true);
     setComposeError("");
     setComposeSuccess("");
@@ -1024,7 +1034,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
 
   return {
     composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice, composeAutosaveFailed,
-    composeFrom, setComposeFrom, composeFromChoices, sendAsOptions,
+    composeFrom, setComposeFrom, composeFromChoices, composeFromRequired, sendAsOptions,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc, addTokenToField,
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,
     composeEncrypt, setComposeEncrypt, setComposeEncryptOverridden, composeSign, setComposeSign, composeSignOverridden,

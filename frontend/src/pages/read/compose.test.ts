@@ -148,3 +148,17 @@ describe("replyFromAddress", () => {
     expect(plusBase("a@x+y.test")).toBe("a@x+y.test");
   });
 });
+
+describe("replyFromAddress with the delivery receipt", () => {
+  const own = ["bob@example.com", "quiet.otter.4821@example.com"];
+  it("answers as a masked address delivered by Bcc, never the primary", () => {
+    expect(replyFromAddress(email({ sentTo: "list@example.org", cc: "" }), own, ["quiet.otter.4821@example.com"])).toBe("quiet.otter.4821@example.com");
+    expect(replyFromAddress(email({ sentTo: "bob@example.com" }), own, ["quiet.otter.4821@example.com"])).toBe("quiet.otter.4821@example.com");
+  });
+  it("keeps a tag the headers show for a delivered address", () => {
+    expect(replyFromAddress(email({ sentTo: "Bob+Shop@example.com" }), own, ["bob@example.com"])).toBe("bob+shop@example.com");
+  });
+  it("leaves From to the user when no delivered address is theirs", () => {
+    expect(replyFromAddress(email({ sentTo: "bob@example.com" }), own, ["gone.fox.1234@example.com"])).toBeNull();
+  });
+});

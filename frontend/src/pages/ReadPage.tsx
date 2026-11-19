@@ -1278,15 +1278,19 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   // fetchMessageBody pulls one message's body, which the list no longer
   // carries. Shares attachmentQuery with the attachment endpoints because
   // /api/mail/body takes the identical messageId+mailbox pair.
-  async function fetchMessageBody(item: InboxEmail): Promise<{ body: string; bodyMode?: "html" | "plain" }> {
+  async function fetchMessageBody(item: InboxEmail): Promise<{ body: string; bodyMode?: "html" | "plain"; deliveredTo?: string[] }> {
     const key = decryptedKey(item.messageId);
     const cached = bodyCacheRef.current.get(key);
     if (cached) return cached;
 
-    const request = getJSON<{ body?: string; bodyMode?: "html" | "plain" }>(
+    const request = getJSON<{ body?: string; bodyMode?: "html" | "plain"; deliveredTo?: unknown }>(
       `/api/mail/body?${attachmentQuery(item)}`
     )
-      .then((data) => ({ body: data.body ?? "", bodyMode: data.bodyMode || undefined }))
+      .then((data) => ({
+        body: data.body ?? "",
+        bodyMode: data.bodyMode || undefined,
+        deliveredTo: Array.isArray(data.deliveredTo) && data.deliveredTo.every((a) => typeof a === "string") ? data.deliveredTo : undefined
+      }))
       .catch((error: unknown) => {
         bodyCacheRef.current.delete(key);
         throw error;
@@ -1497,10 +1501,18 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
 
   const ownAddresses = () => mailboxes.find((m) => (box ? m.id === box : m.kind === "primary"))?.addresses ?? [];
 
-  function replyToSelectedEmail() {
+  // The receipt's recipients come with the body; a failed fetch leaves the
+  // reply's From for the user to choose rather than the primary.
+  async function replyFrom(item: InboxEmail): Promise<string | null> {
+    const delivered = await fetchMessageBody(item).then((b) => b.deliveredTo, () => null);
+    return delivered === null ? null : replyFromAddress(item, ownAddresses(), delivered);
+  }
+
+  async function replyToSelectedEmail() {
     if (!selected || !onOpenDraft) return;
+    const from = await replyFrom(selected);
     openDraft({
-      from: replyFromAddress(selected, ownAddresses()),
+      from,
       sentTo: firstAddressFromText(selected.sender || ""),
       subject: ensureSubjectPrefix(selected.subject, "Re:"),
       intent: "reply",
@@ -1532,11 +1544,12 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
     });
   }
 
-  function replyAllToSelectedEmail() {
+  async function replyAllToSelectedEmail() {
     if (!selected || !onOpenDraft) return;
     const recipients = buildReplyAllRecipients(selected);
+    const from = await replyFrom(selected);
     openDraft({
-      from: replyFromAddress(selected, ownAddresses()),
+      from,
       sentTo: recipients.to,
       cc: recipients.cc,
       subject: ensureSubjectPrefix(selected.subject, "Re:"),
@@ -1992,8 +2005,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
             </div>
             <div className="email-reader-actions">
               <div className="email-reader-reply">
-                <button type="button" onClick={replyToSelectedEmail} disabled={actionLoading}>Reply</button>
-                <button type="button" onClick={replyAllToSelectedEmail} disabled={actionLoading}>Reply All</button>
+                <button type="button" onClick={() => void replyToSelectedEmail()} disabled={actionLoading}>Reply</button>
+                <button type="button" onClick={() => void replyAllToSelectedEmail()} disabled={actionLoading}>Reply All</button>
                 <button type="button" onClick={forwardSelectedEmail} disabled={actionLoading}>Forward</button>
                 {calendarOrigin ? <button type="button" onClick={replyWithMeeting}>Reply with meeting</button> : null}
               </div>

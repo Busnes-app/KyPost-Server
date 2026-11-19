@@ -61,8 +61,8 @@ export type DraftComposePayload = {
   attachments?: ComposeAttachment[];
   /** The mailbox the draft was opened from ("" is the primary). */
   mailbox?: string;
-  /** A reply's From: the own (possibly plus-tagged or masked) address the message was sent to. */
-  from?: string;
+  /** A reply's From: the own (possibly plus-tagged or masked) address the message was delivered to; null when unknown, so the user must choose. */
+  from?: string | null;
   /** Set for a new message (the compose deep link), reply or forward, which may get a signature; absent for a saved draft. */
   intent?: "new" | "reply" | "forward";
   /** An earlier unsent draft is stored: keep it, and do not autosave this one over it. */
