@@ -196,7 +196,7 @@ func TestOneOperationNeverMixesTwoPairings(t *testing.T) {
 	for range 4 {
 		p, err := a.InspectPairing()
 		must(t, err)
-		if !(p.URL == pairs[0][0] && p.Token == pairs[0][1] || p.URL == pairs[1][0] && p.Token == pairs[1][1]) {
+		if got := [2]string{p.URL, p.Token}; got != pairs[0] && got != pairs[1] {
 			t.Fatalf("one read paired %s with %s", p.URL, p.Token)
 		}
 		st, err := a.Status()
