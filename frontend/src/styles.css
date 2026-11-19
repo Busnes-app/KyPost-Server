@@ -3724,13 +3724,20 @@ pre {
   display: none;
 }
 
-/* Send delay countdown: above the page, below any open dialog. */
-.send-hold-bar {
+/* Send delay countdowns, one bar per held message: above the page, below any open dialog. */
+.send-hold-stack {
   position: fixed;
   left: 50%;
   bottom: var(--ky-space-3);
   transform: translateX(-50%);
   z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ky-space-2);
+}
+
+.send-hold-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;

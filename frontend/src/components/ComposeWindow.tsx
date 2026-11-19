@@ -26,7 +26,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
     closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, drive,
-    composeHeld, cancelHeldSend, dismissHeldSend
+    composeHolds, cancelHeldSend, dismissHeldSend
   } = compose;
   const uploading = drive.driveUploads.length > 0;
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
@@ -282,7 +282,13 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
             </footer>
           </section>
       </dialog>
-      {composeHeld ? <SendHoldBar key={composeHeld.id} held={composeHeld} onCancel={() => void cancelHeldSend()} onDismiss={dismissHeldSend} /> : null}
+      {composeHolds.length > 0 ? (
+        <div className="send-hold-stack">
+          {composeHolds.map((held) => (
+            <SendHoldBar key={held.id} held={held} onCancel={() => void cancelHeldSend(held.id)} onDismiss={() => dismissHeldSend(held.id)} />
+          ))}
+        </div>
+      ) : null}
       <ContactPickerModal
         isOpen={contactPickerOpen}
         onClose={() => setContactPickerOpen(false)}

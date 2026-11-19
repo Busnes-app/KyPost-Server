@@ -58,6 +58,8 @@ export type Compose = ReturnType<typeof useCompose>;
 /** A sent message the server holds for the Send delay, with what reopens it if canceled. */
 export type HeldSend = {
   id: string;
+  /** The signed-in user who sent it; another user's session never shows or reopens it. */
+  userId?: string;
   mailbox: string;
   /** When the hold ends, in this browser's clock; the Cancel button goes then. */
   endsAt: number;
@@ -108,7 +110,15 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const [composeNotice, setComposeNotice] = useState("");
   const [composeAutosaveFailed, setComposeAutosaveFailed] = useState(false);
   const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
-  const [composeHeld, setComposeHeld] = useState<HeldSend | null>(null);
+  // Every message still held for the Send delay, each with its own bar.
+  const [composeHolds, setComposeHolds] = useState<HeldSend[]>([]);
+  // Sign-out replaces this; a send or cancel that settles after it must not
+  // touch compose, so the next user never sees the earlier message.
+  const holdSession = useRef<object>({});
+  const userIdNow = useRef(userId);
+  useEffect(() => {
+    userIdNow.current = userId;
+  }, [userId]);
   const [composeEncrypt, setComposeEncrypt] = useState(false);
   const [composeSign, setComposeSign] = useState(false);
   const composeSignOverridden = useRef(false);
@@ -878,6 +888,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // The account's Send delay decides whether Send asks the server to hold
       // the message. Unreadable means not sent, never sent without the delay.
       const pressedAt = Date.now();
+      const session = holdSession.current;
       const delaySeconds = sendAt ? 0 : await getSendDelay();
       const hold = delaySeconds > 0;
       // A client-protected account's key is not on the server, so the server
@@ -889,9 +900,12 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         result = composeEncrypt ? await sendComposeEncryptedLocally(to, body, sendAt, hold) : await sendComposeSignedLocally(to, body, sendAt, hold);
       } else {
         // A client-custody account's drafts are encrypted, so a scheduled or
-        // held plain send carries its returnable draft encrypted too.
+        // held plain send carries its returnable draft encrypted too. The
+        // server never holds a secure-link send, so it needs neither.
         const custody = pgpCustody();
-        const returnable = sendAt !== undefined || hold;
+        const allowPickupFallback = pickupFallbackFlag(composeEncrypt, composeSendLinkForKeyless);
+        const plainHold = hold && !allowPickupFallback;
+        const returnable = sendAt !== undefined || plainHold;
         if (returnable && custody === "unknown") {
           throw new Error(`Your PGP state could not be confirmed, so the message was not ${sendAt ? "scheduled" : "sent"}. Reload and try again.`);
         }
@@ -899,7 +913,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
           setComposeUnlockOpen(true);
           throw new Error(sendAt ? "Your PGP key is locked — unlock it, then schedule again." : "Your PGP key is locked — unlock it, then press Send again.");
         }
-        const scheduled = await scheduleFields(to, body, sendAt, false, hold);
+        const scheduled = await scheduleFields(to, body, sendAt, false, plainHold);
         const pgpDraft = returnable && custody === "client" ? { pgpDraft: await encryptedDraft(to, body) } : {};
         result = await postJSON<SendResult>("/api/mail/send", {
           from: composeFrom,
@@ -912,7 +926,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
           attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 })),
           encrypt: composeEncrypt,
           sign: composeSign,
-          allowPickupFallback: pickupFallbackFlag(composeEncrypt, composeSendLinkForKeyless),
+          allowPickupFallback,
           ...scheduled,
           ...pgpDraft
         }, mailboxHeaders(composeMailbox));
@@ -920,8 +934,9 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       const warning = result.warning ?? "";
       // Held: remember what reopens it if canceled. The countdown ends no later
       // than the server's release, whichever clock is ahead.
-      const held: HeldSend | null = result.delayed && result.id && result.sendAt ? {
+      const held: HeldSend | null = result.delayed && result.id && result.sendAt && session === holdSession.current ? {
         id: result.id,
+        userId,
         mailbox: composeMailbox,
         endsAt: Math.min(pressedAt + delaySeconds * 1000, Date.parse(result.sendAt)),
         draft: { sentTo: to, cc: serializeRecipientField(composeCc), bcc: serializeRecipientField(composeBcc), subject: composeSubject, body, attachments: composeAttachments, mailbox: composeMailbox },
@@ -937,7 +952,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // open carrying the warning; a clean send still closes as before.
       discardComposeDraft();
       if (held) {
-        setComposeHeld(held);
+        setComposeHolds((holds) => [...holds, held]);
         setComposeOpen(false);
       } else if (sendAt) {
         setComposeSuccess(`Scheduled for ${sendAt.toLocaleString()}. It is listed under Scheduled until it goes out.`);
@@ -968,13 +983,17 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
    * Cancels the held send and reopens it to edit. The server also returns it
    * to Drafts, the copy every other client sees. Refused once release started.
    */
-  async function cancelHeldSend() {
-    const held = composeHeld;
+  async function cancelHeldSend(id: string) {
+    const held = composeHolds.find((h) => h.id === id);
     if (!held || held.canceling) return;
-    setComposeHeld({ ...held, canceling: true, error: "" });
+    const session = holdSession.current;
+    // Nothing settles into a later session: signed out, or another user.
+    const stale = () => session !== holdSession.current || userIdNow.current !== held.userId;
+    updateHold(id, { canceling: true, error: "" });
     try {
       const result = await cancelScheduled(held.mailbox, held.id);
-      setComposeHeld(null);
+      if (stale()) return;
+      updateHold(id, null);
       const drafts = result.warning ? "It will be saved to Drafts shortly." : "A copy is in Drafts.";
       if (composeOpenNow.current) {
         setComposeNotice(`Sending canceled. ${drafts}`);
@@ -988,12 +1007,24 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       setComposeSign(held.sign);
       setComposeNotice(`Sending canceled. Edit it and send again. ${drafts}`);
     } catch (e) {
+      if (stale()) return;
       if (e instanceof HttpError && e.status === 409) {
-        setComposeHeld({ ...held, canceling: false, late: true });
+        updateHold(id, { canceling: false, late: true });
       } else {
-        setComposeHeld({ ...held, canceling: false, error: toErrorMessage(e, "could not cancel sending") });
+        updateHold(id, { canceling: false, error: toErrorMessage(e, "could not cancel sending") });
       }
     }
+  }
+
+  /** Changes one hold, or drops it with null. */
+  function updateHold(id: string, change: Partial<HeldSend> | null) {
+    setComposeHolds((holds) => (change ? holds.map((h) => (h.id === id ? { ...h, ...change } : h)) : holds.filter((h) => h.id !== id)));
+  }
+
+  /** Sign-out: forget every hold and ignore whatever settles later. The server still sends them. */
+  function resetHeldSends() {
+    holdSession.current = {};
+    setComposeHolds([]);
   }
 
   async function saveComposeDraft() {
@@ -1101,7 +1132,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
     openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft,
-    composeHeld, cancelHeldSend, dismissHeldSend: () => setComposeHeld(null),
+    composeHolds: composeHolds.filter((h) => h.userId === userId),
+    cancelHeldSend, dismissHeldSend: (id: string) => updateHold(id, null), resetHeldSends,
     drive
   };
 }
