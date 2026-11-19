@@ -24,6 +24,8 @@ vi.mock("../api/pgp", () => ({
   sendClientEncryptedMail: (req: Record<string, unknown>) => sendClientEncryptedMail(req)
 }));
 vi.mock("../api/sendas", () => ({ listSendAsAliases: async () => [] }));
+// Send delay Off: sends go straight out.
+vi.mock("../api/scheduled", () => ({ getSendDelay: async () => 0, cancelScheduled: vi.fn() }));
 
 const session = { clientProtected: false };
 vi.mock("../lib/pgpSession", () => ({
