@@ -43,6 +43,9 @@ func Run(args []string) error {
 	if len(args) > 0 && args[0] == "migrate-to-postgres" {
 		return runMigrateToPostgres(args[1:], os.Stdout)
 	}
+	if len(args) > 0 && args[0] == "accept-replica-config" {
+		return runAcceptReplicaConfig(args[1:], os.Stdout)
+	}
 	// Before any store opens: a Postgres configuration that cannot be used refuses
 	// every command instead of falling back to SQLite.
 	if err := dbbackend.Check(context.Background()); err != nil {

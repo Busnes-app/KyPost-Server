@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -128,4 +131,48 @@ func holdSQLiteInstance(stateDir string) (release func(), err error) {
 		return nil, fmt.Errorf("server-instance lock: %w", err)
 	}
 	return release, nil
+}
+
+// runAcceptReplicaConfig records this process's shared settings as the deployment's after a
+// deliberate change: PostgreSQL only, with no replica running, and only under the same
+// totp-secret.key. It prints and audits the names of the settings that changed, never a
+// value.
+func runAcceptReplicaConfig(args []string, stdout io.Writer) error {
+	if len(args) > 0 {
+		_, err := fmt.Fprintln(stdout, "usage: kypost-server accept-replica-config\n\nRecords this container's shared settings as the deployment's after you changed one on purpose.\nStop every replica first (docker compose stop kypost-server), then run it once with the new settings.\nIt prints the names of the settings that changed, never their values.")
+		if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+			return err
+		}
+		return errors.New("accept-replica-config takes no arguments")
+	}
+	if !dbbackend.Postgres() {
+		return errors.New("accept-replica-config is for PostgreSQL replicas; a SQLite install has no shared configuration record")
+	}
+	ctx := context.Background()
+	if err := dbbackend.Check(ctx); err != nil {
+		return err
+	}
+	st, err := state.New(config.StateDir())
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	live, err := st.LiveInstances(ctx)
+	if err != nil {
+		return err
+	}
+	if len(live) > 0 {
+		return fmt.Errorf("%d replica process(es) are running; stop every replica first (docker compose stop kypost-server), then run this again", len(live))
+	}
+	changed, err := replica.Accept(ctx, st, config.SecretFile("TOTP_SECRET_KEY_FILE", "totp-secret.key"))
+	if err != nil {
+		return err
+	}
+	slog.Info("replica configuration accepted", "action", "admin.replica_config_accepted", "fields", strings.Join(changed, ","))
+	if len(changed) == 0 {
+		_, err = fmt.Fprintln(stdout, "Recorded this container's shared settings; none differed from the record.")
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "Recorded this container's shared settings. Changed: %s\n", strings.Join(changed, ", "))
+	return err
 }
