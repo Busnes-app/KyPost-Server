@@ -77,6 +77,9 @@ export type HeldSend = {
 /** A send started under a sign-in that has since changed; nothing was sent. */
 class SendSessionChanged extends Error {}
 
+/** Send stopped for an unlock; it continues once the key is unlocked. */
+class SendNeedsUnlock extends Error {}
+
 /** What the send routes answer; delayed, id and sendAt describe a Send delay hold. */
 type SendResult = { warning?: string; delayed?: boolean; id?: string; sendAt?: string };
 
@@ -98,6 +101,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const [composeUnlockOpen, setComposeUnlockOpen] = useState(false);
   /** A sealed snapshot was found while the vault was locked; restore on unlock. */
   const composeSnapshotPending = useRef(false);
+  /** A send waiting on the unlock prompt: what to call again once unlocked. */
+  const sendAfterUnlock = useRef<{ sendAt?: Date; driveChecked: boolean } | null>(null);
   // Set while this compose window leaves another mailbox's snapshot in place; autosave must not replace it.
   const composeSnapshotKept = useRef(false);
   // composeOpen as of the last render, for callers holding an older closure.
@@ -229,6 +234,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
 
   function resetComposeForm() {
     stopSignature();
+    sendAfterUnlock.current = null;
     setComposeFrom("");
     setComposeFromRequired(false);
     setComposeTo({ tokens: [], draft: "" });
@@ -731,7 +737,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   async function sendComposeSignedLocally(to: string, body: string, sendAt?: Date, hold = false): Promise<SendResult> {
     if (needsUnlock()) {
       setComposeUnlockOpen(true);
-      throw new Error("Your PGP key is locked — unlock it, then press Send again.");
+      throw new SendNeedsUnlock();
     }
     const toList = splitAddressList(to);
     const ccList = splitAddressList(serializeRecipientField(composeCc));
@@ -772,7 +778,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // captured at the moment of the first click, not what is on screen when
       // the user actually confirms.
       setComposeUnlockOpen(true);
-      throw new Error("Your PGP key is locked — unlock it, then press Send again.");
+      throw new SendNeedsUnlock();
     }
 
     const ccList = splitAddressList(serializeRecipientField(composeCc));
@@ -912,6 +918,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   /** Sends now, or at sendAt when given. */
   async function sendComposeEmail(sendAt?: Date, driveChecked = false) {
     if (composeSending) return;
+    sendAfterUnlock.current = null;
     const to = serializeRecipientField(composeTo);
     if (!to) {
       setComposeError("TO is required.");
@@ -958,7 +965,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         }
         if (returnable && custody === "client" && needsUnlock()) {
           setComposeUnlockOpen(true);
-          throw new Error(sendAt ? "Your PGP key is locked — unlock it, then schedule again." : "Your PGP key is locked — unlock it, then press Send again.");
+          throw new SendNeedsUnlock();
         }
         const scheduled = await scheduleFields(to, body, sendAt, false, plainHold);
         const pgpDraft = returnable && custody === "client" ? { pgpDraft: await encryptedDraft(to, body) } : {};
@@ -1011,6 +1018,11 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       }
     } catch (e) {
       if (e instanceof SendSessionChanged || stale()) return;
+      if (e instanceof SendNeedsUnlock) {
+        // The unlock prompt is the whole message; the send goes on once unlocked.
+        sendAfterUnlock.current = { sendAt, driveChecked: true };
+        return;
+      }
       // Checked BEFORE the keyless case: a changed key must never be described
       // as a missing one, or the user is pointed at the pickup fallback in
       // exactly the situation where mailing plaintext is worst.
@@ -1171,6 +1183,20 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     });
   }
 
+  // The newest render's send: an unlock that settles later must send what
+  // compose holds now, never the state from when the prompt opened.
+  const sendNow = useRef(sendComposeEmail);
+  useEffect(() => { sendNow.current = sendComposeEmail; });
+
+  /** The unlock prompt closed: continue the send that opened it, or drop it. */
+  function settleSendAfterUnlock(unlocked: boolean) {
+    const pending = sendAfterUnlock.current;
+    sendAfterUnlock.current = null;
+    if (!pending) return;
+    if (unlocked) void sendNow.current(pending.sendAt, pending.driveChecked);
+    else setComposeError("Not sent: your PGP key is still locked.");
+  }
+
   return {
     composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice, composeAutosaveFailed,
     composeFrom, setComposeFrom, composeFromChoices, composeFromRequired, sendAsOptions,
@@ -1178,7 +1204,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,
     composeEncrypt, setComposeEncrypt, setComposeEncryptOverridden, composeSign, setComposeSign, composeSignOverridden,
     composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
-    composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
+    composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot, settleSendAfterUnlock,
     quillEditorRef, attachmentInputRef,
     openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft,
     composeHolds: composeHolds.filter((h) => h.userId === userId),

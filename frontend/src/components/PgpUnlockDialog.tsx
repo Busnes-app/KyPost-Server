@@ -32,11 +32,17 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
   const secretName = useAuth().hasPassword === false ? "encryption passphrase" : "account password";
 
   useDialogOpen(dialogRef, open);
+  // Each submit is one attempt. Cancelling or closing ends it, so an unlock
+  // that finishes afterwards calls nobody: by then the caller may be waiting
+  // on something else.
+  const attempt = useRef(0);
+  const cancel = () => { attempt.current++; onCancel(); };
 
   // Never leave a typed password sitting in component state once the dialog
   // is dismissed, however it was dismissed.
   useEffect(() => {
     if (!open) {
+      attempt.current++;
       setPassword("");
       setError("");
     }
@@ -45,14 +51,16 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
+    const mine = ++attempt.current;
     setBusy(true);
     setError("");
     try {
       await unlockPGPSession(password);
+      if (mine !== attempt.current) return;
       setPassword("");
       onUnlocked();
     } catch (e) {
-      setError(toErrorMessage(e, "could not unlock the key"));
+      if (mine === attempt.current) setError(toErrorMessage(e, "could not unlock the key"));
     } finally {
       setBusy(false);
     }
@@ -65,11 +73,11 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
       aria-label="Unlock your PGP key"
       onCancel={(event) => {
         event.preventDefault();
-        onCancel();
+        cancel();
       }}
       onClick={(event) => {
         if (event.target === dialogRef.current) {
-          onCancel();
+          cancel();
         }
       }}
     >
@@ -102,7 +110,7 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
               </p>
             ) : null}
             <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
-              <button type="button" className="contacts-action" onClick={onCancel} disabled={busy}>
+              <button type="button" className="contacts-action" onClick={cancel} disabled={busy}>
                 Cancel
               </button>
               <button type="submit" disabled={busy || password.length === 0}>

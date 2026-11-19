@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
-import { Link, Navigate } from "react-router";
+import { useEffect, useEffectEvent, useState } from "react";
+import { Navigate } from "react-router";
 import { getPGPIdentity, type PGPIdentity } from "../api/pgp";
 import { useAuth } from "../auth";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
 import { loadPGPSession, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
 import { dismissSetup } from "../lib/setupDismissal";
 import { MailKeys, type PreparedRecoveryBackup } from "./security/sections/MailKeys";
+import { EmailServer } from "../settings/sections/EmailServer";
 
 /**
  * First sign-in encryption setup. It reuses Security → Encryption's key
@@ -34,6 +35,11 @@ export function EncryptionSetupPage({ onRefresh }: { onRefresh: () => Promise<vo
   }, []);
   useEffect(() => subscribePGPSession(setPgpSession), []);
   useEffect(() => { void loadPGPSession(); }, []);
+  // Creating, importing or restoring a key and storing a recovery copy each
+  // move the PGP revision; re-read setup then so each step shows done at once.
+  const refresh = useEffectEvent(() => { void onRefresh(); });
+  const pgpRevision = pgpSession?.bootstrap?.pgpRevision;
+  useEffect(() => { if (pgpRevision !== undefined) refresh(); }, [pgpRevision]);
 
   if (!setup || leaving) {
     return <Navigate to="/read" replace />;
@@ -60,7 +66,7 @@ export function EncryptionSetupPage({ onRefresh }: { onRefresh: () => Promise<vo
         </p>
       </header>
 
-      <ol className="sec-custody">
+      <ol className="sec-custody sec-steps">
         <li>
           <p className="sec-eyebrow">1. Key {setup.hasKey ? "· done" : ""}</p>
           <p>Create a new key, or import one you already use (from Proton, mailbox.org or GnuPG). It is made and encrypted in this browser; the server never sees it unencrypted.</p>
@@ -84,6 +90,17 @@ export function EncryptionSetupPage({ onRefresh }: { onRefresh: () => Promise<vo
         </li>
       </ol>
 
+      {pgpSession?.bootstrap && (pgpSession.bootstrap.suggestedUserIDs ?? []).length === 0 ? (
+        <section className="sec-card" aria-labelledby="setup-mail-account-heading">
+          <div className="sec-card-head">
+            <p className="sec-eyebrow">First</p>
+            <h3 id="setup-mail-account-heading">Set up your mail account</h3>
+          </div>
+          <p className="sec-muted">Your key needs your email address. Connect your mail account here, then create your key below.</p>
+          <EmailServer onSaved={() => void loadPGPSession()} />
+        </section>
+      ) : null}
+
       <div className="sec-layout">
         <MailKeys
           pgpIdentity={pgpIdentity}
@@ -96,6 +113,7 @@ export function EncryptionSetupPage({ onRefresh }: { onRefresh: () => Promise<vo
           recoverySecret={recoverySecret}
           setRecoverySecret={setRecoverySecret}
           incomingDefaultOn={setup.incomingPolicy !== "off"}
+          onIncomingSaved={() => void onRefresh()}
         />
       </div>
 
@@ -107,9 +125,6 @@ export function EncryptionSetupPage({ onRefresh }: { onRefresh: () => Promise<vo
               ? "Store a recovery copy first: download the backup, save its recovery code, then confirm."
               : "Turn on Encrypt incoming mail first; your administrator requires it."}
         </p>
-      ) : null}
-      {pgpSession?.bootstrap && (pgpSession.bootstrap.suggestedUserIDs ?? []).length === 0 ? (
-        <p className="notice">Your key needs your email address. <Link to="/settings/mail">Set up your mail account</Link> first.</p>
       ) : null}
 
       <div className="actions">

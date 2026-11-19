@@ -23,7 +23,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,
     composeEncrypt, setComposeEncrypt, setComposeEncryptOverridden, composeSign, setComposeSign, composeSignOverridden,
     composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
-    composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
+    composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot, settleSendAfterUnlock,
     quillEditorRef, attachmentInputRef,
     closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, drive,
     composeHolds, cancelHeldSend, dismissHeldSend
@@ -85,10 +85,12 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
                   setComposeNotice("");
                   void restoreComposeSnapshot();
                 }
+                settleSendAfterUnlock(true);
               }}
               onCancel={() => {
                 setComposeUnlockOpen(false);
                 composeSnapshotPending.current = false;
+                settleSendAfterUnlock(false);
               }}
             />
             <ScheduleDialog

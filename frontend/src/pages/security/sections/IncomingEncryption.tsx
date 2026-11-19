@@ -3,7 +3,7 @@ import { getIncomingEncryption, setIncomingEncryption, type IncomingEncryptionPr
 import { useAuth } from "../../../auth";
 import { toErrorMessage } from "../../../api/client";
 
-export function IncomingEncryption({ identity, clientProtected, defaultOn = false }: { identity: PGPIdentity | null; clientProtected: boolean; defaultOn?: boolean }) {
+export function IncomingEncryption({ identity, clientProtected, defaultOn = false, onSaved }: { identity: PGPIdentity | null; clientProtected: boolean; defaultOn?: boolean; onSaved?: () => void }) {
   const auth = useAuth();
   // The server asks for the password whenever the account has one, whichever
   // way this session signed in; an account without one confirms with KySignOn.
@@ -41,6 +41,7 @@ export function IncomingEncryption({ identity, clientProtected, defaultOn = fals
       setPassword("");
       setPreference(await getIncomingEncryption());
       setMessage(enabled ? "Incoming encryption enabled." : "Future incoming encryption disabled. Existing encrypted mail stays encrypted.");
+      onSaved?.();
     } catch (error) {
       setMessage(toErrorMessage(error, "Could not save incoming encryption preference"));
     } finally { setBusy(false); }
@@ -52,10 +53,14 @@ export function IncomingEncryption({ identity, clientProtected, defaultOn = fals
         <p className="sec-eyebrow">Incoming mail</p>
         <h3 id="incoming-encryption-heading">Classify, then encrypt</h3>
       </div>
-      <p className="sec-muted">KyPost can classify unread inbox mail it has not processed yet, then replace the original with a copy encrypted to your public key. Attachments and the subject are inside the encrypted copy. Your private key stays on your devices.</p>
-      <p className="sec-muted">The provider and KyPost see the original before encryption. Routing headers and labels remain visible; provider backups and copies on other devices may retain plaintext. Plaintext body caching stays disabled after you enable this. Already encrypted mail cannot be classified by the server. Corrections to encrypted replacements do not train the sorter from their original plaintext.</p>
-      <p className="sec-muted">Keep a private-key recovery backup: losing the key makes these messages unreadable. Disabling this setting stops future replacements and does not decrypt existing mail. Pending replacements continue safely. Mail that cannot fit an encrypted copy is left plaintext and reported in Decisions after bounded retries. The configured polling mailbox must be INBOX. IMAP must support targeted deletion (UIDPLUS or IMAP4rev2).</p>
-      {!clientProtected || !identity ? <p className="sec-muted">Set up a client-protected PGP key below before enabling.</p> : null}
+      <p className="sec-muted">New mail is sorted, then encrypted to your key as it arrives. After that, only your devices can read it, but your mail provider and KyPost still see each message before it is encrypted. Keep your recovery backup: without your key, this mail cannot be opened.</p>
+      <details className="sec-details">
+        <summary>Details</summary>
+        <p className="sec-muted">KyPost can classify unread inbox mail it has not processed yet, then replace the original with a copy encrypted to your public key. Attachments and the subject are inside the encrypted copy. Your private key stays on your devices.</p>
+        <p className="sec-muted">The provider and KyPost see the original before encryption. Routing headers and labels remain visible; provider backups and copies on other devices may retain plaintext. Plaintext body caching stays disabled after you enable this. Already encrypted mail cannot be classified by the server. Corrections to encrypted replacements do not train the sorter from their original plaintext.</p>
+        <p className="sec-muted">Keep a private-key recovery backup: losing the key makes these messages unreadable. Disabling this setting stops future replacements and does not decrypt existing mail. Pending replacements continue safely. Mail that cannot fit an encrypted copy is left plaintext and reported in Decisions after bounded retries. The configured polling mailbox must be INBOX. IMAP must support targeted deletion (UIDPLUS or IMAP4rev2).</p>
+      </details>
+      {!clientProtected || !identity ? <p className="sec-muted">Create your key above first.</p> : null}
       {preference?.pending ? <p role="status">An incoming replacement is pending. If it remains pending, check server health and restore the original PGP key or IMAP configuration.</p> : null}
       {required && preference?.enabled ? <p className="sec-check" role="status">Encrypt incoming mail after classification: on. Required by your administrator.</p> : <form onSubmit={(event) => { void save(event); }}>
         <label className="sec-check">

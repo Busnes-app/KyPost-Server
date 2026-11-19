@@ -612,6 +612,19 @@ describe("server recovery", () => {
     expect(JSON.stringify(putJSON.mock.calls)).not.toMatch(/SECRET-ABCD|ARMORED|account-password/);
   });
 
+  it("closes the secret box once the server copy is stored, with the store action as the primary one", async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+    const store = await screen.findByRole("button", { name: "I saved the secret — store server copy" });
+    expect(store.className).toBe("sec-action-primary");
+    expect(screen.getByRole("button", { name: "Close without a server copy" }).className).toBe("sec-action-quiet");
+    await userEvent.click(store);
+    await enterAccountPassword();
+    await screen.findByText(/Recovery copy saved on the server/);
+    expect(screen.queryByText("Store this recovery secret")).toBeNull();
+    expect(screen.queryByText("SECRET-ABCD-1234")).toBeNull();
+  });
+
   it("asks for the account password in a masked page dialog, and Cancel stores nothing", async () => {
     const prompt = vi.spyOn(window, "prompt");
     renderPage();
