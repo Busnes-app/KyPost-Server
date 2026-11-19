@@ -40,7 +40,7 @@ func (s *Server) withMailbox(next http.HandlerFunc) http.HandlerFunc {
 // It writes the refusal and returns false when the caller may not proceed.
 func (s *Server) admitMailbox(w http.ResponseWriter, r *http.Request, id string) (*http.Request, bool) {
 	ac, ok := authFromContext(r)
-	if ok && s.refuseUntilEncryptionSetup(w, ac) {
+	if ok && s.refuseUntilEncryptionSetup(w, r, ac) {
 		return r, false
 	}
 	if !ok || id == "" || id == ac.UserID {

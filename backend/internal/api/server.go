@@ -90,6 +90,8 @@ type Server struct {
 	// depends on, so a Required save and a switch to a generic provider cannot
 	// both pass their checks. Held across discovery: both are admin writes.
 	encPolicyMu sync.Mutex
+	// kySignOnChecked: issuer+client → last discovery recheck (ssoKySignOn).
+	kySignOnChecked sync.Map
 
 	// sessMu guards sessions only.
 	sessMu sync.RWMutex

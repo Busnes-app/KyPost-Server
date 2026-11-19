@@ -384,3 +384,61 @@ func TestAdminRequireKeySetupNeverExposesKeyMaterial(t *testing.T) {
 		t.Fatalf("users list hides the requirement: %s", listed)
 	}
 }
+
+// Every save of an enabled provider records whether it is KySignOn, whatever
+// the policy, so a later per-user requirement or Required policy holds an
+// SSO-only account's paired device as it holds the browser.
+func TestKySignOnRecordedOnEverySSOSave(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	idp.KySignOn = true
+	savePolicy(t, srv, EncryptionPolicy{Key: policyOptional, Incoming: policyOff})
+	body, _ := json.Marshal(srv.ssoStore.Load())
+	rec := httptest.NewRecorder()
+	srv.handleAdminSSOPut(rec, httptest.NewRequest(http.MethodPut, "/api/admin/sso", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK || !srv.ssoStore.Load().KySignOn {
+		t.Fatalf("KySignOn provider saved under Optional: %d %s, kySignOn=%v", rec.Code, rec.Body, srv.ssoStore.Load().KySignOn)
+	}
+
+	ssoSignIn(t, srv, idp, "alice", "sid-1")
+	alice, err := srv.users.GetBySSOSub("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	devID, secret := pairNativeDevice(t, srv, alice.ID, "alice-phone")
+	if rec := deviceGet(srv, devID, secret, "/api/inbox"); heldForSetup(rec) {
+		t.Fatal("Optional policy held the device")
+	}
+	if _, err := srv.users.SetKeySetupRequired(alice.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if rec := deviceGet(srv, devID, secret, "/api/inbox"); !heldForSetup(rec) {
+		t.Fatalf("Require key setup did not hold the SSO-only account's device: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := srv.users.SetKeySetupRequired(alice.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	savePolicy(t, srv, EncryptionPolicy{Key: policyRequired, Incoming: policyOn})
+	if rec := deviceGet(srv, devID, secret, "/api/inbox"); !heldForSetup(rec) {
+		t.Fatalf("Required after an Optional-time SSO save did not hold the device: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Settings not marked KySignOn (saved before detection, or discovery failed)
+// are checked again by a device request, which then holds like the browser.
+func TestDeviceRechecksAProviderNotMarkedKySignOn(t *testing.T) {
+	srv, idp := setupSSOTestServer(t) // saved without the mark
+	idp.KySignOn = true
+	savePolicy(t, srv, EncryptionPolicy{Key: policyRequired, Incoming: policyOn})
+	ssoSignIn(t, srv, idp, "alice", "sid-1")
+	alice, err := srv.users.GetBySSOSub("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	devID, secret := pairNativeDevice(t, srv, alice.ID, "alice-phone")
+	if rec := deviceGet(srv, devID, secret, "/api/inbox"); !heldForSetup(rec) {
+		t.Fatalf("unmarked KySignOn provider: device not held: %d %s", rec.Code, rec.Body)
+	}
+	if !srv.ssoStore.Load().KySignOn {
+		t.Fatal("recheck did not record the KySignOn provider")
+	}
+}

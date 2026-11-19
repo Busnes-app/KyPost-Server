@@ -148,7 +148,7 @@ func (s *Server) encryptionSetupFor(u users.User, canSetUp bool) (encryptionSetu
 // signed in while setup was owed (Session.KeySetupGate), so a policy change
 // never cuts off a session mid-work; any other caller (paired device, agent
 // token) is checked on every request and cannot read mail around it.
-func (s *Server) refuseUntilEncryptionSetup(w http.ResponseWriter, ac AuthContext) bool {
+func (s *Server) refuseUntilEncryptionSetup(w http.ResponseWriter, r *http.Request, ac AuthContext) bool {
 	browser := ac.SessionCSRFToken != ""
 	if browser && !ac.KeySetupGate {
 		return false
@@ -160,8 +160,7 @@ func (s *Server) refuseUntilEncryptionSetup(w http.ResponseWriter, ac AuthContex
 	}
 	kySignOn := ac.SSOSession
 	if !browser && !u.HasLocalCredential() {
-		cfg := s.ssoStore.Load()
-		kySignOn = cfg.Enabled && cfg.KySignOn
+		kySignOn = s.ssoKySignOn(r.Context())
 	}
 	st, err := s.encryptionSetupFor(u, canSetUpKey(u, kySignOn))
 	if err != nil {
@@ -208,6 +207,32 @@ func (s *Server) refreshSSOKySignOn(ctx context.Context) sso.SSOSettings {
 		}
 	}
 	return cfg
+}
+
+// kySignOnRecheck bounds how often a device or agent request re-runs
+// discovery for an enabled provider not marked KySignOn.
+const kySignOnRecheck = 5 * time.Minute
+
+// ssoKySignOn reports whether the configured provider is KySignOn, for callers
+// with no browser session to say so. Every save of an enabled provider already
+// records discovery's answer; an unmarked one (discovery failed, or settings
+// older than detection) is checked again at most every kySignOnRecheck per
+// issuer and client, so an SSO-only account of a KySignOn provider cannot keep
+// a device reading mail around its setup for longer than that.
+func (s *Server) ssoKySignOn(ctx context.Context) bool {
+	cfg := s.ssoStore.Load()
+	if !cfg.Enabled || cfg.KySignOn {
+		return cfg.KySignOn
+	}
+	now := time.Now()
+	key := cfg.IssuerURL + "\x00" + cfg.ClientID
+	if last, ok := s.kySignOnChecked.Load(key); ok {
+		if at, _ := last.(time.Time); now.Sub(at) < kySignOnRecheck {
+			return false
+		}
+	}
+	s.kySignOnChecked.Store(key, now)
+	return s.refreshSSOKySignOn(ctx).KySignOn
 }
 
 // needsKySignOn is the refusal for Required beside a generic provider.

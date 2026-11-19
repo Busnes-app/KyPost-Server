@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -8,6 +10,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/password"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -45,6 +48,10 @@ func TestMain(m *testing.M) {
 	// encryption setup tests save the policy they test, and
 	// TestShippedEncryptionPolicyRequiresAKey checks the shipped default.
 	defaultEncryptionPolicy = EncryptionPolicy{Key: policyOptional, Incoming: policyOn}
+	// Saving enabled SSO settings runs discovery. Tests that save a made-up
+	// issuer must fail it at once rather than reach the network; tests with a
+	// real provider install ssotest's transport.
+	sso.SetTransport(noNetwork{})
 	code := m.Run()
 	restoreIterations()
 	restoreParams()
@@ -103,4 +110,10 @@ func TestTestBinaryBillsExactlyOneReserve(t *testing.T) {
 			"package is back to depending on how fast this machine runs the KDF",
 			got, loginKDFReserveSeconds)
 	}
+}
+
+type noNetwork struct{}
+
+func (noNetwork) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("test binary: no network; use ssotest")
 }

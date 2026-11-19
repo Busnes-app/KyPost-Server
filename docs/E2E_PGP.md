@@ -326,10 +326,16 @@ Authentik and Keycloak publish neither by default. The KySignOn preset in the
 admin UI only fills fields in the browser and is never stored, so it cannot be
 the signal, and a per-token check (`SSOTokenClaims.KySignOn`) would only answer
 after someone's sign-in had already failed. The result is stored as
-`SSOSettings.KySignOn`, written only by the server: when SSO settings are saved
-under a Required policy, when a Required policy is saved, and once at API start
-for settings saved before detection existed; opening the policy page re-checks
-without writing. A discovery failure counts as not KySignOn. An operator who points a
+`SSOSettings.KySignOn`, written only by the server: on every save of enabled SSO
+settings whatever the policy, when a Required policy is saved, and once at API
+start for settings saved before detection existed; opening the policy page
+re-checks without writing. A discovery failure counts as not KySignOn, which
+skips rather than locks out SSO-only users who might not be able to finish. A
+paired device or agent token of an SSO-only account has no session to say how it
+signed in, so while enabled settings are unmarked its requests re-run discovery
+at most every five minutes per issuer and client (`ssoKySignOn`); a KySignOn
+provider whose discovery failed at save is therefore found within five minutes
+of the first such request, and its devices are then held like the browser. An operator who points a
 generic provider's discovery at KySignOn's ACR misconfigures it on purpose and
 its SSO-only users then meet `kysignon_required` at key creation.
 
