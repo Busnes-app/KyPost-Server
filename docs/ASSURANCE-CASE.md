@@ -20,6 +20,8 @@ KyPost is a self-hosted mail client and, opt-in, a mail host. Its security requi
    and must not run script in the app, read the session or reach the server's network.
 4. **End-to-end encrypted mail stays end to end.** A client-protected PGP private key is wrapped
    in the browser; the server, the classifier and AI agents never see the key or the plaintext.
+   An administrator can require each user to create or import a key (and recovery) before mail
+   is served, but no administrator route generates, reads or returns key material.
 5. **Secrets at rest stay secret** from anyone who copies the config volume without the private
    key volume.
 6. **The server cannot be turned against the network it sits in** through hosts a user
@@ -113,6 +115,7 @@ Out of scope: an attacker who already runs code in the container or holds both t
 | Weakness | Counter | Where |
 |---|---|---|
 | Password theft from the server | The browser sends only a derived half of the password (PBKDF2-SHA256, 600,000 iterations, then HKDF); the server stores that as Argon2id (64 MiB, 3 passes, 4 lanes, 16-byte random salt) | `frontend/src/lib/authSecret.ts`, `backend/internal/users/authsecret_derive.go`, `HashPassword` in `backend/internal/users/users.go` (via `ky-primitives/password`) |
+| Encryption requirement bypassed or turned into a lockout | The policy is enforced by the server: every mailbox-admitted route and `/mcp` answer `403 encryption_setup_required` until the account has a client-protected key and a recovery slot (and incoming encryption when Required); a browser session is held from its next sign-in, devices and agent tokens on every request. Required is refused beside an SSO provider whose discovery does not advertise KySignOn's step-up ACR and `roles` claim, and so is switching to one while Required; SSO-only accounts that could not finish setup are never held. Policy and per-user changes take the admin step-up and are audited before they are made | `backend/internal/api/encryption_setup.go`, `encryption_setup_test.go`, `sso.Provider.KySignOn` in `backend/internal/sso/sso.go`, [E2E_PGP.md](E2E_PGP.md#first-sign-in-setup) |
 | Credential stuffing and guessing | 3 failures lock an account for 15 minutes; a looser per-address lockout keyed on the IPv6 /64; an instance-wide login limit; proof-of-work CAPTCHA by default | `backend/internal/api/login_lockout.go`, `lockoutKeyForIP` |
 | Rate-limit allowlist abused or mistyped | Office networks skip only the per-address sign-in limits, and only while one shared office budget per limit lasts; then the per-address limit applies again. The per-account lockout, instance-wide budget, CAPTCHA and MFA still run. Matched on the `clientIP` result, so an untrusted peer's `X-Forwarded-For` claims nothing. Ranges broader than /16 or /48 and loopback are refused; only a step-up confirmed admin changes the list, and each change is logged | `backend/internal/api/exempt_networks.go`, `exempt_networks_test.go`, `ky-primitives/netallow` |
 | Session theft or fixation | A fresh 24-byte `crypto/rand` token per sign-in, in an `HttpOnly`, `SameSite=Lax` cookie, `Secure` on HTTPS; 24-hour idle expiry; removed on sign-out | `backend/internal/api/server_auth_session.go`, `randomToken` in `server.go` |

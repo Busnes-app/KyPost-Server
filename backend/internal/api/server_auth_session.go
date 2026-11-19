@@ -61,6 +61,10 @@ type Session struct {
 	// SSOEpoch is Server.ssoEpoch when the callback began, so a callback that
 	// read settings before a trust change cannot mint under them.
 	SSOEpoch uint64
+	// KeySetupGate is set when the account owed encryption setup at sign-in;
+	// such a session gets no mail until setup is complete
+	// (refuseUntilEncryptionSetup).
+	KeySetupGate bool
 	// revocations is Server.revocations+1 as read before a password sign-in
 	// checked the credential; zero skips the check.
 	revocations uint64
@@ -127,6 +131,8 @@ type AuthContext struct {
 	// KySignOn rather than with a password; a session from any other
 	// provider is not marked and keeps the password gate.
 	SSOSession bool
+	// KeySetupGate is the session's Session.KeySetupGate.
+	KeySetupGate bool
 
 	// SessionCSRFToken is the CSRF token of the session this request authenticated
 	// with, and is EMPTY for every other authentication path (paired-device
@@ -548,6 +554,11 @@ func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Sessio
 	if err := s.requireAccountRestoreReleased(u); err != nil {
 		return err
 	}
+	// Setup owed now holds this session's mail until it is done; an unreadable
+	// status holds it too, and each request rechecks.
+	if st, err := s.encryptionSetupFor(u, canSetUpKey(u, sess.SSOKySignOn)); err != nil || st.Required {
+		sess.KeySetupGate = true
+	}
 	token, err := randomToken(24)
 	if err != nil {
 		return err
@@ -791,7 +802,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "subscriberId": subscriberID})
 		return
 	}
+	setup, err := s.encryptionSetupFor(u, canSetUpKey(u, ac.SSOSession))
+	setup.Required = ac.KeySetupGate && (setup.Required || err != nil)
 	writeJSON(w, http.StatusOK, map[string]any{
+		"encryptionSetup":    setup,
 		"authenticated":      true,
 		"userId":             u.ID,
 		"username":           u.Username,
@@ -1225,6 +1239,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 		Role:               role,
 		MustChangePassword: u.MustChangePassword,
 		SSOSession:         sess.SSOKySignOn,
+		KeySetupGate:       sess.KeySetupGate,
 		// This request authenticated by cookie, so it carries an ambient
 		// credential and csrfCheckOK must enforce the double submit.
 		SessionCSRFToken: sess.CSRFToken,

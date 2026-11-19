@@ -2,6 +2,19 @@ import { createContext, useContext } from "react";
 
 export type Role = "admin" | "user";
 
+/** First sign-in encryption setup, as GET /api/auth/me reports it. */
+export type EncryptionSetup = {
+  /** Mail is refused until setup is complete; no "Not now". */
+  required: boolean;
+  /** The step is offered once, with "Not now". */
+  offered: boolean;
+  hasKey: boolean;
+  hasRecovery: boolean;
+  incomingEnabled: boolean;
+  keyPolicy: "required" | "optional";
+  incomingPolicy: "required" | "on" | "off";
+};
+
 export type AuthState = {
   authenticated: boolean;
   userId?: string;
@@ -23,6 +36,8 @@ export type AuthState = {
   // sync can still address the account. Read this, not ssoSub, to decide
   // whether the link can sign anyone in.
   ssoLinkRevoked?: boolean;
+  // Absent on older servers: no setup step.
+  encryptionSetup?: EncryptionSetup;
 };
 
 export const AuthContext = createContext<AuthState>({ authenticated: false });
