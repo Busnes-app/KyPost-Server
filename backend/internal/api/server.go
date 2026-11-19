@@ -275,6 +275,10 @@ type Server struct {
 	officeLoginParams *keyedLimiter
 	officeLogin       *keyedLimiter
 	exemptNetworksEnv string
+	// exemptStored is the stored list exemptNetworks was last built from (followExemptNetworks).
+	exemptStored atomic.Pointer[string]
+	// cfgStamp is config.yaml as this process last read or wrote it (followConfig).
+	cfgStamp fileIdentity
 
 	// classifier and globalStore back the Ollama version/update-check block on the
 	// Prompt Tuning page and its admin-notification email. classifier is nil until

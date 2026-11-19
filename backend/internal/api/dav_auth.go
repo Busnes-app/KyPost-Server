@@ -26,29 +26,29 @@ const davCredentialTTL = 90 * time.Second
 type davCredentialCacheEntry struct {
 	authContext AuthContext
 	expiresAt   time.Time
-	file        davStamp // carddav-auth.json as it stood before the verification
+	file        fileIdentity // carddav-auth.json as it stood before the verification
 }
 
-// davStamp identifies one version of a file. On PostgreSQL replicas another replica may
+// fileIdentity identifies one version of a file. On PostgreSQL replicas another replica may
 // revoke an app password by deleting or rewriting carddav-auth.json on the shared volume; a
 // cached credential is used only while the file is the one it was verified against.
-type davStamp struct {
+type fileIdentity struct {
 	size int64
 	mod  time.Time
 	ino  uint64
 	ok   bool
 }
 
-func davStampOf(path string) davStamp {
+func fileIdentityOf(path string) fileIdentity {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return davStamp{}
+		return fileIdentity{}
 	}
 	st, _ := fi.Sys().(*syscall.Stat_t)
 	if st == nil {
-		return davStamp{}
+		return fileIdentity{}
 	}
-	return davStamp{size: fi.Size(), mod: fi.ModTime(), ino: st.Ino, ok: true}
+	return fileIdentity{size: fi.Size(), mod: fi.ModTime(), ino: st.Ino, ok: true}
 }
 
 // davCredentialCache is a short-lived, in-memory cache of verified CardDAV
@@ -80,14 +80,14 @@ func davCredentialCacheKey(username, password string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (c *davCredentialCache) get(username, password string) (AuthContext, davStamp, bool) {
+func (c *davCredentialCache) get(username, password string) (AuthContext, fileIdentity, bool) {
 	key := davCredentialCacheKey(username, password)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.entries[key]
 	if !ok || time.Now().After(entry.expiresAt) {
 		delete(c.entries, key)
-		return AuthContext{}, davStamp{}, false
+		return AuthContext{}, fileIdentity{}, false
 	}
 	return entry.authContext, entry.file, true
 }
@@ -103,7 +103,7 @@ func (c *davCredentialCache) currentGeneration() uint64 {
 // put caches a verified credential, unless the cache was invalidated since gen
 // was taken — in which case the credential this verification was based on may
 // already have been deleted, and caching it would resurrect it.
-func (c *davCredentialCache) put(gen uint64, file davStamp, username, password string, ac AuthContext) {
+func (c *davCredentialCache) put(gen uint64, file fileIdentity, username, password string, ac AuthContext) {
 	key := davCredentialCacheKey(username, password)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -164,7 +164,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		}
 
 		ac, file, cached := s.davCredentials.get(username, password)
-		if cached && s.shared != nil && davStampOf(s.userCardDAVAuthPath(ac.UserID)) != file {
+		if cached && s.shared != nil && fileIdentityOf(s.userCardDAVAuthPath(ac.UserID)) != file {
 			// Changed or revoked on the shared volume since it was verified.
 			cached = false
 		}
@@ -203,7 +203,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		// verification is guaranteed to be seen by the put at the end (see
 		// davCredentialCache).
 		gen := s.davCredentials.currentGeneration()
-		var stamp davStamp // set once the account is known, before its file is read
+		var stamp fileIdentity // set once the account is known, before its file is read
 
 		credentialStart := time.Now() // failures padded from here; see settleCredentialTiming
 		u, err := s.users.GetByUsername(username)
@@ -222,7 +222,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 			s.requireDAVAuth(w)
 			return
 		}
-		stamp = davStampOf(s.userCardDAVAuthPath(u.ID))
+		stamp = fileIdentityOf(s.userCardDAVAuthPath(u.ID))
 		passFile, exists, err := s.readDAVPassword(u.ID)
 		if err != nil || !exists {
 			// No CardDAV app-password configured for this account: still pay

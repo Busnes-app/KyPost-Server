@@ -435,6 +435,7 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server, d runDeps) (w
 		srv.StartMFAChallengeSweeper,
 		srv.StartPoWSweeper,
 		srv.StartUserStoreSweeper,
+		srv.StartConfigFollower,
 	}...)
 	elected := elect(ctx, d, worker.RoleAPISweepers, func(owned context.Context) {
 		runSweepers(owned, d.logger, sweeperDrain, []func(context.Context){

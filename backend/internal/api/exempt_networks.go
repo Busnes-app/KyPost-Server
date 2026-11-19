@@ -127,6 +127,7 @@ func (s *Server) loadExemptNetworks() {
 		list, _ = netallow.Parse(env)
 	}
 	s.exemptNetworks.Store(list)
+	s.exemptStored.Store(&stored)
 }
 
 func (s *Server) exemptNetworksStatus(stored string) map[string]any {
@@ -187,6 +188,7 @@ func (s *Server) handleExemptNetworksPut(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.exemptNetworks.Store(combined)
+	s.exemptStored.Store(&stored)
 	audit("saved", fmt.Sprintf("from=%q to=%q", previous, stored))
 	writeJSON(w, http.StatusOK, s.exemptNetworksStatus(stored))
 }

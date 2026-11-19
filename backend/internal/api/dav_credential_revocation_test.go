@@ -24,7 +24,7 @@ func TestDAVCredentialPutIsDroppedWhenRevocationRacesIt(t *testing.T) {
 	cache.invalidateUser("dav-user")
 
 	// The verifier now finishes and tries to cache what it verified.
-	cache.put(gen, davStamp{}, "dav-user", "app-password", AuthContext{UserID: "u1", Username: "dav-user"})
+	cache.put(gen, fileIdentity{}, "dav-user", "app-password", AuthContext{UserID: "u1", Username: "dav-user"})
 
 	if _, _, ok := cache.get("dav-user", "app-password"); ok {
 		t.Fatal("a credential verified before revocation was cached after it")
@@ -37,7 +37,7 @@ func TestDAVCredentialPutSucceedsWithoutRevocation(t *testing.T) {
 	cache := newDAVCredentialCache()
 
 	gen := cache.currentGeneration()
-	cache.put(gen, davStamp{}, "dav-user", "app-password", AuthContext{UserID: "u1", Username: "dav-user"})
+	cache.put(gen, fileIdentity{}, "dav-user", "app-password", AuthContext{UserID: "u1", Username: "dav-user"})
 
 	ac, _, ok := cache.get("dav-user", "app-password")
 	if !ok {
@@ -61,7 +61,7 @@ func TestDAVPasswordRefusedImmediatelyAfterRevocation(t *testing.T) {
 
 	// A verification that is in flight across the revocation below.
 	inFlightGen := srv.davCredentials.currentGeneration()
-	srv.davCredentials.put(inFlightGen, davStamp{}, u.Username, "app-password",
+	srv.davCredentials.put(inFlightGen, fileIdentity{}, u.Username, "app-password",
 		AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role})
 
 	// An admin resets the password: the account stays active, the CardDAV
@@ -69,7 +69,7 @@ func TestDAVPasswordRefusedImmediatelyAfterRevocation(t *testing.T) {
 	srv.revokeAllUserCredentials(u)
 
 	// The in-flight verifier finishes and lands its put after the revocation.
-	srv.davCredentials.put(inFlightGen, davStamp{}, u.Username, "app-password",
+	srv.davCredentials.put(inFlightGen, fileIdentity{}, u.Username, "app-password",
 		AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role})
 
 	reached := false

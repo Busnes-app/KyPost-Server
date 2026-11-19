@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -42,7 +43,7 @@ func replicaOf(t *testing.T, a *Server) *Server {
 	}
 	b := NewServer(config.Default(), logger, health.NewService(), usersStore, nil, wkd)
 	b.pairingSecret = a.pairingSecret
-	b.stateDir, b.configDir = a.stateDir, a.configDir
+	b.stateDir, b.configDir, b.configPath = a.stateDir, a.configDir, a.configPath
 	b.ssoStore = sso.NewStore(a.configDir)
 	b.nativeDomains = sso.NewNativeDomainStore(a.configDir)
 	b.ssoLifecycle = sso.NewLifecycleStore(a.configDir)
@@ -61,6 +62,10 @@ func sharedPair(t *testing.T) (*Server, *Server) {
 	t.Helper()
 	dbbackend.RequirePostgres(t)
 	a := newTestServer(t)
+	a.configPath = filepath.Join(a.configDir, "config.yaml")
+	if err := config.Save(a.configPath, a.cfg); err != nil {
+		t.Fatal(err)
+	}
 	b := replicaOf(t, a)
 	a.UseSharedState(a.globalStore)
 	b.UseSharedState(b.globalStore)
@@ -355,5 +360,78 @@ func TestStoreFailureIsUnavailableNotSignedOut(t *testing.T) {
 		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
 			t.Errorf("%s with the store down: %d Retry-After=%q", path, rec.Code, rec.Header().Get("Retry-After"))
 		}
+	}
+}
+
+// AC18: a settings PUT on A is served by B within 5 s; an office network removed on A stops
+// exempting on B within 5 s.
+func TestSettingsFollowTheVolumeAndDatabase(t *testing.T) {
+	a, b := sharedPair(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go b.StartConfigFollower(ctx)
+	admin, err := a.users.Create(context.Background(), "settings-admin", "settings-admin-password", users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, csrf := mintSessionForTest(a, admin.ID)
+	cookies := []*http.Cookie{{Name: "kypost_session", Value: token}}
+	rec := send(a, http.MethodGet, "/api/config", cookies, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET config: %d %s", rec.Code, rec.Body.String())
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["timezone"] = "Europe/Lisbon"
+	body, _ := json.Marshal(cfg)
+	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	req.Header.Set("X-CSRF-Token", csrf)
+	rec = httptest.NewRecorder()
+	a.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT config on A: %d %s", rec.Code, rec.Body.String())
+	}
+	deadline := time.Now().Add(followInterval + time.Second)
+	for {
+		b.cfgMu.RLock()
+		tz := b.cfg.Timezone
+		b.cfgMu.RUnlock()
+		if tz == "Europe/Lisbon" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("B still serves timezone %q after %v", tz, followInterval+time.Second)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	office := netip.MustParseAddr("192.0.2.10")
+	if err := a.globalStore.SetSetting(exemptNetworksSetting, "192.0.2.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor := func(want bool) {
+		t.Helper()
+		deadline := time.Now().Add(followInterval + time.Second)
+		for b.exemptNetworks.Load().Contains(office) != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("B's office list does not reflect A's change (want contains=%v)", want)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	waitFor(true)
+	if err := a.globalStore.SetSetting(exemptNetworksSetting, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(false)
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req.RemoteAddr = office.String() + ":1234"
+	if b.officeDraw(req, b.officeLogin) {
+		t.Fatal("B still exempts a removed office network")
 	}
 }
