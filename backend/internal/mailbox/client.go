@@ -241,7 +241,11 @@ func (c *Client) GetMessageBodies(ctx context.Context, folder string, uids []int
 			out[uid] = imapadapter.MessageContent{TooLarge: true}
 			continue
 		}
-		out[uid] = p.Content
+		content := p.Content
+		if content.DeliveredTo, err = c.store.DeliveredTo(ctx, int64(uid)); err != nil {
+			return nil, err
+		}
+		out[uid] = content
 	}
 	return out, nil
 }
@@ -308,7 +312,11 @@ func (c *Client) ListUnreadInbox(ctx context.Context, checkpoint string) ([]imap
 			break
 		}
 		used += size
-		out = append(out, imapadapter.Message{ID: o.MessageID, Subject: o.Subject, Sender: o.Sender, SentTo: o.SentTo, CC: o.CC, BCC: o.BCC, Keywords: o.Keywords, AtUTC: o.AtUTC, Body: p.Text, BodyHTML: p.HTML, HasAttachments: p.Content.HasAttachments, PGPEncrypted: p.Content.PGPEncrypted, TooLarge: tooLarge, ParseError: malformed})
+		delivered, err := c.store.DeliveredTo(ctx, m.ID)
+		if err != nil {
+			return nil, checkpoint, err
+		}
+		out = append(out, imapadapter.Message{DeliveredTo: delivered, ID: o.MessageID, Subject: o.Subject, Sender: o.Sender, SentTo: o.SentTo, CC: o.CC, BCC: o.BCC, Keywords: o.Keywords, AtUTC: o.AtUTC, Body: p.Text, BodyHTML: p.HTML, HasAttachments: p.Content.HasAttachments, PGPEncrypted: p.Content.PGPEncrypted, TooLarge: tooLarge, ParseError: malformed})
 		next = m.ID
 	}
 	return out, strconv.FormatInt(next, 10), nil

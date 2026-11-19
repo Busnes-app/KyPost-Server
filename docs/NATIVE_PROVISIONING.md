@@ -425,6 +425,63 @@ recorded as `address_conflict`.
   monotonic. Roll back by restoring the pre-upgrade backup.
 - The recovery authority digest includes every address record.
 
+## Plus addressing and masked addresses
+
+- **Plus addressing** (RFC 5233). A ledger address that holds a `+` (a
+  KyIdentity primary such as `john+work@`, or an alias issued before `+` was
+  refused) matches exactly in any state: active, it keeps receiving and
+  sending for its own mailbox; disabled or reserved, it is refused like an
+  unknown address and never falls to the base address's owner, for receiving,
+  `From`, scheduled sends and the outbox alike, and the Worker table carries
+  it as a `refused` route. Only with no ledger record does receiving read
+  `local+tag@domain` as `local@domain` (`sso.LifecycleStore.NativeAddressFor`;
+  the part before the first `+`) for primaries, aliases and masked addresses
+  alike, and binds the delivery to the resolved address: routes, bindings,
+  import and quarantine never see the tag. Maddy `bind` does this itself; the
+  Cloudflare Worker matches a full-address route first, then the base, and
+  freezes the route address in the envelope
+  (`docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md`). On by default; a user's
+  `refusePlusAddresses` setting (`PUT /api/addresses/plus`) refuses tagged mail
+  with the unknown-recipient answer (Maddy `bind` exit 3 / 550, Worker "Address
+  refused" through the route's `noPlus`). `/api/mail/send` and scheduled sends
+  accept `From: base+tag@` when the base is an owned active address and plus
+  addressing is on; the outbox fences it by the resolved address's
+  generation. New aliases, masked addresses and administrator-created
+  mailboxes refuse a local part holding `+`; KyIdentity primaries (directory
+  events and HR reservations) are taken as KyIdentity sends them. Existing
+  `+` addresses need no migration.
+- **Masked and disposable addresses** are ledger `alias` records on the user's
+  primary mailbox, made by its owner with `POST /api/addresses/masked` on a
+  domain the administrator listed (`masked_address_domains` in root `state.db`
+  meta, `PUT /api/admin/masked-domains`; none listed is off). The owner's
+  record (`maskedAddresses` in the user's `config.yaml`: note, state
+  `active|paused|deleted`, `expiresAt` for disposable) and the ledger together
+  decide: mail flows only while the record is live (active, not expired) and
+  the ledger address is `active`. Pause and delete reserve the ledger address
+  (the released-alias mechanism, generation + 1); resume reassigns it to the
+  same mailbox. The record closes before the ledger and opens after it, under
+  the user's settings lock (order settings → domains → directory), so a crash
+  between the two leaves mail refused. A record whose ledger address never
+  appeared, or whose disposable lifetime ended, becomes `deleted` in the API
+  worker's minute pass, which also reserves any non-active record's ledger
+  address. Both receiving profiles refuse a paused, expired or deleted address
+  exactly as an unknown one (same exit code and SMTP reply; the Worker table
+  simply omits it, with no fallback to an earlier route). A deleted address is
+  never reissued: the ledger never deletes records, and the administrator
+  release and reassign routes answer 409 for any address a user's record
+  holds. Limits: 100 not deleted per user, 20 created in any 24 hours.
+- **Sending as a masked address**: From and the envelope sender are the masked
+  address, the Message-ID domain is its domain, DKIM signs `d=` that domain
+  with no `i=`, and no Reply-To, Sender or Autocrypt header names the primary
+  (`TestMaskedSendLeaksNoPrimaryAddress`, `TestDKIMSignatureCarriesNoIdentity`).
+  Out-of-office never answers mail whose delivery receipt names a masked
+  address (even when To/Cc names a regular alias), since its reply comes from
+  the account address. The web client replies from the address the receipt
+  names (`deliveredTo` on `/api/mail/body`, keeping a tag the headers show);
+  when none is the user's own it leaves From empty and refuses to send until
+  the user picks one, never defaulting to the primary. Mail from masked
+  addresses counts toward the owner's sending quota.
+
 ## Extra mailboxes
 
 Administrators give an everyday identity further mailboxes beside the

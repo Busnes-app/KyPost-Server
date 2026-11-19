@@ -24,6 +24,7 @@ import { isUnlocked } from "../lib/keyVault";
 import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "../lib/pgpClient";
 import { sealPickup } from "../lib/pickupCrypto";
 import { mailboxName, type UserMailbox } from "../app/mailboxes";
+import { plusBase } from "../lib/addressText";
 import type { ComposeAttachment, DraftComposePayload } from "../app/types";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -85,6 +86,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const [composeMailbox, setComposeMailbox] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeFrom, setComposeFrom] = useState("");
+  // A reply whose receiving address is unknown: the user picks From, never the primary by default.
+  const [composeFromRequired, setComposeFromRequired] = useState(false);
   const [sendAsOptions, setSendAsOptions] = useState<SendAsAlias[]>([]);
   const [composeTo, setComposeTo] = useState<RecipientFieldState>({ tokens: [], draft: "" });
   const [composeCc, setComposeCc] = useState<RecipientFieldState>({ tokens: [], draft: "" });
@@ -227,6 +230,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   function resetComposeForm() {
     stopSignature();
     setComposeFrom("");
+    setComposeFromRequired(false);
     setComposeTo({ tokens: [], draft: "" });
     setComposeCc({ tokens: [], draft: "" });
     setComposeBcc({ tokens: [], draft: "" });
@@ -399,7 +403,11 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   }
 
   const mailboxOf = (id: string) => mailboxes.find((m) => (id ? m.id === id : m.kind === "primary"));
-  const composeFromChoices = mailboxOf(composeMailbox)?.addresses ?? [];
+  // A reply from a plus address of this mailbox joins the choices.
+  const boxAddresses = mailboxOf(composeMailbox)?.addresses ?? [];
+  const composeFromChoices = composeFrom && !boxAddresses.includes(composeFrom) && boxAddresses.includes(plusBase(composeFrom))
+    ? [...boxAddresses, composeFrom]
+    : boxAddresses;
 
   /** Pins compose to the selected mailbox, sending from its primary address. */
   function pinComposeMailbox(id = selectedMailboxId()) {
@@ -409,7 +417,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
 
   // Compose opened before the list arrived has no From yet. Only the list's arrival fills it.
   const fillMissingFrom = useEffectEvent(() => {
-    if (composeOpen && !composeFrom) setComposeFrom(mailboxOf(composeMailbox)?.addresses[0] ?? "");
+    if (composeOpen && !composeFrom && !composeFromRequired) setComposeFrom(mailboxOf(composeMailbox)?.addresses[0] ?? "");
   });
   useEffect(() => {
     fillMissingFrom();
@@ -483,7 +491,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // The snapshot's body carries whatever signature it was written with.
       stopSignature();
       pinComposeMailbox(snapshot.mailbox);
-      if (box) setComposeFrom(box.addresses.includes(snapshot.from) ? snapshot.from : box.addresses[0] ?? "");
+      if (box) setComposeFrom(box.addresses.includes(plusBase(snapshot.from)) ? snapshot.from : box.addresses[0] ?? "");
       setComposeTo(parseRecipientField(snapshot.to));
       setComposeCc(parseRecipientField(snapshot.cc));
       setComposeBcc(parseRecipientField(snapshot.bcc));
@@ -503,6 +511,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeSignOverridden.current = false;
     setComposeSign(isClientProtected() && isUnlocked());
     pinComposeMailbox(payload.mailbox);
+    const choices = mailboxOf(payload.mailbox ?? selectedMailboxId())?.addresses ?? [];
+    setComposeFromRequired(payload.from === null);
+    if (payload.from === null) setComposeFrom("");
+    else if (payload.from && (choices.includes(payload.from) || choices.includes(plusBase(payload.from)))) setComposeFrom(payload.from);
     setComposeTo(parseRecipientField(payload.sentTo ?? ""));
     setComposeCc(parseRecipientField(payload.cc ?? ""));
     setComposeBcc(parseRecipientField(payload.bcc ?? ""));
@@ -898,6 +910,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       setComposeError("TO is required.");
       return;
     }
+    if (composeFromRequired && !composeFrom) {
+      setComposeError("Choose the address to reply from: KyPost could not tell which of your addresses received this message.");
+      return;
+    }
     setComposeSending(true);
     setComposeError("");
     setComposeSuccess("");
@@ -1150,7 +1166,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
 
   return {
     composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice, composeAutosaveFailed,
-    composeFrom, setComposeFrom, composeFromChoices, sendAsOptions,
+    composeFrom, setComposeFrom, composeFromChoices, composeFromRequired, sendAsOptions,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc, addTokenToField,
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,
     composeEncrypt, setComposeEncrypt, setComposeEncryptOverridden, composeSign, setComposeSign, composeSignOverridden,

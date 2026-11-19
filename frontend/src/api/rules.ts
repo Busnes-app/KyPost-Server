@@ -17,6 +17,8 @@ export type Condition = {
   header?: string;
   comparator?: string;
   value?: string;
+  /** Plus-address part of from/to/cc/bcc (Sieve subaddress): "user" before the +, "detail" after it. */
+  part?: "user" | "detail";
 };
 
 export type Action = {

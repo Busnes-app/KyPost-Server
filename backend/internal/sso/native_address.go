@@ -81,6 +81,21 @@ func (s *LifecycleStore) NativeAddress(address string) (a NativeAddress, err err
 	return a, nil
 }
 
+// NativeAddressFor resolves a recipient or From under plus addressing: the
+// full address whenever the ledger holds it, in any state (one issued before
+// new addresses refused "+" keeps its owner, and an inactive one refuses
+// rather than falling to the base's owner); otherwise the part before the
+// first +. tagged reports that the tag was dropped; no record is the zero value.
+func (s *LifecycleStore) NativeAddressFor(address string) (x NativeAddress, tagged bool, err error) {
+	x, err = s.NativeAddress(address)
+	base := PlusBase(address)
+	if err != nil || x.Address != "" || base == address {
+		return x, false, err
+	}
+	x, err = s.NativeAddress(base)
+	return x, true, err
+}
+
 // NativeMailboxes lists mailboxes, sorted, with their addresses sorted.
 func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
 	f, err := s.loadNative()
@@ -176,8 +191,12 @@ func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
 
 // AddNativeAlias gives an everyday identity's mailbox a new address. Records
 // are never deleted, so an address the ledger has ever held is refused; a
-// released one comes back only through ReassignNativeAddress.
+// released one comes back only through ReassignNativeAddress. A local part
+// with a "+" is never issued: plus addressing reads it as a tag.
 func (s *LifecycleStore) AddNativeAlias(ctx context.Context, stateRoot, mailboxID, address string) (NativeAddress, error) {
+	if strings.Contains(address, "@") && PlusBase(address) != address {
+		return NativeAddress{}, ErrNativeAddressInvalid
+	}
 	return s.changeNativeAddress(ctx, stateRoot, address, func(f nativeAssignments, domains NativeDomainSet, directory map[string]DirectoryState, x nativeLedgerAddress, exists bool) (nativeLedgerAddress, error) {
 		if exists {
 			return x, ErrNativeAddressConflict

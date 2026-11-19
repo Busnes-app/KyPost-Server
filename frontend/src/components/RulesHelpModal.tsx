@@ -77,6 +77,13 @@ export function RulesHelpModal({ isOpen, onClose }: RulesHelpModalProps) {
           </table>
 
           <p>
+            For <code>from</code>, <code>to</code>, <code>cc</code> and <code>bcc</code> you can test one part of a
+            plus address: <strong>name before +</strong> or <strong>tag after +</strong>. A rule on the tag{" "}
+            <code>is</code> <code>receipts</code> catches mail sent to <code>you+receipts@…</code>; an address with no
+            tag never matches it.
+          </p>
+
+          <p>
             Check "NOT" on a condition to invert it. Choose <strong>ALL of the following (AND)</strong> to require
             every condition to match, or <strong>ANY of the following (OR)</strong> to match if just one does. The
             visual builder only supports one flat group of conditions — a rule with nested groups (only reachable
@@ -131,7 +138,9 @@ if header :contains "from" "billing@example.com" {
             <code>body</code>, <code>hasflag</code>, combined with <code>allof(...)</code>, <code>anyof(...)</code>,
             and <code>not</code>. Comparators are given as a tag, e.g. <code>:contains</code>, <code>:is</code>,{" "}
             <code>:matches</code>, <code>:regex</code>. Comments use <code>#</code> for a line or{" "}
-            <code>/* ... */</code> for a block. Condition groups can nest up to 32 levels deep. Values are always
+            <code>/* ... */</code> for a block. With <code>require ["subaddress"]</code>, an <code>address</code>{" "}
+            test takes <code>:user</code> or <code>:detail</code>, e.g.{" "}
+            <code>address :detail :is ["to"] "receipts"</code>. Condition groups can nest up to 32 levels deep. Values are always
             literal strings — there's no variable or template support.
           </p>
 

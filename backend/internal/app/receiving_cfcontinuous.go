@@ -368,6 +368,8 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 	}
 	byMailbox := map[string][]string{}
 	for address, x := range addresses {
+		// An active address holding a + (issued before + was refused) is
+		// published: the Worker matches a full address before the part before +.
 		if x.State == "active" && set.Domains[sso.AddressDomain(address)].Established && cfreceiving.ValidAddress(address) {
 			byMailbox[x.Mailbox] = append(byMailbox[x.Mailbox], address)
 		}
@@ -395,14 +397,23 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 				}
 				// A failed read publishes no fresh route for this mailbox, so
 				// all keep their previous one.
+				settings, err := config.LoadUserSettings(config.UserSettingsPath(r.configDir, a.UserID()))
+				if err != nil {
+					return err
+				}
 				admitted := []cfreceiving.Route{}
 				for _, address := range fresh {
 					x, err := r.life.NativeAddress(address)
 					if err != nil {
 						return err
 					}
+					// A paused or expired masked address keeps no previous route either.
+					if settings.RefusesAddress(address, false, l.now()) {
+						added[address] = true
+						continue
+					}
 					if x.State == "active" && x.Mailbox == id {
-						admitted = append(admitted, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: min(receivingLimits.MessageBytes, a.Limits.MessageBytes, cfreceiving.MaxMessageBytes), Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox})
+						admitted = append(admitted, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: min(receivingLimits.MessageBytes, a.Limits.MessageBytes, cfreceiving.MaxMessageBytes), Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox, NoPlus: settings.RefusePlusAddresses})
 					}
 				}
 				for _, route := range admitted {
@@ -416,6 +427,13 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 			if p, ok := previous[address]; ok && !added[address] && p.Generation == addresses[address].Generation && p.Mailbox == id {
 				routes = append(routes, p)
 			}
+		}
+	}
+	// An inactive address holding a + is refused outright: without its own
+	// route the Worker would hand its mail to the base address's owner.
+	for address, x := range addresses {
+		if x.State != "active" && sso.PlusBase(address) != address && set.Domains[sso.AddressDomain(address)].Established && cfreceiving.ValidAddress(address) {
+			routes = append(routes, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: 1, Mailbox: x.Mailbox, Refused: true})
 		}
 	}
 	slices.SortFunc(routes, func(a, b cfreceiving.Route) int { return strings.Compare(a.Address, b.Address) })

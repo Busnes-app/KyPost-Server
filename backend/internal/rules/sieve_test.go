@@ -551,3 +551,53 @@ func TestValidateMatchShapeBoundsConditionValue(t *testing.T) {
 		t.Fatalf("an ordinary rule was rejected: %v", err)
 	}
 }
+
+func TestSubaddress(t *testing.T) {
+	r := Rule{Name: "receipts", Enabled: true, Match: MatchGroup{Op: "allof", Conditions: []Condition{{Field: "to", Comparator: "is", Part: "detail", Value: "receipts"}}}, Actions: []Action{{Type: "move", Value: "Receipts"}}}
+	if err := ValidateRule(r); err != nil {
+		t.Fatal(err)
+	}
+	script, err := CompileRule(r)
+	want := "require [\"fileinto\", \"subaddress\"];\n\nif allof(address :detail :is [\"to\"] \"receipts\") {\n    fileinto \"Receipts\";\n}\n"
+	if err != nil || script != want {
+		t.Fatalf("compiled %q, %v", script, err)
+	}
+	parsed, err := ParseRuleText(script, Rule{Name: "receipts"})
+	if err != nil || len(parsed.Match.Conditions) != 1 || parsed.Match.Conditions[0] != r.Match.Conditions[0] {
+		t.Fatalf("round trip %+v, %v", parsed.Match, err)
+	}
+	user, err := ParseRuleText("require [\"subaddress\"];\nif address :contains :user [\"from\", \"cc\"] \"bob\" { keep; }\n", Rule{Name: "u"})
+	// A lone multi-field test becomes the rule's anyof match itself.
+	if err != nil || user.Match.Op != "anyof" || len(user.Match.Conditions) != 2 || user.Match.Conditions[1].Field != "cc" || user.Match.Conditions[1].Part != "user" || user.Match.Conditions[1].Comparator != "contains" {
+		t.Fatalf("tag order or field list %+v, %v", user.Match, err)
+	}
+	for _, bad := range []string{
+		"if header :detail [\"to\"] \"x\" { keep; }",
+		"if address :detail [\"subject\"] \"x\" { keep; }",
+		"if address :detail :user [\"to\"] \"x\" { keep; }",
+		"if address :is :is [\"to\"] \"x\" { keep; }",
+	} {
+		if _, err := ParseRuleText(bad, Rule{Name: "b"}); err == nil {
+			t.Fatal("accepted", bad)
+		}
+	}
+	for _, c := range []Condition{{Field: "subject", Part: "detail", Value: "x"}, {Field: "to", Part: "detail", Comparator: "exists"}, {Field: "to", Part: "domain", Value: "x"}} {
+		if ValidateMatchShape(MatchGroup{Op: "allof", Conditions: []Condition{c}}) == nil {
+			t.Fatal("invalid part accepted", c)
+		}
+	}
+	for to, want := range map[string]bool{
+		"Me <me+Receipts@example.test>, other@example.test": true,
+		"me+receipts+2023@example.test":                     false,
+		"me@example.test":                                   false,
+		"not an address list":                               false,
+	} {
+		if got := len(Evaluate(t.Context(), EvalInput{To: to}, []Rule{r}).Matched) == 1; got != want {
+			t.Errorf("To %q matched %v, want %v", to, got, want)
+		}
+	}
+	from := Rule{Name: "f", Enabled: true, Match: MatchGroup{Op: "allof", Conditions: []Condition{{Field: "from", Comparator: "is", Part: "user", Value: "bob"}}}}
+	if len(Evaluate(t.Context(), EvalInput{From: "Bob <bob+x@example.test>"}, []Rule{from}).Matched) != 1 {
+		t.Fatal(":user did not match the part before +")
+	}
+}

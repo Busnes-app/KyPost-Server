@@ -61,6 +61,17 @@ type oooOriginal struct {
 	sender, messageID, references, inReplyTo string
 }
 
+// nativeOwn adds the mailbox's active addresses to own, except masked ones:
+// the reply comes from the account address, so answering mail sent to a
+// masked address would reveal it.
+func nativeOwn(own map[string]bool, all map[string]sso.NativeAddress, mailbox string, settings config.UserSettings) {
+	for addr, x := range all {
+		if _, masked := settings.Masked(addr); x.Mailbox == mailbox && x.State == "active" && !masked {
+			own[strings.ToLower(addr)] = true
+		}
+	}
+}
+
 // oooEligible applies RFC 3834 and the recipient rules to a message's header
 // (docs/OUT_OF_OFFICE.md). It names the refusal, or "" with the original.
 func oooEligible(h mail.Header, own map[string]bool) (oooOriginal, string) {
@@ -104,7 +115,8 @@ func oooEligible(h mail.Header, own map[string]bool) (oooOriginal, string) {
 	for _, field := range []string{"To", "Cc"} {
 		list, _ := h.AddressList(field)
 		for _, a := range list {
-			addressed = addressed || own[strings.ToLower(a.Address)]
+			lower := strings.ToLower(a.Address)
+			addressed = addressed || own[lower] || own[sso.PlusBase(lower)]
 		}
 	}
 	if !addressed {
@@ -149,17 +161,13 @@ func ruledJunk(ctx context.Context, uc userCtx, msg imapadapter.Message, uid int
 }
 
 // ownAddresses are the polled primary mailbox's own addresses: the account
-// address plus verified send-as aliases (external) or the mailbox's active
-// addresses (native).
+// address plus verified send-as aliases (external) or nativeOwn (native).
 func (p *Poller) ownAddresses(uc userCtx, account string) map[string]bool {
 	own := map[string]bool{strings.ToLower(account): true}
 	if uc.mailbox != "" && p.users != nil {
-		if all, err := sso.NewLifecycleStore(p.configDir).NativeAddresses(); err == nil {
-			for addr, x := range all {
-				if x.Mailbox == uc.mailbox && x.State == "active" {
-					own[strings.ToLower(addr)] = true
-				}
-			}
+		settings, err := config.LoadUserSettings(config.UserSettingsPath(p.configDir, uc.id))
+		if all, ledgerErr := sso.NewLifecycleStore(p.configDir).NativeAddresses(); err == nil && ledgerErr == nil {
+			nativeOwn(own, all, uc.mailbox, settings)
 		}
 		return own
 	}
@@ -183,6 +191,22 @@ func (p *Poller) outOfOfficeReply(ctx context.Context, uc userCtx, msg imapadapt
 	}
 	skip := func(reason string) {
 		p.log.Info("out-of-office reply not sent", "user_id", uc.id, "message_id", msg.ID, "reason", reason)
+	}
+	// Native mail delivered to a masked address never answers: the reply
+	// comes from the account address. The receipt, not the headers (which
+	// may also name a regular alias), says where it was delivered.
+	if len(msg.DeliveredTo) > 0 {
+		settings, err := config.LoadUserSettings(config.UserSettingsPath(p.configDir, uc.id))
+		if err != nil {
+			skip("settings_unreadable")
+			return
+		}
+		for _, address := range msg.DeliveredTo {
+			if _, masked := settings.Masked(address); masked {
+				skip("masked_recipient")
+				return
+			}
+		}
 	}
 	uid, err := strconv.Atoi(strings.TrimSpace(msg.ID))
 	if err != nil {

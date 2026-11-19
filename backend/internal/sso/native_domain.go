@@ -100,6 +100,21 @@ func AddressDomain(address string) string {
 	return strings.ToLower(address[strings.LastIndexByte(address, '@')+1:])
 }
 
+// PlusBase drops an RFC 5233 "+detail" from address: the part before the
+// first +. Resolve recipients with NativeAddressFor, which prefers an exact
+// active address issued before + was refused.
+func PlusBase(address string) string {
+	at := strings.LastIndexByte(address, '@')
+	if at < 0 {
+		return address
+	}
+	plus := strings.IndexByte(address[:at], '+')
+	if plus < 0 {
+		return address
+	}
+	return address[:plus] + address[at:]
+}
+
 type NativeDomainStore struct {
 	path   string
 	lookup func(context.Context, string) ([]string, error)

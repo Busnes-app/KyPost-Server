@@ -18,7 +18,7 @@ import { ComposeDrive, DriveAttachMenu } from "./ComposeDrive";
 export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { compose: Compose; mailboxes: UserMailbox[]; calendarOrigin?: string }) {
   const {
     composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice, composeAutosaveFailed,
-    composeFrom, setComposeFrom, composeFromChoices, sendAsOptions,
+    composeFrom, setComposeFrom, composeFromChoices, composeFromRequired, sendAsOptions,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc, addTokenToField,
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,
     composeEncrypt, setComposeEncrypt, setComposeEncryptOverridden, composeSign, setComposeSign, composeSignOverridden,
@@ -104,7 +104,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
             <div role="status">{composeAutosaveFailed ? <p className="notice notice-warning">Autosave unavailable. Keep this window open and copy your text somewhere safe before leaving.</p> : null}</div>
 
             <div className="compose-form-grid">
-              {mailboxes.length > 1 || composeFromChoices.length > 1 ? (
+              {mailboxes.length > 1 || composeFromChoices.length > 1 || composeFromRequired ? (
                 <label className="compose-field-row">
                   <span>From</span>
                   <select
@@ -112,6 +112,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
                     onChange={(event) => setComposeFrom(event.target.value)}
                     disabled={composeSending || composeSavingDraft}
                   >
+                    {composeFromRequired && !composeFrom ? <option value="" disabled>Choose an address…</option> : null}
                     {composeFromChoices.map((address) => (
                       <option key={address} value={address}>{address}</option>
                     ))}

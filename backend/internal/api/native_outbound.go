@@ -160,8 +160,17 @@ func (s *Server) nativeFrom(a sso.NativeAssignment, requested string) (string, b
 	if requested == "" || requested == a.Address {
 		return a.Address, true, nil
 	}
-	x, err := s.ssoLifecycle.NativeAddress(requested)
-	return requested, err == nil && x.Mailbox == a.Owner.Mailbox && x.State == "active", err
+	// A plus-tagged From (a reply to user+tag@) is its base address's to use,
+	// unless the owner refuses plus addresses; a masked one only while live.
+	x, tagged, err := s.ssoLifecycle.NativeAddressFor(requested)
+	if err != nil || x.Mailbox != a.Owner.Mailbox || x.State != "active" {
+		return requested, false, err
+	}
+	settings, err := config.LoadUserSettings(s.userSettingsPath(a.UserID()))
+	if err != nil {
+		return requested, false, err
+	}
+	return requested, !settings.RefusesAddress(x.Address, tagged, time.Now()), nil
 }
 
 // refuseNativeFrom answers an unusable From; it reports whether it wrote.
