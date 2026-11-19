@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { loadDraftSnapshot, saveDraftSnapshot } from "../app/draftAutosave";
 
 // A reply whose receiving address is unknown never sends from the primary:
 // From stays empty and the send is refused until the user picks one.
@@ -76,6 +77,40 @@ describe("reply identity", () => {
   it("answers as the masked address it was delivered to", () => {
     const { result } = renderHook(() => useCompose({ userId: "u1", mailboxes }));
     act(() => result.current.openDraftInCompose({ from: "quiet.otter.4821@example.com", sentTo: "bob@example.com", intent: "reply", mailbox: "" }));
+    expect(result.current.composeFrom).toBe("quiet.otter.4821@example.com");
+    expect(result.current.composeFromRequired).toBe(false);
+  });
+});
+
+describe("reply identity through draft recovery", () => {
+  it("keeps a required From choice empty and blocking after autosave and restore", async () => {
+    const { result } = renderHook(() => useCompose({ userId: "u1", mailboxes }));
+    act(() => result.current.openDraftInCompose({ from: null, sentTo: "bob@example.com", subject: "Re: hi", body: "<p>reply</p>", intent: "reply", mailbox: "" }));
+    await waitFor(async () => expect(await loadDraftSnapshot("u1")).toMatchObject({ subject: "Re: hi", from: "" }), { timeout: 3000 });
+    act(() => result.current.closeComposeWindow());
+    act(() => result.current.openComposeWindow());
+    await waitFor(() => expect(result.current.composeSubject).toBe("Re: hi"));
+    expect(result.current.composeFrom).toBe("");
+    expect(result.current.composeFromRequired).toBe(true);
+    await act(() => result.current.sendComposeEmail());
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(result.current.composeError).toMatch(/Choose the address to reply from/);
+  });
+
+  it("asks again when the saved From is no longer one of the mailbox's addresses", async () => {
+    await saveDraftSnapshot("u1", { to: "bob@example.com", cc: "", bcc: "", subject: "Re: shop", body: "<p>x</p>", attachments: [], mailbox: "", from: "paused.fox.1234@example.com" });
+    const { result } = renderHook(() => useCompose({ userId: "u1", mailboxes }));
+    act(() => result.current.openComposeWindow());
+    await waitFor(() => expect(result.current.composeSubject).toBe("Re: shop"));
+    expect(result.current.composeFrom).toBe("");
+    expect(result.current.composeFromRequired).toBe(true);
+  });
+
+  it("restores a From that is still the mailbox's", async () => {
+    await saveDraftSnapshot("u1", { to: "bob@example.com", cc: "", bcc: "", subject: "Re: kept", body: "<p>x</p>", attachments: [], mailbox: "", from: "quiet.otter.4821@example.com" });
+    const { result } = renderHook(() => useCompose({ userId: "u1", mailboxes }));
+    act(() => result.current.openComposeWindow());
+    await waitFor(() => expect(result.current.composeSubject).toBe("Re: kept"));
     expect(result.current.composeFrom).toBe("quiet.otter.4821@example.com");
     expect(result.current.composeFromRequired).toBe(false);
   });
