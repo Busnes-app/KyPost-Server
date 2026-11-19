@@ -233,7 +233,7 @@ func TestTopologyGuard(t *testing.T) {
 	st := globalStore(t, dir)
 	set := roots(t)
 	noEnv := env(nil)
-	release, err := Start(ctx, Process{Store: st, Role: "api", Roots: set, BootID: "boot-1", Getenv: noEnv})
+	_, release, err := Start(ctx, Process{Store: st, Role: "api", Roots: set, BootID: "boot-1", Getenv: noEnv})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,14 +242,14 @@ func TestTopologyGuard(t *testing.T) {
 			t.Fatalf("first start wrote no ID into %s: %v", root, err)
 		}
 	}
-	second, err := Start(ctx, Process{Store: globalStore(t, dir), Role: "daemon", Roots: set, BootID: "boot-1", Getenv: noEnv})
+	_, second, err := Start(ctx, Process{Store: globalStore(t, dir), Role: "daemon", Roots: set, BootID: "boot-1", Getenv: noEnv})
 	if err != nil {
 		t.Fatalf("a second instance on one host and volume set: %v", err)
 	}
 	for i := range set {
 		missing := slices.Clone(set)
 		missing[i] = t.TempDir()
-		if _, err := Start(ctx, Process{Store: st, Role: "api", Roots: missing, BootID: "boot-1", Getenv: noEnv}); !errors.Is(err, ErrVolumes) {
+		if _, _, err := Start(ctx, Process{Store: st, Role: "api", Roots: missing, BootID: "boot-1", Getenv: noEnv}); !errors.Is(err, ErrVolumes) {
 			t.Fatalf("root %d missing its ID: %v", i, err)
 		}
 		other := slices.Clone(set)
@@ -257,20 +257,20 @@ func TestTopologyGuard(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(other[i], VolumeIDFile), []byte("another-deployment\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Start(ctx, Process{Store: st, Role: "api", Roots: other, BootID: "boot-1", Getenv: noEnv}); !errors.Is(err, ErrVolumes) {
+		if _, _, err := Start(ctx, Process{Store: st, Role: "api", Roots: other, BootID: "boot-1", Getenv: noEnv}); !errors.Is(err, ErrVolumes) {
 			t.Fatalf("root %d from another deployment: %v", i, err)
 		}
 	}
-	if _, err := Start(ctx, Process{Store: st, Role: "api", Roots: set, BootID: "boot-2", Getenv: noEnv}); !errors.Is(err, ErrHost) {
+	if _, _, err := Start(ctx, Process{Store: st, Role: "api", Roots: set, BootID: "boot-2", Getenv: noEnv}); !errors.Is(err, ErrHost) {
 		t.Fatalf("another kernel beside a live instance: %v", err)
 	}
-	if _, err := Start(ctx, Process{Store: st, Role: "api", Roots: set, BootID: "boot-1", Getenv: env(map[string]string{"KYPOST_NATIVE_RECEIVER": "true"})}); !errors.Is(err, ErrReceiver) {
+	if _, _, err := Start(ctx, Process{Store: st, Role: "api", Roots: set, BootID: "boot-1", Getenv: env(map[string]string{"KYPOST_NATIVE_RECEIVER": "true"})}); !errors.Is(err, ErrReceiver) {
 		t.Fatalf("receiver on PostgreSQL: %v", err)
 	}
 	release()
 	second()
 	// The dead instances no longer pin the host.
-	third, err := Start(ctx, Process{Store: st, Role: "api", Roots: set, BootID: "boot-2", Getenv: noEnv})
+	_, third, err := Start(ctx, Process{Store: st, Role: "api", Roots: set, BootID: "boot-2", Getenv: noEnv})
 	if err != nil {
 		t.Fatalf("after every instance stopped, another boot ID: %v", err)
 	}

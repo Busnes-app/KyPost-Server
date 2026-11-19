@@ -53,13 +53,14 @@ func ReadBootID() (string, error) {
 }
 
 // Start refuses a topology the shared flock fences cannot cover, then registers p as a live
-// instance until release. It must run before any listener or worker starts.
-func Start(ctx context.Context, p Process) (release func(), err error) {
+// instance until release and returns its ID. It must run before any listener or worker
+// starts.
+func Start(ctx context.Context, p Process) (id string, release func(), err error) {
 	if v := strings.TrimSpace(p.Getenv("KYPOST_NATIVE_RECEIVER")); v != "" && !strings.EqualFold(v, "false") {
-		return nil, ErrReceiver
+		return "", nil, ErrReceiver
 	}
 	if p.BootID == "" {
-		return nil, errors.New("replica check: empty boot ID")
+		return "", nil, errors.New("replica check: empty boot ID")
 	}
 	var volume string
 	err = p.Store.Serialized(ctx, "replica-topology", func(context.Context) error {
@@ -82,10 +83,11 @@ func Start(ctx context.Context, p Process) (release func(), err error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	id := p.Role + "-" + rand.Text()[:16]
-	return p.Store.RegisterInstance(ctx, state.Instance{ID: id, BootID: p.BootID, VolumeID: volume, Role: p.Role, Started: time.Now().Unix()})
+	id = p.Role + "-" + rand.Text()[:16]
+	release, err = p.Store.RegisterInstance(ctx, state.Instance{ID: id, BootID: p.BootID, VolumeID: volume, Role: p.Role, Started: time.Now().Unix()})
+	return id, release, err
 }
 
 // checkVolumes returns the deployment's volume ID after checking that every root holds it.

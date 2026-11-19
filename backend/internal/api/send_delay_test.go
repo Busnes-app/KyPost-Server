@@ -290,7 +290,7 @@ func TestSendDelaySurvivesRestart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
 	f.srv.globalStore = reopened
-	if err := reopened.InterruptScheduledSends(context.Background()); err != nil {
+	if err := reopened.InterruptScheduledSends(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if row := f.row(t, id); row.Status != state.ScheduledWaiting {

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS scheduled_sends (
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, mailbox TEXT NOT NULL, send_at BIGINT NOT NULL,
  status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', sealed BYTEA, summary BYTEA NOT NULL,
  next_attempt BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, returning_since BIGINT NOT NULL DEFAULT 0);
+ALTER TABLE scheduled_sends ADD COLUMN IF NOT EXISTS claimant TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS scheduled_sends_due ON scheduled_sends(status, send_at);
 CREATE INDEX IF NOT EXISTS scheduled_sends_user ON scheduled_sends(user_id, status);
 CREATE TABLE IF NOT EXISTS send_ledger (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, at BIGINT NOT NULL, recipients BIGINT NOT NULL);

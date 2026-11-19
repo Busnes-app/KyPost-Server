@@ -439,6 +439,8 @@ var additiveColumns = []struct{ table, column, ddl string }{
 	// A notification queued before recipients were recorded decodes as "",
 	// addressed to every device, which is what the queue meant at the time.
 	{"pull_notifications", "device_ids", "TEXT NOT NULL DEFAULT ''"},
+	// The replica instance that claimed a sending or drafting row; "" is a SQLite process.
+	{"scheduled_sends", "claimant", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func applyAdditiveColumns(db *sql.DB) error {

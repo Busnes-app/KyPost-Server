@@ -7,6 +7,7 @@ const STATUS: Record<string, string> = {
   scheduled: "Waiting",
   sending: "Sending",
   returning: "Returning to Drafts",
+  drafting: "Returning to Drafts",
   returned: "Returned to Drafts",
   sent: "Sent",
   queued: "Handed to the outbox",

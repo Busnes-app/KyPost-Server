@@ -21,20 +21,20 @@ import (
 // live instance until release: one volume set, one host, no Maddy receiver, one shared
 // configuration and a persisted proof-of-work key. Nothing listens or works before it
 // returns. On SQLite it does nothing; the server-instance lock is taken in Run.
-func startReplica(ctx context.Context, d runDeps, role string) (release func(), err error) {
+func startReplica(ctx context.Context, d runDeps, role string) (id string, release func(), err error) {
 	if !dbbackend.Postgres() {
-		return func() {}, nil
+		return "", func() {}, nil
 	}
 	boot, err := replica.ReadBootID()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	release, err = replica.Start(ctx, replica.Process{
+	id, release, err = replica.Start(ctx, replica.Process{
 		Store: d.store, Role: role, BootID: boot, Getenv: os.Getenv,
 		Roots: []string{d.configDir, config.SecretDir(), d.stateDir},
 	})
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	totp := config.SecretFile("TOTP_SECRET_KEY_FILE", "totp-secret.key")
 	if _, err = cryptutil.LoadOrCreateKey(totp); err == nil {
@@ -45,9 +45,9 @@ func startReplica(ctx context.Context, d runDeps, role string) (release func(), 
 	}
 	if err != nil {
 		release()
-		return nil, err
+		return "", nil, err
 	}
-	return release, nil
+	return id, release, nil
 }
 
 // electionOptions are the role elections' timings: on PostgreSQL a new owner waits longer

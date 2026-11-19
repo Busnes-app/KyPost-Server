@@ -48,7 +48,7 @@ func TestScheduledClaimIsExclusive(t *testing.T) {
 		wg.Add(1)
 		go func(store *Store) {
 			defer wg.Done()
-			if _, ok, err := store.ClaimScheduledSend(context.Background(), 100); err != nil {
+			if _, ok, err := store.ClaimScheduledSend(context.Background(), 100, ""); err != nil {
 				t.Error(err)
 			} else if ok {
 				wins.Add(1)
@@ -69,20 +69,20 @@ func TestScheduledClaimWaitsForSendTimeAndRetry(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	addScheduled(t, s, "row", "u1", 100)
-	if _, ok, _ := s.ClaimScheduledSend(ctx, 99); ok {
+	if _, ok, _ := s.ClaimScheduledSend(ctx, 99, ""); ok {
 		t.Fatal("claimed before send time")
 	}
-	row, ok, err := s.ClaimScheduledSend(ctx, 100)
+	row, ok, err := s.ClaimScheduledSend(ctx, 100, "")
 	if err != nil || !ok || string(row.Sealed) != "job" {
 		t.Fatal(row, ok, err)
 	}
 	if moved, _ := s.MoveScheduledSend(ctx, "row", ScheduledSending, ScheduledWaiting, "", 400); !moved {
 		t.Fatal("retry not recorded")
 	}
-	if _, ok, _ := s.ClaimScheduledSend(ctx, 399); ok {
+	if _, ok, _ := s.ClaimScheduledSend(ctx, 399, ""); ok {
 		t.Fatal("claimed before the retry time")
 	}
-	if _, ok, _ := s.ClaimScheduledSend(ctx, 400); !ok {
+	if _, ok, _ := s.ClaimScheduledSend(ctx, 400, ""); !ok {
 		t.Fatal("retry not claimed")
 	}
 	if moved, _ := s.MoveScheduledSend(ctx, "row", ScheduledWaiting, "returning", "late", 0); moved {
@@ -106,20 +106,20 @@ func TestScheduledInterruptedSendsBecomeUncertain(t *testing.T) {
 	ctx := context.Background()
 	addScheduled(t, s, "sending", "u1", 100)
 	addScheduled(t, s, "waiting", "u1", 900)
-	if _, ok, _ := s.ClaimScheduledSend(ctx, 100); !ok {
+	if _, ok, _ := s.ClaimScheduledSend(ctx, 100, ""); !ok {
 		t.Fatal("no claim")
 	}
-	if err := s.InterruptScheduledSends(ctx); err != nil {
+	if err := s.InterruptScheduledSends(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _, _ := s.GetScheduledSend(ctx, "sending")
 	if got.Status != "uncertain" || got.Sealed != nil {
 		t.Fatalf("interrupted send: %+v", got)
 	}
-	if _, ok, _ := s.ClaimScheduledSend(ctx, 1000); !ok {
+	if _, ok, _ := s.ClaimScheduledSend(ctx, 1000, ""); !ok {
 		t.Fatal("waiting row lost")
 	}
-	if _, ok, _ := s.ClaimScheduledSend(ctx, 1000); ok {
+	if _, ok, _ := s.ClaimScheduledSend(ctx, 1000, ""); ok {
 		t.Fatal("uncertain row claimed again")
 	}
 }
@@ -163,7 +163,7 @@ func TestFenceRestoredScheduledSends(t *testing.T) {
 	ctx := context.Background()
 	addScheduled(t, s, "waiting", "u1", 900)
 	addScheduled(t, s, "sending", "u1", 100)
-	if _, ok, _ := s.ClaimScheduledSend(ctx, 100); !ok {
+	if _, ok, _ := s.ClaimScheduledSend(ctx, 100, ""); !ok {
 		t.Fatal("no claim")
 	}
 	_ = s.Close()
@@ -199,15 +199,15 @@ func TestClaimScheduledSendIsFairAcrossUsers(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET next_attempt=50 WHERE id='a2'`); err != nil {
 		t.Fatal(err)
 	}
-	first, ok, err := s.ClaimScheduledSend(ctx, 200)
+	first, ok, err := s.ClaimScheduledSend(ctx, 200, "")
 	if err != nil || !ok || first.ID == "a2" {
 		t.Fatalf("first claim = %+v, %v, %v; a retry must not go before fresh rows", first, ok, err)
 	}
-	second, ok, err := s.ClaimScheduledSend(ctx, 200)
+	second, ok, err := s.ClaimScheduledSend(ctx, 200, "")
 	if err != nil || !ok || second.UserID == first.UserID {
 		t.Fatalf("second claim = %+v, %v, %v; want the other user while %s is sending", second, ok, err, first.UserID)
 	}
-	if third, ok, _ := s.ClaimScheduledSend(ctx, 200); ok {
+	if third, ok, _ := s.ClaimScheduledSend(ctx, 200, ""); ok {
 		t.Fatalf("third claim = %+v; both users already have a row sending", third)
 	}
 }
@@ -230,5 +230,75 @@ func TestAddScheduledSendEnforcesByteBudget(t *testing.T) {
 	}
 	if err := add("4", "other", 100); err != nil {
 		t.Fatalf("another user's budget is separate: %v", err)
+	}
+}
+
+// AC13: a replica restarting never marks another live replica's in-flight send uncertain;
+// once that replica is gone, the next sweep does. A drafting row of a dead claimant returns.
+func TestInterruptionSparesLiveClaimants(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	a, b := twoReplicas(t)
+	ctx := context.Background()
+	release, err := a.RegisterInstance(ctx, Instance{ID: "api-a", BootID: "boot", VolumeID: "v", Role: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addScheduled(t, a, "row-a", "u1", 100)
+	if _, ok, _ := a.ClaimScheduledSend(ctx, 100, "api-a"); !ok {
+		t.Fatal("no claim")
+	}
+	addScheduled(t, a, "row-draft", "u2", 100)
+	if moved, _ := a.MoveScheduledSend(ctx, "row-draft", ScheduledWaiting, ScheduledReturning, "cancelled", 0); !moved {
+		t.Fatal("no return")
+	}
+	if claimed, _ := a.ClaimScheduledReturn(ctx, "row-draft", "api-a"); !claimed {
+		t.Fatal("no draft claim")
+	}
+	// B restarts and its sweeper runs: A is live, so nothing of A's changes.
+	if err := b.InterruptScheduledSends(ctx, b.InstanceLive); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := b.GetScheduledSend(ctx, "row-a"); got.Status != ScheduledSending {
+		t.Fatalf("a live replica's send became %s", got.Status)
+	}
+	if got, _, _ := b.GetScheduledSend(ctx, "row-draft"); got.Status != ScheduledDrafting {
+		t.Fatalf("a live replica's draft save became %s", got.Status)
+	}
+	// A dies (its lock released): the next sweep interrupts both.
+	release()
+	if err := b.InterruptScheduledSends(ctx, b.InstanceLive); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := b.GetScheduledSend(ctx, "row-a"); got.Status != "uncertain" {
+		t.Fatalf("a dead replica's send is %s, want uncertain", got.Status)
+	}
+	if got, _, _ := b.GetScheduledSend(ctx, "row-draft"); got.Status != ScheduledReturning {
+		t.Fatalf("a dead replica's draft save is %s, want returning", got.Status)
+	}
+}
+
+// AC13: two sweepers racing one returning row: one claims it, so one draft is saved.
+func TestReturnToDraftsIsClaimedOnce(t *testing.T) {
+	a, b := twoReplicas(t)
+	ctx := context.Background()
+	for round := range 10 {
+		id := "ret-" + strconv.Itoa(round)
+		addScheduled(t, a, id, "u-"+id, 100)
+		if moved, _ := a.MoveScheduledSend(ctx, id, ScheduledWaiting, ScheduledReturning, "cancelled", 0); !moved {
+			t.Fatal("no return")
+		}
+		var wins atomic.Int32
+		var wg sync.WaitGroup
+		for _, s := range []*Store{a, b} {
+			wg.Go(func() {
+				if ok, err := s.ClaimScheduledReturn(ctx, id, "x"); ok && err == nil {
+					wins.Add(1)
+				}
+			})
+		}
+		wg.Wait()
+		if wins.Load() != 1 {
+			t.Fatalf("round %d: %d sweepers claimed one row", round, wins.Load())
+		}
 	}
 }

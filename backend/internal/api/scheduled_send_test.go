@@ -473,7 +473,7 @@ func TestScheduledSweeperStartMarksInterruptedSendsUncertain(t *testing.T) {
 	f := newScheduledFixture(t, "250 queued")
 	at := sendTime()
 	id := f.schedule(t, at, nil)
-	if _, ok, err := f.srv.globalStore.ClaimScheduledSend(context.Background(), at.Unix()); err != nil || !ok {
+	if _, ok, err := f.srv.globalStore.ClaimScheduledSend(context.Background(), at.Unix(), ""); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -503,7 +503,7 @@ func TestScheduledCancelRacesClaim(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			row, ok, err := f.srv.globalStore.ClaimScheduledSend(context.Background(), at.Unix())
+			row, ok, err := f.srv.globalStore.ClaimScheduledSend(context.Background(), at.Unix(), "")
 			claimed = ok && err == nil && row.ID == id
 		}()
 		wg.Wait()

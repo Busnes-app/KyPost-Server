@@ -289,6 +289,10 @@ type Server struct {
 	// shared is globalStore when this server is a PostgreSQL replica (UseSharedState): the
 	// security state every replica shares lives there. nil keeps it in memory.
 	shared *state.Store
+	// instanceID is this process's replica instance (claimant of its scheduled-send work) and
+	// instanceLive asks whether another is live; both unset on SQLite.
+	instanceID   string
+	instanceLive func(ctx context.Context, id string) (bool, error)
 	// draining is set at SIGTERM (StartDraining); ready caches /readyz's store ping.
 	draining      atomic.Bool
 	ready         readiness

@@ -333,7 +333,7 @@ func configureSorter(log *logging.Logger, poller *processor.Poller) error {
 }
 
 func runDaemon(ctx context.Context, d runDeps) error {
-	release, err := startReplica(ctx, d, "daemon")
+	_, release, err := startReplica(ctx, d, "daemon")
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil // stopped before it started
@@ -477,7 +477,7 @@ func runSweepers(ctx context.Context, logger *logging.Logger, drain time.Duratio
 }
 
 func runServer(ctx context.Context, d runDeps) error {
-	release, err := startReplica(ctx, d, "api")
+	instance, release, err := startReplica(ctx, d, "api")
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil // stopped before it started
@@ -486,6 +486,9 @@ func runServer(ctx context.Context, d runDeps) error {
 	}
 	defer release()
 	srv := newAPIServer(d, nil)
+	if instance != "" {
+		srv.SetReplicaInstance(instance, d.store.InstanceLive)
+	}
 	attachClassifier(srv, d, newClassifierClient(d.cfg))
 
 	// Prepare constructs the *http.Server synchronously, before the Serve
