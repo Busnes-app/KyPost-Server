@@ -1645,6 +1645,16 @@ pre {
   font-size: 0.88rem;
 }
 
+/* Admin forms (Security, SSO, Office networks, Mail addresses): label, control
+   and each hint on their own line, so inline hints never run into the control
+   or into each other. */
+.field-group {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  margin-block-end: 16px;
+}
+
 .users-create-card {
   display: grid;
   gap: 12px;

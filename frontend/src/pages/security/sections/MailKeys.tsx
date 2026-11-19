@@ -694,11 +694,16 @@ export function MailKeys({
       : pgpSession.bootstrap.protection === "client"
         ? "client"
         : "server";
+  // Storing a recovery copy or restoring a backup moves the server's PGP
+  // revision; each reloads the session snapshot but not pgpIdentity, so the
+  // incoming form takes its expected revision from the snapshot.
+  const sessionRevision = pgpSession?.bootstrap?.pgpRevision;
+  const incomingIdentity = pgpIdentity && sessionRevision !== undefined ? { ...pgpIdentity, pgpRevision: sessionRevision } : pgpIdentity;
 
   return (
     <>
       {passwordPrompt}
-      <IncomingEncryption identity={pgpIdentity} clientProtected={pgpSession?.bootstrap?.protection === "client"} defaultOn={incomingDefaultOn} />
+      <IncomingEncryption identity={incomingIdentity} clientProtected={pgpSession?.bootstrap?.protection === "client"} defaultOn={incomingDefaultOn} />
       <div
         className={`sec-card ${
           keyCustody === "client" ? "sec-card-on" : keyCustody === "server" ? "sec-card-risk" : ""
