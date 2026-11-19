@@ -44,8 +44,13 @@ func exportWriteWindow(size int) time.Duration {
 }
 
 type exportGrant struct {
-	user, session, mailbox, folder, format, correlation string
-	expires                                             time.Time
+	User        string    `json:"user"`
+	Session     string    `json:"session"` // sessionHash of the session it was issued to
+	Mailbox     string    `json:"mailbox"`
+	Folder      string    `json:"folder"`
+	Format      string    `json:"format"`
+	Correlation string    `json:"correlation"`
+	Expires     time.Time `json:"expires"`
 }
 
 type mailExporter interface {
@@ -183,22 +188,14 @@ func (s *Server) handleExportStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "export unavailable", http.StatusInternalServerError)
 		return
 	}
-	grant := exportGrant{user: ac.UserID, session: session, mailbox: ac.Mailbox, format: body.Format, correlation: correlation, expires: time.Now().Add(exportGrantTTL)}
+	grant := exportGrant{User: ac.UserID, Session: sessionHash(session), Mailbox: ac.Mailbox, Format: body.Format, Correlation: correlation, Expires: time.Now().Add(exportGrantTTL)}
 	if body.Folder != "" {
-		grant.folder = folders[0]
+		grant.Folder = folders[0]
 	}
-	s.exportMu.Lock()
-	if s.exports == nil {
-		s.exports = map[string]exportGrant{}
+	if err := s.putExportGrant(token, grant); err != nil {
+		writeUnavailable(w)
+		return
 	}
-	// One unspent grant per user, and nothing expired kept around.
-	for k, g := range s.exports {
-		if g.user == ac.UserID || !time.Now().Before(g.expires) {
-			delete(s.exports, k)
-		}
-	}
-	s.exports[token] = grant
-	s.exportMu.Unlock()
 	s.auditExport(grant, "authorized", count, 0)
 	writeJSON(w, http.StatusOK, map[string]any{"url": "/api/export/" + token, "expiresInSeconds": int(exportGrantTTL.Seconds()), "messages": count})
 }
@@ -219,47 +216,25 @@ func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 	ac, _ := authFromContext(r)
 	_, session, ok := s.sessionOf(r)
 	token := r.PathValue("token")
-	now := time.Now()
-	s.exportMu.Lock()
-	g, found := s.exports[token]
-	if found && !now.Before(g.expires) {
-		delete(s.exports, token)
-	}
-	if !ok || !found || g.user != ac.UserID || g.session != session || !now.Before(g.expires) {
-		s.exportMu.Unlock()
-		back("expired")
+	g, refusal := s.claimExportGrant(token, ac.UserID, ok, sessionHash(session), r.ProtoAtLeast(1, 1))
+	if refusal != "" {
+		back(refusal)
 		return
 	}
-	if g.format == "mbox" && !r.ProtoAtLeast(1, 1) {
-		s.exportMu.Unlock()
-		back("proxy")
-		return
-	}
-	if s.exporting[g.user] || len(s.exporting) >= maxExports {
-		s.exportMu.Unlock()
-		back("busy&retry=" + url.QueryEscape(token))
-		return
-	}
-	delete(s.exports, token)
-	if s.exporting == nil {
-		s.exporting = map[string]bool{}
-	}
-	s.exporting[g.user] = true
-	s.exportMu.Unlock()
-	defer s.endExport(g.user)
+	defer s.endExport(g.User)
 
-	ex, refused := s.exporter(r.Context(), g.user, g.mailbox)
+	ex, refused := s.exporter(r.Context(), g.User, g.Mailbox)
 	var folders []string
 	if refused == nil {
-		folders, refused = exportFolders(r.Context(), ex, g.folder)
+		folders, refused = exportFolders(r.Context(), ex, g.Folder)
 	}
 	if refused != nil {
 		s.auditExport(g, "refused", 0, 0)
 		back("unavailable")
 		return
 	}
-	name, contentType := "kypost-mail-"+now.UTC().Format("20060102T150405Z"), "application/mbox"
-	if g.format == "eml-zip" {
+	name, contentType := "kypost-mail-"+time.Now().UTC().Format("20060102T150405Z"), "application/mbox"
+	if g.Format == "eml-zip" {
 		name, contentType = name+".zip", "application/zip"
 	} else {
 		name += ".mbox"
@@ -270,7 +245,7 @@ func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 	counted := &countingWriter{w: w}
 	buffered := bufio.NewWriterSize(counted, 64<<10)
 	var archive *zip.Writer
-	if g.format == "eml-zip" {
+	if g.Format == "eml-zip" {
 		archive = zip.NewWriter(buffered)
 	}
 	rc := http.NewResponseController(w)
@@ -307,7 +282,7 @@ func (s *Server) endExport(user string) {
 // auditExport records the export without correspondence: never subjects or
 // addresses. The correlation ID is random per grant, never the token.
 func (s *Server) auditExport(g exportGrant, result string, messages int, bytes int64) {
-	slog.New(s.logger.Handler()).Info("mail export", "actor", g.user, "action", "mail_export", "target", cmp.Or(g.mailbox, g.user), "folder", cmp.Or(logging.Escape(g.folder), "(all)"), "format", logging.Escape(g.format), "messages", int64(messages), "bytes", bytes, "result", result, "correlation_id", g.correlation)
+	slog.New(s.logger.Handler()).Info("mail export", "actor", g.User, "action", "mail_export", "target", cmp.Or(g.Mailbox, g.User), "folder", cmp.Or(logging.Escape(g.Folder), "(all)"), "format", logging.Escape(g.Format), "messages", int64(messages), "bytes", bytes, "result", result, "correlation_id", g.Correlation)
 }
 
 type countingWriter struct {
@@ -319,4 +294,70 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	c.n += int64(n)
 	return n, err
+}
+
+// putExportGrant records the one unspent export grant of its user, dropping expired ones.
+func (s *Server) putExportGrant(token string, g exportGrant) error {
+	if s.shared != nil {
+		return putRow(s.shared, "export", token, g.User, g, g.Expires, true)
+	}
+	s.exportMu.Lock()
+	defer s.exportMu.Unlock()
+	if s.exports == nil {
+		s.exports = map[string]exportGrant{}
+	}
+	for k, old := range s.exports {
+		if old.User == g.User || !time.Now().Before(old.Expires) {
+			delete(s.exports, k)
+		}
+	}
+	s.exports[token] = g
+	return nil
+}
+
+// claimExportGrant spends token's grant for user's session and takes this process's export
+// slot, or names the refusal: expired, proxy (mbox needs HTTP/1.1), busy (the grant is kept
+// for a retry). On PostgreSQL the spend is a compare-and-delete, so a grant downloads once
+// across replicas; the slots stay per process.
+func (s *Server) claimExportGrant(token, user string, signedIn bool, session string, http11 bool) (exportGrant, string) {
+	now := time.Now()
+	s.exportMu.Lock()
+	defer s.exportMu.Unlock()
+	var g exportGrant
+	refusal := "expired"
+	edit := func(v *exportGrant, found bool) (rowEdit, bool) {
+		switch {
+		case found && !now.Before(v.Expires):
+			return rowDrop, false
+		case !signedIn || !found || v.User != user || v.Session != session:
+			return rowKeep, false
+		case v.Format == "mbox" && !http11:
+			refusal = "proxy"
+			return rowKeep, false
+		case s.exporting[v.User] || len(s.exporting) >= maxExports:
+			refusal = "busy&retry=" + url.QueryEscape(token)
+			return rowKeep, false
+		}
+		g = *v
+		return rowDrop, true
+	}
+	var spent bool
+	if s.shared != nil {
+		spent = editRow(s.shared, "export", token, edit)
+	} else {
+		v, found := s.exports[token]
+		action, ok := edit(&v, found)
+		if action == rowDrop {
+			delete(s.exports, token)
+		}
+		spent = ok
+	}
+	if !spent {
+		return exportGrant{}, refusal
+	}
+	if s.exporting == nil {
+		s.exporting = map[string]bool{}
+	}
+	s.exporting[g.User] = true
+	return g, ""
 }

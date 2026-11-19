@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 // singleUseSweepThreshold is the size past which consume reclaims expired
@@ -44,6 +46,9 @@ const singleUseSweepThreshold = 10_000
 type singleUseTokens struct {
 	mu   sync.Mutex
 	seen map[string]time.Time // sha256(token) -> expiry
+	// shared, when set (UseSharedState), spends tokens in spent_challenges instead, so a
+	// token redeemed on one replica is refused on every other. A store failure refuses.
+	shared *state.Store
 }
 
 func newSingleUseTokens() *singleUseTokens {
@@ -60,6 +65,12 @@ func newSingleUseTokens() *singleUseTokens {
 func (t *singleUseTokens) consume(token string, ttl time.Duration) bool {
 	sum := sha256.Sum256([]byte(token))
 	id := hex.EncodeToString(sum[:])
+	if t.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		ok, err := t.shared.SpendChallenge(ctx, "single:"+id, time.Now().Add(ttl).UnixMilli())
+		return ok && err == nil
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()

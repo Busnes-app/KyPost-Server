@@ -463,7 +463,7 @@ func (f *dkimFixture) grantStepUp(method, path string, body []byte) string {
 	h.Write(body)
 	id := "dkim-grant-" + hex.EncodeToString(h.Sum(nil))[:16]
 	f.s.stepUpMu.Lock()
-	f.s.stepUps[id] = ssoStepUp{session: f.token, action: hex.EncodeToString(h.Sum(nil)), created: time.Now(), expires: time.Now().Add(time.Minute), started: true, verified: true}
+	f.s.stepUps[id] = ssoStepUp{Session: sessionHash(f.token), Action: hex.EncodeToString(h.Sum(nil)), Created: time.Now(), Expires: time.Now().Add(time.Minute), Started: true, Verified: true}
 	f.s.stepUpMu.Unlock()
 	return id
 }

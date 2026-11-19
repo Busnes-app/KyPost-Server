@@ -388,7 +388,7 @@ func TestNativeRecoveryRepairHTTPConsumesStepUpOnlyOnce(t *testing.T) {
 	// Exercise action-bound single-use confirmation; provider proof is synthetic.
 	f.s.stepUpMu.Lock()
 	proof := f.s.stepUps[grant]
-	proof.verified = true
+	proof.Verified = true
 	f.s.stepUps[grant] = proof
 	f.s.stepUpMu.Unlock()
 	w := gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), grant)
@@ -405,7 +405,7 @@ func TestNativeRecoveryRepairHTTPRechecksConfirmedActor(t *testing.T) {
 			grant := challengeFrom(t, gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), ""))
 			f.s.stepUpMu.Lock()
 			proof := f.s.stepUps[grant]
-			proof.verified = true
+			proof.Verified = true
 			f.s.stepUps[grant] = proof
 			f.s.stepUpMu.Unlock()
 			release, err := fsutil.LockFile(filepath.Join(f.s.configDir, "sso.json"))

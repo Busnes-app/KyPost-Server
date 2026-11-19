@@ -32,6 +32,12 @@ var errSharedUnavailable = errors.New("shared security state unavailable")
 // once, before Serve, on PostgreSQL only.
 func (s *Server) UseSharedState(st *state.Store) {
 	s.shared = st
+	s.mfaChallenges.Share(st)
+	s.singleUse.shared = st
+	s.ssoStates.shared = st
+	if s.powVerifier != nil {
+		s.powVerifier.SetSpender(st.SpendChallenge)
+	}
 	for name, l := range map[string]*failureLockout{
 		"login": s.loginLockout, "review-pairing": s.reviewPairingLockout, "login-ip": s.loginIPLockout,
 		"dav": s.davLockout, "mcp-ip": s.mcpLockout, "mcp-user": s.mcpUserLockout, "mfa": s.mfaLockout,

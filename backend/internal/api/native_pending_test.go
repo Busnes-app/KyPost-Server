@@ -192,11 +192,11 @@ func TestPendingDeviceExpires(t *testing.T) {
 	_, reg := webPairAndRegister(t, srv, u.ID, "phone-1")
 	srv.pairingMu.Lock()
 	p := srv.pendingDevices[reg.DeviceID]
-	if p == nil || p.expiresAt.Sub(p.requestedAt) != pendingDeviceTTL || pendingDeviceTTL > 5*time.Minute {
+	if p == nil || p.ExpiresAt.Sub(p.RequestedAt) != pendingDeviceTTL || pendingDeviceTTL > 5*time.Minute {
 		srv.pairingMu.Unlock()
 		t.Fatalf("pending entry %+v, want a %v lifetime", p, pendingDeviceTTL)
 	}
-	p.expiresAt = time.Now().Add(-time.Second)
+	p.ExpiresAt = time.Now().Add(-time.Second)
 	srv.pairingMu.Unlock()
 
 	if st := pairingStatus(srv, reg.DeviceID, reg.DeviceSecret); st.Code != http.StatusGone {
@@ -365,13 +365,13 @@ func TestApprovedOutcomeOutlivesThePendingWindow(t *testing.T) {
 	srv, u := newPendingServer(t)
 	_, reg := webPairAndRegister(t, srv, u.ID, "phone-1")
 	srv.pairingMu.Lock()
-	srv.pendingDevices[reg.DeviceID].expiresAt = time.Now().Add(time.Second)
+	srv.pendingDevices[reg.DeviceID].ExpiresAt = time.Now().Add(time.Second)
 	srv.pairingMu.Unlock()
 	if rec := decide(t, srv, u.ID, reg.DeviceID, "approve"); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
 	}
 	srv.pairingMu.Lock()
-	left := time.Until(srv.pendingDevices[reg.DeviceID].expiresAt)
+	left := time.Until(srv.pendingDevices[reg.DeviceID].ExpiresAt)
 	srv.pairingMu.Unlock()
 	if left < pendingDeviceTTL-time.Minute {
 		t.Fatalf("approved outcome readable for %v more, want about %v", left, pendingDeviceTTL)

@@ -230,6 +230,13 @@ func Run(args []string) error {
 		wkdStore:          wkdStore,
 	}
 
+	if dbbackend.Postgres() {
+		// Replicas refuse an event ID another replica already accepted.
+		kycal.ShareReplay(store)
+		chat.ShareReplay(store)
+		pulse.ShareReplay(store)
+	}
+
 	// Signal handling is installed exactly once, here at the real entrypoint, and
 	// the run functions below observe it only as a context. os/signal registration
 	// is process-global, so doing it inside runServer/runAll left a window between

@@ -94,8 +94,12 @@ func TestRefundRestoresOnlyItsOwnWindow(t *testing.T) {
 	if err := a.ReleaseAttempt(ctx, "k", 2, gen); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _, _ := a.AttemptHits(ctx, "k"); hits != 2 {
-		t.Fatalf("own refund: hits = %d, want 2", hits)
+	// The window had refused attempts (hits at limit+1); its own refund admits exactly one more.
+	if _, _, ok, _ := b.TakeAttempt(ctx, "k", 2, time.Minute); !ok {
+		t.Fatal("own refund freed nothing")
+	}
+	if _, _, ok, _ := b.TakeAttempt(ctx, "k", 2, time.Minute); ok {
+		t.Fatal("own refund freed two attempts")
 	}
 }
 

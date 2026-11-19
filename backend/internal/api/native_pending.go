@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -42,53 +43,116 @@ const (
 )
 
 type pendingDevice struct {
-	ownerID      string
-	subscriberID string
-	device       state.NativeDevice
-	// encryptionEnrolled is the register request's value, applied on approval.
-	encryptionEnrolled *bool
-	osVersion          string
-	requestIP          string
-	approvalCode       string
-	requestedAt        time.Time
-	expiresAt          time.Time
-	// approvedID is set once approved: the id the device was persisted under,
+	OwnerID      string             `json:"ownerId"`
+	SubscriberID string             `json:"subscriberId"`
+	Device       state.NativeDevice `json:"device"` // carries only the secret's hash
+	// EncryptionEnrolled is the register request's value, applied on approval.
+	EncryptionEnrolled *bool     `json:"encryptionEnrolled,omitempty"`
+	OSVersion          string    `json:"osVersion"`
+	RequestIP          string    `json:"requestIp"`
+	ApprovalCode       string    `json:"approvalCode"`
+	RequestedAt        time.Time `json:"requestedAt"`
+	ExpiresAt          time.Time `json:"expiresAt"`
+	// Approving claims the entry for one approval across replicas while it is persisted.
+	Approving bool `json:"approving,omitempty"`
+	// ApprovedID is set once approved: the id the device was persisted under,
 	// which differs from the pending id when the upsert merged it into an
-	// existing row. The entry stays until expiresAt so the device can read it.
-	approvedID string
+	// existing row. The entry stays until ExpiresAt so the device can read it.
+	ApprovedID string `json:"approvedId,omitempty"`
 }
 
-// pendingLocked returns the live entry for id, deleting it if expired.
-// Caller holds pairingMu.
-func (s *Server) pendingLocked(id string, now time.Time) (*pendingDevice, bool) {
-	p, ok := s.pendingDevices[id]
-	if !ok {
-		return nil, false
+// Pending devices live in memory (callers hold pairingMu), or on PostgreSQL as
+// auth_challenges rows, so a device registering through one replica is approved from a
+// browser on another. Every change is an atomic edit (pendingEdit).
+
+// pendingGet returns the live entry for id. Caller holds pairingMu.
+func (s *Server) pendingGet(id string, now time.Time) (pendingDevice, bool) {
+	var out pendingDevice
+	ok := s.pendingEdit(id, now, func(p *pendingDevice, found bool) (rowEdit, bool) {
+		out = *p
+		return rowKeep, found
+	})
+	return out, ok
+}
+
+// pendingEdit applies edit to the live entry for id atomically, deleting an expired one on
+// the way. Caller holds pairingMu.
+func (s *Server) pendingEdit(id string, now time.Time, edit func(p *pendingDevice, found bool) (rowEdit, bool)) bool {
+	live := func(p *pendingDevice, found bool) (rowEdit, bool) {
+		if found && !now.Before(p.ExpiresAt) {
+			_, _ = edit(&pendingDevice{}, false)
+			return rowDrop, false
+		}
+		return edit(p, found)
 	}
-	if !now.Before(p.expiresAt) {
+	if s.shared != nil {
+		return editRow(s.shared, "pending", id, live)
+	}
+	p, found := s.pendingDevices[id]
+	var v pendingDevice
+	if found {
+		v = *p
+	}
+	action, verdict := live(&v, found)
+	switch action {
+	case rowWrite:
+		s.pendingDevices[id] = &v
+	case rowDrop:
 		delete(s.pendingDevices, id)
-		return nil, false
 	}
-	return p, true
+	return verdict
 }
 
-// pendingForUserLocked returns userID's live entries still awaiting approval,
-// purging every expired entry on the way. Caller holds pairingMu.
-func (s *Server) pendingForUserLocked(userID string, now time.Time) []*pendingDevice {
-	var out []*pendingDevice
+// pendingPut records a new entry. Caller holds pairingMu.
+func (s *Server) pendingPut(p pendingDevice) error {
+	if s.shared != nil {
+		return putRow(s.shared, "pending", p.Device.DeviceID, p.OwnerID, p, p.ExpiresAt, false)
+	}
+	if s.pendingDevices == nil {
+		s.pendingDevices = map[string]*pendingDevice{}
+	}
+	s.pendingDevices[p.Device.DeviceID] = &p
+	return nil
+}
+
+// pendingForUser returns userID's live entries still awaiting approval, purging expired
+// ones on the way. Caller holds pairingMu.
+func (s *Server) pendingForUser(userID string, now time.Time) ([]pendingDevice, error) {
+	var out []pendingDevice
+	if s.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		rows, err := s.shared.UserChallenges(ctx, "pending:", userID)
+		if err != nil {
+			return nil, err
+		}
+		for _, data := range rows {
+			var p pendingDevice
+			if json.Unmarshal(data, &p) == nil && now.Before(p.ExpiresAt) && p.ApprovedID == "" {
+				out = append(out, p)
+			}
+		}
+		return out, nil
+	}
 	for id := range s.pendingDevices {
-		if p, ok := s.pendingLocked(id, now); ok && p.ownerID == userID && p.approvedID == "" {
+		if p, ok := s.pendingGet(id, now); ok && p.OwnerID == userID && p.ApprovedID == "" {
 			out = append(out, p)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // dropPendingDevicesLocked forgets every pending device of userID, for
 // credential revocation. Caller holds pairingMu.
 func (s *Server) dropPendingDevicesLocked(userID string) {
+	if s.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		_ = s.shared.DropUserChallenges(ctx, "pending:", userID)
+		return
+	}
 	for id, p := range s.pendingDevices {
-		if p.ownerID == userID {
+		if p.OwnerID == userID {
 			delete(s.pendingDevices, id)
 		}
 	}
@@ -109,11 +173,16 @@ func newApprovalCode() (string, error) {
 // pairingMu and has consumed the pairing token's nonce.
 func (s *Server) holdPendingDevice(w http.ResponseWriter, r *http.Request, ownerID, subscriberID string, device state.NativeDevice, rawSecret string, req nativeRegisterRequest) {
 	now := time.Now().UTC()
-	if p, ok := s.pendingLocked(device.DeviceID, now); ok && (p.ownerID != ownerID || p.approvedID == "") {
+	if p, ok := s.pendingGet(device.DeviceID, now); ok && (p.OwnerID != ownerID || p.ApprovedID == "") {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "a pairing request for this device is already waiting for approval"})
 		return
 	}
-	if len(s.pendingForUserLocked(ownerID, now)) >= maxPendingDevicesPerUser {
+	waiting, err := s.pendingForUser(ownerID, now)
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
+	if len(waiting) >= maxPendingDevicesPerUser {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "too many devices are waiting for approval; approve or deny them first"})
 		return
 	}
@@ -122,21 +191,23 @@ func (s *Server) holdPendingDevice(w http.ResponseWriter, r *http.Request, owner
 		http.Error(w, "failed to mint approval code", http.StatusInternalServerError)
 		return
 	}
-	if s.pendingDevices == nil {
-		s.pendingDevices = map[string]*pendingDevice{}
+	p := pendingDevice{
+		OwnerID:            ownerID,
+		SubscriberID:       subscriberID,
+		Device:             device,
+		EncryptionEnrolled: req.EncryptionEnrolled,
+		OSVersion:          clampField(req.OSVersion, maxDeviceTextLen),
+		RequestIP:          clientIP(r),
+		ApprovalCode:       code,
+		RequestedAt:        now,
+		ExpiresAt:          now.Add(pendingDeviceTTL),
 	}
-	p := &pendingDevice{
-		ownerID:            ownerID,
-		subscriberID:       subscriberID,
-		device:             device,
-		encryptionEnrolled: req.EncryptionEnrolled,
-		osVersion:          clampField(req.OSVersion, maxDeviceTextLen),
-		requestIP:          clientIP(r),
-		approvalCode:       code,
-		requestedAt:        now,
-		expiresAt:          now.Add(pendingDeviceTTL),
+	// The same device ID re-registering after its approval replaces the old entry.
+	s.pendingEdit(device.DeviceID, now, func(*pendingDevice, bool) (rowEdit, bool) { return rowDrop, true })
+	if err := s.pendingPut(p); err != nil {
+		writeUnavailable(w)
+		return
 	}
-	s.pendingDevices[device.DeviceID] = p
 	s.logger.Info("native device pairing awaiting approval", "user_id", ownerID, "device_id", device.DeviceID)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		// ok/synced false: a client that predates approval reads this as a
@@ -148,7 +219,7 @@ func (s *Server) holdPendingDevice(w http.ResponseWriter, r *http.Request, owner
 		"deviceId":            device.DeviceID,
 		"deviceSecret":        rawSecret,
 		"approvalCode":        code,
-		"expiresAt":           p.expiresAt.Format(time.RFC3339),
+		"expiresAt":           p.ExpiresAt.Format(time.RFC3339),
 		"statusEndpoint":      s.nativeEndpoint("/api/notifications/native/pairing-status"),
 		"pollIntervalSeconds": pendingPollSeconds,
 	})
@@ -171,29 +242,25 @@ func (s *Server) handleNativePairingStatus(w http.ResponseWriter, r *http.Reques
 	deviceID, deviceSecret := deviceCredentialsFromRequest(r)
 	if deviceID != "" && deviceSecret != "" {
 		s.pairingMu.Lock()
-		p, found := s.pendingLocked(deviceID, time.Now().UTC())
-		var entry pendingDevice
-		if found {
-			entry = *p
-		}
+		entry, found := s.pendingGet(deviceID, time.Now().UTC())
 		s.pairingMu.Unlock()
 		if found {
-			okSecret, err := users.VerifyDeviceSecret(r.Context(), entry.device.SecretHash, deviceSecret)
+			okSecret, err := users.VerifyDeviceSecret(r.Context(), entry.Device.SecretHash, deviceSecret)
 			if err != nil {
 				writeKDFBusy(w)
 				return
 			}
-			if okSecret && entry.approvedID == "" {
+			if okSecret && entry.ApprovedID == "" {
 				writeJSON(w, http.StatusAccepted, map[string]any{
 					"status":              "pending",
-					"approvalCode":        entry.approvalCode,
-					"expiresAt":           entry.expiresAt.Format(time.RFC3339),
+					"approvalCode":        entry.ApprovalCode,
+					"expiresAt":           entry.ExpiresAt.Format(time.RFC3339),
 					"pollIntervalSeconds": pendingPollSeconds,
 				})
 				return
 			}
 			if okSecret {
-				s.writeApprovedStatus(w, entry.ownerID, entry.approvedID, entry.device.Transport)
+				s.writeApprovedStatus(w, entry.OwnerID, entry.ApprovedID, entry.Device.Transport)
 				return
 			}
 		}
@@ -240,20 +307,25 @@ func (s *Server) handleNativePendingDevices(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.pairingMu.Lock()
-	entries := s.pendingForUserLocked(ac.UserID, time.Now().UTC())
+	entries, err := s.pendingForUser(ac.UserID, time.Now().UTC())
+	if err != nil {
+		s.pairingMu.Unlock()
+		writeUnavailable(w)
+		return
+	}
 	out := make([]map[string]any, 0, len(entries))
 	for _, p := range entries {
 		out = append(out, map[string]any{
-			"deviceId":     p.device.DeviceID,
-			"deviceName":   p.device.DeviceName,
-			"platform":     p.device.Platform,
-			"osVersion":    p.osVersion,
-			"appVersion":   p.device.AppVersion,
-			"userAgent":    p.device.UserAgent,
-			"requestIp":    p.requestIP,
-			"approvalCode": p.approvalCode,
-			"requestedAt":  p.requestedAt.Format(time.RFC3339),
-			"expiresAt":    p.expiresAt.Format(time.RFC3339),
+			"deviceId":     p.Device.DeviceID,
+			"deviceName":   p.Device.DeviceName,
+			"platform":     p.Device.Platform,
+			"osVersion":    p.OSVersion,
+			"appVersion":   p.Device.AppVersion,
+			"userAgent":    p.Device.UserAgent,
+			"requestIp":    p.RequestIP,
+			"approvalCode": p.ApprovalCode,
+			"requestedAt":  p.RequestedAt.Format(time.RFC3339),
+			"expiresAt":    p.ExpiresAt.Format(time.RFC3339),
 		})
 	}
 	s.pairingMu.Unlock()
@@ -271,35 +343,52 @@ func (s *Server) handleNativePendingApprove(w http.ResponseWriter, r *http.Reque
 	id := strings.TrimSpace(r.PathValue("deviceId"))
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
-	p, found := s.pendingLocked(id, time.Now().UTC())
-	if !found || p.ownerID != ac.UserID || p.approvedID != "" {
+	// Claim the entry first: of two approvals racing on two replicas, one persists the device.
+	var p pendingDevice
+	if !s.pendingEdit(id, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
+		if !found || v.OwnerID != ac.UserID || v.ApprovedID != "" || v.Approving {
+			return rowKeep, false
+		}
+		v.Approving = true
+		p = *v
+		return rowWrite, true
+	}) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no device with that id is waiting for approval; it may have expired"})
 		return
+	}
+	drop := func() {
+		s.pendingEdit(id, time.Now().UTC(), func(*pendingDevice, bool) (rowEdit, bool) { return rowDrop, true })
 	}
 	// Revocation rotates the subscriber id and drops pending entries under this
 	// lock; recheck anyway, as register does, so nothing minted before a
 	// revocation is written after it.
 	store, err := s.userStore(ac.UserID)
 	if err != nil {
+		drop()
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)
 		return
 	}
 	u, err := s.users.Get(ac.UserID)
-	if err != nil || !u.Active || store.SubscriberID() != p.subscriberID {
-		delete(s.pendingDevices, id)
+	if err != nil || !u.Active || store.SubscriberID() != p.SubscriberID {
+		drop()
 		writeJSON(w, http.StatusGone, map[string]any{"error": "this pairing request is no longer valid; pair the device again"})
 		return
 	}
-	registeredID, devices, ok := s.persistNativeDevice(w, r, store, ac.UserID, p.device, p.encryptionEnrolled)
+	registeredID, devices, ok := s.persistNativeDevice(w, r, store, ac.UserID, p.Device, p.EncryptionEnrolled)
 	if !ok {
-		delete(s.pendingDevices, id)
+		drop()
 		return
 	}
-	p.approvedID = registeredID
 	// The outcome stays readable for a full window after approval. A merge
 	// into an existing row (same push token) gives the device another id, and
 	// this entry is the only place the device can learn it.
-	p.expiresAt = time.Now().UTC().Add(pendingDeviceTTL)
+	s.pendingEdit(id, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
+		if !found {
+			return rowKeep, false
+		}
+		v.ApprovedID, v.Approving, v.ExpiresAt = registeredID, false, time.Now().UTC().Add(pendingDeviceTTL)
+		return rowWrite, true
+	})
 	s.logger.Info("native device pairing approved", "user_id", ac.UserID, "device_id", registeredID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deviceId": registeredID, "devices": devices})
 }
@@ -314,12 +403,15 @@ func (s *Server) handleNativePendingDeny(w http.ResponseWriter, r *http.Request)
 	id := strings.TrimSpace(r.PathValue("deviceId"))
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
-	p, found := s.pendingLocked(id, time.Now().UTC())
-	if !found || p.ownerID != ac.UserID || p.approvedID != "" {
+	if !s.pendingEdit(id, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
+		if !found || v.OwnerID != ac.UserID || v.ApprovedID != "" || v.Approving {
+			return rowKeep, false
+		}
+		return rowDrop, true
+	}) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no device with that id is waiting for approval; it may have expired"})
 		return
 	}
-	delete(s.pendingDevices, id)
 	s.logger.Info("native device pairing denied", "user_id", ac.UserID, "device_id", id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

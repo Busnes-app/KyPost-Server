@@ -18,9 +18,16 @@ const (
 type issuedSSOStates struct {
 	mu sync.Mutex
 	at map[string]time.Time
+	// shared, when set (UseSharedState), holds the states as auth_challenges rows, so a
+	// callback on another replica redeems the state this one issued, once.
+	shared sharedRows
 }
 
 func (s *issuedSSOStates) add(state string, now time.Time) {
+	if s.shared != nil {
+		_ = putRow(s.shared, "sso-state", state, "", struct{}{}, now.Add(issuedSSOStateTTL), false) // unrecorded: its callback pays
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.at == nil {
@@ -41,6 +48,14 @@ func (s *issuedSSOStates) add(state string, now time.Time) {
 
 // take reports whether state was issued and is unexpired, and forgets it.
 func (s *issuedSSOStates) take(state string, now time.Time) bool {
+	if s.shared != nil {
+		return editRow(s.shared, "sso-state", state, func(_ *struct{}, found bool) (rowEdit, bool) {
+			if found {
+				return rowDrop, true
+			}
+			return rowKeep, false
+		})
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.at[state]

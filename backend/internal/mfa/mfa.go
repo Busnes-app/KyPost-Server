@@ -133,6 +133,8 @@ type Challenge struct {
 type Store struct {
 	mu sync.Mutex
 	m  map[string]Challenge
+	// rows, when set (Share), holds the challenges instead of m: PostgreSQL replicas.
+	rows Rows
 }
 
 func NewStore() *Store {
@@ -143,6 +145,9 @@ func NewStore() *Store {
 // Driven by api.Server.StartMFAChallengeSweeper; separate from the ticker so
 // tests can run one sweep without waiting out an interval.
 func (s *Store) SweepExpired(now time.Time) int {
+	if s.rows != nil {
+		return 0 // expired rows go with the elected coordination cleanup
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	removed := 0
@@ -194,6 +199,12 @@ func (s *Store) CreateFenced(userID string, fence uint64) (Challenge, error) {
 		DecoyDigits:  decoyDigits,
 		FinishSecret: hex.EncodeToString(secretBytes),
 	}
+	if s.rows != nil {
+		if err := s.putRow(ch); err != nil {
+			return Challenge{}, err
+		}
+		return ch, nil
+	}
 	s.mu.Lock()
 	s.m[ch.ID] = ch
 	s.mu.Unlock()
@@ -203,6 +214,12 @@ func (s *Store) CreateFenced(userID string, fence uint64) (Challenge, error) {
 // Get returns the live challenge for id, lazily deleting and reporting
 // ok=false if it is missing or expired.
 func (s *Store) Get(id string) (Challenge, bool) {
+	if s.rows != nil {
+		ctx, cancel := rowContext()
+		defer cancel()
+		ch, _, ok := s.loadRow(ctx, id)
+		return ch, ok
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.m[id]
@@ -221,6 +238,15 @@ func (s *Store) Get(id string) (Challenge, bool) {
 // ErrTooManyAttempts (after deleting the challenge) once the count exceeds
 // MaxTOTPAttempts.
 func (s *Store) RecordTOTPAttempt(id string) error {
+	if s.rows != nil {
+		return s.mutateRow(id, func(ch *Challenge) error {
+			ch.TOTPAttempts++
+			if ch.TOTPAttempts > MaxTOTPAttempts {
+				return errDropRow{ErrTooManyAttempts}
+			}
+			return nil
+		})
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.m[id]
@@ -247,6 +273,15 @@ func (s *Store) RecordTOTPAttempt(id string) error {
 // code could otherwise both pass a stale "not yet used" check before either
 // recorded its use.
 func (s *Store) ConsumeTOTPStep(id string, step int64) error {
+	if s.rows != nil {
+		return s.mutateRow(id, func(ch *Challenge) error {
+			if ch.UsedTOTPStep != 0 {
+				return ErrChallengeAlreadyUsed
+			}
+			ch.UsedTOTPStep = step
+			return nil
+		})
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.m[id]
@@ -264,6 +299,12 @@ func (s *Store) ConsumeTOTPStep(id string, step int64) error {
 
 // Delete removes a challenge (called on success or lockout).
 func (s *Store) Delete(id string) {
+	if s.rows != nil {
+		ctx, cancel := rowContext()
+		defer cancel()
+		_, _ = s.rows.TakeChallenge(ctx, rowKey(id), nil)
+		return
+	}
 	s.mu.Lock()
 	delete(s.m, id)
 	s.mu.Unlock()
@@ -275,6 +316,12 @@ func (s *Store) Delete(id string) {
 // ConsumePushApproval until it naturally expired, even though the account's
 // PushMFAEnabled bit had already been turned off underneath it.
 func (s *Store) DeleteByUser(userID string) {
+	if s.rows != nil {
+		ctx, cancel := rowContext()
+		defer cancel()
+		_ = s.rows.DropUserChallenges(ctx, rowPrefix, userID)
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, ch := range s.m {
@@ -305,6 +352,9 @@ func (s *Store) DeleteByUser(userID string) {
 // reachable notification behind it anyway, and its poll now reports "expired"
 // instead of hanging until the TTL runs out.
 func (s *Store) SupersedeUnansweredPush(userID, exceptID string) int {
+	if s.rows != nil {
+		return s.supersedeRows(userID, exceptID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	superseded := 0
@@ -341,6 +391,16 @@ func isPushResolved(status string) bool {
 // should treat as "expired"). It is in-memory only — cheap enough to poll
 // frequently.
 func (s *Store) PushStatus(id string) (string, bool) {
+	if s.rows != nil {
+		ch, ok := s.Get(id)
+		if !ok {
+			return "", false
+		}
+		if ch.PushStatus == "" {
+			return PushPending, true
+		}
+		return ch.PushStatus, true
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.m[id]
@@ -364,6 +424,9 @@ func (s *Store) PushStatus(id string) (string, bool) {
 // it is not this caller's challenge to resolve, and the browser that owns it
 // must still be able to redeem its own approval.
 func (s *Store) ConsumePushApproval(id, secret string) (string, error) {
+	if s.rows != nil {
+		return s.consumePushRow(id, secret)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.m[id]

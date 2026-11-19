@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -275,20 +276,53 @@ func (c *Client) Verify(r *http.Request, eventType string, body []byte) (syncaut
 func (c *Client) Forget(eventID string) { c.replay.forget(eventID) }
 
 // guard is syncauth's bounded in-memory replay guard plus forget. A restart
-// forgets everything, which the signature's window bounds.
+// forgets everything, which the signature's window bounds. With a shared store
+// (ShareReplay) it is the replica-wide record instead.
 type guard struct {
 	mu     sync.Mutex
 	window time.Duration
 	max    int
 	seen   map[string]time.Time
 	order  []string
+	shared Replays
+	prefix string
+	// attempt marks the records this process wrote, so forget never releases another
+	// replica's: an ambiguous failure here undoes only its own attempt.
+	attempt string
 }
+
+// Replays is the replay record PostgreSQL replicas share (state.Store).
+type Replays interface {
+	RecordReplay(ctx context.Context, id, attempt string, window time.Duration) (bool, error)
+	UndoReplay(ctx context.Context, id, attempt string) error
+}
+
+// ShareReplay makes the replay guard replica-wide: an event ID accepted on one replica is
+// refused on every other within twice the signature window (the window plus clock skew). A
+// store failure refuses the request (syncauth.ErrReplayGuardFull). Call before use.
+func (c *Client) ShareReplay(r Replays) {
+	c.replay.shared, c.replay.prefix, c.replay.attempt = r, "suite:"+c.peer.ID+":", rand.Text()
+}
+
+const replayTimeout = 5 * time.Second
 
 func newGuard(window time.Duration, max int) *guard {
 	return &guard{window: window, max: max, seen: map[string]time.Time{}}
 }
 
 func (g *guard) Check(id string, at time.Time) error {
+	if g.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), replayTimeout)
+		defer cancel()
+		fresh, err := g.shared.RecordReplay(ctx, g.prefix+id, g.attempt, 2*g.window)
+		switch {
+		case err != nil:
+			return syncauth.ErrReplayGuardFull
+		case !fresh:
+			return syncauth.ErrReplay
+		}
+		return nil
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	cutoff := time.Now().Add(-g.window)
@@ -312,6 +346,12 @@ func (g *guard) Check(id string, at time.Time) error {
 }
 
 func (g *guard) forget(id string) {
+	if g.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), replayTimeout)
+		defer cancel()
+		_ = g.shared.UndoReplay(ctx, g.prefix+id, g.attempt)
+		return
+	}
 	g.mu.Lock()
 	delete(g.seen, id)
 	g.mu.Unlock()
