@@ -204,8 +204,7 @@ func legacyPlusAlias(t *testing.T, configDir, address, mailboxID string) {
 // two+legacy@ belongs to one, two@ to two. Once two+legacy@ is reserved its
 // mail is refused, never handed to two, and the Worker table refuses it.
 func TestInactiveLegacyPlusAddressKeepsItsOwner(t *testing.T) {
-	e := cfFixture(t)
-	r, created := e.r, e.users
+	r, created := receivingFixture(t)
 	ctx := context.Background()
 	legacyPlusAlias(t, r.configDir, "two+legacy@example.test", created[0].ID)
 	receive(t, r, "live", "two+legacy@example.test")
@@ -223,6 +222,12 @@ func TestInactiveLegacyPlusAddressKeepsItsOwner(t *testing.T) {
 	}
 	if got := receivingInbox(t, r, created[1]); len(got) != 0 {
 		t.Fatal("base owner received", got)
+	}
+
+	e := cfFixture(t)
+	legacyPlusAlias(t, e.r.configDir, "two+legacy@example.test", e.users[0].ID)
+	if _, err := e.r.life.ReleaseNativeAlias(ctx, e.r.stateDir, "two+legacy@example.test"); err != nil {
+		t.Fatal(err)
 	}
 	routes, err := e.l.buildRoutes(ctx)
 	if err != nil {
