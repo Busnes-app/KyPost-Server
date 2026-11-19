@@ -435,3 +435,46 @@ func TestSettingsFollowTheVolumeAndDatabase(t *testing.T) {
 		t.Fatal("B still exempts a removed office network")
 	}
 }
+
+// AC9: a CardDAV app password revoked on A is refused on B on the next request, although B
+// verified (and cached) it a moment before.
+func TestDAVRevocationReachesEveryReplica(t *testing.T) {
+	a, b := sharedPair(t)
+	u, err := a.users.Create(context.Background(), "dav-replica", "dav-replica-password", users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const appPassword = "app-specific-password-replica"
+	hash, err := users.HashPassword(context.Background(), appPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.writeDAVPassword(u.ID, davPasswordFile{Hash: hash, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	dav := func(srv *Server) int {
+		reached := false
+		handler := srv.withDAVBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached = true; w.WriteHeader(207) }))
+		req := httptest.NewRequest("PROPFIND", davPrefix+"/dav-replica/", nil)
+		req.SetBasicAuth(u.Username, appPassword)
+		req.RemoteAddr = "203.0.113.40:1234"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if reached {
+			return 207
+		}
+		return rec.Code
+	}
+	if got := dav(b); got != 207 {
+		t.Fatalf("B before revocation: %d", got)
+	}
+	if got := dav(b); got != 207 {
+		t.Fatalf("B from its cache: %d", got)
+	}
+	if err := a.revokeAllUserCredentials(u); err != nil {
+		t.Fatal(err)
+	}
+	if got := dav(b); got != http.StatusUnauthorized {
+		t.Fatalf("B accepted an app password A revoked: %d", got)
+	}
+}
