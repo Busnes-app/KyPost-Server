@@ -7,6 +7,7 @@ import { MailStorage } from "../../settings/sections/MailStorage";
 import { KyCalendar } from "../../settings/sections/KyCalendar";
 import { KyPulse } from "../../settings/sections/KyPulse";
 import { ReadingPane } from "../../settings/sections/ReadingPane";
+import { Conversations } from "../../settings/sections/Conversations";
 import { Signatures } from "../../settings/sections/Signatures";
 import { OutOfOffice } from "../../settings/sections/OutOfOffice";
 
@@ -17,7 +18,7 @@ import { OutOfOffice } from "../../settings/sections/OutOfOffice";
  *
  * Import and export live under Security, behind its re-authentication.
  *
- * Tabbed rather than stacked — nine sections, each with its own save action,
+ * Tabbed rather than stacked — eleven sections, each with its own save action,
  * is more than one scroll can present clearly.
  */
 export function MailPanel() {
@@ -25,13 +26,14 @@ export function MailPanel() {
     <section className="panel">
       <div className="config-header">
         <h2 className="visually-hidden">Mail</h2>
-        <p>Your mail server, where messages open, mailbox storage, the addresses you send as and their signatures, your out-of-office reply, KyCalendar invitations, KyPulse alerts, contact sync and mailbox rules.</p>
+        <p>Your mail server, where messages open, conversation grouping, mailbox storage, the addresses you send as and their signatures, your out-of-office reply, KyCalendar invitations, KyPulse alerts, contact sync and mailbox rules.</p>
       </div>
       <PanelTabs
         ariaLabel="Mail sections"
         tabs={[
           { id: "email-server", label: "Email settings", body: <EmailServer /> },
           { id: "reading-pane", label: "Reading pane", body: <ReadingPane /> },
+          { id: "conversations", label: "Conversations", body: <Conversations /> },
           { id: "storage", label: "Storage", body: <MailStorage /> },
           { id: "send-as", label: "Send-as addresses", body: <SendAs /> },
           { id: "signatures", label: "Signatures", body: <Signatures /> },
