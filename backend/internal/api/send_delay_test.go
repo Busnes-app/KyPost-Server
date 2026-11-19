@@ -273,3 +273,40 @@ func TestSendRefusesAnotherSessionsSend(t *testing.T) {
 		t.Fatalf("%d delivered, want only the own send", data)
 	}
 }
+
+// A restart during the hold keeps the message held: the new process reopens
+// the store, its sweeper start leaves waiting rows alone, and the hold is
+// released exactly once when due.
+func TestSendDelaySurvivesRestart(t *testing.T) {
+	f := newScheduledFixture(t, "250 queued")
+	f.setSendDelay(t, 10)
+	id, at := f.hold(t, nil)
+	if err := f.srv.globalStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := state.New(f.srv.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	f.srv.globalStore = reopened
+	if err := reopened.InterruptScheduledSends(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if row := f.row(t, id); row.Status != state.ScheduledWaiting {
+		t.Fatalf("after restart: %+v", row)
+	}
+	f.srv.sweepScheduledSends(context.Background(), clockAt(at.Add(-time.Second)))
+	if dials, _ := f.smtp.counts(); dials != 0 {
+		t.Fatal("held message sent early after restart")
+	}
+	for range 3 {
+		f.srv.sweepScheduledSends(context.Background(), clockAt(at.Add(time.Minute)))
+	}
+	if _, data := f.smtp.counts(); data != 1 || f.row(t, id).Status != "sent" {
+		t.Fatalf("%d delivered, row %+v; want sent once", data, f.row(t, id))
+	}
+	if rec := f.post("/api/scheduled/"+id+"/cancel", nil); rec.Code != http.StatusConflict {
+		t.Fatalf("cancel after release: %d", rec.Code)
+	}
+}
