@@ -188,8 +188,8 @@ func (s *Server) lookupSession(ctx context.Context, token string) (Session, bool
 
 // changeSession applies change to token's session if it still exists, and reports whether it
 // was written. change reports whether to write. On PostgreSQL the write is a compare-and-swap
-// on the session as read: a concurrent change on another replica makes it false, so a grant
-// change consumes is spent once.
+// on the session as read; a lost race reads again and re-applies change to what won, so two
+// changes to different fields both land and a grant change consumes is spent once.
 func (s *Server) changeSession(ctx context.Context, token string, change func(*Session) bool) (bool, error) {
 	if s.shared == nil {
 		s.sessMu.Lock()
@@ -203,22 +203,27 @@ func (s *Server) changeSession(ctx context.Context, token string, change func(*S
 	}
 	ctx, cancel := context.WithTimeout(ctx, sharedTimeout)
 	defer cancel()
-	old, ok, err := s.shared.Session(ctx, sessionHash(token))
-	if err != nil || !ok {
-		return false, err
+	for range rowTries {
+		old, ok, err := s.shared.Session(ctx, sessionHash(token))
+		if err != nil || !ok {
+			return false, err
+		}
+		var sess Session
+		if err := json.Unmarshal([]byte(old), &sess); err != nil {
+			return false, err
+		}
+		if !change(&sess) {
+			return false, nil
+		}
+		data, err := encodeSession(sess)
+		if err != nil {
+			return false, err
+		}
+		if swapped, err := s.shared.UpdateSession(ctx, sessionHash(token), old, data, sess.ExpiresAt.UnixMilli()); err != nil || swapped {
+			return swapped, err
+		}
 	}
-	var sess Session
-	if err := json.Unmarshal([]byte(old), &sess); err != nil {
-		return false, err
-	}
-	if !change(&sess) {
-		return false, nil
-	}
-	data, err := encodeSession(sess)
-	if err != nil {
-		return false, err
-	}
-	return s.shared.UpdateSession(ctx, sessionHash(token), old, data, sess.ExpiresAt.UnixMilli())
+	return false, nil
 }
 
 // dropSession ends token's session.

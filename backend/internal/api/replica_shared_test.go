@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -476,5 +477,59 @@ func TestDAVRevocationReachesEveryReplica(t *testing.T) {
 	}
 	if got := dav(b); got != http.StatusUnauthorized {
 		t.Fatalf("B accepted an app password A revoked: %d", got)
+	}
+}
+
+// The session row is a compare-and-swap: an SSO link grant held in the session is spent on
+// exactly one replica, and two replicas changing different fields of one session at once both
+// land (the loser re-reads and re-applies).
+func TestSessionChangesAreCompareAndSwap(t *testing.T) {
+	a, b := sharedPair(t)
+	user, err := a.users.Create(context.Background(), "cas-user", "long-password-for-cas", users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := mintSessionForTest(a, user.ID)
+	req := func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		return r
+	}
+	for round := range 10 {
+		flow := fmt.Sprintf("state-%d", round)
+		if !a.grantSSOLink(req(), flow) {
+			t.Fatal("grant", round)
+		}
+		var spent atomic.Int32
+		var wg sync.WaitGroup
+		for _, srv := range []*Server{a, b} {
+			wg.Go(func() {
+				if srv.consumeSSOLinkGrant(req(), flow) {
+					spent.Add(1)
+				}
+			})
+		}
+		wg.Wait()
+		if spent.Load() != 1 {
+			t.Fatalf("round %d: one SSO link grant was spent %d times", round, spent.Load())
+		}
+	}
+	for round := range 10 {
+		at := time.Now().Add(time.Duration(round) * time.Second).Truncate(time.Millisecond)
+		var wg sync.WaitGroup
+		var wrote atomic.Int32
+		change := func(srv *Server, f func(*Session)) {
+			ok, err := srv.changeSession(context.Background(), token, func(s *Session) bool { f(s); return true })
+			if err == nil && ok {
+				wrote.Add(1)
+			}
+		}
+		wg.Go(func() { change(a, func(s *Session) { s.SteppedUpAt = at }) })
+		wg.Go(func() { change(b, func(s *Session) { s.SSOLinkState = "touched-" + at.String() }) })
+		wg.Wait()
+		sess, ok, err := b.lookupSession(context.Background(), token)
+		if err != nil || !ok || wrote.Load() != 2 || !sess.SteppedUpAt.Equal(at) || sess.SSOLinkState != "touched-"+at.String() {
+			t.Fatalf("round %d: concurrent changes lost one: wrote=%d steppedUp=%v state=%q", round, wrote.Load(), sess.SteppedUpAt, sess.SSOLinkState)
+		}
 	}
 }
