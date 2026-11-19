@@ -7,7 +7,7 @@ import { ComposeWindow } from "../components/ComposeWindow";
 // A scheduled send carries its time to the server and, on the browser PGP
 // path, into every Date header and the encrypted draft copy.
 
-const postJSON = vi.fn(async (_url: string, _body: unknown) => ({ scheduled: true }));
+const postJSON = vi.fn(async (_url: string, _body: unknown): Promise<Record<string, unknown>> => ({ scheduled: true }));
 vi.mock("../api/client", () => ({
   HttpError: class HttpError extends Error {
     constructor(message: string, public status: number, public body: unknown) { super(message); }
