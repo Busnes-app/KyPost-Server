@@ -49,8 +49,8 @@ Out of scope: an attacker who already runs code in the container or holds both t
 1. **Browser and apps → KyPost.** KyPost serves plain HTTP unless `TLS_CERT_FILE` is set. The
    entrypoint refuses a non-loopback cleartext publish without `ALLOW_INSECURE_HTTP=true`
    (`scripts/entrypoint.sh`, proved by the `ci-docker` job). Forwarded headers are read only
-   from peers in `TRUSTED_PROXY_CIDRS`, one named header, right-most hop
-   (`clientIP` in `backend/internal/api/server_request_context.go`).
+   from peers in `TRUSTED_PROXY_CIDRS`, one named header, the right-most hop that is not
+   itself a trusted proxy (`clientIP` in `backend/internal/api/server_request_context.go`).
 1a. **Replica → replica (PostgreSQL, one host).** Replicas never talk to each other: they trust
    the shared database credentials and the shared `SECRET_DIR`. A start refuses a replica on
    another kernel or volume set, `KYPOST_NATIVE_RECEIVER`, a per-process proof-of-work key, and

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -107,19 +108,30 @@ var longRoutes = []longRoute{
 	{"/api/imap/", 2 * time.Minute, "IMAP account test (10 s dial, 45 s per command)"},
 	{"/api/contacts/carddav-client/", 2 * time.Minute, "external CardDAV sync (45 s)"},
 	{"/api/contacts/import", 2 * time.Minute, "address book upload"},
+	{"/api/contacts/*/photo", 2 * time.Minute, "contact photo upload (5 MiB)"},
+	{"/dav/", time.Minute, "CardDAV bodies up to 5 MiB, as long as the listener's 60 s ReadTimeout allows"},
 	{"/api/kydrive/", 2 * time.Minute, "KyDrive upload and fetch budgets"},
 	{"/api/pgp/pickup", 2 * time.Minute, "pickup upload"},
 	{"/api/admin/native-recovery/", 2 * time.Minute, "recovery evidence upload and checks (1 min)"},
 	{"/api/admin/mail-relay", time.Minute, "relay TLS and AUTH check, DKIM and deliverability DNS (30 s)"},
 	{"/api/admin/mail-domain", time.Minute, "domain proof DNS lookups (30 s)"},
+	{"/api/admin/mail-domains", time.Minute, "added domains' proof DNS lookups (30 s)"},
 	{"/api/admin/mail/poll-now", 2 * time.Minute, "runs one poll tick over IMAP"},
 	{"/mcp", 2 * time.Minute, "agent tools read and act on mail over IMAP"},
 }
 
-// longRouteFor is the exemption covering path, if any.
-func longRouteFor(path string) (longRoute, bool) {
+// longRouteFor is the exemption covering p, if any: a prefix covers itself and the paths
+// below it, never a longer name (/api/export, not /api/exports); a "*" is one path segment.
+func longRouteFor(p string) (longRoute, bool) {
 	for _, l := range longRoutes {
-		if path == strings.TrimSuffix(l.prefix, "/") || strings.HasPrefix(path, l.prefix) {
+		if strings.Contains(l.prefix, "*") {
+			if ok, _ := path.Match(l.prefix, p); ok {
+				return l, true
+			}
+			continue
+		}
+		base := strings.TrimSuffix(l.prefix, "/")
+		if p == base || strings.HasPrefix(p, base+"/") {
 			return l, true
 		}
 	}

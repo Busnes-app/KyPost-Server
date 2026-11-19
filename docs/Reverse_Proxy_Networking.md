@@ -39,7 +39,7 @@ client pick its own address.
 
 - nginx with `x-forwarded-for`: `proxy_set_header X-Forwarded-For $remote_addr;`.
   `$proxy_add_x_forwarded_for` also works, because KyPost uses the right-most
-  element, which nginx itself appended.
+  element that is not a trusted proxy, which nginx itself appended.
 - cloudflared appends its own hop to `X-Forwarded-For`, so behind it use
   `cf-connecting-ip`. With nginx in between, nginx must pass the header on
   (`proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;`) and must be

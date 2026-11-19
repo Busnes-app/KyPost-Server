@@ -280,7 +280,7 @@ When a reverse proxy sits in front of KyPost, the server sees the proxy's addres
 
 **If `TRUSTED_PROXY_CIDRS` is set, KyPost trusts forwarded headers from that CIDR.** This marks cookies `Secure` (`X-Forwarded-Proto`) and keys lockouts off the real caller. The caller's address comes from exactly one header, chosen by `TRUSTED_PROXY_HEADER`; the other is never read, because nginx and Caddy pass unknown headers through from the client:
 
-- `x-forwarded-for` (default): nginx or Caddy. In nginx, `proxy_set_header X-Forwarded-For $remote_addr;` (`$proxy_add_x_forwarded_for` also works; the right-most element is used).
+- `x-forwarded-for` (default): nginx or Caddy. In nginx, `proxy_set_header X-Forwarded-For $remote_addr;` (`$proxy_add_x_forwarded_for` also works; the right-most element that is not a trusted proxy is used).
 - `cf-connecting-ip`: cloudflared, which appends its own hop to `X-Forwarded-For`. Also for cloudflared → nginx → KyPost, with nginx passing it on (`proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;`) and reachable only from cloudflared.
 - Cloudflare proxied DNS (CDN) in front of nginx: keep `x-forwarded-for` and have nginx restore the visitor from `CF-Connecting-IP` only for Cloudflare's ranges (`set_real_ip_from`, `real_ip_header CF-Connecting-IP;`); see [Reverse_Proxy_Networking.md](docs/Reverse_Proxy_Networking.md#trusting-the-proxy).
 

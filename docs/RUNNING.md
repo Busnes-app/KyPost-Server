@@ -302,10 +302,16 @@ else is per container.
    `postgres://kypost:<KYPOST_POSTGRES_PASSWORD>@postgres:5432/kypost?sslmode=disable`.
 2. Set in `.env`: `COMPOSE_FILE=docker-compose.yml:docker-compose.replicas.yml`,
    `KYPOST_REPLICAS` (default 2), `KYPOST_REPLICA_SUBNET` (a private /24) and
-   `KYPOST_PROXY_IP` (HAProxy's address inside it: the only address the replicas trust for
-   `X-Forwarded-For`), plus `KYPOST_EDGE_TRUSTED_PROXY` if your TLS proxy sits on
-   `kypost-net` and forwards client addresses (its own address, never the network gateway).
-   `KYPOST_BIND` now gates HAProxy's publish, with the same rules as before.
+   `KYPOST_PROXY_IP` (HAProxy's address inside it, which the replicas trust for
+   `X-Forwarded-For`). Behind a TLS proxy (nginx, Nginx Proxy Manager, Caddy, cloudflared),
+   run that proxy on `kypost-net` with a fixed address and set `KYPOST_EDGE_TRUSTED_PROXY`
+   to it: HAProxy keeps `X-Forwarded-For`, `CF-Connecting-IP` and `X-Forwarded-Proto` only
+   from that address and drops them from everyone else, and the replicas take the client as
+   the right-most address that is neither proxy. Never the network gateway: a proxy on the
+   host reaches HAProxy from the gateway, which every other host-side caller shares, so it
+   cannot be told apart and its forwarded addresses are dropped (every user would share one
+   lockout bucket). Check it: `GET /api/status` through your proxy shows your own address as
+   `clientIp`. `KYPOST_BIND` now gates HAProxy's publish, with the same rules as before.
 3. `docker compose up -d --wait`, then pull the model once into the shared Ollama:
    `docker compose exec ollama ollama pull "$OLLAMA_MODEL"` (AI sorting only).
 
@@ -359,7 +365,7 @@ terminationGracePeriodSeconds: 2160
 
 Every request answers within 14 seconds: past it KyPost answers `503` with `{"code":"request_timeout"}`. A `503` after the deadline does not prove the request had no effect; the work may still finish once the database answers, so check before retrying. The routes below keep their own, longer budgets and are not cut at 14 seconds. A proxy in front of KyPost (the replica profile's HAProxy, nginx, Nginx Proxy Manager) must allow each route at least the proxy timeout given here, which is the budget plus headroom. With one value for the whole site, use the largest: 17 minutes.
 
-| Route prefix | Budget | Proxy timeout |
+| Route (a prefix and the paths below it; `*` is one path segment) | Budget | Proxy timeout |
 |---|---|---|
 | `/api/admin/backup/` | 16 min | 17 min |
 | `/api/export` | 10 min | 11 min |
@@ -371,10 +377,13 @@ Every request answers within 14 seconds: past it KyPost answers `503` with `{"co
 | `/api/imap/` | 2 min | 3 min |
 | `/api/contacts/carddav-client/` | 2 min | 3 min |
 | `/api/contacts/import` | 2 min | 3 min |
+| `/api/contacts/*/photo` | 2 min | 3 min |
+| `/dav/` | 1 min | 2 min |
 | `/api/kydrive/` | 2 min | 3 min |
 | `/api/pgp/pickup` | 2 min | 3 min |
 | `/api/admin/native-recovery/` | 2 min | 3 min |
 | `/api/admin/mail-relay` | 1 min | 2 min |
 | `/api/admin/mail-domain` | 1 min | 2 min |
+| `/api/admin/mail-domains` | 1 min | 2 min |
 | `/api/admin/mail/poll-now` | 2 min | 3 min |
 | `/mcp` | 2 min | 3 min |

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,6 +135,73 @@ func TestStalledRequestAnswersAtTheDeadline(t *testing.T) {
 	<-done
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("a long route was cut at the deadline: %d", rec.Code)
+	}
+}
+
+// Every route that extends its read deadline for an upload is exempt from the request
+// deadline too; otherwise a slow upload is cut at 14 s however long it may read.
+func TestEveryUploadRouteKeepsItsBudget(t *testing.T) {
+	src, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := regexp.MustCompile(`mux\.HandleFunc\("(?:[A-Z]+ )?([^"]+)", withUploadDeadline\(`).FindAllStringSubmatch(string(src), -1)
+	if len(routes) < 6 {
+		t.Fatalf("found %d upload routes; the pattern no longer matches server.go", len(routes))
+	}
+	for _, m := range routes {
+		p := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(m[1], "x")
+		if _, ok := longRouteFor(p); !ok {
+			t.Errorf("%s extends its upload deadline but is cut at the request deadline", m[1])
+		}
+	}
+	for p, want := range map[string]bool{
+		"/api/export": true, "/api/export/folders": true, "/api/exports": false,
+		"/api/admin/mail-domains/x/verify": true, "/api/contacts/x/photo": true,
+		"/api/contacts/x/y/photo": false, "/api/contacts/x/photos": false,
+		"/dav/alice/contacts/card.vcf": true, // CardDAV PUT bodies up to 5 MiB
+	} {
+		if _, ok := longRouteFor(p); ok != want {
+			t.Errorf("longRouteFor(%q) = %v, want %v", p, ok, want)
+		}
+	}
+}
+
+// A 5 MiB contact photo arriving slowly finishes past the request deadline; the same body
+// on an ordinary route is cut.
+func TestSlowPhotoUploadOutlivesTheDeadline(t *testing.T) {
+	const size = 5 << 20
+	var got atomic.Int64
+	srv := httptest.NewServer(withDeadline(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n, _ := io.Copy(io.Discard, r.Body)
+		got.Store(n)
+		w.WriteHeader(http.StatusNoContent)
+	}), 200*time.Millisecond))
+	defer srv.Close()
+	upload := func(path string) int {
+		body, write := io.Pipe()
+		go func() {
+			chunk := make([]byte, size/10)
+			for range 10 {
+				time.Sleep(80 * time.Millisecond) // 800 ms in all, four times the deadline
+				if _, err := write.Write(chunk); err != nil {
+					return
+				}
+			}
+			_ = write.Close()
+		}()
+		resp, err := http.Post(srv.URL+path, "image/jpeg", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := upload("/api/contacts/abc/photo"); code != http.StatusNoContent || got.Load() != size {
+		t.Fatalf("slow photo upload: %d after %d bytes", code, got.Load())
+	}
+	if code := upload("/api/contacts/abc/note"); code != http.StatusServiceUnavailable {
+		t.Fatalf("the same slow body on an ordinary route: %d, want the deadline's 503", code)
 	}
 }
 

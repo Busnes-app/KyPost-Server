@@ -86,6 +86,8 @@ services:
     # One server slot per replica; change the count through KYPOST_REPLICAS, never --scale.
     environment:
       KYPOST_REPLICAS: ${KYPOST_REPLICAS:-2}
+      # 255.255.255.255 is never a TCP source: with no edge, every forwarded header is dropped.
+      KYPOST_EDGE_TRUSTED_PROXY: ${KYPOST_EDGE_TRUSTED_PROXY:-255.255.255.255}
     # KYPOST_BIND gates this publish exactly as it gates the single container's: no
     # default, and non-loopback cleartext needs ALLOW_INSECURE_HTTP=true (checked by the
     # replicas at startup, which see the same value).

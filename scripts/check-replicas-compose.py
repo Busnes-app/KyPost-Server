@@ -81,8 +81,20 @@ rules = {}
 for minutes, prefixes in re.findall(r"set-timeout server (\d+)m if \{ path_beg ([^}]+)\}", cfg):
     for prefix in prefixes.split():
         rules[prefix] = minutes
+# A docs route with "*" (one path segment) is a path_reg rule.
+for minutes, pattern in re.findall(r"set-timeout server (\d+)m if \{ path_reg \^([^ ]+)\$ \}", cfg):
+    rules[pattern.replace("[^/]+", "*")] = minutes
 assert rules == table, f"haproxy set-timeout rules {rules} differ from the docs table {table}"
 print("PASS replicas: HAProxy probes /readyz and its timeouts are the proxy table")
+
+# Only the edge proxy may name the client or the scheme: HAProxy drops those headers from
+# every other source, and with no edge the ACL matches no TCP source at all.
+assert 'acl from_edge src "${KYPOST_EDGE_TRUSTED_PROXY}"' in cfg, "HAProxy has no edge-proxy ACL"
+for header in ("X-Forwarded-For", "CF-Connecting-IP", "X-Forwarded-Proto"):
+    assert f"http-request del-header {header} unless from_edge" in cfg, f"HAProxy passes a client's {header} through"
+edge = proxy["environment"].get("KYPOST_EDGE_TRUSTED_PROXY")
+assert edge == "255.255.255.255", f"with no edge set HAProxy must trust no source, got {edge}"
+print("PASS replicas: HAProxy keeps forwarded client headers only from the edge proxy")
 
 for overlay in ["docker-compose.receiving.yml", "docker-compose.rspamd.yml", "docker-compose.lan-dns.yml"]:
     chain = ["docker-compose.yml", overlay, "docker-compose.replicas.yml"]
