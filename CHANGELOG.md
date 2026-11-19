@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- **First sign-in encryption setup, required by default.** Users create or import a PGP key in the browser, store a recovery copy and choose incoming encryption (on by default) before their mail opens. Admin → Server → Security sets Encryption key (Required, the default, or Optional) and Encrypt incoming mail (Required, On by default, Off by default); Manage Users gains "Require key setup". **Upgrading admins:** with no saved policy, every user without a client-protected key and recovery copy, existing users included, is sent through setup at their next sign-in, and their paired phones and AI agent tokens get `403 encryption_setup_required` on mail until they finish (incoming mail is still received). Sessions already signed in are not cut off. To keep the old behaviour, set Encryption key to Optional before users sign in again. Installs whose SSO provider is not KySignOn keep the Required default for password users; that provider's SSO-only users are skipped, and the admin page asks you to choose Optional. Saving Required, or switching SSO to a provider that is not KySignOn while anything is Required, is refused. Update native clients so they show the setup message instead of a generic error. See [E2E_PGP.md](docs/E2E_PGP.md#first-sign-in-setup).
+
 - Keep SQLite `v1.62.0` with its upstream-required libc `v1.80.1` and memory `v1.12.1`; defer independent updates of those runtime dependencies.
 
 - Prepare application version `0.6.1` (from `0.6.0`) for the compatible dependency refresh. Rebuild or install the updated application; this version bump requires no additional data, account, key or configuration migration.

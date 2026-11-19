@@ -42,6 +42,10 @@ type IdP struct {
 	WrongIssuer   string // put this in iss instead of the real issuer
 	PadDiscovery  int    // pad the discovery document with this many bytes
 
+	// KySignOn makes discovery advertise what KySignOn's does: the password
+	// ACR and the roles claim (sso.Provider.KySignOn).
+	KySignOn bool
+
 	// UserInfo, when set, is served from the userinfo endpoint. UserInfoSub
 	// overrides the `sub` it reports, so a test can check that a mismatched
 	// subject is ignored rather than merged in.
@@ -173,6 +177,10 @@ func (i *IdP) route(w http.ResponseWriter, r *http.Request) {
 			"userinfo_endpoint":                     i.Server.URL + "/oauth/userinfo",
 			"jwks_uri":                              i.Server.URL + "/.well-known/jwks.json",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
+		}
+		if i.KySignOn {
+			doc["acr_values_supported"] = []string{"urn:kysignon:acr:password", "urn:kysignon:acr:mfa"}
+			doc["claims_supported"] = []string{"sub", "roles", "acr", "amr"}
 		}
 		if i.PadDiscovery > 0 {
 			doc["padding"] = string(make([]byte, i.PadDiscovery))

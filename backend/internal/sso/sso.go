@@ -57,6 +57,11 @@ type SSOSettings struct {
 	// AdminGroup is the exact group or realm role that makes a generic
 	// provider's new account an administrator. Empty: none does.
 	AdminGroup string `json:"adminGroup,omitempty"`
+
+	// KySignOn records that discovery of this issuer showed KySignOn
+	// (Provider.KySignOn). Written only by the server after discovery, never
+	// from an admin request; false means generic or not yet confirmed.
+	KySignOn bool `json:"kySignOn,omitempty"`
 }
 
 // SuiteDirectory is KyPost's own OAuth client at the issuer, which KyIdentity's
@@ -392,7 +397,18 @@ type Provider struct {
 	// token as a logout and, worse, a logout token as an ID token.
 	// oidcverify.VerifyLogout refuses anything but a `logout+jwt`.
 	logout *oidcverify.Verifier
+	// kySignOn: see KySignOn.
+	kySignOn bool
 }
+
+// KySignOnPasswordACR is the assurance step-up requests and FreshProof accepts.
+const KySignOnPasswordACR = "urn:kysignon:acr:password"
+
+// KySignOn reports whether the issuer's discovery document advertises what
+// KyPost relies on KySignOn for: the password ACR a PGP step-up requests and
+// the `roles` claim that marks a session as KySignOn's. A generic provider
+// advertises neither, so its SSO-only users could never confirm a key write.
+func (p *Provider) KySignOn() bool { return p.kySignOn }
 
 // VerifyLogout verifies a back-channel logout token against the provider's
 // JWKS and returns the session it names. It proves the token, nothing more:
@@ -524,8 +540,10 @@ func discoverProvider(ctx context.Context, cfg SSOSettings, redirectURI string) 
 	}
 
 	var extra struct {
-		JWKSURI          string `json:"jwks_uri"`
-		UserinfoEndpoint string `json:"userinfo_endpoint"`
+		JWKSURI          string   `json:"jwks_uri"`
+		UserinfoEndpoint string   `json:"userinfo_endpoint"`
+		ACRValues        []string `json:"acr_values_supported"`
+		Claims           []string `json:"claims_supported"`
 	}
 	if err := provider.Claims(&extra); err != nil {
 		return nil, fmt.Errorf("unreadable OIDC discovery document: %w", err)
@@ -561,7 +579,8 @@ func discoverProvider(ctx context.Context, cfg SSOSettings, redirectURI string) 
 	jwksClient.Transport = strongJWKSTransport{base: client.Transport}
 
 	return &Provider{
-		logout: logout,
+		kySignOn: slices.Contains(extra.ACRValues, KySignOnPasswordACR) && slices.Contains(extra.Claims, "roles"),
+		logout:   logout,
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -594,7 +613,7 @@ func (p *Provider) AuthCodeURL(state, nonce, challenge string, freshLogin bool) 
 		opts = append(opts,
 			oauth2.SetAuthURLParam("prompt", "login"),
 			oauth2.SetAuthURLParam("max_age", "0"),
-			oauth2.SetAuthURLParam("acr_values", "urn:kysignon:acr:password"),
+			oauth2.SetAuthURLParam("acr_values", KySignOnPasswordACR),
 		)
 	}
 	return p.oauth.AuthCodeURL(state, opts...)
@@ -626,7 +645,7 @@ func (c *SSOTokenClaims) FreshProof(start, now time.Time) bool {
 			return false
 		}
 	}
-	return pwd && (c.ACR == "urn:kysignon:acr:password" || (c.ACR == "urn:kysignon:acr:mfa" && mfa && factor))
+	return pwd && (c.ACR == KySignOnPasswordACR || (c.ACR == "urn:kysignon:acr:mfa" && mfa && factor))
 }
 
 // Exchange redeems the authorization code and returns claims only from an ID

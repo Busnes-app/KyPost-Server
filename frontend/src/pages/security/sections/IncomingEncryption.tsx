@@ -1,12 +1,15 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useEffectEvent, useState, type FormEvent } from "react";
 import { getIncomingEncryption, setIncomingEncryption, type IncomingEncryptionPreference, type PGPIdentity } from "../../../api/pgp";
 import { useAuth } from "../../../auth";
 import { toErrorMessage } from "../../../api/client";
 
-export function IncomingEncryption({ identity, clientProtected }: { identity: PGPIdentity | null; clientProtected: boolean }) {
+export function IncomingEncryption({ identity, clientProtected, defaultOn = false }: { identity: PGPIdentity | null; clientProtected: boolean; defaultOn?: boolean }) {
+  const auth = useAuth();
   // The server asks for the password whenever the account has one, whichever
   // way this session signed in; an account without one confirms with KySignOn.
-  const needsPassword = useAuth().hasPassword !== false;
+  const needsPassword = auth.hasPassword !== false;
+  // The server refuses turning it off under a Required policy, too.
+  const required = auth.encryptionSetup?.incomingPolicy === "required";
   const [preference, setPreference] = useState<IncomingEncryptionPreference | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -14,10 +17,15 @@ export function IncomingEncryption({ identity, clientProtected }: { identity: PG
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
+  // Preselected once, from the policy at load; later policy reads do not reset a choice.
+  const loaded = useEffectEvent((value: IncomingEncryptionPreference) => {
+    setPreference(value);
+    setEnabled(value.enabled || defaultOn || required);
+  });
   useEffect(() => {
     let active = true;
     getIncomingEncryption().then((value) => {
-      if (active) { setPreference(value); setEnabled(value.enabled); }
+      if (active) loaded(value);
     }).catch((error: unknown) => {
       if (active) setMessage(toErrorMessage(error, "Could not load incoming encryption preference"));
     });
@@ -49,7 +57,7 @@ export function IncomingEncryption({ identity, clientProtected }: { identity: PG
       <p className="sec-muted">Keep a private-key recovery backup: losing the key makes these messages unreadable. Disabling this setting stops future replacements and does not decrypt existing mail. Pending replacements continue safely. Mail that cannot fit an encrypted copy is left plaintext and reported in Decisions after bounded retries. The configured polling mailbox must be INBOX. IMAP must support targeted deletion (UIDPLUS or IMAP4rev2).</p>
       {!clientProtected || !identity ? <p className="sec-muted">Set up a client-protected PGP key below before enabling.</p> : null}
       {preference?.pending ? <p role="status">An incoming replacement is pending. If it remains pending, check server health and restore the original PGP key or IMAP configuration.</p> : null}
-      <form onSubmit={(event) => { void save(event); }}>
+      {required && preference?.enabled ? <p className="sec-check" role="status">Encrypt incoming mail after classification: on. Required by your administrator.</p> : <form onSubmit={(event) => { void save(event); }}>
         <label className="sec-check">
           <input type="checkbox" checked={enabled} disabled={busy || !preference || (!enabled && (!identity || !clientProtected))} onChange={(event) => { setEnabled(event.target.checked); setAcknowledged(false); }} />
           Encrypt incoming mail after classification
@@ -62,8 +70,9 @@ export function IncomingEncryption({ identity, clientProtected }: { identity: PG
           <span>Account password</span>
           <input className="sec-input" type="password" autoComplete="current-password" value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} required />
         </label> : <p className="sec-muted">Confirm this change through KySignOn when prompted.</p>}
-        <button type="submit" className="btn" disabled={busy || !preference || (needsPassword && !password) || (enabled && !acknowledged)}>{busy ? "Saving…" : "Save incoming encryption"}</button>
-      </form>
+        <button type="submit" className="btn" disabled={busy || !preference || (needsPassword && !password) || (enabled && !acknowledged) || (required && !enabled)}>{busy ? "Saving…" : "Save incoming encryption"}</button>
+        {required ? <p className="sec-muted">Required by your administrator.</p> : null}
+      </form>}
       {message ? <p role="status">{message}</p> : null}
     </section>
   );

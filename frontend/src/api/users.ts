@@ -31,6 +31,10 @@ export type ManagedUser = {
   deactivatedAt?: string;
   totpEnabled?: boolean;
   sendQuota?: SendQuota;
+  /** An administrator's "Require key setup" is in force. */
+  keySetupRequired?: boolean;
+  /** Present once the user has a key; the key itself never reaches an administrator. */
+  pgpFingerprint?: string;
   /** Legacy plaintext-password hash: cannot sign in until an admin resets it. */
   needsPasswordReset?: boolean;
 };
@@ -83,6 +87,11 @@ export function userAction(confirm: AdminConfirm, id: string, action: "deactivat
 /** Overrides one account's sending quota; null returns it to the install-wide one. */
 export function setUserSendQuota(confirm: AdminConfirm, id: string, sendQuota: SendQuota | null): Promise<ManagedUser> {
   return confirmedAdmin(confirm, { sendQuota }, (b, h) => putJSON<ManagedUser>(`/api/users/${encodeURIComponent(id)}/send-quota`, b, h));
+}
+
+/** Sends one user through encryption setup at their next sign-in, or stops doing so. */
+export function setUserKeySetupRequired(confirm: AdminConfirm, id: string, required: boolean): Promise<ManagedUser> {
+  return confirmedAdmin(confirm, { required }, (b, h) => putJSON<ManagedUser>(`/api/users/${encodeURIComponent(id)}/key-setup`, b, h));
 }
 
 export type UserIMAPStatus = {
