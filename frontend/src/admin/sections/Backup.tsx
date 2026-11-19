@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { credentialFields, deriveCredential } from "../../api/auth";
 import { withSSOStepUp } from "../../api/stepup";
 import { useAuth } from "../../auth";
 import {
   deleteJSON,
   getJSON,
+  HttpError,
   postBlob,
   postJSON,
   putJSON,
@@ -59,6 +60,10 @@ export function Backup() {
   const [status, setStatus] = useState<Status | null>(null);
   // A status read that failed: what is configured is unknown, so no fact or action shows.
   const [loadError, setLoadError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  // A Refresh that loaded the page moves focus to its heading, not to <body>.
+  const heading = useRef<HTMLHeadingElement>(null);
+  const [focusHeading, setFocusHeading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -79,13 +84,34 @@ export function Backup() {
       return value;
     } catch (e) {
       setStatus(null);
-      setLoadError(toErrorMessage(e, "the server did not answer"));
+      const unreadable = e instanceof HttpError && (e.body as { code?: string } | null)?.code === "unavailable";
+      setLoadError(unreadable
+        ? "Could not load backup status. The server could not read it; try Refresh in a moment."
+        : "Could not load backup status: " + toErrorMessage(e, "the server did not answer"));
       throw e;
+    }
+  }
+  async function retryLoad() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refresh();
+      setFocusHeading(true);
+    } catch {
+      // The error view stays, with focus on Refresh.
+    } finally {
+      setRefreshing(false);
     }
   }
   useEffect(() => {
     void refresh().catch(() => {});
   }, []);
+  useEffect(() => {
+    if (focusHeading && status !== null) {
+      heading.current?.focus();
+      setFocusHeading(false);
+    }
+  }, [focusHeading, status]);
   async function act(
     action:
       | "run"
@@ -181,11 +207,10 @@ export function Backup() {
         {notice && <p className="notice" role="status">{notice}</p>}
         {loadError ? (
           <>
-            <p className="notice notice-error" role="alert">
-              Could not load backup status: {loadError}
-            </p>
-            <button className="button secondary" type="button" onClick={() => void refresh().catch(() => {})}>
-              Refresh
+            <p className="notice notice-error" role="alert">{loadError}</p>
+            {/* aria-disabled, not disabled: focus stays on the button while it loads. */}
+            <button className="button secondary" type="button" aria-disabled={refreshing} onClick={() => void retryLoad()}>
+              {refreshing ? "Refreshing…" : "Refresh"}
             </button>
           </>
         ) : (
@@ -196,7 +221,7 @@ export function Backup() {
   }
   return (
     <div className="config-section backup-section">
-      <h3>Sealed backups</h3>
+      <h3 ref={heading} tabIndex={-1}>Sealed backups</h3>
       <p>Encrypted server backups, recoverable only by your custodians.</p>
       <p>{status.excluded}</p>
       {error && (

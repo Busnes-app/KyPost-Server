@@ -250,3 +250,11 @@ it("confirms an account import with KySignOn and starts over when the grant expi
   fireEvent.click(screen.getByRole("button", { name: "List folders" }));
   await waitFor(() => expect(vi.mocked(withSSOStepUp)).toHaveBeenCalledTimes(2));
 });
+
+it("says an import stopped with the replica running it, not that it is still running", async () => {
+  statuses = [{ ...idle, state: "interrupted", imported: 3, error: "the server running this import stopped; import again to continue" }];
+  view({ ...user, ssoSession: true });
+  const alert = await screen.findByText(/Import interrupted: the server running this import stopped/);
+  expect(alert.getAttribute("role")).toBe("alert");
+  expect(screen.queryByRole("button", { name: "Cancel import" })).toBeNull();
+});

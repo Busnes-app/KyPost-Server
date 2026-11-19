@@ -70,6 +70,7 @@ export function App() {
   // The session lookup got no answer, a 5xx or a 429: not signed out, unavailable.
   const [unavailable, setUnavailable] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [stillUnavailable, setStillUnavailable] = useState(false);
   // The caller's mailboxes and the selected one ("" is the primary); see app/mailboxes.ts.
   const [mailboxes, setMailboxes] = useState<UserMailbox[]>([]);
   const [selectedMailbox, setSelectedMailbox] = useState("");
@@ -154,6 +155,11 @@ export function App() {
   }
 
   async function refreshAuth() {
+    await loadAuth();
+  }
+
+  // Reports whether KyPost is still unavailable.
+  async function loadAuth(): Promise<boolean> {
     try {
       const next = await getJSON<AuthState>("/api/auth/me");
       // Before the first render of a mail page, so its first request already follows the selection.
@@ -162,24 +168,27 @@ export function App() {
       setSelectedMailbox(restored);
       setUnavailable(false);
       setAuth(next);
+      return false;
     } catch (e) {
       // No answer, a 5xx or a 429 says nothing about the session: the server (or its
       // database) is down, and showing the sign-in form would read as "signed out".
       // Only a real refusal is signed out.
       if (!(e instanceof HttpError) || e.status >= 500 || e.status === 429) {
         setUnavailable(true);
-        return;
+        return true;
       }
       setUnavailable(false);
       setAuth({ authenticated: false });
+      return false;
     }
   }
 
   async function retryAuth() {
     if (retrying) return;
     setRetrying(true);
+    setStillUnavailable(false);
     try {
-      await refreshAuth();
+      setStillUnavailable(await loadAuth());
     } finally {
       setRetrying(false);
     }
@@ -571,13 +580,22 @@ export function App() {
     return (
       <main className="ky-auth">
         <div className="ky-auth-theme" />
-        <div className="ky-auth-body" role="alert">
-          <h1>KyPost is temporarily unavailable</h1>
-          <p className="ky-auth-help">You have not been signed out. Try again in a moment.</p>
-          {/* aria-disabled, not disabled: focus stays on the button while it retries. */}
-          <button type="button" className="ky-auth-submit" aria-disabled={retrying} onClick={() => void retryAuth()}>
-            {retrying ? "Trying…" : "Try again"}
-          </button>
+        <div className="ky-auth-body">
+          <div className="ky-auth-brand">
+            <AppMark size={56} />
+            <h1>KyPost</h1>
+          </div>
+          <div className="ky-auth-card">
+            <div role="alert">
+              <h2>KyPost is temporarily unavailable</h2>
+              <p>You have not been signed out. Try again in a moment.</p>
+            </div>
+            {/* aria-disabled, not disabled: focus stays on the button while it retries. */}
+            <button type="button" className="ky-auth-submit" aria-disabled={retrying} onClick={() => void retryAuth()}>
+              {retrying ? "Trying…" : "Try again"}
+            </button>
+            <p role="status">{stillUnavailable ? "Still unavailable." : ""}</p>
+          </div>
         </div>
       </main>
     );

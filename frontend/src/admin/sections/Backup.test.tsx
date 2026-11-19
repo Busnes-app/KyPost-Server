@@ -8,9 +8,17 @@ import {
 } from "@testing-library/react";
 import { Backup } from "./Backup";
 import { AuthContext } from "../../auth";
-import { getJSON, postJSON } from "../../api/client";
+import { getJSON, HttpError, postJSON } from "../../api/client";
 vi.mock("../../api/client", () => ({
-  HttpError: class HttpError extends Error {},
+  HttpError: class HttpError extends Error {
+    status: number;
+    body: unknown;
+    constructor(status = 0, body: unknown = null) {
+      super("request failed: " + status);
+      this.status = status;
+      this.body = body;
+    }
+  },
   getJSON: vi.fn(),
   postJSON: vi.fn(),
   putJSON: vi.fn(),
@@ -290,4 +298,26 @@ it("shows an unreadable status as could not load, never as unpaired or unpinned"
   vi.mocked(getJSON).mockResolvedValue({ keyId: "k", paired: false, localDir: "/b", localCopies: [], intervalSec: 0, recent: [], excluded: "x" });
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByText("Recovery key: k")).toBeTruthy();
+});
+
+it("Refresh says it is loading, keeps focus, and on success moves focus to the heading", async () => {
+  const Unreadable = HttpError as unknown as new (status: number, body: unknown) => Error;
+  vi.mocked(getJSON).mockRejectedValue(new Unreadable(503, { code: "unavailable", error: "backup status could not be read" }));
+  render(<Backup />);
+  expect(await screen.findByText("Could not load backup status. The server could not read it; try Refresh in a moment.")).toBeTruthy();
+  expect(screen.queryByText(/request failed/)).toBeNull();
+  let answer: (v: unknown) => void = () => {};
+  vi.mocked(getJSON).mockReset();
+  vi.mocked(getJSON).mockReturnValue(new Promise((resolve) => { answer = resolve; }) as never);
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+  refresh.focus();
+  fireEvent.click(refresh);
+  const busy = await screen.findByRole("button", { name: "Refreshing…" });
+  expect(busy.getAttribute("aria-disabled")).toBe("true");
+  expect(busy.hasAttribute("disabled")).toBe(false);
+  expect(document.activeElement).toBe(busy);
+  fireEvent.click(busy);
+  expect(vi.mocked(getJSON).mock.calls.length).toBe(1);
+  answer({ keyId: "k", paired: false, localDir: "/b", localCopies: [], intervalSec: 0, recent: [], excluded: "x" });
+  await waitFor(() => expect(document.activeElement?.textContent).toBe("Sealed backups"));
 });

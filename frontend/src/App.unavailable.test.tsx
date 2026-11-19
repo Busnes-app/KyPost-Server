@@ -87,6 +87,34 @@ describe("App when KyPost is unavailable", () => {
     expect(await screen.findByRole("button", { name: /sign in/i })).toBeTruthy();
   });
 
+  it("keeps focus on Try again while it retries, then says it is still unavailable", async () => {
+    let fail: (e: unknown) => void = () => {};
+    let held = false;
+    getJSON.mockImplementation((url: string) => {
+      if (url !== "/api/auth/me") return Promise.resolve({});
+      if (!held) return Promise.reject(new HttpError(503));
+      return new Promise((_, reject) => { fail = reject; });
+    });
+    renderApp();
+    await screen.findByText("KyPost is temporarily unavailable");
+    // The sign-in page's brand and card, and an alert that does not re-announce the button.
+    expect(screen.getByRole("heading", { name: "KyPost" }).closest(".ky-auth-brand")).toBeTruthy();
+    const alert = screen.getByRole("alert");
+    expect(alert.closest(".ky-auth-card")).toBeTruthy();
+    expect(alert.querySelector("button")).toBeNull();
+    held = true;
+    const retry = screen.getByRole("button", { name: "Try again" });
+    retry.focus();
+    await userEvent.click(retry);
+    const busy = await screen.findByRole("button", { name: "Trying…" });
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    expect(busy.hasAttribute("disabled")).toBe(false);
+    expect(document.activeElement).toBe(busy);
+    fail(new HttpError(503));
+    expect(await screen.findByText("Still unavailable.")).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Try again" }));
+  });
+
   it("treats a proxy's 401 as signed out", async () => {
     getJSON.mockImplementation(async (url: string) => {
       if (url === "/api/auth/me") throw new HttpError(401);
