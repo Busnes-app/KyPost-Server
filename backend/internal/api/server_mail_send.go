@@ -195,6 +195,17 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 	}, "", nil
 }
 
+// refuseOtherSession answers 409 when the web client names, in X-KyPost-User,
+// an account other than the session's: the tab started this send signed in as
+// someone else (another tab changed the cookie), so it must not go as this one.
+func refuseOtherSession(w http.ResponseWriter, r *http.Request, ac AuthContext) bool {
+	if want := r.Header.Get("X-KyPost-User"); want != "" && want != ac.UserID {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "this tab is now signed in as a different account; nothing was sent", "sessionChanged": true})
+		return true
+	}
+	return false
+}
+
 func sanitizeHeaderValue(value string) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r", " "), "\n", " "))
 }
@@ -594,6 +605,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if refuseOtherSession(w, r, ac) {
 		return
 	}
 	// The Send delay holds the message as a scheduled one going out at the end

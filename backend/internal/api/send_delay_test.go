@@ -228,13 +228,14 @@ func TestSendDelayHoldsClientPGP(t *testing.T) {
 		req.To, req.SentCopy, req.SentCopyEncrypted, req.MaterialGeneration, req.SendDelay = []string{"bob@example.com"}, delivery, true, &generation, true
 		return f.post("/api/mail/send-pgp", req)
 	}
-	for name, req := range map[string]clientEncryptedSendRequest{
-		"no draft":   {Deliveries: []clientEncryptedDelivery{{Ciphertext: delivery}}},
-		"stale date": {Deliveries: []clientEncryptedDelivery{{Ciphertext: scheduledPGPDelivery("alice@example.com", time.Now().Add(-time.Hour))}}, DraftCopy: delivery},
-	} {
-		if rec := send(req); rec.Code != http.StatusBadRequest {
-			t.Errorf("%s: %d %s", name, rec.Code, rec.Body.String())
-		}
+	if rec := send(clientEncryptedSendRequest{Deliveries: []clientEncryptedDelivery{{Ciphertext: delivery}}}); rec.Code != http.StatusBadRequest {
+		t.Errorf("held without a draft: %d %s", rec.Code, rec.Body.String())
+	}
+	// A browser clock five minutes off is no reason to refuse; an immediate
+	// send never checked its Date either.
+	skewed := scheduledPGPDelivery("alice@example.com", time.Now().Add(5*time.Minute))
+	if rec := send(clientEncryptedSendRequest{Deliveries: []clientEncryptedDelivery{{Ciphertext: skewed}}, DraftCopy: skewed}); rec.Code != http.StatusAccepted {
+		t.Errorf("held with a skewed Date: %d %s", rec.Code, rec.Body.String())
 	}
 	rec := send(clientEncryptedSendRequest{Deliveries: []clientEncryptedDelivery{{Ciphertext: delivery}}, DraftCopy: delivery})
 	id := scheduledID(t, rec)
@@ -247,5 +248,28 @@ func TestSendDelayHoldsClientPGP(t *testing.T) {
 	assertReturned(t, f, id, reasonCanceled)
 	if string(f.fake.savedDrafts[0].Raw) != strings.TrimSpace(delivery) {
 		t.Fatal("returned draft is not the browser's encrypted draftCopy")
+	}
+}
+
+// A tab that started the send as another account is refused before anything
+// is built, sent or held.
+func TestSendRefusesAnotherSessionsSend(t *testing.T) {
+	f := newScheduledFixture(t, "250 queued")
+	for _, path := range []string{"/api/mail/send", "/api/mail/send-pgp"} {
+		raw, _ := json.Marshal(map[string]any{"to": "bob@example.com", "body": "b"})
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(raw)))
+		authRequestAs(f.srv, req, f.userID)
+		req.Header.Set("X-KyPost-User", "someone-else")
+		rec := httptest.NewRecorder()
+		f.srv.routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"sessionChanged":true`) {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if code := f.post("/api/mail/send", map[string]any{"to": "bob@example.com", "body": "b"}).Code; code != http.StatusOK {
+		t.Fatalf("own send: %d", code)
+	}
+	if _, data := f.smtp.counts(); data != 1 {
+		t.Fatalf("%d delivered, want only the own send", data)
 	}
 }

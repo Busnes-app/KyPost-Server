@@ -73,6 +73,9 @@ export type HeldSend = {
   error?: string;
 };
 
+/** A send started under a sign-in that has since changed; nothing was sent. */
+class SendSessionChanged extends Error {}
+
 /** What the send routes answer; delayed, id and sendAt describe a Send delay hold. */
 type SendResult = { warning?: string; delayed?: boolean; id?: string; sendAt?: string };
 
@@ -119,6 +122,23 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   useEffect(() => {
     userIdNow.current = userId;
   }, [userId]);
+  // The sign-in a send started under; every send request is bound to it.
+  const sendOwner = useRef<{ session: object; userId?: string } | null>(null);
+  const sendOwnerStale = () => {
+    const owner = sendOwner.current;
+    return !owner || owner.session !== holdSession.current || owner.userId !== userIdNow.current;
+  };
+
+  /**
+   * Headers for a send request. Refuses here when this tab's sign-in changed
+   * since Send was pressed, and names the account so the server refuses when
+   * another tab changed the cookie underneath this one.
+   */
+  function sendHeaders(): Record<string, string> {
+    if (sendOwnerStale()) throw new SendSessionChanged("The signed-in account changed, so nothing was sent.");
+    const owner = sendOwner.current!;
+    return { ...mailboxHeaders(composeMailbox), ...(owner.userId ? { "X-KyPost-User": owner.userId } : {}) };
+  }
   const [composeEncrypt, setComposeEncrypt] = useState(false);
   const [composeSign, setComposeSign] = useState(false);
   const composeSignOverridden = useRef(false);
@@ -644,7 +664,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       mode: "plain",
       encrypt: false,
       sign: false
-    }, mailboxHeaders(composeMailbox));
+    }, sendHeaders());
   }
 
   /**
@@ -722,7 +742,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       mode: "html",
       materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration,
       ...(await scheduleFields(to, body, sendAt, true, hold))
-    }, mailboxHeaders(composeMailbox));
+    }, sendHeaders());
     return result;
   }
 
@@ -843,7 +863,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         mode: "html",
         materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration,
         ...(await scheduleFields(to, body, sendAt, true, held))
-      }, mailboxHeaders(composeMailbox));
+      }, sendHeaders());
     }
 
     if (groups.length === 0 && missing.length === 0) {
@@ -882,13 +902,17 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeError("");
     setComposeSuccess("");
     const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
+    // Bound before any await: a sign-in change while this send is pending
+    // stops it, and nothing that settles afterwards touches compose.
+    const owner = { session: holdSession.current, userId: userIdNow.current };
+    sendOwner.current = owner;
+    const stale = () => sendOwner.current !== owner || sendOwnerStale();
     try {
       const recipients = [to, serializeRecipientField(composeCc), serializeRecipientField(composeBcc)].flatMap(splitAddressList);
       if (!driveChecked && !(await drive.driveRecipientsOk(body, recipients, sendAt))) return;
       // The account's Send delay decides whether Send asks the server to hold
       // the message. Unreadable means not sent, never sent without the delay.
       const pressedAt = Date.now();
-      const session = holdSession.current;
       const delaySeconds = sendAt ? 0 : await getSendDelay();
       const hold = delaySeconds > 0;
       // A client-protected account's key is not on the server, so the server
@@ -929,12 +953,13 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
           allowPickupFallback,
           ...scheduled,
           ...pgpDraft
-        }, mailboxHeaders(composeMailbox));
+        }, sendHeaders());
       }
+      if (stale()) return;
       const warning = result.warning ?? "";
       // Held: remember what reopens it if canceled. The countdown ends no later
       // than the server's release, whichever clock is ahead.
-      const held: HeldSend | null = result.delayed && result.id && result.sendAt && session === holdSession.current ? {
+      const held: HeldSend | null = result.delayed && result.id && result.sendAt ? {
         id: result.id,
         userId,
         mailbox: composeMailbox,
@@ -962,6 +987,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         setComposeOpen(false);
       }
     } catch (e) {
+      if (e instanceof SendSessionChanged || stale()) return;
       // Checked BEFORE the keyless case: a changed key must never be described
       // as a missing one, or the user is pointed at the pickup fallback in
       // exactly the situation where mailing plaintext is worst.

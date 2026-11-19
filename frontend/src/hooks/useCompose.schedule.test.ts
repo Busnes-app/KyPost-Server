@@ -7,12 +7,13 @@ import { ComposeWindow } from "../components/ComposeWindow";
 // A scheduled send carries its time to the server and, on the browser PGP
 // path, into every Date header and the encrypted draft copy.
 
+const postHeaders = vi.fn((_headers: Record<string, string>) => undefined);
 const postJSON = vi.fn(async (_url: string, _body: unknown): Promise<Record<string, unknown>> => ({ scheduled: true }));
 vi.mock("../api/client", () => ({
   HttpError: class HttpError extends Error {
     constructor(message: string, public status: number, public body: unknown) { super(message); }
   },
-  postJSON: (url: string, body: unknown) => postJSON(url, body),
+  postJSON: (url: string, body: unknown, headers?: Record<string, string>) => { postHeaders(headers ?? {}); return postJSON(url, body); },
   toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback),
   selectedMailboxId: () => "",
   mailboxHeaders: () => ({})
@@ -245,6 +246,33 @@ describe("send delay", () => {
     for (let i = 0; i < window.sessionStorage.length; i++) {
       expect(window.sessionStorage.getItem(window.sessionStorage.key(i)!)).not.toContain("private plans");
     }
+  });
+
+  it("drops a send whose sign-in changed while it was pending, leaving compose alone", async () => {
+    session.clientProtected = false;
+    let settle: (seconds: number) => void = () => {};
+    getSendDelay.mockImplementationOnce(() => new Promise((resolve) => { settle = resolve; }));
+    const { result, rerender } = renderHook(({ userId }) => useCompose({ userId, mailboxes: [] }), { initialProps: { userId: "u1" } });
+    act(() => {
+      result.current.setComposeTo({ tokens: [], draft: "bob@example.com" });
+      result.current.setComposeSubject("private plans");
+    });
+    let sending: Promise<void> = Promise.resolve();
+    act(() => { sending = result.current.sendComposeEmail(); });
+    act(() => result.current.resetHeldSends());
+    rerender({ userId: "u2" });
+    await act(async () => { settle(0); await sending; });
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(result.current.composeError).toBe("");
+    expect(result.current.composeSuccess).toBe("");
+    expect(result.current.composeHolds).toEqual([]);
+  });
+
+  it("names the account that pressed Send on the send request", async () => {
+    session.clientProtected = false;
+    const result = composeTo(false);
+    await act(() => result.current.sendComposeEmail());
+    expect(postHeaders.mock.calls[0][0]).toMatchObject({ "X-KyPost-User": "u1" });
   });
 
   it("a secure-link send is not held, so it needs no unlock or encrypted draft", async () => {
