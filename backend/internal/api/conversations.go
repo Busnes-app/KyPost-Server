@@ -31,6 +31,11 @@ type threadMember struct {
 	own     string   // its Message-ID token
 	parents []string // In-Reply-To and References tokens
 	known   bool
+	// Derived once: grouping compares these, never the raw sender-chosen subject.
+	at    time.Time
+	dated bool
+	base  string // lower-cased baseSubject
+	reply bool   // the subject carries a reply prefix
 }
 
 func newThreadMember(folder string, ov imapadapter.Overview, lines []string, known bool) threadMember {
@@ -40,12 +45,11 @@ func newThreadMember(folder string, ov imapadapter.Overview, lines []string, kno
 		m.own = ids[0]
 	}
 	m.parents = messageIDToken.FindAllString(strings.Join(append(slices.Clone(h["In-Reply-To"]), h["References"]...), " "), -1)
+	t, err := time.Parse(time.RFC3339, ov.AtUTC)
+	m.at, m.dated = t, err == nil
+	m.base = strings.ToLower(baseSubject(ov.Subject))
+	m.reply = replyPrefix.MatchString(ov.Subject)
 	return m
-}
-
-func (m threadMember) at() (time.Time, bool) {
-	t, err := time.Parse(time.RFC3339, m.ov.AtUTC)
-	return t, err == nil
 }
 
 // groupThreads partitions members into conversations, each oldest first.
@@ -54,8 +58,9 @@ func (m threadMember) at() (time.Time, bool) {
 // joins the newest earlier message with the same base subject within
 // subjectFallbackWindow, but only when none of the reply's parents is here and
 // either the reply names no parent or that message has no Message-ID: equal
-// subjects alone ("Invoice") never merge.
-func groupThreads(members []threadMember) [][]threadMember {
+// subjects alone ("Invoice") never merge. Subjects are normalised once per
+// member and ctx is checked per member, since the input is sender-controlled.
+func groupThreads(ctx context.Context, members []threadMember) ([][]threadMember, error) {
 	parent := make([]int, len(members))
 	for i := range parent {
 		parent[i] = i
@@ -71,9 +76,14 @@ func groupThreads(members []threadMember) [][]threadMember {
 
 	firstWith, owned := map[string]int{}, map[string]bool{}
 	for _, m := range members {
-		owned[m.own] = true
+		if m.own != "" {
+			owned[m.own] = true
+		}
 	}
 	for i, m := range members {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for _, id := range append([]string{m.own}, m.parents...) {
 			if id == "" {
 				continue
@@ -86,26 +96,37 @@ func groupThreads(members []threadMember) [][]threadMember {
 		}
 	}
 
+	// Candidates per base subject, oldest first, so a reply walks back from its
+	// own time and stops at the window instead of comparing every pair.
+	bySubject := map[string][]int{}
+	for i, m := range members {
+		if m.dated && m.known && m.base != "" {
+			bySubject[m.base] = append(bySubject[m.base], i)
+		}
+	}
+	for _, ids := range bySubject {
+		slices.SortStableFunc(ids, func(a, b int) int { return members[a].at.Compare(members[b].at) })
+	}
 	for i, reply := range members {
-		at, ok := reply.at()
-		base := baseSubject(reply.ov.Subject)
-		if !ok || !reply.known || base == "" || !replyPrefix.MatchString(reply.ov.Subject) ||
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !reply.reply || !reply.dated || !reply.known || reply.base == "" ||
 			slices.ContainsFunc(reply.parents, func(id string) bool { return owned[id] }) {
 			continue
 		}
-		best, bestAt := -1, time.Time{}
-		for j, other := range members {
-			otherAt, ok := other.at()
-			if j == i || !ok || !other.known || otherAt.After(at) || at.Sub(otherAt) > subjectFallbackWindow ||
-				!strings.EqualFold(baseSubject(other.ov.Subject), base) || (len(reply.parents) > 0 && other.own != "") {
-				continue
+		ids := bySubject[reply.base]
+		end, _ := slices.BinarySearchFunc(ids, reply.at, func(j int, t time.Time) int {
+			if members[j].at.After(t) {
+				return 1
 			}
-			if best < 0 || otherAt.After(bestAt) {
-				best, bestAt = j, otherAt
+			return -1
+		})
+		for k := end - 1; k >= 0 && reply.at.Sub(members[ids[k]].at) <= subjectFallbackWindow; k-- {
+			if j := ids[k]; j != i && (len(reply.parents) == 0 || members[j].own == "") {
+				union(i, j)
+				break
 			}
-		}
-		if best >= 0 {
-			union(i, best)
 		}
 	}
 
@@ -122,13 +143,11 @@ func groupThreads(members []threadMember) [][]threadMember {
 	for _, r := range roots {
 		group := byRoot[r]
 		slices.SortStableFunc(group, func(a, b threadMember) int {
-			at, _ := a.at()
-			bt, _ := b.at()
-			return cmp.Or(at.Compare(bt), cmp.Compare(a.ov.UID, b.ov.UID))
+			return cmp.Or(a.at.Compare(b.at), cmp.Compare(a.ov.UID, b.ov.UID))
 		})
 		out = append(out, group)
 	}
-	return out
+	return out, nil
 }
 
 // listThreadMembers lists the newest limit messages of folder with their
@@ -213,7 +232,12 @@ func (s *Server) handleInboxConversations(w http.ResponseWriter, r *http.Request
 			members = append(members, more...)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"conversations": conversationsOut(client, mailbox, groupThreads(members))})
+	groups, err := groupThreads(ctx, members)
+	if err != nil {
+		http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversations": conversationsOut(client, mailbox, groups)})
 }
 
 func conversationsOut(client imapadapter.Client, mailbox string, groups [][]threadMember) []conversationOut {

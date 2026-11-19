@@ -869,13 +869,15 @@ func sentFoldersBesides(ctx context.Context, client imapadapter.Client, folder s
 	return out
 }
 
+// baseSubject strips leading reply prefixes by slicing, so a sender's long
+// prefix chain costs time linear in the subject, not a copy per prefix.
 func baseSubject(subject string) string {
 	for {
-		trimmed := replyPrefix.ReplaceAllString(subject, "")
-		if trimmed == subject {
+		loc := replyPrefix.FindStringIndex(subject)
+		if loc == nil {
 			return strings.TrimSpace(subject)
 		}
-		subject = trimmed
+		subject = subject[loc[1]:]
 	}
 }
 

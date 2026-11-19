@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +27,16 @@ func member(uid int, subject string, d int, lines ...string) threadMember {
 	return newThreadMember("INBOX", ov, lines, true)
 }
 
+// groupFor runs the grouping with a live context.
+func groupFor(t *testing.T, members []threadMember) [][]threadMember {
+	t.Helper()
+	groups, err := groupThreads(context.Background(), members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return groups
+}
+
 func groupedUIDs(groups [][]threadMember) [][]int {
 	out := [][]int{}
 	for _, g := range groups {
@@ -42,7 +53,7 @@ func groupedUIDs(groups [][]threadMember) [][]int {
 func TestGroupThreads(t *testing.T) {
 	unknown := member(15, "Re: Report", 3)
 	unknown.known = false
-	got := groupedUIDs(groupThreads([]threadMember{
+	got := groupedUIDs(groupFor(t, []threadMember{
 		// A header chain, listed newest first, comes back oldest first.
 		member(3, "Re: Re: Plan", 2, "References: <a@x> <b@x>", "Message-ID: <c@x>"),
 		member(1, "Plan", 0, "Message-ID: <a@x>"),
@@ -76,7 +87,7 @@ func TestGroupThreads(t *testing.T) {
 
 // One side of the chain without a Message-ID still joins a threaded reply.
 func TestGroupThreadsOriginalWithoutMessageID(t *testing.T) {
-	got := groupedUIDs(groupThreads([]threadMember{
+	got := groupedUIDs(groupFor(t, []threadMember{
 		member(1, "Quote", 0),
 		member(2, "Re: Quote", 1, "In-Reply-To: <missing@x>"),
 	}))
@@ -206,5 +217,67 @@ func TestMailSettingsConversationsSwitch(t *testing.T) {
 		if code, _ := call(http.MethodPut, bad); code != 400 {
 			t.Fatalf("%s answered %d, want 400", bad, code)
 		}
+	}
+}
+
+// longSubjectWindow is 500 replies whose subjects carry `prefixes` reply prefixes
+// each, all with the same base subject and no threading headers: the worst
+// case for the subject fallback.
+func longSubjectWindow(prefixes int) []imapadapter.Overview {
+	subject := strings.Repeat("Re: AW: ", prefixes/2) + "Quarterly numbers"
+	out := make([]imapadapter.Overview, 500)
+	for i := range out {
+		out[i] = imapadapter.Overview{UID: i + 1, MessageID: strconv.Itoa(i + 1), Subject: subject, AtUTC: threadDay0.Add(time.Duration(i) * time.Minute).Format(time.RFC3339)}
+	}
+	return out
+}
+
+func groupWindow(overviews []imapadapter.Overview) error {
+	members := make([]threadMember, len(overviews))
+	for i, ov := range overviews {
+		members[i] = newThreadMember("INBOX", ov, nil, true)
+	}
+	_, err := groupThreads(context.Background(), members)
+	return err
+}
+
+func BenchmarkGroupThreadsLongSubjects(b *testing.B) {
+	window := longSubjectWindow(2000)
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := groupWindow(window); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// Normalising a sender's subject costs memory linear in its length: doubling
+// every subject's prefix chain must not quadruple the bytes allocated.
+func TestGroupThreadsAllocationsLinearInSubjectBytes(t *testing.T) {
+	allocated := func(prefixes int) uint64 {
+		window := longSubjectWindow(prefixes)
+		if err := groupWindow(window); err != nil { // warm caches outside the measurement
+			t.Fatal(err)
+		}
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		if err := groupWindow(window); err != nil {
+			t.Fatal(err)
+		}
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	n, twice := allocated(1000), allocated(2000)
+	if twice > 3*n {
+		t.Fatalf("allocated %d bytes at N and %d at 2N: superlinear in subject length", n, twice)
+	}
+}
+
+func TestGroupThreadsStopsWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := groupThreads(ctx, []threadMember{member(1, "Re: Plan", 1)}); err == nil {
+		t.Fatal("grouping ran on after its request was cancelled")
 	}
 }
