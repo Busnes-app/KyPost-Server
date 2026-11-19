@@ -1,6 +1,6 @@
 import { type DragEvent, type MouseEvent as ReactMouseEvent, type ReactElement, lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { deleteJSON, getJSON, onMailboxGone, postJSON, putJSON, selectedMailboxId, selectMailbox, toErrorMessage } from "./api/client";
+import { deleteJSON, getJSON, HttpError, onMailboxGone, postJSON, putJSON, selectedMailboxId, selectMailbox, toErrorMessage } from "./api/client";
 import { AuthContext, type AuthState } from "./auth";
 import { AppRail, loadSuiteApps, type SuiteApp } from "./components/AppRail";
 import { calendarOrigin } from "./lib/meetingLink";
@@ -67,6 +67,9 @@ export function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [auth, setAuth] = useState<AuthState | null>(null);
+  // The session lookup got no answer, a 5xx or a 429: not signed out, unavailable.
+  const [unavailable, setUnavailable] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   // The caller's mailboxes and the selected one ("" is the primary); see app/mailboxes.ts.
   const [mailboxes, setMailboxes] = useState<UserMailbox[]>([]);
   const [selectedMailbox, setSelectedMailbox] = useState("");
@@ -157,9 +160,28 @@ export function App() {
       const restored = next.authenticated && next.userId ? loadMailboxSelection(next.userId) : "";
       selectMailbox(restored);
       setSelectedMailbox(restored);
+      setUnavailable(false);
       setAuth(next);
-    } catch {
+    } catch (e) {
+      // No answer, a 5xx or a 429 says nothing about the session: the server (or its
+      // database) is down, and showing the sign-in form would read as "signed out".
+      // Only a real refusal is signed out.
+      if (!(e instanceof HttpError) || e.status >= 500 || e.status === 429) {
+        setUnavailable(true);
+        return;
+      }
+      setUnavailable(false);
       setAuth({ authenticated: false });
+    }
+  }
+
+  async function retryAuth() {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await refreshAuth();
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -544,6 +566,22 @@ export function App() {
 
 
 
+
+  if (unavailable) {
+    return (
+      <main className="ky-auth">
+        <div className="ky-auth-theme" />
+        <div className="ky-auth-body" role="alert">
+          <h1>KyPost is temporarily unavailable</h1>
+          <p className="ky-auth-help">You have not been signed out. Try again in a moment.</p>
+          {/* aria-disabled, not disabled: focus stays on the button while it retries. */}
+          <button type="button" className="ky-auth-submit" aria-disabled={retrying} onClick={() => void retryAuth()}>
+            {retrying ? "Trying…" : "Try again"}
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   if (auth === null) {
     // Same field as the sign-in page, so resolving the session does not flash a

@@ -277,3 +277,17 @@ it("says what a schedule waits for instead of a next run it cannot make", async 
   render(<Backup />);
   expect(await screen.findByText("Next run: 2026-10-31T12:00:00Z")).toBeTruthy();
 });
+
+it("shows an unreadable status as could not load, never as unpaired or unpinned", async () => {
+  vi.mocked(getJSON).mockRejectedValue(new Error("request failed: 503 - backup status could not be read"));
+  render(<Backup />);
+  expect(await screen.findByText(/Could not load backup status/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Pin key" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Back up now" })).toBeNull();
+  expect(screen.queryByText(/No key pinned/)).toBeNull();
+  expect(screen.queryByText(/Not configured/)).toBeNull();
+  expect(screen.queryByText(/Pair with KyRecovery or paste/)).toBeNull();
+  vi.mocked(getJSON).mockResolvedValue({ keyId: "k", paired: false, localDir: "/b", localCopies: [], intervalSec: 0, recent: [], excluded: "x" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(await screen.findByText("Recovery key: k")).toBeTruthy();
+});

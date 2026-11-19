@@ -57,6 +57,8 @@ export function Backup() {
   // password it does not have; see api/stepup.ts.
   const ssoSession = useAuth().ssoSession === true;
   const [status, setStatus] = useState<Status | null>(null);
+  // A status read that failed: what is configured is unknown, so no fact or action shows.
+  const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,15 +71,20 @@ export function Backup() {
   const [minutes, setMinutes] = useState(1440);
   const unlocked = ssoSession || password.length > 0;
   async function refresh() {
-    const value = await getJSON<Status>(base + "status");
-    setStatus(value);
-    setMinutes(value.intervalSec / 60);
-    return value;
+    try {
+      const value = await getJSON<Status>(base + "status");
+      setStatus(value);
+      setLoadError("");
+      setMinutes(value.intervalSec / 60);
+      return value;
+    } catch (e) {
+      setStatus(null);
+      setLoadError(toErrorMessage(e, "the server did not answer"));
+      throw e;
+    }
   }
   useEffect(() => {
-    void refresh().catch((e) =>
-      setError(toErrorMessage(e, "Unable to load backup status")),
-    );
+    void refresh().catch(() => {});
   }, []);
   async function act(
     action:
@@ -152,8 +159,8 @@ export function Backup() {
         );
         setCode("");
       }
-      const updated = await refresh();
-      if (action === "pair-remote" || action === "pin-key") {
+      const updated = await refresh().catch(() => null);
+      if (updated && (action === "pair-remote" || action === "pin-key")) {
         setNotice(
           (previous) =>
             `${previous} Fingerprint: ${updated.keyId || "Unavailable — reload to verify the key"}`,
@@ -166,11 +173,32 @@ export function Backup() {
       setBusy(false);
     }
   }
+  if (status === null) {
+    return (
+      <div className="config-section backup-section">
+        <h3>Sealed backups</h3>
+        <p>Encrypted server backups, recoverable only by your custodians.</p>
+        {notice && <p className="notice" role="status">{notice}</p>}
+        {loadError ? (
+          <>
+            <p className="notice notice-error" role="alert">
+              Could not load backup status: {loadError}
+            </p>
+            <button className="button secondary" type="button" onClick={() => void refresh().catch(() => {})}>
+              Refresh
+            </button>
+          </>
+        ) : (
+          <p role="status">Loading backup status…</p>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="config-section backup-section">
       <h3>Sealed backups</h3>
       <p>Encrypted server backups, recoverable only by your custodians.</p>
-      {status && <p>{status.excluded}</p>}
+      <p>{status.excluded}</p>
       {error && (
         <p className="notice notice-error" role="alert">
           {error}

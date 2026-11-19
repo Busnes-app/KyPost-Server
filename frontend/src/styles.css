@@ -5768,3 +5768,12 @@ thead:has(.inbox-bulk-head) th { background: var(--accent-soft); }
   .due-sheet-foot > button { flex: 1; min-height: 44px; }
   .due-custom input { width: 100%; min-height: 44px; }
 }
+
+/* "Try again" while it retries: aria-disabled keeps focus on the button, so it gets the
+   disabled look here. */
+.ky-auth-submit[aria-disabled="true"] {
+  border-color: var(--line, var(--ky-line));
+  background: var(--panel-hover, var(--ky-panel-hover));
+  color: var(--muted, var(--ky-muted));
+  cursor: progress;
+}
