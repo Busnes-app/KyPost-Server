@@ -171,7 +171,7 @@ func runAcceptReplicaConfig(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("replica configuration accepted", "action", "admin.replica_config_accepted", "fields", strings.Join(changed, ","))
+	slog.Info("replica configuration accepted", "action", "admin.replica_config_accepted", "detail", strings.Join(changed, ","))
 	if len(changed) == 0 {
 		_, err = fmt.Fprintln(stdout, "Recorded this container's shared settings; none differed from the record.")
 		return err

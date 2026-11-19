@@ -61,7 +61,7 @@ ON CONFLICT (instance_id) DO UPDATE SET boot_id = excluded.boot_id, volume_id = 
 				continue
 			}
 			discard(conn)
-			slog.Error("replica instance lock lost; taking it again", "instance", in.ID, "error", err.Error())
+			slog.Error("replica instance lock lost; taking it again", "target", in.ID, "error", err.Error())
 			for held.Err() == nil {
 				c, won, err := s.tryLock(held, spaceInstance, in.ID)
 				if err == nil && won {

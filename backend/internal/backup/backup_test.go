@@ -16,6 +16,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoverykey"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func validService(t *testing.T) *Service {
@@ -112,8 +113,19 @@ func TestBackupLocalRestoreAndDrill(t *testing.T) {
 	if err := os.Remove(recoveryclient.RecoveryKeyPath(s.dirs.State)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Run(context.Background()); !errors.Is(err, recoveryclient.ErrKeyPinMissing) {
-		t.Fatalf("missing pin: %v", err)
+	_, err = s.Run(context.Background())
+	if !dbbackend.Postgres() {
+		if !errors.Is(err, recoveryclient.ErrKeyPinMissing) {
+			t.Fatalf("missing pin: %v", err)
+		}
+		return
+	}
+	// PostgreSQL rewrites the file from the sealed record (replica.go) before the run.
+	if err != nil {
+		t.Fatalf("run with the file restored from the record: %v", err)
+	}
+	if got, err := recoveryclient.LoadRecoveryKey(s.dirs.State, s.settings); err != nil || got.Public.ID() != key.Public().ID() {
+		t.Fatalf("restored key: %v %v", got.Public.ID(), err)
 	}
 }
 func TestBackupRefusesUnsafeCollection(t *testing.T) {
