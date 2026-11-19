@@ -259,14 +259,30 @@ jobs:
           test "$(grep -cE "$LISTED" "$RUNNER_TEMP/all")" = 4
           xargs go test -race -count=1 -timeout=20m < "$RUNNER_TEMP/mine"
 
-  # The store, backup, restore and migration suites again with every store on a Postgres
-  # 17 service (UTF8, C locale, as docs/RUNNING.md requires). Each test opens a schema of
-  # its own (dbbackend's test hook); tests about SQLite files skip, visibly in -v output.
+  # The required name; green only when every Postgres leg passed.
   backend-postgres:
     name: ci-backend-postgres
+    needs: [backend-postgres-test]
+    if: (always()) && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}" = true
+
+  # The store, backup, restore and migration suites, and internal/api (held and
+  # scheduled sends live in its global state store), again with every store on a
+  # Postgres 17 service (UTF8, C locale, as docs/RUNNING.md requires). Each test opens
+  # a schema of its own (dbbackend's test hook); tests about SQLite files skip, visibly
+  # in -v output. internal/api is sharded by test name as in backend-api-test.
+  backend-postgres-test:
+    name: ci-backend-postgres (${{ matrix.leg }})
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [stores, api-1, api-2]
     services:
       postgres:
         image: postgres:17@sha256:3b0cda93be7c8dba2ed484d19393d93845dc3dafb88973e248ba8e6d99d784e1
@@ -306,7 +322,18 @@ jobs:
       - name: go test -race on Postgres
         env:
           KYPOST_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
-        run: go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/...
+          LEG: ${{ matrix.leg }}
+        run: |
+          set -euo pipefail
+          if [ "$LEG" = stores ]; then
+            go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/...
+            exit
+          fi
+          go test -race -list . ./internal/api/ | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > "$RUNNER_TEMP/all"
+          awk -v s="${LEG#api-}" -v n=2 'NR % n == s % n' "$RUNNER_TEMP/all" > "$RUNNER_TEMP/mine"
+          echo "$(wc -l < "$RUNNER_TEMP/mine") of $(wc -l < "$RUNNER_TEMP/all") top-level tests"
+          test -s "$RUNNER_TEMP/mine"
+          go test -race -count=1 -timeout=30m -run "^($(paste -sd'|' "$RUNNER_TEMP/mine"))\$" ./internal/api/
 
   frontend:
     name: ci-frontend
