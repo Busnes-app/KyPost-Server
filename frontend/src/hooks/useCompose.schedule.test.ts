@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { HttpError } from "../api/client";
 import { ComposeWindow } from "../components/ComposeWindow";
@@ -62,8 +62,18 @@ vi.mock("../lib/pgpClient", () => ({
 
 import { useCompose } from "./useCompose";
 
+/** A promise and its resolver, both ready before anything awaits it. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
 afterEach(() => {
   session.custody = undefined;
+  // Leftover one-shot answers must not leak into the next test.
+  getSendDelay.mockReset().mockResolvedValue(0);
+  cancelScheduled.mockReset().mockResolvedValue({ ok: true });
   cleanup();
   vi.clearAllMocks();
   vi.useRealTimers();
@@ -219,16 +229,14 @@ describe("send delay", () => {
     await act(() => result.current.cancelHeldSend("b"));
     expect(result.current.composeHolds.map((h) => h.id)).toEqual(["a"]);
     expect(result.current.composeSubject).toBe("second");
-    getSendDelay.mockReset();
-    getSendDelay.mockResolvedValue(0);
   });
 
   it("never reopens a canceled message after sign-out, even for the next user", async () => {
     session.clientProtected = false;
     getSendDelay.mockResolvedValueOnce(30);
     postJSON.mockResolvedValueOnce(heldAnswer(30));
-    let settle: (value: { ok: boolean }) => void = () => {};
-    cancelScheduled.mockImplementationOnce(() => new Promise((resolve) => { settle = resolve; }));
+    const cancel = deferred<{ ok: boolean }>();
+    cancelScheduled.mockImplementationOnce(() => cancel.promise);
     const { result, rerender } = renderHook(({ userId }) => useCompose({ userId, mailboxes: [] }), { initialProps: { userId: "u1" } });
     act(() => {
       result.current.setComposeTo({ tokens: [], draft: "bob@example.com" });
@@ -237,9 +245,10 @@ describe("send delay", () => {
     await act(() => result.current.sendComposeEmail());
     let canceling: Promise<void> = Promise.resolve();
     act(() => { canceling = result.current.cancelHeldSend("held-1"); });
+    await waitFor(() => expect(cancelScheduled).toHaveBeenCalledTimes(1));
     act(() => result.current.resetHeldSends());
     rerender({ userId: "u2" });
-    await act(async () => { settle({ ok: true }); await canceling; });
+    await act(async () => { cancel.resolve({ ok: true }); await canceling; });
     expect(result.current.composeOpen).toBe(false);
     expect(result.current.composeSubject).toBe("");
     expect(result.current.composeHolds).toEqual([]);
@@ -250,8 +259,8 @@ describe("send delay", () => {
 
   it("drops a send whose sign-in changed while it was pending, leaving compose alone", async () => {
     session.clientProtected = false;
-    let settle: (seconds: number) => void = () => {};
-    getSendDelay.mockImplementationOnce(() => new Promise((resolve) => { settle = resolve; }));
+    const delay = deferred<number>();
+    getSendDelay.mockImplementationOnce(() => delay.promise);
     const { result, rerender } = renderHook(({ userId }) => useCompose({ userId, mailboxes: [] }), { initialProps: { userId: "u1" } });
     act(() => {
       result.current.setComposeTo({ tokens: [], draft: "bob@example.com" });
@@ -259,9 +268,11 @@ describe("send delay", () => {
     });
     let sending: Promise<void> = Promise.resolve();
     act(() => { sending = result.current.sendComposeEmail(); });
+    // The delay is read after earlier awaits; switch accounts only while it is pending.
+    await waitFor(() => expect(getSendDelay).toHaveBeenCalledTimes(1));
     act(() => result.current.resetHeldSends());
     rerender({ userId: "u2" });
-    await act(async () => { settle(0); await sending; });
+    await act(async () => { delay.resolve(0); await sending; });
     expect(postJSON).not.toHaveBeenCalled();
     expect(result.current.composeError).toBe("");
     expect(result.current.composeSuccess).toBe("");
