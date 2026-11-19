@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -16,8 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend/pgtest"
+	"github.com/Busnes-app/kypost-server/backend/internal/replica"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -445,4 +448,38 @@ func TestCleanStopFoldsSQLiteLogs(t *testing.T) {
 		t.Fatalf("the folded write is lost: %q %v", v, err)
 	}
 	_ = st.Close()
+}
+
+// AC10/AC28: a proof-of-work key that cannot be kept refuses a PostgreSQL replica start; a
+// SQLite start registers nothing and writes no replica marker.
+func TestReplicaStartChecksOnEachDriver(t *testing.T) {
+	t.Setenv("CAPTCHA_PROVIDER", "pow")
+	t.Setenv("POW_SECRET", "")
+	secret := filepath.Join(t.TempDir(), "readonly")
+	if err := os.MkdirAll(secret, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SECRET_DIR", secret)
+	if err := api.CheckSharedPoWKey(); err == nil || !strings.Contains(err.Error(), "cannot be persisted") {
+		t.Fatalf("an unkeepable PoW key: %v", err)
+	}
+	t.Setenv("POW_SECRET", strings.Repeat("s", 40))
+	if err := api.CheckSharedPoWKey(); err != nil {
+		t.Fatalf("POW_SECRET set: %v", err)
+	}
+
+	t.Run("SQLite records nothing", func(t *testing.T) {
+		dbbackend.SetURLForTest(t, "")
+		d := newGracefulShutdownTestDeps(t)
+		id, release, err := startReplica(context.Background(), d, "api")
+		if err != nil || id != "" {
+			t.Fatalf("SQLite start: %q %v", id, err)
+		}
+		release()
+		for _, dir := range []string{d.configDir, d.stateDir, os.Getenv("SECRET_DIR")} {
+			if _, err := os.Stat(filepath.Join(dir, replica.VolumeIDFile)); err == nil {
+				t.Fatalf("SQLite wrote %s in %s", replica.VolumeIDFile, dir)
+			}
+		}
+	})
 }
