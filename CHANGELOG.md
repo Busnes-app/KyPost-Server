@@ -54,6 +54,20 @@ non-prerelease version.
   memory before raising concurrency; this change makes no staff-capacity claim.
 
 
+### Upgrading: encryption setup, native apps and the Cloudflare Worker
+
+Encryption setup, plus and masked addresses, conversation view and send delay
+already shipped in the `v0.6.1.2` dependency release; its release notes carry
+this same warning.
+
+- **Native apps lose mail until each user finishes setup on the web.** Under the
+  default Required policy, paired phones and desktops get
+  `403 encryption_setup_required`. Apps released before they handle it show a
+  generic error. To avoid this, set Admin → Server → Security → Encryption key to
+  Optional before users sign in again.
+- **Cloudflare receiving:** redeploy `receiving-worker/continuous.mjs` before
+  anyone turns plus addressing off; until then tagged mail is refused as before.
+
 ### Upgrading: behind a reverse proxy or Cloudflare Tunnel, set a pin source
 
 **Deployments where KyPost does not terminate TLS itself lose the pairing-link
