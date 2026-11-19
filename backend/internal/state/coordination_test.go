@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -444,5 +445,12 @@ func TestResetReplicaStateKeepsOnlyLiveRefusals(t *testing.T) {
 	}
 	if v, _ := s.Setting("kyrecovery_key_id"); v != "kept" {
 		t.Error("the restore cleared the recovery pin")
+	}
+}
+
+// The refusal names a command that works: the Compose service is kypost-server.
+func TestInstanceRunningNamesTheService(t *testing.T) {
+	if !strings.Contains(ErrInstanceRunning.Error(), "docker compose stop kypost-server") {
+		t.Fatalf("ErrInstanceRunning = %q", ErrInstanceRunning)
 	}
 }

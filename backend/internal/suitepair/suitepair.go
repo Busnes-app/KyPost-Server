@@ -299,7 +299,9 @@ type Replays interface {
 
 // ShareReplay makes the replay guard replica-wide: an event ID accepted on one replica is
 // refused on every other within twice the signature window (the window plus clock skew). A
-// store failure refuses the request (syncauth.ErrReplayGuardFull). Call before use.
+// store failure refuses the request (syncauth.ErrReplayGuardFull). Call before use. The
+// attempt token is per process, not per request: only the request that recorded an ID ever
+// undoes it, so it needs to tell this process's records from another replica's, no more.
 func (c *Client) ShareReplay(r Replays) {
 	c.replay.shared, c.replay.prefix, c.replay.attempt = r, "suite:"+c.peer.ID+":", rand.Text()
 }

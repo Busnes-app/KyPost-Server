@@ -19,7 +19,11 @@ elif [[ "$1 ${2:-} ${3:-}" == "compose ps -aq" ]]; then
 elif [[ "$1" == "inspect" && "$*" == *"config_files"* ]]; then
   # The overlays the running container was created with.
   # ...including a previous run's image override, which that run deleted.
-  echo "/srv/kypost/docker-compose.yml,/srv/kypost/docker-compose.receiving.yml,/srv/kypost/.kypost-update.AbC123.yml"
+  if [[ "${FAKE_DOCKER_MODE:-}" == "replicas" ]]; then
+    echo "/srv/kypost/docker-compose.yml,/srv/kypost/docker-compose.replicas.yml"
+  else
+    echo "/srv/kypost/docker-compose.yml,/srv/kypost/docker-compose.receiving.yml,/srv/kypost/.kypost-update.AbC123.yml"
+  fi
 elif [[ "$1" == "compose" && " $* " == *" config --images kypost-server "* ]]; then
   echo "ghcr.io/busnes-app/kypost-server:stable"
 elif [[ "$1" == "compose" && " $* " == *" images -q kypost-server "* ]]; then
@@ -78,6 +82,11 @@ run_case() {
       grep -qx 'tag ghcr.io/busnes-app/kypost-server@sha256:b\{64\} ghcr.io/busnes-app/kypost-server:stable' "$tmp_dir/$mode-count.calls" \
         || { echo "rollback did not move the tag back" >&2; exit 1; }
       ;;
+    replicas)
+      [[ "$status" == 65 ]] || { echo "replicas updater exit = $status" >&2; exit 1; }
+      grep -q 'docker compose stop kypost-server' <<<"$output"
+      ! grep -q 'compose.* up ' "$tmp_dir/$mode-count.calls" || { echo "the updater recreated replicas in place" >&2; exit 1; }
+      ;;
     update)
       [[ "$status" == 0 ]] || { echo "update exit = $status" >&2; exit 1; }
       grep -q 'action=update .*result=healthy' <<<"$output"
@@ -94,4 +103,5 @@ run_case() {
 run_case noop
 run_case rollback
 run_case update
+run_case replicas
 echo "update-host self-check passed"

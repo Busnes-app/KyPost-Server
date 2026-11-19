@@ -230,9 +230,10 @@ a new, empty database.
 ## Replicas on one host
 
 On PostgreSQL, several identical KyPost containers can run on **one Docker host**, so one
-can be restarted, upgraded or killed without an outage. They share the three data volumes
+can be restarted or killed without an outage; an upgrade stops every replica, a short full
+outage (below). They share the three data volumes
 (`kypost_config`, `kypost_private`, `kypost_state`) and one PostgreSQL behind HAProxy. This
-is restart and upgrade continuity, **not** PostgreSQL high availability and **not** host
+is restart continuity, **not** PostgreSQL high availability and **not** host
 failover: every replica depends on the one database and the one host. No capacity or
 throughput is claimed.
 
@@ -269,7 +270,7 @@ else is per container.
 | Maddy SMTP receiving, `receiver.sock` | Refused: single-container profile only |
 | Cloudflare pickup, external IMAP polling, receiving import, poller, push, WKD recheck, retention, backup schedule | Run by the one replica holding the `daemon` role; the others stand by |
 | Native outbox recovery, DKIM rotation | The `mail-runtime` role; the outbox claim token fences request-path sends |
-| Scheduled sends, Send delay, provisioning, pickup and contact sweeps, agent-token expiry, version check, shared-row cleanup | The `api-sweepers` role; a `sending` row records its replica, and only a dead replica's rows become uncertain |
+| Scheduled sends, Send delay, provisioning, pickup and contact sweeps, agent-token expiry, version check, shared-row cleanup | The `api-sweepers` role; a `sending` row records its replica, and only a dead replica's rows become uncertain; a mail a dead replica was returning to Drafts is returned again, so it can appear there twice, never lost |
 | Sessions (token hash only), CSRF, revocations, SSO epoch | PostgreSQL: a sign-out or revocation on one replica holds on every other at the next request |
 | MFA challenges, step-ups, SSO states, pairing nonces, pending device approvals, export grants | PostgreSQL, each spent once across replicas |
 | Login, DAV, MCP, MFA, device, password-change, IMAP-login and review-pairing lockouts, the login budget, office budgets | PostgreSQL windows on database time: the limits are the same in total, never N times |
@@ -294,7 +295,7 @@ else is per container.
    database, check, then migrate:
 
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.replicas.yml up -d postgres
+   docker compose -f docker-compose.yml -f docker-compose.replicas.yml up -d --wait postgres
    docker compose -f docker-compose.yml -f docker-compose.replicas.yml run --rm --no-deps --user kypost \
      kypost-server /usr/local/bin/kypost-server migrate-to-postgres --check -from /kypost/state
    docker compose -f docker-compose.yml -f docker-compose.replicas.yml run --rm --no-deps --user kypost \
@@ -315,11 +316,24 @@ else is per container.
    cannot be told apart and its forwarded addresses are dropped (every user would share one
    lockout bucket). Check it: `GET /api/status` through your proxy shows your own address as
    `clientIp`. `KYPOST_BIND` now gates HAProxy's publish, with the same rules as before.
-3. `docker compose up -d --wait`, then pull the model once into the shared Ollama:
-   `docker compose exec ollama ollama pull "$OLLAMA_MODEL"` (AI sorting only).
+3. `docker compose up -d --wait`. Your proxy's target (`http://KyPost-Server:5866` or
+   `KYPOST_IP`) now reaches HAProxy unchanged. For AI sorting, the shared Ollama uses the
+   same model folder as the single container (`OLLAMA_MODELS_HOST_DIR`, by default
+   `./share/ollama/models`), so a migrated install already has the model; otherwise pull it
+   once: `docker compose exec ollama ollama pull nemotron-3-nano:4b` (or your
+   `OLLAMA_MODEL`).
 
-**Upgrades:** stop every replica first (`docker compose stop kypost-server`), then
-`docker compose up -d --wait`. Mixed versions are not supported.
+**If a replica keeps restarting**, its reason is in `docker compose logs kypost-server`
+("kypost api did not start", followed by the end of its error log), for example the shared
+settings that differ.
+
+**Upgrades** stop every replica, because mixed versions are not supported:
+`docker compose pull && docker compose stop kypost-server && docker compose up -d --wait`.
+That is a full outage: 14 to 21 seconds measured (two runs) for two replicas on the test
+host with the image already pulled (stop, then start and ready), and longer while a backup drains (up to 16
+minutes). `./scripts/update-host.sh` is for the single container: with replicas it refuses
+and prints these commands. A release that changes a shared setting's default also needs
+`accept-replica-config` (below) after the replicas stop.
 
 **Shared and per-host settings.** Every replica must have the same shared settings: the
 server URL, CAPTCHA, proxies and office networks, native mail, integrations, push relays,
@@ -328,9 +342,38 @@ backups, TLS pinning, AI sorting and every secret file path. KyPost records an H
 refuses a replica whose settings differ, naming the settings only. Per-host settings (port,
 log level, memory, concurrency, scratch, the database URL) may differ. After a deliberate
 change: stop every replica, then run
-`docker compose run --rm --no-deps kypost-server /usr/local/bin/kypost-server accept-replica-config`
+`docker compose run --rm --no-deps --user kypost kypost-server /usr/local/bin/kypost-server accept-replica-config`
 once with the new settings, and start again. The full list is in
 [CONFIGURATION.md](CONFIGURATION.md#replicas).
+
+### Restoring a replica deployment
+
+Restore into a new, empty database beside the old one, which stays untouched until the
+restore checks out. The cutover check (`scripts/check-replica-cutover.sh`) runs these steps.
+`docker compose` below uses the `COMPOSE_FILE` in `.env`; the capsule is in `./restore`.
+
+1. Stop every replica: `docker compose stop kypost-server`.
+2. Create the new database: `docker compose exec postgres createdb -U kypost kypost_restored`,
+   and point `KYPOST_DATABASE_URL` in `.env` at it (`.../kypost_restored?sslmode=disable`).
+3. Restore, entering the custodian shares on stdin (one per line, then Ctrl-D):
+
+   ```bash
+   docker compose run --rm --no-deps -i --user kypost -v "$PWD/restore:/restore" kypost-server \
+     /usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered
+   ```
+
+   `./restore` must be writable by the container's `kypost` user. This loads the databases
+   into `kypost_restored` and writes the files to `./restore/recovered`.
+4. Keep a copy of the three volumes, then replace their contents with `recovered/config`,
+   `recovered/private` and `recovered/state`:
+
+   ```bash
+   docker compose run --rm --no-deps --user kypost -v "$PWD/restore:/restore" --entrypoint sh kypost-server \
+     -c 'for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"; done'
+   ```
+5. `docker compose up -d --wait`, then sign in again: the restore cleared every session. The
+   first replica records new volume IDs and settings. Drop the old database only after the
+   restored deployment checks out.
 
 ### Drain and readiness
 
@@ -348,7 +391,9 @@ pool and one pool per open database (at most 4 connections each, 1 idle), plus o
 dedicated connection for its liveness lock and one for each role or backup lock it holds.
 For N replicas (an api and a daemon each) plan on at least 2 × N × (8 + 4 × the databases
 busy at once); the overlay's default `max_connections` of 400 leaves room for the default
-two replicas. A peak during a backup was not measured; raise
+two replicas. **Unproven:** the peak during a backup, which opens every account's databases,
+was not measured, and no account count is claimed. With many accounts a backup could use up
+`max_connections`, and every replica's `/readyz` would then fail; raise
 `KYPOST_POSTGRES_MAX_CONNECTIONS` if `too many clients` appears.
 
 **Other proxies (not executed).** nginx and Nginx Proxy Manager have only passive health

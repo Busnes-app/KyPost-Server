@@ -46,6 +46,7 @@ assert shared == [("kypost_config", "/kypost/config"), ("kypost_private", "/kypo
 anonymous = [v["target"] for v in app["volumes"] if not v.get("source")]
 assert anonymous == ["/kypost/logs"] and len(app["volumes"]) == 4, f"app mounts {app['volumes']}, want the three data volumes and a per-container logs volume"
 assert set(app["networks"]) == {"replicas", "database"}, "an app replica pins an address or joins kypost-net"
+assert not any((n or {}).get("ipv4_address") for n in app["networks"].values()), "an app replica pins an address"
 env = app["environment"]
 assert env["TRUSTED_PROXY_CIDRS"] == required["KYPOST_PROXY_IP"] + "/32", env["TRUSTED_PROXY_CIDRS"]
 assert env["OLLAMA_BASE_URL"] == "http://ollama:11434", "replicas start their own Ollama"
@@ -96,11 +97,36 @@ edge = proxy["environment"].get("KYPOST_EDGE_TRUSTED_PROXY")
 assert edge == "255.255.255.255", f"with no edge set HAProxy must trust no source, got {edge}"
 print("PASS replicas: HAProxy keeps forwarded client headers only from the edge proxy")
 
+# With no replica ready, HAProxy answers with KyPost's page: not signed out, retry soon.
+page = (root / "deploy/replicas/503.http").read_bytes()
+assert "errorfile 503 /usr/local/etc/haproxy/503.http" in cfg and page.startswith(b"HTTP/1.1 503 ") and b"Retry-After:" in page and b"You have not been signed out" in page
+head, body = page.split(b"\n\n", 1)
+assert f"Content-Length: {len(body)}".encode() in head, "503.http Content-Length is wrong"
+print("PASS replicas: HAProxy's 503 is KyPost's unavailable page")
+
 # TLS ends in front of HAProxy: a certificate on the replicas is refused, by name.
 result = compose(files, base_env | required | {"TLS_CERT_FILE": "/kypost/config/tls/cert.pem"})
 assert result.returncode != 0 and "TLS_CERT_FILE cannot be used with docker-compose.replicas.yml" in result.stderr, f"TLS_CERT_FILE rendered with replicas: {result.stderr}"
 assert app["environment"].get("TLS_CERT_FILE", "") == "", "replicas would serve TLS that HAProxy cannot read"
 print("PASS replicas: TLS_CERT_FILE is refused with a message")
+
+# A TLS proxy configured for the single container (http://KyPost-Server:5866 or KYPOST_IP)
+# reaches HAProxy after the cutover.
+net = proxy["networks"]["kypost-net"]
+assert "KyPost-Server" in (net.get("aliases") or []) and net.get("ipv4_address"), f"HAProxy does not answer as KyPost-Server on kypost-net: {net}"
+assert 'server-template app "${KYPOST_REPLICAS}" kypost-replica:5866' in cfg and "kypost-replica" in (app["networks"]["replicas"].get("aliases") or []), \
+    "HAProxy must find the replicas by a name its own KyPost-Server alias cannot match (DNS ignores case)"
+print("PASS replicas: HAProxy answers as KyPost-Server at KYPOST_IP on kypost-net")
+
+# The docs' commands are the ones the cutover check runs.
+running = (root / "docs/RUNNING.md").read_text()
+cutover = (root / "scripts/check-replica-cutover.sh").read_text()
+assert "replicas.yml up -d --wait postgres" in running, "RUNNING.md starts the database without --wait; the next command would fail"
+assert "docker compose pull && docker compose stop kypost-server && docker compose up -d --wait" in running, "RUNNING.md's upgrade does not pull, then stop every replica"
+for step in ("createdb -U kypost kypost_restored", "/usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered",
+             'find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"'):
+    assert step in running and step in cutover, f"the replica restore step {step!r} is not both documented and run by the cutover check"
+print("PASS replicas: RUNNING.md's start, upgrade and restore commands match what the cutover check runs")
 
 for overlay in ["docker-compose.receiving.yml", "docker-compose.rspamd.yml", "docker-compose.lan-dns.yml"]:
     chain = ["docker-compose.yml", overlay, "docker-compose.replicas.yml"]

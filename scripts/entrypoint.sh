@@ -112,5 +112,11 @@ setpriv --reuid=kypost --regid=kypost --init-groups \
 # reasons: PID 1 itself is then unprivileged (so a container escape does not
 # start from root), and the drop no longer depends on a setting in a config
 # file that someone could edit without realizing it was load-bearing.
+#
+# The container's own stdout and stderr (Docker's log pipes) are handed to kypost first, so
+# supervisord can reopen them for the startfailure listener: a refused start then shows in
+# `docker compose logs`. They are this process's own output; nothing else is shared.
+# No redirect on this command: it would make its own fd 2 /dev/null instead of the pipe.
+chown kypost:kypost /proc/self/fd/1 /proc/self/fd/2 || echo "start refusals will show only in /kypost/logs" >&2
 exec setpriv --reuid=kypost --regid=kypost --init-groups \
 	supervisord -c /etc/supervisord.conf

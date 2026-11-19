@@ -1,0 +1,20 @@
+HTTP/1.1 503 Service Unavailable
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+Retry-After: 5
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+Content-Length: 333
+Connection: close
+
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>KyPost is temporarily unavailable</title></head>
+<body>
+<main>
+<h1>KyPost is temporarily unavailable</h1>
+<p>You have not been signed out. Reload this page in a moment.</p>
+</main>
+</body>
+</html>

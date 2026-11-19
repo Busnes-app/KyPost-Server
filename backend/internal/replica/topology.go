@@ -34,6 +34,9 @@ var (
 	ErrReceiver = errors.New("KYPOST_NATIVE_RECEIVER (receiving through Maddy on port 25) runs only in the single-container profile; it cannot run on PostgreSQL replicas. Use the single-container SQLite profile for Maddy, or receive through Cloudflare or an external IMAP account")
 )
 
+// volumesFix ends every ErrVolumes refusal with what to do.
+const volumesFix = "; mount the same kypost_config, kypost_private and kypost_state volumes as the running replicas (docs/RUNNING.md, Replicas on one host)"
+
 // Process is one api or daemon process starting on PostgreSQL.
 type Process struct {
 	Store  *state.Store // the global state store
@@ -119,7 +122,7 @@ func checkVolumes(st *state.Store, roots []string) (string, error) {
 			case recorded == "":
 				recorded = id
 			case id != recorded:
-				return "", fmt.Errorf("%w: %s carries volume ID %s, another root %s", ErrVolumes, roots[i], id, recorded)
+				return "", fmt.Errorf("%w: %s carries volume ID %s, another root %s%s", ErrVolumes, roots[i], id, recorded, volumesFix)
 			}
 		}
 		if recorded == "" {
@@ -141,9 +144,9 @@ func checkVolumes(st *state.Store, roots []string) (string, error) {
 	for i, id := range ids {
 		switch {
 		case id == "":
-			return "", fmt.Errorf("%w: %s has no %s, but this deployment's database is already in use", ErrVolumes, roots[i], VolumeIDFile)
+			return "", fmt.Errorf("%w: %s has no %s, but this deployment's database is already in use%s", ErrVolumes, roots[i], VolumeIDFile, volumesFix)
 		case id != recorded:
-			return "", fmt.Errorf("%w: %s belongs to another deployment (volume ID %s, this deployment %s)", ErrVolumes, roots[i], id, recorded)
+			return "", fmt.Errorf("%w: %s belongs to another deployment (volume ID %s, this deployment %s)%s", ErrVolumes, roots[i], id, recorded, volumesFix)
 		}
 	}
 	return recorded, nil

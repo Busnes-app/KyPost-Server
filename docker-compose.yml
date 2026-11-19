@@ -177,8 +177,8 @@ services:
       # Uncomment to mount certificates for TLS_CERT_FILE/TLS_KEY_FILE above.
       # Read-only, and pointed at wherever your ACME client writes. Renewals are
       # picked up without a restart (the server re-reads the pair when it changes
-      # on disk), which matters because a restart logs every user out — sessions
-      # are in-memory by design.
+      # on disk), which matters because on SQLite a restart logs every user out —
+      # sessions are in memory there (PostgreSQL keeps them in the database).
       # - /etc/letsencrypt/live/mail.example.com:/kypost/tls:ro
       # Uncomment for KYPOST_TLS_CERT_FILE: the certificate your reverse proxy
       # serves for SERVER_BASE_URL, read-only. Only the certificate is read.

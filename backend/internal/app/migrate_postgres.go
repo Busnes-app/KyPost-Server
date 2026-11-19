@@ -33,7 +33,7 @@ func runMigrateToPostgres(args []string, stdout io.Writer) error {
 	for _, a := range args {
 		if strings.Contains(strings.ToLower(a), "postgres://") || strings.Contains(strings.ToLower(a), "postgresql://") {
 			// Never echoed: it may carry a password.
-			return errors.New("a database URL on the command line is refused, because argv is visible to every process and may be logged; set KYPOST_DATABASE_URL_FILE instead. " + migrateUsage)
+			return errors.New("a database URL on the command line is refused, because argv is visible to every process and may be logged; set KYPOST_DATABASE_URL (in .env) or KYPOST_DATABASE_URL_FILE instead. " + migrateUsage)
 		}
 	}
 	fs := flag.NewFlagSet("migrate-to-postgres", flag.ContinueOnError)

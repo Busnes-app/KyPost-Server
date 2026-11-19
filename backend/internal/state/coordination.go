@@ -307,7 +307,7 @@ func withFlock(ctx context.Context, dbPath, name string, work func(context.Conte
 const InstanceLockFile = "server-instance.lock"
 
 // ErrInstanceRunning refuses an exclusive instance lock while a server holds it.
-var ErrInstanceRunning = errors.New("KyPost is running on this data: stop it first (docker compose stop app)")
+var ErrInstanceRunning = errors.New("KyPost is running on this data: stop it first (docker compose stop kypost-server)")
 
 // HoldInstance takes the server-instance flock in stateDir, shared (a server process) or
 // exclusive (migrate-to-postgres), and returns its release. Exclusive never waits.

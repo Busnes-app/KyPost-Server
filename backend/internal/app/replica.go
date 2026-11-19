@@ -118,8 +118,8 @@ func cleanCoordination(ctx context.Context, st *state.Store, report func(error))
 }
 
 // holdSQLiteInstance takes the shared server-instance lock beside the global state.db, so
-// migrate-to-postgres refuses while this process runs. The data root must already exist:
-// the lock is taken before anything is created in it.
+// migrate-to-postgres refuses while this process runs. Only the empty STATE_DIR is created
+// first; the lock is taken before anything is written in it.
 func holdSQLiteInstance(stateDir string) (release func(), err error) {
 	if dbbackend.Postgres() {
 		return func() {}, nil

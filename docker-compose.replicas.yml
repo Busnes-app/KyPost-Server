@@ -11,8 +11,8 @@
 # and docker-compose.lan-dns.yml run only in the single-container profile and refuse to
 # render with this file.
 #
-# Upgrade: stop every replica first (docker compose stop kypost-server), then
-# docker compose up -d --wait. Mixed versions are not supported.
+# Upgrade (a short full outage; mixed versions are not supported): docker compose pull &&
+# docker compose stop kypost-server && docker compose up -d --wait.
 services:
   kypost-server:
     container_name: !reset null
@@ -42,8 +42,10 @@ services:
       - kypost_state:/kypost/state
       - /kypost/logs
     networks: !override
-      - replicas
-      - database
+      # kypost-replica is the name HAProxy finds the replicas by (haproxy.cfg).
+      replicas:
+        aliases: [kypost-replica]
+      database: {}
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,6 +89,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./deploy/replicas/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./deploy/replicas/503.http:/usr/local/etc/haproxy/503.http:ro
     # One server slot per replica; change the count through KYPOST_REPLICAS, never --scale.
     environment:
       KYPOST_REPLICAS: ${KYPOST_REPLICAS:-2}
@@ -98,8 +101,11 @@ services:
     ports:
       - "${KYPOST_BIND:?set KYPOST_BIND in .env — 127.0.0.1 for a proxy on this host, your LAN IP for a proxy elsewhere, or 0.0.0.0 to deliberately publish on every interface (always cleartext with replicas)}:5866:5866"
     networks:
+      # The single container's address and name, so a TLS proxy pointed at either
+      # (http://KyPost-Server:5866 is the documented target) reaches HAProxy unchanged.
       kypost-net:
         ipv4_address: ${KYPOST_IP:-10.89.0.5}
+        aliases: [KyPost-Server]
       replicas:
         ipv4_address: ${KYPOST_PROXY_IP:?Set KYPOST_PROXY_IP to the proxy address inside KYPOST_REPLICA_SUBNET}
 
