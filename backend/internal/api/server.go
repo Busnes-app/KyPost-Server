@@ -724,7 +724,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mail/flags/{ref}", s.withMailAuth(s.handleFlagRef))
 	mux.HandleFunc("GET /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
 	mux.HandleFunc("PUT /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
-	mux.HandleFunc("GET /api/settings/mail", s.withAuth(s.handleMailSettings))
+	mux.HandleFunc("GET /api/settings/mail", s.withMailAuth(s.handleMailSettings))
 	mux.HandleFunc("PUT /api/settings/mail", s.withAuth(s.handleMailSettings))
 	mux.HandleFunc("POST /api/suite/kypulse/alert", withPublicRoute(s.handleKyPulseAlert))
 	mux.HandleFunc("GET /api/addresses", s.withAuth(s.handleAddresses))

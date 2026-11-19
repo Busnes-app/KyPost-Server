@@ -315,3 +315,24 @@ func TestGroupThreadsStopsWhenCancelled(t *testing.T) {
 		t.Fatal("grouping ran on after its request was cancelled")
 	}
 }
+
+// Native apps follow the conversation switch with their own pairing
+// credentials, so GET must stay on withMailAuth; changing it stays on the web.
+func TestMailSettingsReadableByDevice(t *testing.T) {
+	srv := newTestServer(t)
+	userID := srv.mustBootstrapUserID(t)
+	deviceID, deviceSecret := pairNativeDevice(t, srv, userID, "settings-device")
+	call := func(method, body string) (int, string) {
+		req := httptest.NewRequest(method, "/api/settings/mail", strings.NewReader(body))
+		setDeviceHeaders(req, deviceID, deviceSecret)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		return rec.Code, strings.TrimSpace(rec.Body.String())
+	}
+	if code, body := call(http.MethodGet, ""); code != http.StatusOK || body != `{"conversations":true}` {
+		t.Fatalf("device GET %d %s", code, body)
+	}
+	if code, _ := call(http.MethodPut, `{"conversations":false}`); code != http.StatusUnauthorized {
+		t.Fatalf("device PUT %d, want 401", code)
+	}
+}
