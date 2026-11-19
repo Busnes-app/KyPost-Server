@@ -18,7 +18,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -837,48 +836,15 @@ func parseNotificationPrivateKeyPEM(b []byte) (*ecdsa.PrivateKey, error) {
 // loadOrCreateNotificationPrivateKey reads the VAPID private key at path,
 // generating and persisting a new one on first run.
 //
-// daemon and server are separate OS processes that each independently call
-// this on boot. On a fresh install both can observe "file doesn't exist"
-// and race to generate + write a keypair; whichever write lands last "wins"
-// on disk while the other process would otherwise keep running with a
-// DIFFERENT keypair in memory, so the persisted public key in config.yaml
-// could end up not matching the private key on disk. To prevent that, the
-// whole read-check-generate-write sequence is guarded by a syscall.Flock on
-// a sibling lock file. Flock (rather than an O_EXCL lock file) is used
-// deliberately: it is released automatically by the kernel if the holding
-// process dies, so a crash mid-lock can never deadlock a future boot. The
-// losing side of the race re-reads the file after acquiring the lock
-// instead of trusting its own already-generated in-memory key, so every
-// caller converges on the single keypair that actually ends up on disk.
+// The daemon, the api and replicas sharing SECRET_DIR all call this on boot; creation is
+// exclusive (fsutil.CreateExclusive), so the losers read the winner's key and the public key
+// recorded in config.yaml always matches the private key on disk.
 func loadOrCreateNotificationPrivateKey(path string) (*ecdsa.PrivateKey, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir notification key dir: %w", err)
-	}
-
-	// Read-only: flock needs no write access and the lock file holds no data.
-	lockFile, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDONLY, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("open notification key lock: %w", err)
-	}
-	defer lockFile.Close()
-
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		return nil, fmt.Errorf("lock notification key: %w", err)
-	}
-	// Unlock errors are not actionable: the deferred Close below releases the
-	// lock regardless, and the process is on its way out of this function
-	// either way. Discard explicitly rather than implicitly.
-	defer func() { _ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) }()
-
-	// Re-check under the lock: another process/goroutine may have already
-	// generated and written the key while we were waiting for the lock. If
-	// so, use what's actually on disk rather than generating our own.
 	if b, err := os.ReadFile(path); err == nil {
 		return parseNotificationPrivateKeyPEM(b)
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-
 	key, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generate notification key: %w", err)
@@ -887,9 +853,16 @@ func loadOrCreateNotificationPrivateKey(path string) (*ecdsa.PrivateKey, error) 
 	if err != nil {
 		return nil, fmt.Errorf("marshal notification key: %w", err)
 	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
-	if err := fsutil.AtomicWriteFile(path, pemBytes, 0o600); err != nil {
+	created, err := fsutil.CreateExclusive(path, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}), 0o600)
+	if err != nil {
 		return nil, fmt.Errorf("write notification key: %w", err)
 	}
-	return key, nil
+	if created {
+		return key, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseNotificationPrivateKeyPEM(b)
 }
