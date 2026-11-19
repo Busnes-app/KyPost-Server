@@ -11,6 +11,7 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -342,5 +343,32 @@ func qualifyScheduledNativeDelivery(t *testing.T, s *Server, userID, root string
 		if date, err := msg.Header.Date(); err != nil || !date.Equal(at) {
 			t.Fatalf("%s Date %q, want the send time %s", name, msg.Header.Get("Date"), at)
 		}
+	}
+}
+
+// A Send delay hold on a native mailbox waits outside the outbox, then is
+// queued and attempted at once when due, not at the worker's next pass.
+func TestSendDelayNativeAttemptsWhenDue(t *testing.T) {
+	f := newNativeScheduled(t)
+	ctx := context.Background()
+	r := httptest.NewRequest("PUT", "/api/mail/send-delay", strings.NewReader(`{"seconds":10}`))
+	authRequestAs(f.s, r, f.u.ID)
+	w := httptest.NewRecorder()
+	f.s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("set send delay: %d %s", w.Code, w.Body.String())
+	}
+	id := f.schedule(t, "/api/mail/send", map[string]any{"to": "visible@outside.test", "subject": "held", "body": "native body", "sendDelay": true}, nil)
+	if _, _, _, err := f.box.ReadOutbound(ctx, f.key, id); err == nil {
+		t.Fatal("held send entered the outbox before it was due")
+	}
+	row, _, _ := f.s.globalStore.GetScheduledSend(ctx, id)
+	f.s.sweepScheduledSends(ctx, clockAt(time.Unix(row.SendAt, 0)))
+	if row, _, _ := f.s.globalStore.GetScheduledSend(ctx, id); row.Status != "queued" {
+		t.Fatalf("due held send %s %q, want queued", row.Status, row.Reason)
+	}
+	// The test relay refuses connections, so the attempt is recorded, not delivered.
+	if _, statuses, _, err := f.box.ReadOutbound(ctx, f.key, id); err != nil || len(statuses) != 1 || statuses[0].Attempts != 1 {
+		t.Fatal("held send not attempted when due", statuses, err)
 	}
 }

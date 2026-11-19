@@ -61,11 +61,12 @@ export function ScheduledPage() {
                 <td>{row.subject === OUTER_PLACEHOLDER_SUBJECT ? "(encrypted)" : row.subject}</td>
                 <td>
                   {STATUS[row.status] ?? row.status}
+                  {row.delayed ? <div className="config-muted">Send delay</div> : null}
                   {row.reason ? <div className="config-muted">{row.reason}</div> : null}
                 </td>
                 <td>
                   {row.status === "scheduled" ? (
-                    <button type="button" className="button" disabled={busy !== ""} onClick={() => void cancel(row.id)}>Cancel</button>
+                    <button type="button" className="button" disabled={busy !== ""} onClick={() => void cancel(row.id)}>{row.delayed ? "Cancel sending" : "Cancel"}</button>
                   ) : null}
                 </td>
               </tr>

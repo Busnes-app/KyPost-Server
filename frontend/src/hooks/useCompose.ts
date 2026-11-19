@@ -3,7 +3,8 @@ import { useEffect, useEffectEvent, useRef, useState, type ChangeEvent } from "r
 // puts it in the entry chunk, so the login page pays for it too. loadQuill
 // below fetches it when compose first opens.
 import type Quill from "quill";
-import { mailboxHeaders, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
+import { HttpError, mailboxHeaders, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
+import { cancelScheduled, getSendDelay } from "../api/scheduled";
 import {
   checkPGPRecipients,
   createSealedPickup,
@@ -55,6 +56,30 @@ async function loadQuill(): Promise<typeof Quill> {
 
 export type Compose = ReturnType<typeof useCompose>;
 
+/** A sent message the server holds for the Send delay, with what reopens it if canceled. */
+export type HeldSend = {
+  id: string;
+  /** The signed-in user who sent it; another user's session never shows or reopens it. */
+  userId?: string;
+  mailbox: string;
+  /** When the hold ends, in this browser's clock; the Cancel button goes then. */
+  endsAt: number;
+  draft: DraftComposePayload;
+  from: string;
+  encrypt: boolean;
+  sign: boolean;
+  canceling?: boolean;
+  /** Release had started, so the server refused the cancel. */
+  late?: boolean;
+  error?: string;
+};
+
+/** A send started under a sign-in that has since changed; nothing was sent. */
+class SendSessionChanged extends Error {}
+
+/** What the send routes answer; delayed, id and sendAt describe a Send delay hold. */
+type SendResult = { warning?: string; delayed?: boolean; id?: string; sendAt?: string };
+
 /** Compose state, autosave, PGP send paths and draft saving; rendered by ComposeWindow. */
 export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: UserMailbox[] }) {
   // Compose stays on the mailbox it was opened in, whatever happens to the selection.
@@ -91,6 +116,32 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const [composeNotice, setComposeNotice] = useState("");
   const [composeAutosaveFailed, setComposeAutosaveFailed] = useState(false);
   const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
+  // Every message still held for the Send delay, each with its own bar.
+  const [composeHolds, setComposeHolds] = useState<HeldSend[]>([]);
+  // Sign-out replaces this; a send or cancel that settles after it must not
+  // touch compose, so the next user never sees the earlier message.
+  const holdSession = useRef<object>({});
+  const userIdNow = useRef(userId);
+  useEffect(() => {
+    userIdNow.current = userId;
+  }, [userId]);
+  // The sign-in a send started under; every send request is bound to it.
+  const sendOwner = useRef<{ session: object; userId?: string } | null>(null);
+  const sendOwnerStale = () => {
+    const owner = sendOwner.current;
+    return !owner || owner.session !== holdSession.current || owner.userId !== userIdNow.current;
+  };
+
+  /**
+   * Headers for a send request. Refuses here when this tab's sign-in changed
+   * since Send was pressed, and names the account so the server refuses when
+   * another tab changed the cookie underneath this one.
+   */
+  function sendHeaders(): Record<string, string> {
+    if (sendOwnerStale()) throw new SendSessionChanged("The signed-in account changed, so nothing was sent.");
+    const owner = sendOwner.current!;
+    return { ...mailboxHeaders(composeMailbox), ...(owner.userId ? { "X-KyPost-User": owner.userId } : {}) };
+  }
   const [composeEncrypt, setComposeEncrypt] = useState(false);
   const [composeSign, setComposeSign] = useState(false);
   const composeSignOverridden = useRef(false);
@@ -625,7 +676,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       mode: "plain",
       encrypt: false,
       sign: false
-    }, mailboxHeaders(composeMailbox));
+    }, sendHeaders());
   }
 
   /**
@@ -661,15 +712,16 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     );
   }
 
-  /** What a scheduled send adds to its request: the time, and the encrypted
-   *  draft it returns to Drafts as when it cannot go out. */
-  async function scheduleFields(to: string, body: string, sendAt: Date | undefined, encrypted: boolean) {
-    if (!sendAt) return {};
-    const fields = { sendAt: sendAt.toISOString() };
+  /** What a scheduled or held send adds to its request: the time, or the Send
+   *  delay flag (a held message is dated now), and the encrypted draft it
+   *  returns to Drafts as when canceled or unsendable. */
+  async function scheduleFields(to: string, body: string, sendAt: Date | undefined, encrypted: boolean, hold = false) {
+    if (!sendAt && !hold) return {};
+    const fields = sendAt ? { sendAt: sendAt.toISOString() } : { sendDelay: true };
     return encrypted ? { ...fields, draftCopy: await encryptedDraft(to, body, sendAt) } : fields;
   }
 
-  async function sendComposeSignedLocally(to: string, body: string, sendAt?: Date): Promise<string> {
+  async function sendComposeSignedLocally(to: string, body: string, sendAt?: Date, hold = false): Promise<SendResult> {
     if (needsUnlock()) {
       setComposeUnlockOpen(true);
       throw new Error("Your PGP key is locked — unlock it, then press Send again.");
@@ -681,8 +733,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     if (recipients.length === 0) {
       throw new Error("Nothing to send: no recipients.");
     }
-    // One delivery plus the Sent copy (and a scheduled draft) carry the attachments.
-    const budget = encryptedAttachmentBudget(sendAt ? 3 : 2);
+    // One delivery plus the Sent copy (and a scheduled or held draft) carry the attachments.
+    const budget = encryptedAttachmentBudget(sendAt || hold ? 3 : 2);
     const attached = composeAttachments.reduce((sum, a) => sum + a.size, 0);
     if (composeAttachments.length > 0 && attached > budget) {
       throw new Error(`Attachments too large for a signed message: ${formatBytes(attached)} attached, ${formatBytes(budget)} allowed.`);
@@ -701,12 +753,12 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       sentCopyEncrypted: true,
       mode: "html",
       materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration,
-      ...(await scheduleFields(to, body, sendAt, true))
-    }, mailboxHeaders(composeMailbox));
-    return result.warning ?? "";
+      ...(await scheduleFields(to, body, sendAt, true, hold))
+    }, sendHeaders());
+    return result;
   }
 
-  async function sendComposeEncryptedLocally(to: string, body: string, sendAt?: Date) {
+  async function sendComposeEncryptedLocally(to: string, body: string, sendAt?: Date, hold = false): Promise<SendResult> {
     if (needsUnlock()) {
       // Open the prompt and stop. The composed body is deliberately not
       // stashed across the unlock: holding it would mean sending whatever was
@@ -757,6 +809,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         `No usable PGP key for: ${missing.join(", ")}. Add their key in Contacts, tick "send a secure link" to send those recipients a one-time encrypted link instead, or turn off encryption.`
       );
     }
+    // Secure links are mailed at send time, so a send that needs them is not held.
+    const held = hold && missing.length === 0;
     const keyed = [toList, ccList, bccList].map((list) => list.filter((a) => keyFor.has(a.toLowerCase())));
     const [keyedTo, keyedCc, keyedBcc] = keyed;
 
@@ -786,12 +840,12 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       );
     }
 
-    let warning = "";
+    let sent: SendResult = {};
     if (groups.length > 0) {
       // Every group and the Sent copy carries the attachments in full, so the
       // budget shrinks with each Bcc recipient. Checked before any encryption
       // so the refusal names the limit rather than arriving as a 413.
-      const budget = encryptedAttachmentBudget(groups.length + (sendAt ? 2 : 1));
+      const budget = encryptedAttachmentBudget(groups.length + (sendAt || held ? 2 : 1));
       const attached = composeAttachments.reduce((sum, a) => sum + a.size, 0);
       // Only a send that carries files is measured against the budget.
       if (composeAttachments.length > 0 && attached > budget) {
@@ -807,7 +861,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // the real subject with it. The server refuses an unencrypted copy now,
       // so this is not optional.
       const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, composeSign, composeAttachments);
-      const result = await sendClientEncryptedMail({
+      sent = await sendClientEncryptedMail({
         from: clientSenderAddress(),
         // The real subject travels inside the ciphertext as a protected
         // header, exactly as it does for the deliveries.
@@ -820,9 +874,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         sentCopyEncrypted: true,
         mode: "html",
         materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration,
-        ...(await scheduleFields(to, body, sendAt, true))
-      }, mailboxHeaders(composeMailbox));
-      warning = result.warning ?? "";
+        ...(await scheduleFields(to, body, sendAt, true, held))
+      }, sendHeaders());
     }
 
     if (groups.length === 0 && missing.length === 0) {
@@ -846,7 +899,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         `Could not send a secure link to any recipient (${failedLinks.join(", ")}). Nothing was sent.`
       );
     }
-    return combineWarnings(warning, secureLinkWarning(failedLinks, missing.length));
+    return { ...sent, warning: combineWarnings(sent.warning ?? "", secureLinkWarning(failedLinks, missing.length)) };
   }
 
   /** Sends now, or at sendAt when given. */
@@ -865,30 +918,44 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeError("");
     setComposeSuccess("");
     const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
+    // Bound before any await: a sign-in change while this send is pending
+    // stops it, and nothing that settles afterwards touches compose.
+    const owner = { session: holdSession.current, userId: userIdNow.current };
+    sendOwner.current = owner;
+    const stale = () => sendOwner.current !== owner || sendOwnerStale();
     try {
       const recipients = [to, serializeRecipientField(composeCc), serializeRecipientField(composeBcc)].flatMap(splitAddressList);
       if (!driveChecked && !(await drive.driveRecipientsOk(body, recipients, sendAt))) return;
+      // The account's Send delay decides whether Send asks the server to hold
+      // the message. Unreadable means not sent, never sent without the delay.
+      const pressedAt = Date.now();
+      const delaySeconds = sendAt ? 0 : await getSendDelay();
+      const hold = delaySeconds > 0;
       // A client-protected account's key is not on the server, so the server
       // cannot sign or encrypt on its behalf — the browser does it and posts
       // ciphertext. Falling through to /api/mail/send here would get a 409
       // (the server refuses rather than silently sending in the clear).
-      let warning = "";
+      let result: SendResult;
       if ((composeEncrypt || composeSign) && isClientProtected()) {
-        warning = composeEncrypt ? await sendComposeEncryptedLocally(to, body, sendAt) : await sendComposeSignedLocally(to, body, sendAt);
+        result = composeEncrypt ? await sendComposeEncryptedLocally(to, body, sendAt, hold) : await sendComposeSignedLocally(to, body, sendAt, hold);
       } else {
-        // A client-custody account's drafts are encrypted, so a scheduled
-        // plain send carries its returnable draft encrypted too.
+        // A client-custody account's drafts are encrypted, so a scheduled or
+        // held plain send carries its returnable draft encrypted too. The
+        // server never holds a secure-link send, so it needs neither.
         const custody = pgpCustody();
-        if (sendAt && custody === "unknown") {
-          throw new Error("Your PGP state could not be confirmed, so the message was not scheduled. Reload and try again.");
+        const allowPickupFallback = pickupFallbackFlag(composeEncrypt, composeSendLinkForKeyless);
+        const plainHold = hold && !allowPickupFallback;
+        const returnable = sendAt !== undefined || plainHold;
+        if (returnable && custody === "unknown") {
+          throw new Error(`Your PGP state could not be confirmed, so the message was not ${sendAt ? "scheduled" : "sent"}. Reload and try again.`);
         }
-        if (sendAt && custody === "client" && needsUnlock()) {
+        if (returnable && custody === "client" && needsUnlock()) {
           setComposeUnlockOpen(true);
-          throw new Error("Your PGP key is locked — unlock it, then schedule again.");
+          throw new Error(sendAt ? "Your PGP key is locked — unlock it, then schedule again." : "Your PGP key is locked — unlock it, then press Send again.");
         }
-        const scheduled = await scheduleFields(to, body, sendAt, false);
-        const pgpDraft = sendAt && custody === "client" ? { pgpDraft: await encryptedDraft(to, body) } : {};
-        const result = await postJSON<{ ok: boolean; sentSaved?: boolean; warning?: string }>("/api/mail/send", {
+        const scheduled = await scheduleFields(to, body, sendAt, false, plainHold);
+        const pgpDraft = returnable && custody === "client" ? { pgpDraft: await encryptedDraft(to, body) } : {};
+        result = await postJSON<SendResult>("/api/mail/send", {
           from: composeFrom,
           to,
           cc: serializeRecipientField(composeCc),
@@ -899,12 +966,25 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
           attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 })),
           encrypt: composeEncrypt,
           sign: composeSign,
-          allowPickupFallback: pickupFallbackFlag(composeEncrypt, composeSendLinkForKeyless),
+          allowPickupFallback,
           ...scheduled,
           ...pgpDraft
-        }, mailboxHeaders(composeMailbox));
-        warning = result.warning ?? "";
+        }, sendHeaders());
       }
+      if (stale()) return;
+      const warning = result.warning ?? "";
+      // Held: remember what reopens it if canceled. The countdown ends no later
+      // than the server's release, whichever clock is ahead.
+      const held: HeldSend | null = result.delayed && result.id && result.sendAt ? {
+        id: result.id,
+        userId,
+        mailbox: composeMailbox,
+        endsAt: Math.min(pressedAt + delaySeconds * 1000, Date.parse(result.sendAt)),
+        draft: { sentTo: to, cc: serializeRecipientField(composeCc), bcc: serializeRecipientField(composeBcc), subject: composeSubject, body, attachments: composeAttachments, mailbox: composeMailbox },
+        from: composeFrom,
+        encrypt: composeEncrypt,
+        sign: composeSign
+      } : null;
       // A 200 with a warning means the message went out but something after
       // it did not — the Sent copy failed to save, some BCC deliveries
       // failed, or a pickup link could not be delivered. Closing the window
@@ -912,7 +992,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // window cannot be used to send the same message twice) and keep it
       // open carrying the warning; a clean send still closes as before.
       discardComposeDraft();
-      if (sendAt) {
+      if (held) {
+        setComposeHolds((holds) => [...holds, held]);
+        setComposeOpen(false);
+      } else if (sendAt) {
         setComposeSuccess(`Scheduled for ${sendAt.toLocaleString()}. It is listed under Scheduled until it goes out.`);
       } else if (warning) {
         setComposeNotice(`Sent — ${warning}`);
@@ -920,6 +1003,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         setComposeOpen(false);
       }
     } catch (e) {
+      if (e instanceof SendSessionChanged || stale()) return;
       // Checked BEFORE the keyless case: a changed key must never be described
       // as a missing one, or the user is pointed at the pickup fallback in
       // exactly the situation where mailing plaintext is worst.
@@ -935,6 +1019,54 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     } finally {
       setComposeSending(false);
     }
+  }
+
+  /**
+   * Cancels the held send and reopens it to edit. The server also returns it
+   * to Drafts, the copy every other client sees. Refused once release started.
+   */
+  async function cancelHeldSend(id: string) {
+    const held = composeHolds.find((h) => h.id === id);
+    if (!held || held.canceling) return;
+    const session = holdSession.current;
+    // Nothing settles into a later session: signed out, or another user.
+    const stale = () => session !== holdSession.current || userIdNow.current !== held.userId;
+    updateHold(id, { canceling: true, error: "" });
+    try {
+      const result = await cancelScheduled(held.mailbox, held.id);
+      if (stale()) return;
+      updateHold(id, null);
+      const drafts = result.warning ? "It will be saved to Drafts shortly." : "A copy is in Drafts.";
+      if (composeOpenNow.current) {
+        setComposeNotice(`Sending canceled. ${drafts}`);
+        return;
+      }
+      openDraftInCompose(held.draft);
+      setComposeFrom(held.from);
+      setComposeEncryptOverridden(true);
+      setComposeEncrypt(held.encrypt);
+      composeSignOverridden.current = true;
+      setComposeSign(held.sign);
+      setComposeNotice(`Sending canceled. Edit it and send again. ${drafts}`);
+    } catch (e) {
+      if (stale()) return;
+      if (e instanceof HttpError && e.status === 409) {
+        updateHold(id, { canceling: false, late: true });
+      } else {
+        updateHold(id, { canceling: false, error: toErrorMessage(e, "could not cancel sending") });
+      }
+    }
+  }
+
+  /** Changes one hold, or drops it with null. */
+  function updateHold(id: string, change: Partial<HeldSend> | null) {
+    setComposeHolds((holds) => (change ? holds.map((h) => (h.id === id ? { ...h, ...change } : h)) : holds.filter((h) => h.id !== id)));
+  }
+
+  /** Sign-out: forget every hold and ignore whatever settles later. The server still sends them. */
+  function resetHeldSends() {
+    holdSession.current = {};
+    setComposeHolds([]);
   }
 
   async function saveComposeDraft() {
@@ -1042,6 +1174,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
     openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft,
+    composeHolds: composeHolds.filter((h) => h.userId === userId),
+    cancelHeldSend, dismissHeldSend: (id: string) => updateHold(id, null), resetHeldSends,
     drive
   };
 }

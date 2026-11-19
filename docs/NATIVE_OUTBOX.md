@@ -53,7 +53,11 @@ block restore qualification, pin its domain and be quarantined by any relay or
 directory change. When due, the API sweeper calls `Queue` with the job ID of
 the scheduled row and the authority frozen at schedule time; `Queue` refuses
 a frozen From generation or PGP fingerprint that no longer matches, and binds
-the then-current relay generation. Its existing workers deliver it.
+the then-current relay generation. Its existing workers deliver it. A Send
+delay hold is the same row; when it is queued the sweeper also calls `Recover`
+for that job at once, so it does not wait for the worker's next pass (the
+claim is the same atomic one, and whatever the attempt leaves queued is the
+worker's to retry).
 
 Successful HTTP send responses keep `ok:true` meaning confirmed primary SMTP
 acceptance, with existing `sentSaved`/`warning` and additive `outboxId`. Merely

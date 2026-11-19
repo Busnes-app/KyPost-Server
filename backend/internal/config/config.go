@@ -201,6 +201,9 @@ type UserSettings struct {
 	OutOfOffice OutOfOffice `yaml:"outOfOffice,omitempty" json:"-"`
 	// KyPulse is served only by /api/settings/kypulse (docs/KYPULSE.md).
 	KyPulse KyPulseSettings `yaml:"kyPulse,omitempty" json:"-"`
+	// SendDelay is the Send delay in seconds, 0 (Off) by default; served
+	// only by /api/mail/send-delay.
+	SendDelay int `yaml:"sendDelay,omitempty" json:"-"`
 	// RefusePlusAddresses refuses mail to user+tag@ (hosted mail; plus
 	// addressing is on by default). Served only by /api/addresses.
 	RefusePlusAddresses bool `yaml:"refusePlusAddresses,omitempty" json:"-"`
