@@ -189,7 +189,10 @@ type UserSettings struct {
 	// they have never chosen. A stored false is always an off: the earlier
 	// code wrote it for everyone who saved any setting, so it cannot be told
 	// from a deliberate opt-out and is kept as one.
-	KyCalendar    *bool                    `yaml:"kyCalendar,omitempty" json:"-"`
+	KyCalendar *bool `yaml:"kyCalendar,omitempty" json:"-"`
+	// Conversations is "Group messages into conversations"; nil is on.
+	// Served only by /api/settings/mail.
+	Conversations *bool                    `yaml:"conversations,omitempty" json:"-"`
 	Notifications UserNotificationSettings `yaml:"notifications" json:"notifications"`
 	Labels        UserLabelSettings        `yaml:"labels" json:"labels"`
 	// Signatures is served only by /api/mail/signatures.

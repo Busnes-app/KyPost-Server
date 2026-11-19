@@ -152,6 +152,7 @@ describe("mailbox selection", () => {
     const scoped = [
       () => getJSON("/api/inbox?limit=500"),
       () => getJSON("/api/inbox/folders"),
+      () => getJSON("/api/inbox/conversations?limit=500"),
       () => postJSON("/api/inbox/actions", {}),
       () => getJSON("/api/snoozes"),
       () => getJSON("/api/mail/flags"),

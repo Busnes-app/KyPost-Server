@@ -5479,6 +5479,31 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 }
 .inbox-row-unread .inbox-subject { font-weight: 600; }
 .inbox-row-unread .inbox-time { color: var(--ink-strong); }
+/* Conversations: the row's message count, and the reader's collapsed messages. */
+.inbox-thread-count { margin-inline-start: 0.4em; color: var(--ink); font-weight: 400; font-variant-numeric: tabular-nums; }
+.conversation-count { margin: 0 0 8px; font-size: var(--ky-type-meta); color: var(--ink); }
+.conversation-cards { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.email-reader-body-wrap + .conversation-cards { margin: 12px 0 0; }
+.conversation-card {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--ky-control-radius);
+  background: var(--panel);
+  color: var(--ink-strong);
+  font: inherit;
+  text-align: left;
+}
+button.conversation-card { cursor: pointer; }
+.conversation-card > summary { display: grid; gap: 2px; cursor: pointer; }
+.conversation-card-head { display: flex; justify-content: space-between; gap: 12px; font-size: var(--ky-type-meta); }
+.conversation-card-head time { color: var(--ink); white-space: nowrap; }
+.conversation-card-from { font-weight: 600; }
+.conversation-card-unread .conversation-card-from::before { content: "\2022\00a0"; color: var(--accent); }
+.conversation-card-snippet { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: var(--ky-type-meta); }
+.conversation-card-sent[open] > summary { margin-bottom: 8px; }
 .inbox-row[data-open] { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .inbox-unit-head { font-size: var(--ky-type-meta); }
 .inbox-unit-head .inbox-sort-button { text-align: left; }
