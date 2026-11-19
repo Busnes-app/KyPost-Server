@@ -438,6 +438,9 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `$STATE_DIR/users/<userID>/contacts.json` | User's address book (contacts, revisions, tombstones) |
 | `$STATE_DIR/users/<userID>/mailcache.json` | User's mail metadata cache, per mailbox (not full message bodies except where opportunistically warmed) |
 | `$CONFIG_DIR/users/<userID>/carddav-auth.json` | Argon2id hash of the user's app-specific CardDAV password (a retired `scrypt$` one never verifies; regenerate it) (never the raw secret) |
+| `$CONFIG_DIR`, `$SECRET_DIR`, `$STATE_DIR` `/replica-volume.id` | PostgreSQL only: the deployment's volume ID, written exclusively by the first start and recorded as meta `replica_volume_id`; a replica whose root lacks it or holds another is refused (`internal/replica`) |
+| `$STATE_DIR/server-instance.lock` | SQLite only: held shared by the api and daemon, exclusively by `migrate-to-postgres` (`state.HoldInstance`) |
+| `$STATE_DIR/state.db` meta `replica_config_fingerprint`, `kyrecovery_public_key`, `sso_epoch`, `session_revocation_seq` | PostgreSQL only: the shared-settings HMAC record, the sealed pinned recovery key, and the session fences; a restore deletes all but the sealed key |
 
 ### Log Files
 

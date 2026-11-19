@@ -39,6 +39,10 @@ See [`CHANGELOG.md`](../CHANGELOG.md) for what changed in each release and for t
 upgrade/rollback matrix. Take a backup before upgrading — see
 [Backup and Restore](STORAGE-AND-RECOVERY.md#backup-and-restore).
 
+With PostgreSQL replicas ([Replicas on one host](RUNNING.md#replicas-on-one-host)), stop
+every replica first (`docker compose stop kypost-server`), then `docker compose up -d --wait`:
+mixed versions are not supported.
+
 Published releases are available from GitHub Container Registry. From the
 checkout, apply the current `stable` image with health-gated rollback:
 

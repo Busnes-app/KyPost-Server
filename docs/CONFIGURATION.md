@@ -124,6 +124,18 @@ Notes:
 - `KYPOST_DATABASE_URL`: empty keeps every database in its SQLite file. A `postgres://` URL keeps them in that one Postgres database (16 or newer, UTF8, C locale), one schema per file. The URL holds the password, so prefer the file below; use `sslmode=verify-full` off the host.
 - `KYPOST_DATABASE_URL_FILE`: the path of a file holding that URL, such as a mounted Secret. Setting both refuses startup, as does an unreadable or empty file, a URL that does not parse, an older server or another locale; there is no fallback to SQLite. Setup, moving an install (`migrate-to-postgres`) and restoring are in [RUNNING.md](RUNNING.md#postgres).
 
+## Replicas
+
+Only with `docker-compose.replicas.yml` ([RUNNING.md](RUNNING.md#replicas-on-one-host)):
+
+- `KYPOST_REPLICAS`: how many KyPost containers (default 2). Change it here, never with `--scale`: HAProxy has one slot per replica.
+- `KYPOST_POSTGRES_PASSWORD`: the bundled PostgreSQL's password. Required; there is no default.
+- `KYPOST_POSTGRES_MAX_CONNECTIONS`: default 400; must exceed the connection budget in RUNNING.md.
+- `KYPOST_REPLICA_SUBNET` and `KYPOST_PROXY_IP`: a private subnet for the replicas and HAProxy's address in it. Both required. The replicas trust `X-Forwarded-For` only from that address.
+- `KYPOST_EDGE_TRUSTED_PROXY`: your TLS proxy's own address on `kypost-net`, when it forwards client addresses. Never the network gateway: anything arriving as a trusted address can forge `X-Forwarded-For`.
+
+Every replica must have the same **shared** settings; KyPost refuses a replica whose values differ, naming the settings, never the values (`kypost-server accept-replica-config` records a deliberate change, with every replica stopped). Shared: `SERVER_BASE_URL`, `PAIRING_SECRET`/`_FILE`, `POW_SECRET`/`_FILE`, `POW_MAX_NUMBER`, `CAPTCHA_*`, `TRUSTED_PROXY_*`, `RATE_LIMIT_EXEMPT_CIDRS` (compared as parsed, masked networks), `SANDBOX_PRIVATE_HOSTS`, `ALLOW_INSECURE_SMTP`, `ALLOW_INSECURE_HTTP`, `KYPOST_NATIVE_MAIL`, `KYPOST_NATIVE_RECEIVING`, `KYPOST_MAILBOX_QUOTA_BYTES`, `KYPOST_RECEIVING_RSPAMD`, `KYPOST_CLOUDFLARE_RECEIVING_ORIGIN`, `KYPOST_NATIVE_RESTORE_RELEASE`, the `KYPOST_KYCALENDAR_*`, `KYPOST_KYDRIVE_*` and `KYPOST_KYMESSAGE_*` settings, `PUSH_RELAY_*`, `APNS_RELAY_*`, `KYPOST_TLS_CERT_FILE`, `KYPOST_TLS_PIN_PROBE`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `KYPOST_DISABLE_AI_SORTING`, `CLASSIFIER_ENGINE`, `OLLAMA_MODEL`, `TUNING_FILE`, the `KYPOST_BACKUP_*` settings except the scratch directory, `KYPOST_BULK_BACKUP_REPOSITORY`, `REVIEW_PAIRING_USERNAME`, every secret-file path and `CONFIG_DIR`/`SECRET_DIR`/`STATE_DIR`. Everything else (port, log level, memory and CPU, Ollama's address, receiving concurrency, scratch, restic binary, the database URL) may differ per host. `backend/internal/replica/config.go` is the list; a test fails on a variable that is in neither.
+
 ## Redaction patterns
 
 `redaction.patterns` in `config.yaml` (or admin-only `PUT /api/config`) is

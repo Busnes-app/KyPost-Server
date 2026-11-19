@@ -98,9 +98,9 @@ Mail-domain setup adds no environment variables. Its public challenge and issuer
 ## Postgres
 
 KyPost keeps its databases in SQLite files under `STATE_DIR` and `CONFIG_DIR` by default.
-It can keep them in one Postgres database instead. This release runs one instance (the
-API and daemon processes of one container) per database; more than one is a later
-release. Backup, the drill, `restore` and capsules work on both backends.
+It can keep them in one Postgres database instead, which also lets several identical
+containers run on one Docker host ([Replicas on one host](#replicas-on-one-host)). Backup,
+the drill, `restore` and capsules work on both backends.
 
 ### The database
 
@@ -160,9 +160,10 @@ either backend.
 
 ### Moving an install from SQLite to Postgres
 
-1. Stop KyPost (`docker compose stop kypost-server`). The copy refuses a database with a
-   non-empty `-wal` beside it, which a running or uncleanly stopped server leaves; start and
-   stop it once if so.
+1. Stop KyPost (`docker compose stop kypost-server`). The copy takes the SQLite
+   server-instance lock and refuses while KyPost runs on that data, and it refuses a
+   database with a non-empty `-wal` beside it, which an uncleanly stopped server leaves;
+   start and stop it once if so.
 2. Create the database as above. Nothing else may have written to it.
 3. Copy the data as the data owner, with the volumes mounted. Put the URL in a file only
    the data owner can read (`chmod 600 kypost-db-url`) and bind-mount it read-only; the
@@ -175,13 +176,19 @@ either backend.
      kypost-server /usr/local/bin/kypost-server migrate-to-postgres -from /kypost/state
    ```
 
+   Run it first with `--check` before `-from`: it does the whole copy and every check,
+   then rolls back and leaves the database empty. Then run it again without `--check`.
    `-config` names `CONFIG_DIR` when it is not the default. The command copies every
    database under the state and config directories in one transaction, prints each
-   table's row count, then counts again after the commit and fails (removing the copy) if
-   any differs. It refuses a database that holds any row, and a file from a newer release
-   (one from an older release is brought up to date on a private copy first). It never
-   modifies the SQLite files and exits non-zero on any failure; a failure before the
-   commit leaves Postgres as it was.
+   table's row count, and checks every table's row count and a digest of its content
+   (BLOBs byte for byte) against the source before the commit; it counts again after the
+   commit and fails (removing the copy) if any differs. It refuses a database that holds
+   any row, a file from a newer release (one from an older release is brought up to date
+   on a private copy under `STATE_DIR/backup-scratch`, mode 0700, removed afterwards), a
+   pinned recovery key whose `recovery.pub` is missing, and a database URL on the command
+   line (argv is visible to every process; use the file). It never modifies the SQLite
+   databases and exits non-zero on any failure; a failure before the commit leaves
+   Postgres as it was.
 4. Give the service the same file and variable, and start it. Put this in
    `docker-compose.override.yml` beside `docker-compose.yml` (Compose merges it in; the
    service already has an `environment:` block, so do not paste it into that file):
@@ -221,6 +228,132 @@ published to the target. A database that holds any row is refused unchanged; res
 a new, empty database.
 
 ## Replicas on one host
+
+On PostgreSQL, several identical KyPost containers can run on **one Docker host**, so one
+can be restarted, upgraded or killed without an outage. They share the three data volumes
+(`kypost_config`, `kypost_private`, `kypost_state`) and one PostgreSQL behind HAProxy. This
+is restart and upgrade continuity, **not** PostgreSQL high availability and **not** host
+failover: every replica depends on the one database and the one host. No capacity or
+throughput is claimed.
+
+### Why one host
+
+Users, contacts, rules, the native authority and domain records and the DKIM keys are files
+on the shared volumes, fenced by `flock`. A flock coordinates containers on one kernel and
+one inode; it does not coordinate across hosts, and on NFS, CephFS or Kubernetes RWX
+volumes it is unproven. So KyPost refuses, at startup and before listening:
+
+- a replica that does not mount the deployment's volumes: the first start writes one ID to
+  `replica-volume.id` in each of the three roots and records it in the database, and a
+  root without it, or with another, is refused;
+- a replica on another host: a live replica with another `/proc/sys/kernel/random/boot_id`
+  refuses the start ("KyPost replicas must run on one Docker host");
+- `KYPOST_NATIVE_RECEIVER`: receiving through Maddy needs one container on port 25 and
+  stays in the single-container profile (the Cloudflare and external-IMAP profiles work
+  with replicas);
+- a proof-of-work key that cannot be kept in `SECRET_DIR` (each replica would refuse the
+  others' challenges).
+
+Separate hosts, separate volumes, NFS/RWX volumes and multi-node Kubernetes are refused or
+unsupported. KyPost has no IMAP, submission or LMTP server and no search index, so nothing
+else is per container.
+
+### What is shared, and how
+
+| Thing | With replicas |
+|---|---|
+| HTTP listener (5866) | Per replica, behind HAProxy, which routes on `/readyz` |
+| Maddy SMTP receiving, `receiver.sock` | Refused: single-container profile only |
+| Cloudflare pickup, external IMAP polling, receiving import, poller, push, WKD recheck, retention, backup schedule | Run by the one replica holding the `daemon` role; the others stand by |
+| Native outbox recovery, DKIM rotation | The `mail-runtime` role; the outbox claim token fences request-path sends |
+| Scheduled sends, Send delay, provisioning, pickup and contact sweeps, agent-token expiry, version check, shared-row cleanup | The `api-sweepers` role; a `sending` row records its replica, and only a dead replica's rows become uncertain |
+| Sessions (token hash only), CSRF, revocations, SSO epoch | PostgreSQL: a sign-out or revocation on one replica holds on every other at the next request |
+| MFA challenges, step-ups, SSO states, pairing nonces, pending device approvals, export grants | PostgreSQL, each spent once across replicas |
+| Login, DAV, MCP, MFA, device, password-change, IMAP-login and review-pairing lockouts, the login budget, office budgets | PostgreSQL windows on database time: the limits are the same in total, never N times |
+| Proof-of-work spent set, KyCalendar and suite replay guards | PostgreSQL |
+| Per-account meters (people, KyDrive, KyMessages, MCP calls, WKD, account writes, push polls, TLS pin, MFA push), cooldowns, office exempt count | Per replica: with N replicas each allows up to N times its limit (O4) |
+| CardDAV app passwords | File on the shared volume; each replica re-checks it on every use |
+| Mail-import jobs and links | Per replica (HAProxy keeps no session affinity: a browser's import link may need a retry) |
+| `config.yaml`, office networks | Re-read by every replica within 5 seconds of a change |
+| Keys in `SECRET_DIR` | Shared volume; created exclusively, so replicas starting together agree |
+| JSON stores (users, contacts, rules, aliases...), DKIM keys, TLS certificate files | Shared volume, flock |
+| Backups, `recovery.pub` | One run at a time (`backup-run` lock); a pinned key's sealed record rewrites a missing `recovery.pub` |
+| supervisord socket and pid, logs | Per container (`/run/kypost`, an anonymous logs volume) |
+| Ollama | One shared service |
+
+### Starting
+
+1. Stop KyPost and put the variables of step 2 in `.env` first: Compose needs them to
+   render the overlay. Then move to PostgreSQL
+   ([Moving an install from SQLite to Postgres](#moving-an-install-from-sqlite-to-postgres))
+   using the overlay's own database: set `KYPOST_POSTGRES_PASSWORD` (a long random hex
+   string; there is no default) and `KYPOST_DATABASE_URL` (below), start only the
+   database, check, then migrate:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.replicas.yml up -d postgres
+   docker compose -f docker-compose.yml -f docker-compose.replicas.yml run --rm --no-deps --user kypost \
+     kypost-server /usr/local/bin/kypost-server migrate-to-postgres --check -from /kypost/state
+   docker compose -f docker-compose.yml -f docker-compose.replicas.yml run --rm --no-deps --user kypost \
+     kypost-server /usr/local/bin/kypost-server migrate-to-postgres -from /kypost/state
+   ```
+
+   The service takes `KYPOST_DATABASE_URL` from `.env` (protected, mode 600), never argv:
+   `postgres://kypost:<KYPOST_POSTGRES_PASSWORD>@postgres:5432/kypost?sslmode=disable`.
+2. Set in `.env`: `COMPOSE_FILE=docker-compose.yml:docker-compose.replicas.yml`,
+   `KYPOST_REPLICAS` (default 2), `KYPOST_REPLICA_SUBNET` (a private /24) and
+   `KYPOST_PROXY_IP` (HAProxy's address inside it: the only address the replicas trust for
+   `X-Forwarded-For`), plus `KYPOST_EDGE_TRUSTED_PROXY` if your TLS proxy sits on
+   `kypost-net` and forwards client addresses (its own address, never the network gateway).
+   `KYPOST_BIND` now gates HAProxy's publish, with the same rules as before.
+3. `docker compose up -d --wait`, then pull the model once into the shared Ollama:
+   `docker compose exec ollama ollama pull "$OLLAMA_MODEL"` (AI sorting only).
+
+**Upgrades:** stop every replica first (`docker compose stop kypost-server`), then
+`docker compose up -d --wait`. Mixed versions are not supported.
+
+**Shared and per-host settings.** Every replica must have the same shared settings: the
+server URL, CAPTCHA, proxies and office networks, native mail, integrations, push relays,
+backups, TLS pinning, AI sorting and every secret file path. KyPost records an HMAC of each
+(keyed by `totp-secret.key`, so the database never holds a value) on the first start and
+refuses a replica whose settings differ, naming the settings only. Per-host settings (port,
+log level, memory, concurrency, scratch, the database URL) may differ. After a deliberate
+change: stop every replica, then run
+`docker compose run --rm --no-deps kypost-server /usr/local/bin/kypost-server accept-replica-config`
+once with the new settings, and start again. The full list is in
+[CONFIGURATION.md](CONFIGURATION.md#replicas).
+
+### Drain and readiness
+
+`/livez` answers 200 while the process serves and never touches the database. `/readyz`
+answers 503 while the replica drains, or when the database does not answer a ping within
+one second (also a read-only standby); HAProxy checks it every second and takes a replica
+out after two failures. At SIGTERM a replica turns `/readyz` to 503, refuses new backups,
+drills and exports, keeps serving for 5 seconds, then gives ordinary requests 20 seconds and
+running backups up to 16 minutes. A daemon gives up its role first, so another takes over
+while it drains. The Docker healthcheck still uses `/api/health`.
+
+**Connection budget.** Measured with the real binary: three idle api processes on one
+database hold 12 connections (4 each, besides the test's own). Each process has a catalog
+pool and one pool per open database (at most 4 connections each, 1 idle), plus one
+dedicated connection for its liveness lock and one for each role or backup lock it holds.
+For N replicas (an api and a daemon each) plan on at least 2 × N × (8 + 4 × the databases
+busy at once); the overlay's default `max_connections` of 400 leaves room for the default
+two replicas. A peak during a backup was not measured; raise
+`KYPOST_POSTGRES_MAX_CONNECTIONS` if `too many clients` appears.
+
+**Other proxies (not executed).** nginx and Nginx Proxy Manager have only passive health
+checks: they keep sending to a draining replica until requests fail. Use HAProxy (the
+overlay) in front of replicas, or set the timeouts below and accept errors during restarts.
+
+**Kubernetes (single node, not executed).** One node only, the three volumes as
+`ReadWriteOnce` on that node:
+
+```yaml
+livenessProbe:  { httpGet: { path: /livez,  port: 5866 }, periodSeconds: 10, timeoutSeconds: 2 }
+readinessProbe: { httpGet: { path: /readyz, port: 5866 }, periodSeconds: 1, timeoutSeconds: 2, failureThreshold: 2 }
+terminationGracePeriodSeconds: 2160
+```
 
 ### Request deadline and proxy timeouts
 
