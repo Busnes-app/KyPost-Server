@@ -38,3 +38,15 @@ it("is off until a domain is ticked, and saves the chosen domains", async () => 
   expect((await screen.findByRole("status")).textContent).toMatch(/Users can make masked addresses/);
   expect(putJSON).toHaveBeenCalledWith("/api/admin/masked-domains", { domains: ["masked.test"] });
 });
+
+it("offers no save when the list could not be read, so it cannot overwrite it", async () => {
+  getJSON.mockImplementation(async (url: string) => {
+    if (url === "/api/admin/masked-domains") throw new Error("request failed: 503 - could not read the masked address domains");
+    return { receivingEnabled: false, issuer: "https://idp.example", founding: "example.test", domains: [domain("example.test")] };
+  });
+  render(<MaskedDomains />);
+  expect((await screen.findByRole("alert")).textContent).toMatch(/503/);
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect((screen.getByRole("button", { name: "Save masked domains" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(putJSON).not.toHaveBeenCalled();
+});

@@ -79,17 +79,20 @@ func randomMaskedAddress(domain string) (string, error) {
 	return adjective + "." + animal + "." + strconv.FormatInt(1000+n.Int64(), 10) + "@" + domain, nil
 }
 
-// maskedDomains reads the administrator's list; unset reads as empty.
+// maskedDomains reads the administrator's list; only an unset one reads as
+// empty. Any other failure is an error, never "no domains".
 func (s *Server) maskedDomains() ([]string, error) {
 	if s.globalStore == nil {
 		return nil, errors.New("the server state database did not open")
 	}
 	v, err := s.globalStore.Setting(maskedDomainsSetting)
-	if errors.Is(err, state.ErrNotFound) || v == "" {
+	switch {
+	case errors.Is(err, state.ErrNotFound):
 		return []string{}, nil
-	}
-	if err != nil {
+	case err != nil:
 		return nil, err
+	case v == "":
+		return []string{}, nil
 	}
 	return strings.Split(v, ","), nil
 }
@@ -342,8 +345,12 @@ func (s *Server) handleMaskedCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domains, err := s.maskedDomains()
+	if err != nil {
+		http.Error(w, "masked address domains unreadable; try again later", http.StatusServiceUnavailable)
+		return
+	}
 	domain := strings.ToLower(strings.TrimSpace(req.Domain))
-	if err != nil || !slices.Contains(domains, domain) {
+	if !slices.Contains(domains, domain) {
 		http.Error(w, "choose one of the masked address domains your administrator set", http.StatusBadRequest)
 		return
 	}

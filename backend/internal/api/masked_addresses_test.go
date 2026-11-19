@@ -18,6 +18,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -247,5 +248,44 @@ func TestMaskedSendLeaksNoPrimaryAddress(t *testing.T) {
 	head, _, _ := bytes.Cut(job.Deliveries[0].Raw, []byte("\r\n\r\n"))
 	if bytes.Contains(bytes.ToLower(head), []byte(a.Address)) || a.Address != "one@example.test" {
 		t.Fatalf("headers name the primary %s:\n%s", a.Address, head)
+	}
+}
+
+// A state database that cannot be read is an error, never "no domains": every
+// read answers 503 and nothing overwrites the stored list.
+func TestMaskedDomainsUnreadableStoreAnswers503(t *testing.T) {
+	s, _, call := maskedFixture(t)
+	if err := s.globalStore.SetSetting(maskedDomainsSetting, "example.test"); err != nil {
+		t.Fatal(err)
+	}
+	good := s.globalStore
+	broken, err := state.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broken.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.globalStore = broken
+	admin := func(method, body string) int {
+		w := httptest.NewRecorder()
+		s.handleMaskedDomains(w, httptest.NewRequest(method, "/api/admin/masked-domains", strings.NewReader(body)))
+		return w.Code
+	}
+	if code := admin("GET", ""); code != 503 {
+		t.Fatal("admin list on an unreadable store", code)
+	}
+	if code := admin("PUT", `{"domains":[]}`); code != 503 {
+		t.Fatal("admin save on an unreadable store", code)
+	}
+	if w := call("GET", "/api/addresses", ""); w.Code != 503 {
+		t.Fatal("user view on an unreadable store", w.Code, w.Body)
+	}
+	if w := call("POST", "/api/addresses/masked", `{"domain":"example.test"}`); w.Code != 503 {
+		t.Fatal("create on an unreadable store", w.Code, w.Body)
+	}
+	s.globalStore = good
+	if v, err := good.Setting(maskedDomainsSetting); err != nil || v != "example.test" {
+		t.Fatal("stored list changed", v, err)
 	}
 }
