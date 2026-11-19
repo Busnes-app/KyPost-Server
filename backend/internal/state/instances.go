@@ -22,6 +22,13 @@ type Instance struct {
 // instanceRelock is how often a held instance lock is probed and, if lost, taken again.
 var instanceRelock = 5 * time.Second
 
+// liveSQL is true while the instance whose ID is expr holds its liveness lock.
+func liveSQL(expr string) string {
+	return `EXISTS (SELECT 1 FROM pg_locks l WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 2
+  AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+  AND l.classid = 4 AND l.objid = hashtext(current_schema() || ':' || ` + expr + `)::oid)`
+}
+
 // RegisterInstance records in and holds its liveness lock on a dedicated connection until
 // ctx ends or release is called. A lost connection is re-locked in the background: until
 // then other processes read this instance as dead.
@@ -33,12 +40,18 @@ func (s *Store) RegisterInstance(ctx context.Context, in Instance) (release func
 	if !won {
 		return nil, errors.New("state: instance ID already live")
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO replica_instances (instance_id, boot_id, volume_id, role, started_at) VALUES (?, ?, ?, ?, ?)
+	// Recorded again after every re-lock: another process may have pruned the row meanwhile.
+	record := func(ctx context.Context) error {
+		_, err := s.db.ExecContext(ctx, `INSERT INTO replica_instances (instance_id, boot_id, volume_id, role, started_at) VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (instance_id) DO UPDATE SET boot_id = excluded.boot_id, volume_id = excluded.volume_id, role = excluded.role, started_at = excluded.started_at`,
-		in.ID, in.BootID, in.VolumeID, in.Role, in.Started); err != nil {
+			in.ID, in.BootID, in.VolumeID, in.Role, in.Started)
+		return err
+	}
+	if err := record(ctx); err != nil {
 		discard(conn)
 		return nil, err
 	}
+	recorded := true
 	held, stop := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	go func() {
@@ -56,16 +69,23 @@ ON CONFLICT (instance_id) DO UPDATE SET boot_id = excluded.boot_id, volume_id = 
 			}
 			ping, cancel := context.WithTimeout(held, lockProbeTimeout)
 			err := conn.PingContext(ping)
+			if err == nil && !recorded {
+				recorded = record(ping) == nil
+			}
 			cancel()
 			if err == nil {
 				continue
 			}
+			recorded = false
 			discard(conn)
 			slog.Error("replica instance lock lost; taking it again", "target", in.ID, "error", err.Error())
 			for held.Err() == nil {
 				c, won, err := s.tryLock(held, spaceInstance, in.ID)
 				if err == nil && won {
 					conn = c
+					rec, cancel := context.WithTimeout(held, lockProbeTimeout)
+					recorded = record(rec) == nil
+					cancel()
 					break
 				}
 				select {
@@ -85,10 +105,7 @@ ON CONFLICT (instance_id) DO UPDATE SET boot_id = excluded.boot_id, volume_id = 
 // LiveInstances lists registered instances whose liveness lock is held now. Rows of dead ones
 // are deleted on the way.
 func (s *Store) LiveInstances(ctx context.Context) ([]Instance, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT i.instance_id, i.boot_id, i.volume_id, i.role, i.started_at,
- EXISTS (SELECT 1 FROM pg_locks l WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 2
-  AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
-  AND l.classid = 4 AND l.objid = hashtext(current_schema() || ':' || i.instance_id)::oid)
+	rows, err := s.db.QueryContext(ctx, `SELECT i.instance_id, i.boot_id, i.volume_id, i.role, i.started_at, `+liveSQL("i.instance_id")+`
  FROM replica_instances i ORDER BY i.instance_id`)
 	if err != nil {
 		return nil, err
@@ -112,19 +129,15 @@ func (s *Store) LiveInstances(ctx context.Context) ([]Instance, error) {
 		return nil, err
 	}
 	for _, id := range dead {
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM replica_instances WHERE instance_id = ? AND NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 2
-  AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
-  AND l.classid = 4 AND l.objid = hashtext(current_schema() || ':' || ?)::oid)`, id, id)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM replica_instances WHERE instance_id = ? AND NOT `+liveSQL("?"), id, id)
 	}
 	return live, nil
 }
 
-// InstanceLive reports whether id is registered and live.
+// InstanceLive reports whether id holds its liveness lock now.
 func (s *Store) InstanceLive(ctx context.Context, id string) (bool, error) {
 	var ok bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks l WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 2
-  AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
-  AND l.classid = 4 AND l.objid = hashtext(current_schema() || ':' || ?)::oid)`, id).Scan(&ok)
+	err := s.db.QueryRowContext(ctx, `SELECT `+liveSQL("?"), id).Scan(&ok)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

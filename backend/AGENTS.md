@@ -429,6 +429,7 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `$CONFIG_DIR/admin.env` | Legacy single-admin seed; imported once into `users.json`, then unused |
 | `$SECRET_DIR/imap-config.key` | Master AES key for all stored IMAP credentials |
 | `$SECRET_DIR/totp-secret.key` | Master key for second-factor material: seals `TOTPSecretEnc`, and (via HKDF `kypost:recovery-code:v1`) keys the recovery-code digests in `users.json` |
+| `$SECRET_DIR/imap-import.key` | Seals the provider password an IMAP import grant holds between its listing and its start (at most 10 minutes); created by the API on first use. Losing it only fails grants in flight |
 | `$SECRET_DIR/scheduled-send.key` | Seals pending scheduled mail in `$STATE_DIR/state.db`; created by the API on first use. Losing it makes pending scheduled mail unrecoverable (it fails as `failed`, nothing sent); sealed backups include all of `SECRET_DIR` |
 | `$SECRET_DIR/imap-config.json` | Legacy global IMAP credentials; migrated to the first admin, then unused |
 | `$STATE_DIR/state.db` | SQLite. Global state: sticky AI-credits flag, scheduled sends, the send ledger, and `agent_tokens` (SHA-256 of each AI agent token's secret, scope, owner, last use) |

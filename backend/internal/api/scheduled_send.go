@@ -161,7 +161,7 @@ func (s *Server) scheduledSendKey() ([]byte, error) {
 	return cryptutil.LoadOrCreateKey(filepath.Join(config.SecretDir(), "scheduled-send.key"))
 }
 
-func sealScheduled(key []byte, v any) ([]byte, error) {
+func sealJSON(key []byte, v any) ([]byte, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
@@ -173,7 +173,7 @@ func sealScheduled(key []byte, v any) ([]byte, error) {
 	return json.Marshal(env)
 }
 
-func openScheduled(key, blob []byte, v any) error {
+func openJSON(key, blob []byte, v any) error {
 	var env cryptutil.EncryptedPayload
 	if err := json.Unmarshal(blob, &env); err != nil {
 		return err
@@ -189,7 +189,7 @@ func openScheduled(key, blob []byte, v any) error {
 // so a blob copied between rows or users cannot be sent as theirs.
 func openScheduledRow(key []byte, r state.ScheduledSend) (scheduledJob, error) {
 	var j scheduledJob
-	if err := openScheduled(key, r.Sealed, &j); err != nil {
+	if err := openJSON(key, r.Sealed, &j); err != nil {
 		return j, err
 	}
 	if j.ID != r.ID || j.UserID != r.UserID || j.Mailbox != r.Mailbox {
@@ -257,8 +257,8 @@ func (s *Server) scheduleSend(w http.ResponseWriter, r *http.Request, ac AuthCon
 		}
 		j.Job.FromGeneration = fromAddress.Generation
 	}
-	sealed, err := sealScheduled(key, j)
-	summary, summaryErr := sealScheduled(key, scheduledSummary{Subject: subject, To: to, Delayed: j.Delayed})
+	sealed, err := sealJSON(key, j)
+	summary, summaryErr := sealJSON(key, scheduledSummary{Subject: subject, To: to, Delayed: j.Delayed})
 	if err != nil || summaryErr != nil {
 		http.Error(w, "scheduled send unavailable; send now or retry later", http.StatusServiceUnavailable)
 		return
@@ -304,7 +304,7 @@ func (s *Server) handleScheduledList(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		var sum scheduledSummary
-		_ = openScheduled(key, row.Summary, &sum)
+		_ = openJSON(key, row.Summary, &sum)
 		out = append(out, map[string]any{"id": row.ID, "status": row.Status, "reason": row.Reason, "sendAt": time.Unix(row.SendAt, 0).UTC().Format(time.RFC3339), "subject": sum.Subject, "to": sum.To, "delayed": sum.Delayed})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"scheduled": out})

@@ -275,6 +275,49 @@ func TestInstancesAreLiveWhileRegistered(t *testing.T) {
 	}
 }
 
+// A replica whose liveness connection drops is pruned by another's LiveInstances; once it
+// holds its lock again it must be listed again, or the topology and accept-replica-config
+// guards stop seeing a running replica.
+func TestRelockedInstanceIsListedAgain(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	old := instanceRelock
+	// Long enough that b sees the row pruned before a's next probe re-locks.
+	instanceRelock = 2 * time.Second
+	t.Cleanup(func() { instanceRelock = old })
+	a, b := twoReplicas(t)
+	ctx := context.Background()
+	release, err := a.RegisterInstance(ctx, Instance{ID: "i-blip", BootID: "boot", VolumeID: "vol", Role: "api", Started: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var n int
+	if err := b.db.QueryRowContext(ctx, `SELECT count(pg_terminate_backend(pid)) FROM pg_locks WHERE locktype='advisory' AND granted AND objsubid=2
+ AND classid=4 AND objid=hashtext(current_schema() || ':' || 'i-blip')::oid`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("terminate: %d %v", n, err)
+	}
+	for pruned := time.Now().Add(time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if live, err := b.LiveInstances(ctx); err == nil && len(live) == 0 {
+			break
+		}
+		if time.Now().After(pruned) {
+			t.Fatal("the lost instance was never pruned")
+		}
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		live, err := b.LiveInstances(ctx)
+		if err == nil && len(live) == 1 && live[0].ID == "i-blip" && live[0].BootID == "boot" {
+			return
+		}
+		if time.Now().After(deadline) {
+			ok, _ := b.InstanceLive(ctx, "i-blip")
+			t.Fatalf("re-locked instance not listed: live=%+v err=%v lockHeld=%v", live, err, ok)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func TestSQLiteInstanceLockRefusesMigrationWhileRunning(t *testing.T) {
 	dir := t.TempDir()
 	release, err := HoldInstance(dir, false)
@@ -370,7 +413,7 @@ func TestResetReplicaStateKeepsOnlyLiveRefusals(t *testing.T) {
 		`INSERT INTO auth_challenges VALUES ('k', 'u', X'00', 9999999999999)`,
 		`INSERT INTO security_windows VALUES ('k', 1, 9999999999999)`,
 		`INSERT INTO replica_instances VALUES ('i', 'b', 'v', 'api', 1)`,
-		`INSERT INTO import_jobs VALUES ('u', 'i', '{}', 0, 1)`,
+		`INSERT INTO import_jobs VALUES ('u', 'i', '{}', 1, 0, 1)`,
 		`INSERT INTO spent_challenges VALUES ('live', ` + strconv.FormatInt(future, 10) + `), ('old', 1)`,
 		`INSERT INTO replay_ids VALUES ('live', 'a', ` + strconv.FormatInt(future, 10) + `), ('old', 'a', 1)`,
 		`INSERT INTO meta VALUES ('replica_config_fingerprint', '{}'), ('replica_volume_id', 'v'), ('sso_epoch', '3'), ('kyrecovery_key_id', 'kept')`,

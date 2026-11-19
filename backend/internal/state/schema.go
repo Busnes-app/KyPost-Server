@@ -320,6 +320,7 @@ CREATE TABLE IF NOT EXISTS import_jobs (
 	user_id     TEXT PRIMARY KEY,
 	instance_id TEXT NOT NULL,
 	data        TEXT NOT NULL,
+	active      INTEGER NOT NULL DEFAULT 0,
 	cancel      INTEGER NOT NULL DEFAULT 0,
 	updated_at  INTEGER NOT NULL
 );

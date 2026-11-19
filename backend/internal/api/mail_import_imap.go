@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/json"
@@ -83,15 +84,22 @@ type imapAccount struct {
 	ip       net.IP
 }
 
-// imapGrant is an unspent IMAP import. password is set by a successful
-// listing; folders are what it listed, by name; stop cancels a listing in
-// flight.
+// imapGrant is an unspent IMAP import. A successful listing sets the approved
+// address, the provider password sealed to this grant, and the folders it
+// listed by name; Listing is set while one is in flight.
 type imapGrant struct {
-	imapAccount
-	password []byte
-	folders  map[string]imapadapter.RemoteFolder
-	listing  bool
-	stop     context.CancelFunc
+	Host     string                              `json:"host"`
+	Port     int                                 `json:"port"`
+	StartTLS bool                                `json:"startTLS,omitempty"`
+	Username string                              `json:"username"`
+	IP       string                              `json:"ip,omitempty"`
+	Password []byte                              `json:"password,omitempty"`
+	Folders  map[string]imapadapter.RemoteFolder `json:"folders,omitempty"`
+	Listing  bool                                `json:"listing,omitempty"`
+}
+
+func (g *imapGrant) account() imapAccount {
+	return imapAccount{host: g.Host, port: g.Port, startTLS: g.StartTLS, username: g.Username, ip: net.ParseIP(g.IP)}
 }
 
 // imapHost normalizes a host name or IP literal.
@@ -185,22 +193,6 @@ func imapFailure(err error) (int, string) {
 	return http.StatusBadGateway, "the server did not answer as an IMAP server should; check the server name, port and security"
 }
 
-// dropImportGrantLocked deletes the grant at token, cancels its listing in
-// flight and wipes its held password. The listing holds its own copy and
-// wipes it on finding the grant gone. Wiping is best effort: the JSON decoder
-// and TLS buffers held copies that only the collector reclaims. Hold importMu.
-func (s *Server) dropImportGrantLocked(token string) {
-	g, ok := s.importGrants[token]
-	delete(s.importGrants, token)
-	if ok && g.imap != nil {
-		if g.imap.stop != nil {
-			g.imap.stop()
-		}
-		clear(g.imap.password)
-		g.imap.password = nil
-	}
-}
-
 // handleIMAPImportStart proves the caller for one account and mints the grant.
 func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -268,30 +260,16 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "import unavailable", http.StatusInternalServerError)
 		return
 	}
-	now := time.Now()
-	g := importGrant{user: ac.UserID, session: session, mailbox: ac.Mailbox, correlation: correlation, expires: now.Add(imapGrantTTL),
-		imap: &imapGrant{imapAccount: imapAccount{host: host, port: body.Port, startTLS: startTLS, username: username}}}
-	s.importMu.Lock()
-	if s.importGrants == nil {
-		s.importGrants = map[string]importGrant{}
-	}
-	for k, old := range s.importGrants {
-		if old.user == ac.UserID || !now.Before(old.expires) {
-			s.dropImportGrantLocked(k)
-		}
-	}
+	g := importGrant{User: ac.UserID, Session: sessionHash(session), Mailbox: ac.Mailbox, Correlation: correlation, Expires: time.Now().Add(imapGrantTTL),
+		IMAP: &imapGrant{Host: host, Port: body.Port, StartTLS: startTLS, Username: username}}
 	// Replacing the user's grant cancels its listing in flight.
-	s.importGrants[token] = g
-	s.importMu.Unlock()
-	// A held password must not outlive the grant waiting for the next request.
-	time.AfterFunc(imapGrantTTL+time.Second, func() {
-		s.importMu.Lock()
-		defer s.importMu.Unlock()
-		if old, ok := s.importGrants[token]; ok && !time.Now().Before(old.expires) {
-			s.dropImportGrantLocked(token)
-		}
-	})
-	s.auditImport(importJob{Mailbox: g.mailbox, Host: host, user: g.user, correlation: correlation}, "authorized", "")
+	if err := s.putImportGrant(token, g); err != nil {
+		writeUnavailable(w)
+		return
+	}
+	// A sealed password does not outlive the grant waiting for the next request.
+	time.AfterFunc(imapGrantTTL+time.Second, func() { s.dropImportGrant(token) })
+	s.auditImport(importJob{Mailbox: g.Mailbox, Host: host, user: g.User, correlation: correlation}, "authorized", "")
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "expiresInSeconds": int(imapGrantTTL.Seconds()), "target": imapDefaultTarget(host)})
 }
 
@@ -299,17 +277,17 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 // user's import, or the server's import slots, are busy.
 func (s *Server) imapAdmissible(w http.ResponseWriter, user string) bool {
 	s.importMu.Lock()
-	closed, busy := s.importClosed, s.importBusy(user)
+	closed := s.importClosed
 	s.importMu.Unlock()
-	switch {
-	case closed:
+	if closed {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "the server is shutting down; import again after it restarts"})
-	case busy != "":
-		writeJSON(w, http.StatusConflict, map[string]any{"error": busy})
-	default:
-		return true
+		return false
 	}
-	return false
+	if status, busy := s.importRefusal(user); status != 0 {
+		writeJSON(w, status, map[string]any{"error": busy})
+		return false
+	}
+	return true
 }
 
 func imapDefaultTarget(host string) string {
@@ -325,12 +303,6 @@ func (s *Server) imapCaller(r *http.Request) (user, session string) {
 		return ac.UserID, session
 	}
 	return ac.UserID, ""
-}
-
-// imapGrantOf returns the caller's live IMAP grant at token. Hold importMu.
-func (s *Server) imapGrantOf(user, session, token string) (importGrant, bool) {
-	g, found := s.importGrants[token]
-	return g, session != "" && found && g.imap != nil && g.user == user && g.session == session && time.Now().Before(g.expires)
 }
 
 var errIMAPGrant = map[string]any{"error": "this import expired or was already started; start again"}
@@ -356,27 +328,64 @@ func (s *Server) handleIMAPImportFolders(w http.ResponseWriter, r *http.Request)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), imapListTimeout)
 	defer cancel()
-	s.importMu.Lock()
-	g, ok := s.imapGrantOf(user, session, token)
-	if !ok || g.imap.listing {
-		s.importMu.Unlock()
+	var g importGrant
+	mine := func(v *importGrant, found bool) bool {
+		return found && v.IMAP != nil && v.User == user && session != "" && v.Session == sessionHash(session)
+	}
+	if !s.editImportGrant(token, func(v *importGrant, found bool) (rowEdit, bool) {
+		if !mine(v, found) || v.IMAP.Listing {
+			return rowKeep, false
+		}
+		v.IMAP.Listing = true
+		g = *v
+		return rowWrite, true
+	}) {
 		clear(password)
 		writeJSON(w, http.StatusNotFound, errIMAPGrant)
 		return
 	}
-	g.imap.listing, g.imap.stop = true, cancel
-	account := g.imap.imapAccount
+	s.importMu.Lock()
+	if s.importListings == nil {
+		s.importListings = map[string]importListing{}
+	}
+	s.importListings[user] = importListing{token, cancel}
 	s.importMu.Unlock()
+	account := g.IMAP.account()
 
 	var folders []imapadapter.RemoteFolder
 	err := s.listIMAP(ctx, user, &account, password, &folders)
 	s.importMu.Lock()
-	g.imap.listing, g.imap.stop = false, nil
-	_, live := s.importGrants[token]
+	if l, ok := s.importListings[user]; ok && l.token == token {
+		delete(s.importListings, user)
+	}
+	s.importMu.Unlock()
+	var sealed []byte
+	var sealErr error
+	if err == nil {
+		sealed, sealErr = sealIMAPPassword(user, token, password)
+	}
+	clear(password)
+	listed := make(map[string]imapadapter.RemoteFolder, len(folders))
+	for _, f := range folders {
+		listed[f.Name] = f
+	}
+	// The grant keeps the sealed password only after a successful sign-in.
+	live := s.editImportGrant(token, func(v *importGrant, found bool) (rowEdit, bool) {
+		if !mine(v, found) || !v.IMAP.Listing {
+			return rowKeep, false
+		}
+		v.IMAP.Listing = false
+		if err == nil && sealErr == nil {
+			v.IMAP.Password, v.IMAP.IP, v.IMAP.Folders = sealed, account.ip.String(), listed
+		}
+		return rowWrite, true
+	})
+	if sealErr != nil {
+		http.Error(w, "import unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	switch {
 	case err != nil || !live:
-		s.importMu.Unlock()
-		clear(password)
 		var refused imapRefusal
 		switch {
 		case errors.As(err, &refused):
@@ -390,18 +399,11 @@ func (s *Server) handleIMAPImportFolders(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		status, reason := imapFailure(err)
-		s.auditImport(importJob{Mailbox: g.mailbox, Host: account.host, user: g.user, correlation: g.correlation}, "list_failed", reason)
+		s.auditImport(importJob{Mailbox: g.Mailbox, Host: account.host, user: g.User, correlation: g.Correlation}, "list_failed", reason)
 		writeJSON(w, status, map[string]any{"error": reason})
 		return
 	}
-	clear(g.imap.password)
-	g.imap.password, g.imap.ip = password, account.ip
-	g.imap.folders = make(map[string]imapadapter.RemoteFolder, len(folders))
-	for _, f := range folders {
-		g.imap.folders[f.Name] = f
-	}
-	s.importMu.Unlock()
-	s.auditImport(importJob{Mailbox: g.mailbox, Host: account.host, user: g.user, correlation: g.correlation}, "listed", "")
+	s.auditImport(importJob{Mailbox: g.Mailbox, Host: account.host, user: g.User, correlation: g.Correlation}, "listed", "")
 	type folder struct {
 		Name       string   `json:"name"`
 		Path       []string `json:"path"`
@@ -470,25 +472,23 @@ func (s *Server) handleIMAPImportRun(w http.ResponseWriter, r *http.Request) {
 	}
 	token := r.PathValue("token")
 	user, session := s.imapCaller(r)
-	s.importMu.Lock()
-	g, ok := s.imapGrantOf(user, session, token)
-	s.importMu.Unlock()
+	g, ok := s.importGrantOf(token, user, session, true)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, errIMAPGrant)
 		return
 	}
-	im, refused := nativeMail[mailImporter](s, r.Context(), g.user, g.mailbox, "import is available for native mailboxes")
+	im, refused := nativeMail[mailImporter](s, r.Context(), g.User, g.Mailbox, "import is available for native mailboxes")
 	if refused != nil {
 		refused.write(w)
 		return
 	}
-	if err := s.importEncryptionOff(g.user); err != nil {
+	if err := s.importEncryptionOff(g.User); err != nil {
 		writeImportRefusal(w, err)
 		return
 	}
 	target := strings.TrimSpace(body.Target)
 	if target == "" {
-		target = imapDefaultTarget(g.imap.host)
+		target = imapDefaultTarget(g.IMAP.Host)
 	}
 	if _, err := mailbox.ImportPath(target, nil); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid target folder: each level needs a name without '.', '/', '\\' or '\"'"})
@@ -496,27 +496,22 @@ func (s *Server) handleIMAPImportRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.importMu.Lock()
-	g, ok = s.imapGrantOf(user, session, token)
+	closed := s.importClosed
+	s.importMu.Unlock()
 	var refusal string
 	status := http.StatusBadRequest
 	var folders []imapImportFolder
 	switch {
-	case !ok:
-		refusal, status = errIMAPGrant["error"].(string), http.StatusNotFound
-	case g.imap.listing || g.imap.password == nil:
+	case g.IMAP.Listing || g.IMAP.Password == nil:
 		refusal, status = "list the folders first", http.StatusConflict
-	case s.importClosed:
+	case closed:
 		refusal, status = "the server is shutting down; import again after it restarts", http.StatusServiceUnavailable
 	case len(body.Folders) == 0:
 		refusal = "choose at least one folder"
 	default:
-		if refusal = s.importBusy(g.user); refusal != "" {
-			status = http.StatusConflict
-			break
-		}
 		seen := map[string]bool{}
 		for _, name := range body.Folders {
-			f, listed := g.imap.folders[name]
+			f, listed := g.IMAP.Folders[name]
 			if !listed || seen[name] {
 				refusal = "choose folders from the list"
 				break
@@ -531,19 +526,36 @@ func (s *Server) handleIMAPImportRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if refusal != "" {
-		s.importMu.Unlock()
 		writeJSON(w, status, map[string]any{"error": refusal})
 		return
 	}
-	account, password := g.imap.imapAccount, g.imap.password
-	g.imap.password = nil // the job owns it now
-	s.dropImportGrantLocked(token)
-	if s.imports == nil {
-		s.imports = map[string]*importJob{}
+	account := g.IMAP.account()
+	job := &importJob{State: "running", Mailbox: g.Mailbox, Folder: target, Host: account.host, FoldersTotal: len(folders), user: g.User, correlation: g.Correlation}
+	if status, busy, undo := s.claimImport(job); status != 0 { // the grant is kept for a retry
+		writeJSON(w, status, map[string]any{"error": busy})
+		return
+	} else if !s.editImportGrant(token, func(v *importGrant, found bool) (rowEdit, bool) {
+		if !found || v.IMAP == nil || v.User != g.User || v.Session != g.Session || v.IMAP.Listing || !bytes.Equal(v.IMAP.Password, g.IMAP.Password) {
+			return rowKeep, false
+		}
+		return rowDrop, true // the job owns the password now
+	}) {
+		undo()
+		writeJSON(w, http.StatusNotFound, errIMAPGrant)
+		return
+	}
+	password, err := openIMAPPassword(g.User, token, g.IMAP.Password)
+	if err != nil {
+		s.finishImport(job, "failed", "the import could not start; start it again")
+		http.Error(w, "import unavailable", http.StatusServiceUnavailable)
+		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	job := &importJob{State: "running", Mailbox: g.mailbox, Folder: target, Host: account.host, FoldersTotal: len(folders), user: g.user, correlation: g.correlation, cancel: cancel}
-	s.imports[g.user] = job
+	s.importMu.Lock()
+	job.cancel = cancel
+	if s.importClosed { // shutdown began meanwhile: the job ends as cancelled
+		cancel()
+	}
 	started := *job
 	s.importMu.Unlock()
 	s.auditImport(started, "started", "")

@@ -185,7 +185,7 @@ it("imports from another account: confirms without the provider password, lists,
   });
   view();
   fireEvent.click(await screen.findByLabelText("From another mail account"));
-  expect(screen.getByText(/used only for this import and is never stored/)).toBeTruthy();
+  expect(screen.getByText(/used only for this import: it is kept encrypted until the import starts/)).toBeTruthy();
   expect(screen.getByText(/need an app password/)).toBeTruthy();
   expect(screen.getByText(/Nothing is changed on the other account/)).toBeTruthy();
   expect(screen.getByText(/signs in to your other mail provider/)).toBeTruthy();

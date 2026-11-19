@@ -273,7 +273,7 @@ else is per container.
 | Proof-of-work spent set, KyCalendar and suite replay guards | PostgreSQL |
 | Per-account meters (people, KyDrive, KyMessages, MCP calls, WKD, account writes, push polls, TLS pin, MFA push), cooldowns, office exempt count | Per replica: with N replicas each allows up to N times its limit (O4) |
 | CardDAV app passwords | File on the shared volume; each replica re-checks it on every use |
-| Mail-import jobs and links | Per replica (HAProxy keeps no session affinity: a browser's import link may need a retry) |
+| Mail-import links, IMAP grants and job status | PostgreSQL: a link or grant is spent once on any replica (an IMAP password sealed under `SECRET_DIR/imap-import.key`); status and cancel reach the replica running the job, which reads as interrupted if that replica stops. The job itself runs where its upload or start landed |
 | `config.yaml`, office networks | Re-read by every replica within 5 seconds of a change |
 | Keys in `SECRET_DIR` | Shared volume; created exclusively, so replicas starting together agree |
 | JSON stores (users, contacts, rules, aliases...), DKIM keys, TLS certificate files | Shared volume, flock |

@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS auth_challenges (
  key TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', data BYTEA NOT NULL, expires_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS auth_challenges_expiry ON auth_challenges(expires_at);
 CREATE TABLE IF NOT EXISTS import_jobs (
- user_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, data TEXT NOT NULL, cancel BIGINT NOT NULL DEFAULT 0,
+ user_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, data TEXT NOT NULL, active BIGINT NOT NULL DEFAULT 0,
+ cancel BIGINT NOT NULL DEFAULT 0,
  updated_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS replica_instances (
  instance_id TEXT PRIMARY KEY, boot_id TEXT NOT NULL, volume_id TEXT NOT NULL, role TEXT NOT NULL,

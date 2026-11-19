@@ -163,13 +163,16 @@ type Server struct {
 	exportMu  sync.Mutex
 	exports   map[string]exportGrant
 	exporting map[string]bool
-	// importGrants are the unspent mail-import upload links and IMAP grants, keyed by token,
-	// and imports each user's latest import job. Innermost, taken alone,
-	// never while another Server mutex is held.
-	importMu     sync.Mutex
-	importGrants map[string]importGrant
-	imports      map[string]*importJob
-	importClosed bool // set at Shutdown: no new import job starts
+	// importGrants are the unspent mail-import upload links and IMAP grants, keyed by token
+	// (memory only; rows on PostgreSQL), imports each user's latest import job run here, and
+	// importListings each user's IMAP listing in flight here. Innermost, taken alone, never
+	// while another Server mutex is held. importPublishMu orders a job's status row writes.
+	importMu        sync.Mutex
+	importGrants    map[string]importGrant
+	imports         map[string]*importJob
+	importListings  map[string]importListing
+	importClosed    bool // set at Shutdown: no new import job starts
+	importPublishMu sync.Mutex
 	// importPending is the upload bytes promised but not yet written; see uploadSpace.
 	importPending atomic.Int64
 	// singleUse makes each one-shot token — PGP QR key exchange, native device
@@ -1056,9 +1059,7 @@ func (s *Server) routesFrontend(mux *http.ServeMux) {
 // Serve and Run call Prepare automatically if it wasn't already called.
 func (s *Server) Prepare() {
 	// No import job survives a restart; its upload may have.
-	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
-		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
-	}
+	s.sweepImportUploads()
 	s.bindUnboundSSOLinks()
 	// Settings saved before KySignOn detection carry no mark; confirm it once.
 	if cfg := s.ssoStore.Load(); cfg.Enabled && !cfg.KySignOn {

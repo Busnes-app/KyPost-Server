@@ -87,7 +87,7 @@ export function MailImportAccount({ mailbox, ssoSession, disabled, onStarted }: 
   const canList = host.trim() !== "" && username.trim() !== "" && providerPassword !== "" && (ssoSession || token !== "" || accountPassword !== "");
   return <>
     {error && <p className="notice notice-error" role="alert">{error}</p>}
-    <p>KyPost's server signs in to your other mail provider and copies the folders you choose. The password is used only for this import and is never stored. Gmail, iCloud and Outlook usually need an app password, created in that account's security settings. Nothing is changed on the other account: folders are opened read-only, and messages keep their read and flagged state and their received date. Importing again skips the messages already there.</p>
+    <p>KyPost's server signs in to your other mail provider and copies the folders you choose. The password is used only for this import: it is kept encrypted until the import starts, for 10 minutes at most, and never saved after that. Gmail, iCloud and Outlook usually need an app password, created in that account's security settings. Nothing is changed on the other account: folders are opened read-only, and messages keep their read and flagged state and their received date. Importing again skips the messages already there.</p>
     <fieldset className="config-card config-grid" disabled={busy || disabled}>
       <legend>Other mail account</legend>
       <label>Server<input aria-label="Server" placeholder="imap.example.com" autoComplete="off" value={host} onChange={edit(setHost)} /></label>

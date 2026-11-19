@@ -14,7 +14,7 @@ import (
 const raceDirEnv = "KYPOST_TEST_KEY_RACE_DIR"
 
 var raceKeys = []string{"totp-secret.key", "imap-config.key", "pgp-private-key.key", "pickup-store.key", "pairing.key",
-	"pow.key", "relay-identity.key", "scheduled-send.key", "native-relay.key", "bulk-backup.key"}
+	"pow.key", "relay-identity.key", "scheduled-send.key", "imap-import.key", "native-relay.key", "bulk-backup.key"}
 
 // raceCreate creates every key from n goroutines released together and returns what each
 // saw, base64, one line per goroutine per key.
