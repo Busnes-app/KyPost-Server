@@ -20,7 +20,7 @@ var replicaRows = []string{
 	`INSERT INTO spent_challenges VALUES ('pow:s', 9999999999999)`,
 	`INSERT INTO replay_ids VALUES ('kycalendar:e', 'attempt', 9999999999999)`,
 	`INSERT INTO auth_challenges VALUES ('mfa:k', 'u1', X'00ff7f10', 9999999999999)`,
-	`INSERT INTO import_jobs VALUES ('u1', 'api-1', '{}', 0, 1)`,
+	`INSERT INTO import_jobs VALUES ('u1', 'api-1', '{}', 1, 0, 1)`,
 	`INSERT INTO replica_instances VALUES ('api-1', 'boot', 'vol', 'api', 1)`,
 	`INSERT INTO scheduled_sends (id, user_id, mailbox, send_at, status, summary, created_at, claimant) VALUES ('s1', 'u1', 'u1', 1, 'sending', X'01', 1, 'api-1')`,
 	// Identity tables, with ids well above 1.

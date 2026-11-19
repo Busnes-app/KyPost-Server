@@ -138,33 +138,18 @@ func importBusyRefusal(err error) (int, string) {
 // claimImport makes job the user's import, run here, unless importRefusal refuses; undo
 // gives the claim back when the grant then cannot be spent.
 func (s *Server) claimImport(job *importJob) (status int, refusal string, undo func()) {
+	if s.shared == nil {
+		return s.claimImportHere(job)
+	}
+	ctx, cancel := sharedContext()
+	defer cancel()
+	if status, refusal := importBusyRefusal(s.shared.ClaimImport(ctx, job.user, s.instanceID, encodeImportRow(*job), maxImports)); status != 0 {
+		return status, refusal, nil
+	}
 	s.importMu.Lock()
 	if s.imports == nil {
 		s.imports = map[string]*importJob{}
 	}
-	if s.shared == nil {
-		defer s.importMu.Unlock()
-		if busy := s.importBusy(job.user); busy != "" {
-			return http.StatusConflict, busy, nil
-		}
-		prev := s.imports[job.user]
-		s.imports[job.user] = job
-		return 0, "", func() {
-			s.importMu.Lock()
-			defer s.importMu.Unlock()
-			if s.imports[job.user] == job {
-				s.imports[job.user] = prev
-			}
-		}
-	}
-	data := encodeImportRow(*job)
-	s.importMu.Unlock()
-	ctx, cancel := sharedContext()
-	defer cancel()
-	if status, refusal := importBusyRefusal(s.shared.ClaimImport(ctx, job.user, s.instanceID, data, maxImports)); status != 0 {
-		return status, refusal, nil
-	}
-	s.importMu.Lock()
 	s.imports[job.user] = job
 	s.importMu.Unlock()
 	go s.followImport(job)
@@ -173,6 +158,27 @@ func (s *Server) claimImport(job *importJob) (status int, refusal string, undo f
 		job.State = "idle"
 		s.importMu.Unlock()
 		s.publishImport(job)
+	}
+}
+
+// claimImportHere is claimImport in memory: the slots and the user's job are this process's.
+func (s *Server) claimImportHere(job *importJob) (int, string, func()) {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	if busy := s.importBusy(job.user); busy != "" {
+		return http.StatusConflict, busy, nil
+	}
+	if s.imports == nil {
+		s.imports = map[string]*importJob{}
+	}
+	prev := s.imports[job.user]
+	s.imports[job.user] = job
+	return 0, "", func() {
+		s.importMu.Lock()
+		defer s.importMu.Unlock()
+		if s.imports[job.user] == job {
+			s.imports[job.user] = prev
+		}
 	}
 }
 

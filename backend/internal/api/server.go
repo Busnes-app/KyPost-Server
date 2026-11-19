@@ -53,7 +53,7 @@ import (
 // Server holds the HTTP surface and its process-wide state.
 //
 // LOCK ORDER: encPolicyMu before cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
-// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu before importMu. Never the reverse.
+// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu before importPublishMu before importMu. Never the reverse.
 // The sso-lifecycle file lock (sso.LifecycleStore) ranks before all of them and
 // is not modelled by lockRank or TestLockOrderIsRespected: hold no Server mutex
 // when calling LockDirectory, ApplyDirectory, RecordLogout or RecordSignOnJTI.
