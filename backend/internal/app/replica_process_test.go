@@ -18,6 +18,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend/pgtest"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -419,4 +420,29 @@ func TestConcurrentFirstStart(t *testing.T) {
 	if err := tx.QueryRow(`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()`).Scan(&connections); err == nil {
 		t.Logf("connections with three idle api processes: %d (this test's own included)", connections)
 	}
+}
+
+// A clean stop leaves no non-empty -wal: the stores keep their handles until exit, and
+// migrate-to-postgres refuses a log beside a database.
+func TestCleanStopFoldsSQLiteLogs(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "SQLite write-ahead logs")
+	dir := t.TempDir()
+	st, err := state.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("left", "open"); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, "state.db-wal")); err != nil || info.Size() == 0 {
+		t.Fatalf("fixture has no log to fold: %v", err)
+	}
+	checkpointSQLite(newTestLogger(t), dir) // the store is still open, as at a real stop
+	if info, err := os.Stat(filepath.Join(dir, "state.db-wal")); err == nil && info.Size() != 0 {
+		t.Fatalf("a %d-byte log is left beside state.db", info.Size())
+	}
+	if v, err := st.Setting("left"); err != nil || v != "open" {
+		t.Fatalf("the folded write is lost: %q %v", v, err)
+	}
+	_ = st.Close()
 }

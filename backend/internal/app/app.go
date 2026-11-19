@@ -197,6 +197,11 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if !dbbackend.Postgres() {
+		// Deferred after the instance lock, so it runs first: the log is folded in while this
+		// process still holds the lock and after every worker has returned.
+		defer checkpointSQLite(logger, paths.StateDir, configDir)
+	}
 
 	clearAllMFAIfRequested(logger, usersStore, paths.StateDir)
 

@@ -595,7 +595,7 @@ jobs:
     name: ci-docker
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -750,6 +750,9 @@ jobs:
           done
           echo "container never became healthy" >&2
           exit 1
+
+      - name: replica cutover (SQLite -> PostgreSQL -> two replicas)
+        run: bash scripts/check-replica-cutover.sh kypost-server:ci
 
       - name: container logs
         if: always()

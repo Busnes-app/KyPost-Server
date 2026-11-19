@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/replica"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/worker"
@@ -175,4 +178,30 @@ func runAcceptReplicaConfig(args []string, stdout io.Writer) error {
 	}
 	_, err = fmt.Fprintf(stdout, "Recorded this container's shared settings. Changed: %s\n", strings.Join(changed, ", "))
 	return err
+}
+
+// checkpointSQLite folds every non-empty SQLite write-ahead log under roots back into its
+// database at a clean stop. The stores keep their handles open until exit, so without it a
+// stopped install leaves -wal files, which migrate-to-postgres rightly refuses. Run after the
+// work has stopped, under the instance lock. ponytail: walks the roots once per stop.
+func checkpointSQLite(logger *logging.Logger, roots ...string) {
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".db-wal") {
+				return nil
+			}
+			if info, err := d.Info(); err != nil || info.Size() == 0 {
+				return nil
+			}
+			db, err := dbbackend.OpenSQLiteFile(strings.TrimSuffix(p, "-wal"), "_pragma=busy_timeout(5000)")
+			if err == nil {
+				_, err = db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+				err = errors.Join(err, db.Close())
+			}
+			if err != nil {
+				logger.Warn("a SQLite write-ahead log was left at stop", "path", p, "error", err.Error())
+			}
+			return nil
+		})
+	}
 }
