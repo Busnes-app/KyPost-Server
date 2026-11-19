@@ -1,5 +1,7 @@
 # Opt-in resolver for a private KyRecovery hostname. This resolver also sees
 # IMAP, SMTP and WKD lookups; use only an operator-controlled resolver.
+# Refused together with docker-compose.replicas.yml, whose KYPOST_PROXY_IP is then set.
+x-single-container: ${KYPOST_PROXY_IP:+${KYPOST_LAN_DNS_WITH_REPLICAS:?docker-compose.lan-dns.yml configures the single container; remove docker-compose.replicas.yml or this overlay}}
 services:
   kypost-server:
     dns:
