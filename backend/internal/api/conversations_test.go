@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -271,6 +272,39 @@ func TestGroupThreadsAllocationsLinearInSubjectBytes(t *testing.T) {
 	n, twice := allocated(100), allocated(200)
 	if twice > 3*n {
 		t.Fatalf("allocated %d bytes at N and %d at 2N: superlinear in subject length", n, twice)
+	}
+}
+
+// Past maxGroupedSubjectBytes a longer subject costs nothing more.
+func TestGroupThreadsSubjectWorkIsCapped(t *testing.T) {
+	allocated := func(prefixes int) uint64 {
+		window := longSubjectWindow(prefixes)
+		if err := groupWindow(window); err != nil {
+			t.Fatal(err)
+		}
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		if err := groupWindow(window); err != nil {
+			t.Fatal(err)
+		}
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	capped, huge := allocated(1000), allocated(4000)
+	if huge > capped+capped/2 {
+		t.Fatalf("allocated %d bytes at 1000 prefixes and %d at 4000: subject work is not capped", capped, huge)
+	}
+}
+
+func TestCapSubjectKeepsRunes(t *testing.T) {
+	s := strings.Repeat("é", maxGroupedSubjectBytes) // 2 bytes each
+	got := capSubject(s)
+	if len(got) > maxGroupedSubjectBytes || !utf8.ValidString(got) {
+		t.Fatalf("capSubject gave %d bytes, valid=%v", len(got), utf8.ValidString(got))
+	}
+	if capSubject("Re: short") != "Re: short" {
+		t.Fatal("capSubject changed a short subject")
 	}
 }
 

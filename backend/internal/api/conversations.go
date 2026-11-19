@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 )
@@ -47,9 +48,26 @@ func newThreadMember(folder string, ov imapadapter.Overview, lines []string, kno
 	m.parents = messageIDToken.FindAllString(strings.Join(append(slices.Clone(h["In-Reply-To"]), h["References"]...), " "), -1)
 	t, err := time.Parse(time.RFC3339, ov.AtUTC)
 	m.at, m.dated = t, err == nil
-	m.base = strings.ToLower(baseSubject(ov.Subject))
-	m.reply = replyPrefix.MatchString(ov.Subject)
+	subject := capSubject(ov.Subject)
+	m.base = strings.ToLower(baseSubject(subject))
+	m.reply = replyPrefix.MatchString(subject)
 	return m
+}
+
+// maxGroupedSubjectBytes bounds the sender-chosen subject grouping normalises,
+// so a crafted subject costs a fixed amount however long it is.
+const maxGroupedSubjectBytes = 1024
+
+// capSubject cuts s to maxGroupedSubjectBytes on a rune boundary.
+func capSubject(s string) string {
+	if len(s) <= maxGroupedSubjectBytes {
+		return s
+	}
+	cut := maxGroupedSubjectBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // groupThreads partitions members into conversations, each oldest first.
