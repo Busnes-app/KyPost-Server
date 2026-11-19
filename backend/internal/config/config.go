@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 
@@ -200,6 +201,54 @@ type UserSettings struct {
 	OutOfOffice OutOfOffice `yaml:"outOfOffice,omitempty" json:"-"`
 	// KyPulse is served only by /api/settings/kypulse (docs/KYPULSE.md).
 	KyPulse KyPulseSettings `yaml:"kyPulse,omitempty" json:"-"`
+	// RefusePlusAddresses refuses mail to user+tag@ (hosted mail; plus
+	// addressing is on by default). Served only by /api/addresses.
+	RefusePlusAddresses bool `yaml:"refusePlusAddresses,omitempty" json:"-"`
+	// MaskedAddresses are the user's own masked and disposable addresses,
+	// never removed: a deleted one stays here and reserved in the ledger.
+	MaskedAddresses []MaskedAddress `yaml:"maskedAddresses,omitempty" json:"-"`
+}
+
+// MaskedAddress is a user-made address on the owner's primary mailbox, a
+// ledger alias. Mail flows only while both this record is Live and the ledger
+// address is active; State is "active", "paused" or "deleted".
+type MaskedAddress struct {
+	Address   string `yaml:"address" json:"address"`
+	Note      string `yaml:"note,omitempty" json:"note"`
+	State     string `yaml:"state" json:"state"`
+	CreatedAt int64  `yaml:"createdAt" json:"createdAt"`
+	// ExpiresAt (unix seconds) makes the address disposable; 0 never expires.
+	ExpiresAt int64 `yaml:"expiresAt,omitempty" json:"expiresAt,omitempty"`
+}
+
+// Live reports whether mail to and from m may flow at now.
+func (m MaskedAddress) Live(now time.Time) bool {
+	return m.State == "active" && (m.ExpiresAt == 0 || now.Unix() < m.ExpiresAt)
+}
+
+// RefusesAddress reports whether hosted mail to address (lowercase, plus tag
+// already removed; tagged says it had one) must be refused like an unknown
+// recipient: a refused plus tag, or a masked address that is not Live.
+func (s UserSettings) RefusesAddress(address string, tagged bool, now time.Time) bool {
+	if tagged && s.RefusePlusAddresses {
+		return true
+	}
+	for _, m := range s.MaskedAddresses {
+		if m.Address == address {
+			return !m.Live(now)
+		}
+	}
+	return false
+}
+
+// Masked returns the user's masked record for address.
+func (s UserSettings) Masked(address string) (MaskedAddress, bool) {
+	for _, m := range s.MaskedAddresses {
+		if m.Address == address {
+			return m, true
+		}
+	}
+	return MaskedAddress{}, false
 }
 
 // MaxKyPulseRecipients caps the extra addresses KyPulse alerts may go to.

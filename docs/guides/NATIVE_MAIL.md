@@ -12,7 +12,8 @@ mailbox per mailbox) instead of reading an external IMAP account:
 
 - **People come from KyIdentity.** A signed directory push creates the person's
   KyPost account and primary mailbox at the primary address KyIdentity holds.
-  KyPost administrators add extra mailboxes and aliases.
+  KyPost administrators add extra mailboxes and aliases; users make only their
+  own masked addresses, on domains you choose.
 - **Sending** goes through an SMTP relay account you own (AWS SES, Cloudflare
   Email Sending or any implicit-TLS SMTP provider with AUTH). Busnes runs no
   relay service.
@@ -205,7 +206,14 @@ provider rewrites other records. Full domain rules: [native provisioning](../NAT
   are held permanently, never deleted.
 - **Release** an alias: it becomes reserved, delivery and sending from it stop
   at once, delivered mail stays. **Reassign** a reserved alias to a chosen
-  mailbox.
+  mailbox. New aliases cannot contain `+`: plus addressing (`you+tag@`, on by
+  default) delivers those to `you@`. Addresses that already hold a `+`,
+  including KyIdentity primaries, keep receiving exactly.
+- **Masked addresses** (same tab): tick the domains users may make their own
+  masked and disposable addresses on; none ticked keeps the feature off. Users
+  manage them under Settings → Mail → Masked & plus addresses; you cannot
+  release or reassign them. With Cloudflare receiving, redeploy the Worker
+  (`receiving-worker/continuous.mjs`) so plus addressing works there.
 - **New mailbox**: choose a user and an address to give an everyday identity an
   extra mailbox. Extra mailboxes cannot be deleted, only **Disable**d (mail is
   kept; queued outgoing mail in it is quarantined for good) and **Enable**d.

@@ -317,3 +317,21 @@ func TestDirectDeliverFailsClosedWithoutUsableKey(t *testing.T) {
 		})
 	}
 }
+
+// A masked address's mail is signed d=<From domain> with no i= identity, so
+// the signature names no mailbox (docs/NATIVE_PROVISIONING.md masked addresses).
+func TestDKIMSignatureCarriesNoIdentity(t *testing.T) {
+	c := directTestProfile()
+	msg := "From: quiet.otter.4821@example.test\r\nTo: b@example.org\r\nSubject: s\r\nMessage-ID: <id@example.test>\r\n\r\nbody\r\n"
+	signed, err := c.dkimSign("example.test", []byte(msg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tags, _ := signatureField(t, string(signed))
+	if tags["d"] != "example.test" {
+		t.Fatal("d=", tags["d"])
+	}
+	if i, ok := tags["i"]; ok {
+		t.Fatal("DKIM i= names an identity", i)
+	}
+}

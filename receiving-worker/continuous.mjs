@@ -137,7 +137,10 @@ export function validTable(t) {
       !Array.isArray(t.blockedSenders) || t.blockedSenders.length > limits.blocks) return false;
   const seen = new Set();
   for (const r of t.routes) {
-    if (!exactKeys(r, ["address", "generation", "maxBytes"]) || !addressOk(r.address) || seen.has(r.address) ||
+    // noPlus and refused appear only as true: a table without them still suits an older Worker.
+    const flag = ["noPlus", "refused"].find(k => Object.hasOwn(r ?? {}, k));
+    if (!(flag ? exactKeys(r, ["address", "generation", "maxBytes", flag]) && r[flag] === true : exactKeys(r, ["address", "generation", "maxBytes"])) ||
+        !addressOk(r.address) || seen.has(r.address) ||
         !isInt(r.generation) || !isInt(r.maxBytes) || r.maxBytes > limits.messageBytes) return false;
     seen.add(r.address);
   }
@@ -288,13 +291,20 @@ export default {
     const now = Date.now();
     if (sender && blocked(table, sender, now)) { message.setReject("Sender blocked"); return; }
     if (now - table.issuedAt > limits.maxAgeMs) { message.setReject("Routing unavailable"); return; }
-    const route = table.routes.find(r => r.address === recipient);
-    if (!route) { message.setReject("Address refused"); return; }
+    // Plus addressing: a route for the full address wins (one issued before +
+    // was refused, or a refused one that is no longer active); otherwise the
+    // part before the first + selects it, and that is what the envelope
+    // freezes. A noPlus route refuses tagged mail.
+    const sign = recipient.lastIndexOf("@"), plus = recipient.slice(0, sign).indexOf("+");
+    const base = plus < 0 ? recipient : recipient.slice(0, plus) + recipient.slice(sign);
+    const route = table.routes.find(r => r.address === recipient) ??
+      (base === recipient ? undefined : table.routes.find(r => r.address === base && !r.noPlus));
+    if (!route || route.refused) { message.setReject("Address refused"); return; }
     if (!(message.rawSize <= route.maxBytes)) { message.setReject("Message too large"); return; }
     const raw = await readBounded(message.raw, route.maxBytes);
     if (!raw || raw.byteLength === 0) { message.setReject(raw ? "Empty message" : "Message too large"); return; }
     const id = uuidv7(now), digest = hex(await sha256(raw));
-    const envelope = JSON.stringify({id, sender, recipient, generation: route.generation,
+    const envelope = JSON.stringify({id, sender, recipient: route.address, generation: route.generation,
       tableRevision: table.revision, capturedAt: now, size: raw.byteLength, digest});
     if (enc.encode(envelope).length > limits.envelopeBytes) { message.setReject("Address refused"); return; }
     const stored = await env.MAIL.put(INBOX + id, raw, {

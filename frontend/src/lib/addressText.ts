@@ -71,6 +71,13 @@ export function firstAddressFromText(value: string): string {
   return "";
 }
 
+/** address without its "+tag": the part before the first + names the mailbox (mirrors Go sso.PlusBase). */
+export function plusBase(address: string): string {
+  const at = address.lastIndexOf("@");
+  const plus = address.slice(0, Math.max(at, 0)).indexOf("+");
+  return plus < 0 ? address : address.slice(0, plus) + address.slice(at);
+}
+
 export function listAddressesFromText(value: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();

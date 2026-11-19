@@ -13,6 +13,7 @@ import { Backup } from "../../admin/sections/Backup";
 import { Users } from "../../admin/sections/Users";
 import { MailDomain } from "../../admin/sections/MailDomain";
 import { MailAddresses } from "../../admin/sections/MailAddresses";
+import { MaskedDomains } from "../../admin/sections/MaskedDomains";
 import { Quarantine } from "../../admin/sections/Quarantine";
 import { SenderBlocks } from "../../admin/sections/SenderBlocks";
 
@@ -48,7 +49,7 @@ export function ServerPanel() {
           { id: "kydrive", label: "KyDrive", body: <KyDriveStatus /> },
           { id: "kymessages", label: "KyMessages", body: <KyMessagesStatus /> },
           { id: "mail-domain", label: "Mail domain", body: <MailDomain /> },
-          { id: "mail-addresses", label: "Mail addresses", body: <MailAddresses /> },
+          { id: "mail-addresses", label: "Mail addresses", body: <><MailAddresses /><MaskedDomains /></> },
           { id: "quarantine", label: "Quarantine", body: <Quarantine /> },
           { id: "sender-blocks", label: "Sender blocks", body: <SenderBlocks /> },
           { id: "mail-defaults", label: "Default Mail Server", body: <MailDefaults /> },

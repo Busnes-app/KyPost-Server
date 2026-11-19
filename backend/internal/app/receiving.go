@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -421,10 +422,20 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	if err != nil || parsed.Name != "" || parsed.Address != recipient {
 		return ingress.ErrRoute
 	}
+	// Plus addressing: an active full address wins; otherwise the part before
+	// + decides, and mail binds to that address, so routes, bindings and
+	// import never see the tag. The domain is the same either way.
 	recipient = strings.ToLower(recipient)
 	proofs, err := r.verifyDomains(ctx, []string{recipient})
 	if err != nil {
 		return err
+	}
+	x, tagged, err := r.life.NativeAddressFor(recipient)
+	if err != nil {
+		return err
+	}
+	if x.Address != "" {
+		recipient = x.Address
 	}
 	a, found, err := r.life.NativeAssignmentForAddress(proofs[0].Issuer, recipient)
 	if err != nil {
@@ -438,6 +449,11 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	// an unavailable mailbox, a temporary error senders retry for days.
 	if _, err := r.activeAddress(recipient); err != nil {
 		return err
+	}
+	// So is a refused plus tag or a paused or expired masked address: the
+	// sender learns nothing an unknown address would not tell them.
+	if refused, err := r.refusesAddress(a.UserID(), recipient, tagged); err != nil || refused {
+		return cmp.Or(err, ingress.ErrRoute)
 	}
 	return r.withAuthority(ctx, true, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
@@ -462,6 +478,16 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 		}
 		return r.holding.Bind(ctx, r.gatewayID(), id, sender, recipient)
 	})
+}
+
+// refusesAddress reads the owner's address settings (config.UserSettings
+// RefusesAddress). An unreadable file is an error, a temporary refusal.
+func (r *receivingRuntime) refusesAddress(userID, address string, tagged bool) (bool, error) {
+	settings, err := config.LoadUserSettings(config.UserSettingsPath(r.configDir, userID))
+	if err != nil {
+		return true, err
+	}
+	return settings.RefusesAddress(address, tagged, time.Now()), nil
 }
 
 // activeAddress reads the current ledger record under the caller's directory

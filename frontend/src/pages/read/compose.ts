@@ -8,7 +8,7 @@
 
 import { processEmailHtml } from "../../lib/emailHtml";
 import { displayBody } from "./body";
-import { firstAddressFromText, listAddressesFromText } from "../../lib/addressText";
+import { firstAddressFromText, listAddressesFromText, plusBase } from "../../lib/addressText";
 import type { DecryptedView, InboxEmail } from "./types";
 import { formatTimestamp } from "./format";
 
@@ -83,6 +83,26 @@ export function buildForwardBody(email: InboxEmail, decrypted?: DecryptedView): 
     `<p><strong>To:</strong> ${escapeHtml(sentTo)}</p>`,
     rendered
   ].join("");
+}
+
+/**
+ * The address a reply sends from, so a reply to a masked or plus address
+ * never reveals the primary. Native mail carries `delivered`, the receipt's
+ * envelope recipients (trusted, unlike headers, and set for Bcc): the To/Cc
+ * address naming one keeps its tag, else the delivered own address; null when
+ * none is the user's, so they must choose. Without a receipt (external IMAP,
+ * Sent) the own To/Cc address is used, and "" keeps the account default.
+ */
+export function replyFromAddress(email: InboxEmail, own: string[], delivered?: string[]): string | null {
+  const mine = new Set(own.map((a) => a.toLowerCase()));
+  const isMine = (a: string) => mine.has(a) || mine.has(plusBase(a));
+  const headers = [...listAddressesFromText(email.sentTo ?? ""), ...listAddressesFromText(email.cc ?? "")].map((a) => a.toLowerCase());
+  if (delivered) {
+    const got = new Set(delivered.map((a) => a.toLowerCase()));
+    const tagged = headers.find((a) => (got.has(a) || got.has(plusBase(a))) && isMine(a));
+    return tagged ?? [...got].find((a) => mine.has(a)) ?? null;
+  }
+  return headers.find(isMine) ?? "";
 }
 
 export function buildReplyAllRecipients(email: InboxEmail): { to: string; cc: string } {

@@ -471,6 +471,29 @@ func (s *Store) Raw(ctx context.Context, folder string, id int64) ([]byte, error
 	return raw, err
 }
 
+// DeliveredTo lists the frozen envelope recipients of a received message: the
+// addresses receiving bound it to, never header text. Mail without a gateway
+// receipt (drafts, Sent, file imports) has none.
+func (s *Store) DeliveredTo(ctx context.Context, id int64) ([]string, error) {
+	var envelope string
+	err := s.db.QueryRowContext(ctx, "SELECT envelope FROM receipts WHERE message_id=? LIMIT 1", id).Scan(&envelope)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var r Receipt
+	if err := json.Unmarshal([]byte(envelope), &r); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(r.Recipients))
+	for _, p := range r.Recipients {
+		out = append(out, p.Address)
+	}
+	return out, nil
+}
+
 // List is keyset pagination of live metadata, never the bounded/rebuildable mail cache.
 // before=0 starts at newest. Concurrent mutations are reconciled using Changes.
 func (s *Store) List(ctx context.Context, folder string, before int64, limit int) ([]Message, error) {

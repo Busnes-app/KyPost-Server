@@ -18,6 +18,7 @@ var allowedCapabilities = map[string]bool{
 	"regex":      true, // :regex match comparator (RFC 3894)
 	"imap4flags": true, // addflag/removeflag/hasflag (RFC 5232)
 	"kymail":     true, // invented markread/archive/markspam actions
+	"subaddress": true, // address :user / :detail (RFC 5233)
 }
 
 // CompileRule renders one Rule as a Sieve-subset script: an optional
@@ -40,6 +41,9 @@ func CompileRule(r Rule) (string, error) {
 	}
 	if usesCapability(r, "kymail") {
 		caps = append(caps, "kymail")
+	}
+	if usesCapability(r, "subaddress") {
+		caps = append(caps, "subaddress")
 	}
 
 	var sb strings.Builder
@@ -97,6 +101,8 @@ func usesCapability(r Rule, capability string) bool {
 		return matchGroupUsesField(r.Match, "body")
 	case "regex":
 		return matchGroupUsesComparator(r.Match, "regex")
+	case "subaddress":
+		return matchGroupUsesPart(r.Match)
 	default:
 		return false
 	}
@@ -111,6 +117,15 @@ func matchGroupUsesField(g MatchGroup, field string) bool {
 			continue
 		}
 		if strings.EqualFold(c.Field, field) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchGroupUsesPart(g MatchGroup) bool {
+	for _, c := range g.Conditions {
+		if c.Group != nil && matchGroupUsesPart(*c.Group) || c.Group == nil && c.Part != "" {
 			return true
 		}
 	}
@@ -169,6 +184,9 @@ func compileLeafCondition(c Condition) (string, error) {
 	field := strings.ToLower(strings.TrimSpace(c.Field))
 	switch field {
 	case "from", "to", "cc", "bcc", "subject":
+		if c.Part != "" {
+			return fmt.Sprintf("address :%s :%s [%s] %s", c.Part, comparatorTag(c.Comparator), sieveQuote(field), sieveQuote(c.Value)), nil
+		}
 		if strings.EqualFold(c.Comparator, "exists") {
 			return fmt.Sprintf("exists [%s]", sieveQuote(field)), nil
 		}
@@ -394,6 +412,12 @@ func validateMatchGroupShape(m MatchGroup, depth int, count *int) error {
 			}
 			continue
 		}
+		if c.Part != "" {
+			field := normalizeField(c.Field)
+			if c.Part != "user" && c.Part != "detail" || field != "from" && field != "to" && field != "cc" && field != "bcc" || strings.EqualFold(c.Comparator, "exists") {
+				return fmt.Errorf("address part %q needs from, to, cc or bcc and a match type other than exists", c.Part)
+			}
+		}
 		if strings.EqualFold(strings.TrimSpace(c.Field), "header") {
 			if !validCustomHeader(c.Header) {
 				return fmt.Errorf("invalid header name %q: use printable ASCII without spaces or colons, and not body, keyword or a field with its own option (from, to, cc, bcc, subject)", c.Header)
@@ -593,9 +617,28 @@ func (p *sieveParser) parseTest() (Condition, error) {
 	case strings.EqualFold(t.text, "header") || strings.EqualFold(t.text, "address"):
 		isHeader := strings.EqualFold(t.text, "header")
 		p.next()
-		comparator, err := p.parseComparatorTag("is")
-		if err != nil {
-			return Condition{}, err
+		// An address test may carry an address-part tag before or after the
+		// match type; only :all (the default), :user and :detail are known.
+		part := ""
+		comparator, partSeen, comparatorSeen := "is", false, false
+		for p.peek().kind == tokColonTag {
+			tag := strings.ToLower(p.peek().text)
+			if !isHeader && !partSeen && (tag == "all" || tag == "user" || tag == "detail") {
+				p.next()
+				partSeen = true
+				if tag != "all" {
+					part = tag
+				}
+				continue
+			}
+			if comparatorSeen {
+				return Condition{}, fmt.Errorf("line %d: unsupported or repeated tag :%s", p.peek().line, p.peek().text)
+			}
+			c, err := p.parseComparatorTag("is")
+			if err != nil {
+				return Condition{}, err
+			}
+			comparator, comparatorSeen = c, true
 		}
 		fields, err := p.parseStringList()
 		if err != nil {
@@ -612,8 +655,13 @@ func (p *sieveParser) parseTest() (Condition, error) {
 			if !validHeaderAddressFields[normalizeField(f)] && (!isHeader || !validCustomHeader(f)) {
 				return Condition{}, fmt.Errorf("line %d: unsupported header/address field %q", t.line, f)
 			}
+			if part != "" && normalizeField(f) == "subject" {
+				return Condition{}, fmt.Errorf("line %d: :%s needs an address field (from, to, cc, bcc)", t.line, part)
+			}
 		}
-		return fieldsToCondition(fields, comparator, valueTok.text), nil
+		c := fieldsToCondition(fields, comparator, valueTok.text)
+		setPart(&c, part)
+		return c, nil
 
 	case strings.EqualFold(t.text, "exists"):
 		p.next()
@@ -657,6 +705,16 @@ func (p *sieveParser) parseTest() (Condition, error) {
 
 	default:
 		return Condition{}, fmt.Errorf("line %d: unknown test %q", t.line, t.text)
+	}
+}
+
+func setPart(c *Condition, part string) {
+	if c.Group == nil {
+		c.Part = part
+		return
+	}
+	for i := range c.Group.Conditions {
+		setPart(&c.Group.Conditions[i], part)
 	}
 }
 

@@ -73,8 +73,14 @@ func (s *Server) handleMailBody(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	answer := map[string]any{
 		"body":     content.Body,
 		"bodyMode": content.BodyMode,
-	})
+	}
+	// Native mail names the addresses it was delivered to, so a reply can
+	// answer as a masked address the headers never show (Bcc).
+	if content.DeliveredTo != nil {
+		answer["deliveredTo"] = content.DeliveredTo
+	}
+	writeJSON(w, http.StatusOK, answer)
 }

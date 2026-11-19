@@ -241,3 +241,16 @@ func TestFitBlocksKeepsRoutesPublishable(t *testing.T) {
 		t.Fatal(fitted, err)
 	}
 }
+
+// noPlus reaches the Worker only when set, so a table without a plus refusal
+// stays readable by a Worker that predates it.
+func TestWireRouteNoPlus(t *testing.T) {
+	table, err := newWireTable(1, 1, []Route{{Address: "a@x.test", Generation: 1, MaxBytes: 1}, {Address: "b@x.test", Generation: 1, MaxBytes: 1, NoPlus: true, Mailbox: "m"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(table.Routes)
+	if err != nil || string(raw) != `[{"address":"a@x.test","generation":1,"maxBytes":1},{"address":"b@x.test","generation":1,"maxBytes":1,"noPlus":true}]` {
+		t.Fatal(string(raw), err)
+	}
+}
