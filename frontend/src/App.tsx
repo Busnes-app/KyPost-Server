@@ -28,6 +28,7 @@ import type {
   MoveInboxActionResponse,
   DragMessagePayload
 } from "./app/types";
+import { setupDismissed } from "./lib/setupDismissal";
 import { bodyHtml, holdComposeLink, parseComposeLink, takeComposeLink } from "./lib/composeLink";
 import { clearDraftSnapshot, hasDraftSnapshot } from "./app/draftAutosave";
 import { mailboxLabel, standardMailboxKind, standardMailboxPath, type StandardMailboxKind } from "./app/mailboxKind";
@@ -47,6 +48,7 @@ const AppsPage = lazy(() => import("./pages/AppsPage").then((m) => ({ default: m
 const ContactsPage = lazy(() => import("./pages/ContactsPage").then((m) => ({ default: m.ContactsPage })));
 const ReadPage = lazy(() => import("./pages/ReadPage").then((m) => ({ default: m.ReadPage })));
 const SecurityPage = lazy(() => import("./pages/SecurityPage").then((m) => ({ default: m.SecurityPage })));
+const EncryptionSetupPage = lazy(() => import("./pages/EncryptionSetupPage").then((m) => ({ default: m.EncryptionSetupPage })));
 const AppearancePanel = lazy(() => import("./pages/settings/AppearancePanel").then((m) => ({ default: m.AppearancePanel })));
 const MailPanel = lazy(() => import("./pages/settings/MailPanel").then((m) => ({ default: m.MailPanel })));
 const NotificationsPanel = lazy(() => import("./pages/settings/NotificationsPanel").then((m) => ({ default: m.NotificationsPanel })));
@@ -578,6 +580,16 @@ export function App() {
     return element;
   }
 
+  // Mail pages wait for first sign-in encryption setup: always while the
+  // server requires it (it refuses the mail anyway), once while it is offered.
+  function mailPage(element: ReactElement) {
+    const setup = auth?.encryptionSetup;
+    if (auth?.authenticated && !auth.mustChangePassword && setup && (setup.required || (setup.offered && !setupDismissed(auth.userId ?? "")))) {
+      return <Navigate to="/setup/encryption" replace />;
+    }
+    return protect(element);
+  }
+
   // Settings is one page: the shared page head, then its sections as one row of
   // tabs above the open panel, so the sidebar stays the only side column.
   function settingsPage(panel: ReactElement) {
@@ -908,7 +920,7 @@ export function App() {
           <Route path="/login" element={<LoginPage auth={auth} onAuthChanged={refreshAuth} />} />
           <Route path="/compose" element={composeLinkRoute(location.search, auth.authenticated)} />
           <Route path="/password" element={protect(<LoginPage auth={auth} onAuthChanged={refreshAuth} mode="password" />)} />
-              <Route path="/read" element={protect(<ReadPage key={selectedMailbox} onOpenDraft={compose.openDraftInCompose} onCompose={compose.openComposeWindow} folders={mailboxFolders} calendarOrigin={meetingOrigin} chatOrigin={elementOrigin} />)} />
+              <Route path="/read" element={mailPage(<ReadPage key={selectedMailbox} onOpenDraft={compose.openDraftInCompose} onCompose={compose.openComposeWindow} folders={mailboxFolders} calendarOrigin={meetingOrigin} chatOrigin={elementOrigin} />)} />
           {/* Retired settings paths. They redirect rather than 404: they appear
               in docs and bookmarks, and in service workers cached inside
               installed PWAs, which can send a notification tap here long after
@@ -948,7 +960,8 @@ export function App() {
             ))}
           />
           <Route path="/contacts" element={protect(<ContactsPage calendarOrigin={meetingOrigin} chatOrigin={elementOrigin} />)} />
-          <Route path="/scheduled" element={protect(<ScheduledPage key={selectedMailbox} />)} />
+          <Route path="/scheduled" element={mailPage(<ScheduledPage key={selectedMailbox} />)} />
+          <Route path="/setup/encryption" element={protect(<EncryptionSetupPage onRefresh={refreshAuth} />)} />
           {/* The admin panels. protect(..., true) redirects non-admins to
               /read; the server enforces every one of these regardless. */}
           <Route path="/admin/server" element={protect(settingsPage(<ServerPanel />), true)} />

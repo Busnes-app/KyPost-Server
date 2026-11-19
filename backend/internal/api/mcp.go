@@ -198,6 +198,9 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 			mcpChallenge(w)
 			return
 		}
+		if s.refuseUntilEncryptionSetup(w, r, AuthContext{UserID: user.ID}) {
+			return
+		}
 		// Per user, not per token: a user may hold 20 tokens. One request in flight
 		// per user bounds concurrency, which the rate alone does not.
 		if ok, wait := s.mcpCallLimiter.allow(user.ID); !ok {
