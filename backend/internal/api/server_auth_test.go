@@ -448,7 +448,7 @@ func TestSessionAbsoluteLifetimeCapsRenewal(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
-	if _, ok := srv.currentUser(req); ok {
+	if _, ok, _ := srv.currentUser(req); ok {
 		t.Fatal("a session past sessionMaxLifetime authenticated; the absolute cap is not enforced")
 	}
 
@@ -530,7 +530,7 @@ func TestSessionSlideIsQuantized(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 
 	// A request arriving immediately must NOT rewrite the expiry.
-	if _, ok := srv.currentUser(req); !ok {
+	if _, ok, _ := srv.currentUser(req); !ok {
 		t.Fatal("currentUser rejected a live session")
 	}
 	srv.sessMu.RLock()
@@ -554,7 +554,7 @@ func TestSessionSlideIsQuantized(t *testing.T) {
 	}
 	srv.sessMu.Unlock()
 
-	if _, ok := srv.currentUser(req); !ok {
+	if _, ok, _ := srv.currentUser(req); !ok {
 		t.Fatal("currentUser rejected a live session on the second pass")
 	}
 	srv.sessMu.RLock()
@@ -579,7 +579,7 @@ func TestSessionSlideIsQuantized(t *testing.T) {
 		CSRFToken: "csrf",
 	}
 	srv.sessMu.Unlock()
-	if _, ok := srv.currentUser(req); ok {
+	if _, ok, _ := srv.currentUser(req); ok {
 		t.Error("currentUser accepted a session past sessionMaxLifetime")
 	}
 	srv.sessMu.RLock()

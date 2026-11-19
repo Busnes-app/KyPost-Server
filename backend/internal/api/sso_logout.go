@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -80,7 +81,12 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	revoked := s.revokeSessionsCoveredBy(event)
+	revoked, err := s.revokeSessionsCoveredBy(event)
+	if err != nil {
+		s.logger.Error("SSO logout recorded but its sessions could not be ended", "error", err.Error())
+		writeUnavailable(w)
+		return
+	}
 	if s.loginParamsLimiter != nil {
 		s.loginParamsLimiter.settleCost(lockoutKeyForIP(clientIP(r)), -1)
 	}
@@ -90,7 +96,12 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 
 // endSSOSessions deletes every SSO session and bumps ssoEpoch under the same
 // lock, so a callback already past its settings read cannot mint one after.
-func (s *Server) endSSOSessions() {
+func (s *Server) endSSOSessions() error {
+	if s.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		return s.shared.EndSSOSessions(ctx)
+	}
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
 	s.ssoEpoch.Add(1)
@@ -99,12 +110,21 @@ func (s *Server) endSSOSessions() {
 			delete(s.sessions, token)
 		}
 	}
+	return nil
 }
 
 // revokeSessionsCoveredBy deletes every session the logout addresses and
 // returns how many. Scope is sso.LogoutEvent.Covers: a session by its sid,
 // or a subject's sessions issued no later than the token.
-func (s *Server) revokeSessionsCoveredBy(event sso.LogoutEvent) int {
+func (s *Server) revokeSessionsCoveredBy(event sso.LogoutEvent) (int, error) {
+	if s.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		return s.shared.DeleteSSOSessionsWhere(ctx, func(data string) bool {
+			var sess Session
+			return json.Unmarshal([]byte(data), &sess) != nil || event.Covers(sess.SSO)
+		})
+	}
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
 	n := 0
@@ -114,5 +134,5 @@ func (s *Server) revokeSessionsCoveredBy(event sso.LogoutEvent) int {
 			n++
 		}
 	}
-	return n
+	return n, nil
 }

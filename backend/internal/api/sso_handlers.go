@@ -138,7 +138,10 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 	// Sessions carry the issuer, client and admin ceiling they were minted
 	// under; a change to any of them, or disabling SSO, ends them all.
 	if req.Enabled != stored.Enabled || req.IssuerURL != stored.IssuerURL || req.ClientID != stored.ClientID || req.AdminGroup != stored.AdminGroup {
-		s.endSSOSessions()
+		if err := s.endSSOSessions(); err != nil {
+			http.Error(w, "settings saved, but ending the existing SSO sessions failed; save again", http.StatusInternalServerError)
+			return
+		}
 	}
 	// Links made at another provider name other people here. Idempotent, so a
 	// failed revocation is finished by saving again.
@@ -389,7 +392,11 @@ func (s *Server) startSSOFlow(w http.ResponseWriter, r *http.Request, settings s
 
 // handleSSOCallback processes the authorization code callback from the OIDC IdP.
 func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
-	epoch := s.ssoEpoch.Load() // before the settings it vouches for
+	epoch, err := s.currentSSOEpoch(r.Context()) // before the settings it vouches for
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
 	settings := s.ssoStore.Load()
 	if !settings.Enabled || settings.IssuerURL == "" {
 		http.Error(w, "Single Sign-On is not configured or disabled", http.StatusServiceUnavailable)
@@ -433,7 +440,11 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 	// Link mode targets the session making this request, and nothing else.
 	linkUserID := ""
 	if rest, isLink := strings.CutPrefix(mode, ssoModeLink+":"); isLink {
-		auth, ok := s.currentUser(r)
+		auth, ok, err := s.currentUser(r)
+		if err != nil {
+			writeUnavailable(w)
+			return
+		}
 		if !ok {
 			http.Error(w, "sign in before linking an SSO identity", http.StatusUnauthorized)
 			return
@@ -699,7 +710,11 @@ func (s *Server) ssoFailure(w http.ResponseWriter, stage string, err error) {
 
 // handleSSOUnlink removes the linked SSO identity from the current user's profile.
 func (s *Server) handleSSOUnlink(w http.ResponseWriter, r *http.Request) {
-	auth, ok := s.currentUser(r)
+	auth, ok, err := s.currentUser(r)
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -739,16 +754,12 @@ func (s *Server) grantSSOLink(r *http.Request, state string) bool {
 	if err != nil || c.Value == "" {
 		return false
 	}
-	s.sessMu.Lock()
-	defer s.sessMu.Unlock()
-	sess, ok := s.sessions[c.Value]
-	if !ok {
-		return false
-	}
-	sess.SSOLinkGrantedAt = time.Now()
-	sess.SSOLinkState = state
-	s.sessions[c.Value] = sess
-	return true
+	ok, err := s.changeSession(r.Context(), c.Value, func(sess *Session) bool {
+		sess.SSOLinkGrantedAt = time.Now()
+		sess.SSOLinkState = state
+		return true
+	})
+	return ok && err == nil
 }
 
 // consumeSSOLinkGrant reports whether this session may write a link for the
@@ -759,20 +770,25 @@ func (s *Server) consumeSSOLinkGrant(r *http.Request, state string) bool {
 	if err != nil || c.Value == "" {
 		return false
 	}
-	s.sessMu.Lock()
-	defer s.sessMu.Unlock()
-	sess, ok := s.sessions[c.Value]
-	if !ok || sess.SSOLinkGrantedAt.IsZero() {
-		return false
-	}
 	// Cleared before the verdict, not after it: a grant that a wrong state just
 	// failed against is a grant someone else is trying to spend, and leaving it
 	// live for the rest of the TTL is the whole hole. The user re-runs the
 	// step-up, which costs them one form and costs the attacker the password.
-	granted, want := sess.SSOLinkGrantedAt, sess.SSOLinkState
-	sess.SSOLinkGrantedAt = time.Time{}
-	sess.SSOLinkState = ""
-	s.sessions[c.Value] = sess
+	// The clear is a compare-and-swap on PostgreSQL, so two replicas never both spend it.
+	var granted time.Time
+	var want string
+	cleared, err := s.changeSession(r.Context(), c.Value, func(sess *Session) bool {
+		if sess.SSOLinkGrantedAt.IsZero() {
+			return false
+		}
+		granted, want = sess.SSOLinkGrantedAt, sess.SSOLinkState
+		sess.SSOLinkGrantedAt = time.Time{}
+		sess.SSOLinkState = ""
+		return true
+	})
+	if err != nil || !cleared {
+		return false
+	}
 
 	if want == "" || !hmac.Equal([]byte(want), []byte(state)) {
 		return false

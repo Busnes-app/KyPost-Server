@@ -32,7 +32,7 @@ func effectiveRole(t *testing.T, srv *Server, c *http.Cookie) users.Role {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	req.AddCookie(c)
-	ac, ok := srv.currentUser(req)
+	ac, ok, _ := srv.currentUser(req)
 	if !ok {
 		t.Fatal("session is not alive")
 	}

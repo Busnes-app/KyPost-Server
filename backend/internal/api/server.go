@@ -284,8 +284,14 @@ type Server struct {
 	// the daemon process's published health report (health.MergeDaemonReport) —
 	// which is the same store the daemon writes it to, since both processes are
 	// rooted at the same state directory.
-	classifier    *classifier.HTTPClient
-	globalStore   *state.Store
+	classifier  *classifier.HTTPClient
+	globalStore *state.Store
+	// shared is globalStore when this server is a PostgreSQL replica (UseSharedState): the
+	// security state every replica shares lives there. nil keeps it in memory.
+	shared *state.Store
+	// draining is set at SIGTERM (StartDraining); ready caches /readyz's store ping.
+	draining      atomic.Bool
+	ready         readiness
 	backup        *backup.Service
 	ssoStore      *sso.Store
 	nativeDomains *sso.NativeDomainStore
@@ -602,7 +608,7 @@ func (s *Server) routes() http.Handler {
 	s.routesFrontend(mux)
 
 	// The paired KyDrive origin can change at run time, so the policy is per response.
-	return withGzip(withSecurityHeaders(mux, func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }, s.kydrive.Origin))
+	return withGzip(withSecurityHeaders(withDeadline(mux, requestDeadline), func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }, s.kydrive.Origin))
 }
 
 // routesAuth registers sign-in, session, and second-factor endpoints.
@@ -701,6 +707,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/backup/pin-key", s.withAdmin(withActionDigest(s.handleBackupPinKey)))
 	mux.HandleFunc("PUT /api/admin/backup/schedule", s.withAdmin(withActionDigest(s.handleBackupSchedule)))
 	mux.HandleFunc("/api/health", withPublicRoute(s.handleHealth))
+	mux.HandleFunc("GET /livez", withPublicRoute(s.handleLivez))
+	mux.HandleFunc("GET /readyz", withPublicRoute(s.handleReadyz))
 	mux.HandleFunc("GET /healthz", withPublicRoute(s.suiteHealthHandler().ServeHTTP))
 	mux.HandleFunc("POST /api/admin/mail/poll-now", s.withAdmin(s.handlePollNow))
 	mux.HandleFunc("GET /api/installer/network", withPublicRoute(s.handleInstallerNetwork))
@@ -1306,6 +1314,9 @@ func (s *Server) logSaturatedLockouts() {
 // sweepSessions drops every session dead as of now. Split out so tests can
 // drive it directly instead of waiting on the ticker.
 func (s *Server) sweepSessions(now time.Time) int {
+	if s.shared != nil {
+		return 0 // expired rows go with the elected coordination cleanup
+	}
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
 	removed := 0

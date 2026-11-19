@@ -35,6 +35,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/suitepair"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
+	"github.com/Busnes-app/kypost-server/backend/internal/worker"
 )
 
 // Run dispatches the process mode and blocks until shutdown for long-running modes.
@@ -93,7 +94,15 @@ func Run(args []string) error {
 		return BootstrapAdmin()
 	}
 
-	if err := config.CheckEnv(); err != nil {
+	// SQLite: the shared server-instance lock, before anything below writes to the data
+	// roots, so migrate-to-postgres refuses while this process runs.
+	releaseInstance, err := holdSQLiteInstance(config.StateDir())
+	if err != nil {
+		return err
+	}
+	defer releaseInstance()
+
+	if err = config.CheckEnv(); err != nil {
 		return err
 	}
 	if _, err := config.LoadBackupConfig(); err != nil {
@@ -317,25 +326,48 @@ func configureSorter(log *logging.Logger, poller *processor.Poller) error {
 }
 
 func runDaemon(ctx context.Context, d runDeps) error {
+	release, err := startReplica(ctx, d, "daemon")
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil // stopped before it started
+		}
+		return err
+	}
+	defer release()
 	ctx, restart := context.WithCancelCause(ctx)
 	defer restart(nil)
 	go monitorHealth(ctx, d.logger, d.health, healthCheckInterval, restart)
-	outboundCtx, cancelOutbound := context.WithCancel(ctx)
-	outboundDone := startNativeOutbound(outboundCtx, d)
-	dkimDone := startDKIMRotation(outboundCtx, d)
-	defer func() { cancelOutbound(); <-outboundDone; <-dkimDone }()
-	receivingCtx, cancelReceiving := context.WithCancel(ctx)
-	receivingDone, err := startReceivingImport(receivingCtx, d)
+	// A scheduled backup outlives the daemon role: it holds its own run lock, so the role is
+	// released first and a standby takes over while this process drains it.
+	var backups sync.WaitGroup
+	defer backups.Wait()
+	waitMail := elect(ctx, d, worker.RoleMailRuntime, func(owned context.Context) { runMailRuntime(owned, d) })
+	waitDaemon := elect(ctx, d, worker.RoleDaemon, func(owned context.Context) {
+		if err := runDaemonRole(owned, d, &backups); err != nil {
+			restart(err)
+		}
+	})
+	<-ctx.Done()
+	waitDaemon()
+	waitMail()
+	return exitCause(ctx)
+}
+
+// runDaemonRole is the daemon role, run only by its elected owner: receiving import,
+// Cloudflare pickup, the poller (classification, out-of-office, snoozes, native push,
+// phishing, heartbeat, WKD recheck, retention cleanup), the classifier warmup and the backup
+// schedule. Standby daemons idle until they win the role.
+func runDaemonRole(owned context.Context, d runDeps, backups *sync.WaitGroup) error {
+	receivingDone, err := startReceivingImport(owned, d)
 	if err != nil {
-		cancelReceiving()
 		return err
 	}
-	defer func() { cancelReceiving(); <-receivingDone }()
-	cloudflareDone, err := startCloudflareReceiving(receivingCtx, d)
+	defer func() { <-receivingDone }()
+	cloudflareDone, err := startCloudflareReceiving(owned, d)
 	if err != nil {
 		return err
 	}
-	defer func() { cancelReceiving(); <-cloudflareDone }()
+	defer func() { <-cloudflareDone }()
 	classifierClient := newClassifierClient(d.cfg)
 	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, classifierClient, d.wkdStore)
 	if err != nil {
@@ -346,18 +378,18 @@ func runDaemon(ctx context.Context, d runDeps) error {
 	if d.nativeMail {
 		poller.EnableNativeMail()
 	}
-	warmupDone, err := startClassifier(ctx, d, classifierClient, poller)
+	warmupDone, err := startClassifier(owned, d, classifierClient, poller)
 	if err != nil {
 		return err
 	}
-	backupDone, err := startBackupLoop(ctx, d)
+	backupDone, err := startBackupLoop(owned, d, backups)
 	if err != nil {
 		return err
 	}
 	defer func() { <-backupDone }()
 	poller.Start()
 	d.logger.Info("poller goroutine started")
-	<-ctx.Done()
+	<-owned.Done()
 	poller.Stop()
 	awaitWarmup(d.logger, warmupDone)
 	// Wait for the poller's own goroutines (the tick loop, plus the eager
@@ -365,33 +397,56 @@ func runDaemon(ctx context.Context, d runDeps) error {
 	// cancels; without this the process could exit, or a test could remove
 	// its state directory, while those were still writing to it.
 	poller.Wait()
-	return healthRestart(ctx)
+	return nil
+}
+
+// exitCause is the error a run ends with: the health monitor's restart, or a role that could
+// not start; nil for an ordinary stop.
+func exitCause(ctx context.Context) error {
+	if err := context.Cause(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }
 
 // startBackgroundSweepers launches every periodic reclaim the API process needs.
 //
-// One list, called from both runServer and runAll. As nine duplicated
-// `go srv.StartXSweeper(ctx)` lines, a tenth added to one list and not the other
+// One list, called from both runServer and runAll. As a dozen duplicated
+// `go srv.StartXSweeper(ctx)` lines, one added to one list and not the other
 // is a leak that only appears in the run mode nobody is testing when they add it.
+//
+// The memory sweeps run in every process. The durable ones run only on the owner of the
+// api-sweepers role, so replicas never sweep, provision or send scheduled mail twice at
+// once; the expired shared-row cleanup joins them on PostgreSQL.
 //
 // The returned wait blocks until every sweeper has returned after ctx is
 // canceled, so shutdown does not cut off work already under way.
-func startBackgroundSweepers(ctx context.Context, srv *api.Server, logger *logging.Logger) (wait func()) {
-	return runSweepers(ctx, logger, sweeperDrain, []func(context.Context){
-		srv.StartNativeProvisioning,
-		srv.StartPickupSweeper,
-		srv.StartContactPhotoSweeper,
-		srv.StartContactsTombstoneSweeper,
-		srv.StartEnvelopeSweeper,
+func startBackgroundSweepers(ctx context.Context, srv *api.Server, d runDeps) (wait func()) {
+	local := runSweepers(ctx, d.logger, sweeperDrain, []func(context.Context){
 		srv.StartCooldownSweeper,
 		srv.StartSessionSweeper,
 		srv.StartMFAChallengeSweeper,
 		srv.StartPoWSweeper,
 		srv.StartUserStoreSweeper,
-		srv.StartVersionMonitor,
-		srv.StartScheduledSendSweeper,
-		srv.StartAgentTokenSweeper,
 	}...)
+	elected := elect(ctx, d, worker.RoleAPISweepers, func(owned context.Context) {
+		runSweepers(owned, d.logger, sweeperDrain, []func(context.Context){
+			srv.StartNativeProvisioning,
+			srv.StartPickupSweeper,
+			srv.StartContactPhotoSweeper,
+			srv.StartContactsTombstoneSweeper,
+			srv.StartEnvelopeSweeper,
+			srv.StartVersionMonitor,
+			srv.StartScheduledSendSweeper,
+			srv.StartAgentTokenSweeper,
+			func(ctx context.Context) {
+				cleanCoordination(ctx, d.store, func(err error) {
+					d.logger.Error("expired shared rows not cleaned", "error", err.Error())
+				})
+			},
+		}...)()
+	})
+	return func() { local(); elected() }
 }
 
 // sweeperDrain bounds how long shutdown waits for sweepers; a scheduled send
@@ -415,18 +470,15 @@ func runSweepers(ctx context.Context, logger *logging.Logger, drain time.Duratio
 }
 
 func runServer(ctx context.Context, d runDeps) error {
-	outboundCtx, cancelOutbound := context.WithCancel(ctx)
-	outboundDone := startNativeOutbound(outboundCtx, d)
-	dkimDone := startDKIMRotation(outboundCtx, d)
-	defer func() { cancelOutbound(); <-outboundDone; <-dkimDone }()
-	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, nil, d.wkdStore)
-	srv.SetKyCalendar(d.kycal)
-	srv.SetKyDrive(d.kydrive)
-	srv.SetKyMessage(d.kymessage)
-	srv.SetKyPulse(d.kypulse)
-	if d.nativeMail {
-		srv.EnableNativeMail()
+	release, err := startReplica(ctx, d, "api")
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil // stopped before it started
+		}
+		return err
 	}
+	defer release()
+	srv := newAPIServer(d, nil)
 	attachClassifier(srv, d, newClassifierClient(d.cfg))
 
 	// Prepare constructs the *http.Server synchronously, before the Serve
@@ -435,10 +487,11 @@ func runServer(ctx context.Context, d runDeps) error {
 	// api.Server.Prepare's doc comment for the race this avoids).
 	srv.Prepare()
 
-	sweeperCtx, cancelSweepers := context.WithCancel(ctx)
-	defer cancelSweepers()
-	waitSweepers := startBackgroundSweepers(sweeperCtx, srv, d.logger)
-	defer func() { cancelSweepers(); waitSweepers() }()
+	workCtx, cancelWork := context.WithCancel(ctx)
+	defer cancelWork()
+	waitMail := elect(workCtx, d, worker.RoleMailRuntime, func(owned context.Context) { runMailRuntime(owned, d) })
+	waitSweepers := startBackgroundSweepers(workCtx, srv, d)
+	defer func() { cancelWork(); waitSweepers(); waitMail() }()
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -447,12 +500,7 @@ func runServer(ctx context.Context, d runDeps) error {
 
 	select {
 	case <-ctx.Done():
-		cancelSweepers()
-		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancelShutdown()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			d.logger.Error("api server shutdown error", "error", err.Error())
-		}
+		gracefulStop(srv, cancelWork, d.logger)
 		if err := <-serveErr; err != nil {
 			d.logger.Error("api server serve error", "error", err.Error())
 		}
@@ -462,11 +510,53 @@ func runServer(ctx context.Context, d runDeps) error {
 	}
 }
 
+// newAPIServer builds the api server for d; on PostgreSQL its security state is shared with
+// every replica through the global state store.
+func newAPIServer(d runDeps, onConfigUpdated func(config.Config)) *api.Server {
+	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, onConfigUpdated, d.wkdStore)
+	srv.SetKyCalendar(d.kycal)
+	srv.SetKyDrive(d.kydrive)
+	srv.SetKyMessage(d.kymessage)
+	srv.SetKyPulse(d.kypulse)
+	if d.nativeMail {
+		srv.EnableNativeMail()
+	}
+	if dbbackend.Postgres() {
+		srv.UseSharedState(d.store)
+	}
+	return srv
+}
+
+// readinessDrainDelay is how long a PostgreSQL replica keeps serving after /readyz turns 503,
+// so the proxy's two failed checks a second apart take it out of rotation before the listener
+// closes. One SQLite container has no proxy to wait for.
+var readinessDrainDelay = 5 * time.Second
+
+// gracefulStop is the api's SIGTERM sequence: turn /readyz to 503 and refuse new backup
+// work; on PostgreSQL keep serving for readinessDrainDelay; then stop the sweepers and
+// elections, drain ordinary requests for shutdownTimeout, cancel imports and drain detached
+// backups (Shutdown). The caller then joins the sweepers and the outbound workers.
+func gracefulStop(srv *api.Server, cancelWork context.CancelFunc, logger *logging.Logger) {
+	srv.StartDraining()
+	if dbbackend.Postgres() {
+		time.Sleep(readinessDrainDelay)
+	}
+	cancelWork()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancelShutdown()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("api server shutdown error", "error", err.Error())
+	}
+}
+
 // shutdownTimeout bounds ordinary HTTP draining and classifier warmup cleanup.
 // Detached backup handlers are drained separately, including their audit writes.
 const shutdownTimeout = 20 * time.Second
 
 func runAll(ctx context.Context, d runDeps) error {
+	if dbbackend.Postgres() {
+		return errors.New("--mode all is the single-process mode for one SQLite container; on PostgreSQL run --mode server and --mode daemon, as the image's supervisord does")
+	}
 	ctx, restart := context.WithCancelCause(ctx)
 	defer restart(nil)
 	go monitorHealth(ctx, d.logger, d.health, healthCheckInterval, restart)
@@ -497,15 +587,10 @@ func runAll(ctx context.Context, d runDeps) error {
 		return err
 	}
 	poller.SetConfigPath(d.configPath)
-	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, poller.UpdateConfig, d.wkdStore)
-	srv.SetKyCalendar(d.kycal)
-	srv.SetKyDrive(d.kydrive)
-	srv.SetKyMessage(d.kymessage)
-	srv.SetKyPulse(d.kypulse)
+	srv := newAPIServer(d, poller.UpdateConfig)
 	poller.SetKyCalendar(d.kycal)
 	if d.nativeMail {
 		poller.EnableNativeMail()
-		srv.EnableNativeMail()
 	}
 	srv.SetPoller(poller)
 	attachClassifier(srv, d, classifierClient)
@@ -523,14 +608,16 @@ func runAll(ctx context.Context, d runDeps) error {
 	sweeperCtx, cancelSweepers := context.WithCancel(ctx)
 	defer cancelSweepers()
 
-	backupDone, err := startBackupLoop(ctx, d)
+	var backups sync.WaitGroup
+	defer backups.Wait()
+	backupDone, err := startBackupLoop(ctx, d, &backups)
 	if err != nil {
 		return err
 	}
 	defer func() { <-backupDone }()
 	poller.Start()
 	d.logger.Info("poller goroutine started")
-	waitSweepers := startBackgroundSweepers(sweeperCtx, srv, d.logger)
+	waitSweepers := startBackgroundSweepers(sweeperCtx, srv, d)
 	defer func() { cancelSweepers(); waitSweepers() }()
 	serveDone := make(chan struct{})
 	go func() {

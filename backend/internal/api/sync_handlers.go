@@ -161,7 +161,9 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 			return false, &syncRefusal{status, err}
 		}
 		fence = true
-		s.revokeUserSessions(existing.ID, "")
+		if err := s.revokeUserSessions(existing.ID, ""); err != nil {
+			return false, err
+		}
 		s.revokeAgentTokens(existing.ID)
 	}
 	if !existing.Active {

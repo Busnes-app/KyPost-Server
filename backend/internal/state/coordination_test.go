@@ -85,17 +85,42 @@ func TestRefundRestoresOnlyItsOwnWindow(t *testing.T) {
 	if _, _, ok, _ := b.TakeAttempt(ctx, "k", 2, time.Minute); !ok {
 		t.Fatal("second hit of the new window refused")
 	}
-	if err := a.ReleaseAttempt(ctx, "k", old); err != nil {
+	if err := a.ReleaseAttempt(ctx, "k", 2, old); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, ok, _ := b.TakeAttempt(ctx, "k", 2, time.Minute); ok {
 		t.Fatal("a refund of the expired window credited the new one")
 	}
-	if err := a.ReleaseAttempt(ctx, "k", gen); err != nil {
+	if err := a.ReleaseAttempt(ctx, "k", 2, gen); err != nil {
 		t.Fatal(err)
 	}
 	if hits, _, _ := a.AttemptHits(ctx, "k"); hits != 2 {
 		t.Fatalf("own refund: hits = %d, want 2", hits)
+	}
+}
+
+// A window that already refused attempts frees exactly one per refund.
+func TestRefundAfterRefusalsFreesOne(t *testing.T) {
+	a, b := twoReplicas(t)
+	ctx := context.Background()
+	var gen int64
+	for i := range 5 {
+		g, _, ok, err := a.TakeAttempt(ctx, "full", 3, time.Minute)
+		if err != nil || ok != (i < 3) {
+			t.Fatalf("take %d: ok=%v err=%v", i, ok, err)
+		}
+		if i == 0 {
+			gen = g
+		}
+	}
+	if err := b.ReleaseAttempt(ctx, "full", 3, gen); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, _ := b.TakeAttempt(ctx, "full", 3, time.Minute); !ok {
+		t.Fatal("a refund after refusals freed nothing")
+	}
+	if _, _, ok, _ := a.TakeAttempt(ctx, "full", 3, time.Minute); ok {
+		t.Fatal("one refund freed two attempts")
 	}
 }
 

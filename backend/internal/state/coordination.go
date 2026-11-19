@@ -49,9 +49,12 @@ RETURNING hits, expires_at, expires_at - ` + now
 	return gen, time.Duration(ms) * time.Millisecond, hits <= int64(limit), nil
 }
 
-// ReleaseAttempt hands one hit back to the window gen, never to a newer one.
-func (s *Store) ReleaseAttempt(ctx context.Context, key string, gen int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE security_windows SET hits = hits - 1 WHERE key = ? AND expires_at = ? AND hits > 0`, key, gen)
+// ReleaseAttempt hands one admitted hit back to the window gen, never to a newer one. A window
+// that refused attempts holds limit+1; its refund leaves limit-1, so exactly one more is
+// admitted.
+func (s *Store) ReleaseAttempt(ctx context.Context, key string, limit int, gen int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE security_windows SET hits = CASE WHEN hits > ? THEN ? - 1 ELSE hits - 1 END
+WHERE key = ? AND expires_at = ? AND hits > 0`, limit, limit, key, gen)
 	return err
 }
 
@@ -121,6 +124,9 @@ func (s *Store) CleanExpiredCoordination(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Ping checks the database answers; on PostgreSQL it fails on a read-only standby.
+func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 // Lock bounds (variables so tests can shorten them). Acquisition is a connection checkout plus
 // pg_try_advisory_lock; a probe that does not answer within lockProbeTimeout ends ownership at

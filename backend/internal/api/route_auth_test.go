@@ -159,6 +159,8 @@ var publicRoutes = map[string]string{
 	"POST /api/auth/mfa/push/finish":         "as above; redeems an approved push challenge for a session, on the finishSecret the login response handed the browser (not the challenge id, which travels in the notification)",
 	"/api/health":                            "liveness for orchestrators; health.Status carries no per-user data",
 	"GET /healthz":                           "public suite monitor receives only a coarse service status",
+	"GET /livez":                             "replica liveness for the proxy and orchestrator: one status word, never touches the database",
+	"GET /readyz":                            "replica readiness for the proxy: one status word from a cached store ping",
 	"GET /api/setup":                         "pre-login hint for a fresh install with no accounts to authenticate against",
 	"GET /.well-known/openpgpkey/":           "Web Key Directory is public by protocol; any sender's client must fetch published keys uncredentialed",
 	"GET /agent/skills/kypost/SKILL.md":      "the AI agent skill; the same text on every instance, no user or instance data",

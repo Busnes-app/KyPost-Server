@@ -113,11 +113,13 @@ func (s *Server) handleAuthStepUp(w http.ResponseWriter, r *http.Request) {
 
 // recordStepUp stamps the session with the time it last proved itself here.
 func (s *Server) recordStepUp(token string) {
-	s.sessMu.Lock()
-	defer s.sessMu.Unlock()
-	if sess, ok := s.sessions[token]; ok {
+	ctx, cancel := sharedContext()
+	defer cancel()
+	if _, err := s.changeSession(ctx, token, func(sess *Session) bool {
 		sess.SteppedUpAt = time.Now()
-		s.sessions[token] = sess
+		return true
+	}); err != nil {
+		s.logger.Error("step-up could not be recorded on the session", "error", err.Error())
 	}
 }
 

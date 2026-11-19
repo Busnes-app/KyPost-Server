@@ -11,7 +11,9 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/captcha"
 	"github.com/Busnes-app/kypost-server/backend/internal/mfa"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -170,7 +173,8 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 	// See loginBudget.
 	var budget loginBudget
 	if s.loginRateLimiter != nil {
-		if ok, retryAfter := s.loginRateLimiter.admitCost(loginRateLimitKey, loginKDFReserveSeconds); !ok {
+		ok, retryAfter, gen := s.loginRateLimiter.reserve(loginRateLimitKey, loginKDFReserveSeconds)
+		if !ok {
 			retrySeconds := int(retryAfter.Seconds()) + 1
 			w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
 			writeJSON(w, http.StatusTooManyRequests, map[string]any{
@@ -179,7 +183,7 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 			})
 			return users.User{}, false
 		}
-		budget.limiter = s.loginRateLimiter
+		budget.limiter, budget.gen = s.loginRateLimiter, gen
 	}
 	defer budget.refund()
 
@@ -196,10 +200,10 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 	// this lockout again. The per-account lockout and the instance budget above
 	// bound it either way.
 	s.warnOnUnusedProxyHeaders(r)
-	exempt := s.officeDraw(r, s.officeLogin)
+	exempt, officeGen := s.officeDrawGen(r, s.officeLogin)
 	refundOffice := func() {
 		if exempt {
-			officeRefund(s.officeLogin)
+			officeRefund(s.officeLogin, officeGen)
 		}
 	}
 	ipLockoutKey := lockoutKeyForIP(clientIP(r))
@@ -396,7 +400,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	revocations := s.revocations.Load() // before verifyLogin reads the credential
+	revocations, err := s.revocationMark(r.Context()) // before verifyLogin reads the credential
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
 	u, ok := s.verifyLogin(w, r, s.loginLockout, req.Username, req.AuthSecret, req.CaptchaToken, nil)
 	if !ok {
 		return
@@ -426,9 +434,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// The same fence mintSession applies to a password-only sign-in: a
 		// revocation since the credential was read drops this challenge, and
 		// one after this check purges it (revokeUserSessions).
-		s.sessMu.RLock()
-		revoked := s.revokedAt[u.ID] >= revocations+1
-		s.sessMu.RUnlock()
+		revoked, err := s.revokedSince(r.Context(), u.ID, revocations)
+		if err != nil {
+			s.mfaChallenges.Delete(ch.ID)
+			writeUnavailable(w)
+			return
+		}
 		if revoked {
 			s.mfaChallenges.Delete(ch.ID)
 			http.Error(w, "invalid credentials", http.StatusUnauthorized)
@@ -516,7 +527,10 @@ func (s *Server) handleCaptchaConfig(w http.ResponseWriter, r *http.Request) {
 // no CORS headers, so a cross-origin page can trigger this GET but never read
 // the token; possession of the session cookie remains the only way to obtain it.
 func (s *Server) handleCSRFToken(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.currentUser(r); !ok {
+	if _, ok, err := s.currentUser(r); err != nil {
+		writeUnavailable(w)
+		return
+	} else if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
@@ -529,9 +543,11 @@ func (s *Server) handleCSRFToken(w http.ResponseWriter, r *http.Request) {
 	// split off the old single mu is that taking sessMu exclusively on a request
 	// path serializes every other request behind it. csrfCheckOK does the
 	// identical lookup under RLock thirty lines below.
-	s.sessMu.RLock()
-	sess, ok := s.sessions[cookie.Value]
-	s.sessMu.RUnlock()
+	sess, ok, err := s.lookupSession(r.Context(), cookie.Value)
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
@@ -569,18 +585,13 @@ func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Sessio
 	}
 	now := time.Now()
 	sess.IssuedAt, sess.ExpiresAt, sess.CSRFToken = now, now.Add(sessionIdleTimeout), csrfToken
-	s.sessMu.Lock()
-	// Under sessMu, which endSSOSessions holds while bumping the epoch.
-	if sess.SSO.Subject != "" && sess.SSOEpoch != s.ssoEpoch.Load() {
-		s.sessMu.Unlock()
-		return errors.New("SSO settings changed during sign-in")
+	if s.shared != nil {
+		if err := s.putSharedSession(r.Context(), token, sess); err != nil {
+			return err
+		}
+	} else if err := s.putSession(token, sess); err != nil {
+		return err
 	}
-	if sess.revocations != 0 && s.revokedAt[sess.UserID] >= sess.revocations {
-		s.sessMu.Unlock()
-		return errors.New("account credentials were revoked during sign-in")
-	}
-	s.sessions[token] = sess
-	s.sessMu.Unlock()
 	secure := isRequestSecure(r)
 	http.SetCookie(w, &http.Cookie{Name: "kypost_session", Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
 	// Deliberately NOT HttpOnly: the frontend must be able to read this and
@@ -589,6 +600,41 @@ func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Sessio
 	// HttpOnly session cookie, so JS-readability doesn't weaken the session.
 	http.SetCookie(w, &http.Cookie{Name: "csrf_token", Value: csrfToken, Path: "/", HttpOnly: false, Secure: secure, SameSite: http.SameSiteLaxMode})
 	return nil
+}
+
+// putSession records a minted session in memory, refusing it if the sign-in's fences moved:
+// under sessMu, which endSSOSessions and revokeUserSessions hold while moving them.
+func (s *Server) putSession(token string, sess Session) error {
+	s.sessMu.Lock()
+	defer s.sessMu.Unlock()
+	if sess.SSO.Subject != "" && sess.SSOEpoch != s.ssoEpoch.Load() {
+		return errors.New("SSO settings changed during sign-in")
+	}
+	if sess.revocations != 0 && s.revokedAt[sess.UserID] >= sess.revocations {
+		return errors.New("account credentials were revoked during sign-in")
+	}
+	s.sessions[token] = sess
+	return nil
+}
+
+// putSharedSession is putSession on PostgreSQL: the fence checks and the insert are one
+// database transaction (state.PutSession).
+func (s *Server) putSharedSession(ctx context.Context, token string, sess Session) error {
+	data, err := encodeSession(sess)
+	if err != nil {
+		return err
+	}
+	fence := state.SessionFence{Revocations: math.MaxUint64, CheckSSO: sess.SSO.Subject != "", SSOEpoch: sess.SSOEpoch}
+	if sess.revocations != 0 {
+		fence.Revocations = sess.revocations - 1
+	}
+	ctx, cancel := context.WithTimeout(ctx, sharedTimeout)
+	defer cancel()
+	err = s.shared.PutSession(ctx, sessionHash(token), sess.UserID, sess.SSO.Subject, data, sess.ExpiresAt.UnixMilli(), fence)
+	if errors.Is(err, state.ErrSessionFenced) {
+		return errors.New("credentials or SSO settings changed during sign-in")
+	}
+	return err
 }
 
 // handleMFATOTP completes a login challenge with a TOTP code. It is
@@ -738,9 +784,10 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie("kypost_session")
 	if err == nil {
-		s.sessMu.Lock()
-		delete(s.sessions, c.Value)
-		s.sessMu.Unlock()
+		if err := s.dropSession(r.Context(), c.Value); err != nil {
+			writeUnavailable(w)
+			return
+		}
 	}
 	secure := isRequestSecure(r)
 	http.SetCookie(w, &http.Cookie{Name: "kypost_session", Value: "", Path: "/", Expires: time.Unix(0, 0), MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
@@ -765,7 +812,21 @@ func currentSessionToken(r *http.Request) string {
 // disable/regeneration so a stolen session cookie is cut off as soon as the
 // legitimate user, or an admin on their behalf, takes one of those recovery
 // actions, rather than staying valid for the remaining 24h sliding window.
-func (s *Server) revokeUserSessions(userID, keepToken string) {
+func (s *Server) revokeUserSessions(userID, keepToken string) error {
+	if s.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		keep := ""
+		if keepToken != "" {
+			keep = sessionHash(keepToken)
+		}
+		if _, err := s.shared.RevokeUserSessions(ctx, userID, keep); err != nil {
+			s.logger.Error("sessions could not be revoked", "user_id", userID, "error", err.Error())
+			return fmt.Errorf("%w: %v", errSharedUnavailable, err)
+		}
+		s.mfaChallenges.DeleteByUser(userID)
+		return nil
+	}
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
 	if s.revokedAt == nil {
@@ -781,10 +842,15 @@ func (s *Server) revokeUserSessions(userID, keepToken string) {
 	// after the fence is bumped, so handleLogin's check catches any created
 	// before it and this catches any created after.
 	s.mfaChallenges.DeleteByUser(userID)
+	return nil
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	ac, ok := s.currentUser(r)
+	ac, ok, err := s.currentUser(r)
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
 	if !ok {
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
 		return
@@ -1021,7 +1087,11 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ac, ok := s.currentUser(r)
+		ac, ok, err := s.currentUser(r)
+		if err != nil {
+			writeUnavailable(w)
+			return
+		}
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 			return
@@ -1088,6 +1158,10 @@ func (s *Server) withMailAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ac, err := s.resolveMailAuthContext(r)
 		if err != nil {
+			if errors.Is(err, errSharedUnavailable) {
+				writeUnavailable(w)
+				return
+			}
 			if s.refuseNativeAdministrator(w, r, ac.UserID, err) {
 				return
 			}
@@ -1171,62 +1245,70 @@ func authContextFromContext(ctx context.Context) (AuthContext, bool) {
 // live from the users store (not snapshotted into the session), so a role
 // change or deactivation take effect on the request immediately following
 // it rather than only at next login.
-func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
+func (s *Server) currentUser(r *http.Request) (AuthContext, bool, error) {
 	cookie, err := r.Cookie("kypost_session")
 	if err != nil {
-		return AuthContext{}, false
+		return AuthContext{}, false, nil
 	}
 
 	now := time.Now()
-	// Read under the read lock first. The common case is a live session that was
-	// already touched moments ago and does not need its expiry rewritten, and
-	// taking the write lock for that turned every authenticated request into an
-	// exclusive critical section — see the sessMu note on Server.
-	s.sessMu.RLock()
-	sess, ok := s.sessions[cookie.Value]
-	s.sessMu.RUnlock()
+	// A lookup under the read lock (or one database read): the common case is a live session
+	// touched moments ago that needs no rewrite. An error is "unknown", not "signed out".
+	sess, ok, err := s.lookupSession(r.Context(), cookie.Value)
+	if err != nil {
+		return AuthContext{}, false, err
+	}
 	if !ok {
-		return AuthContext{}, false
+		return AuthContext{}, false, nil
 	}
 
 	// Idle timeout, then the absolute cap. The cap is checked separately so
 	// that renewing below can never push a session past sessionMaxLifetime.
 	if now.After(sess.ExpiresAt) || now.Sub(sess.IssuedAt) >= sessionMaxLifetime {
-		s.sessMu.Lock()
-		// Re-check identity before deleting: this token could have been logged
-		// out and a new session minted under the same map key in between (not
-		// possible today — tokens are 24 random bytes — but deleting a session
-		// this goroutine never validated is wrong regardless).
-		if cur, still := s.sessions[cookie.Value]; still && cur.IssuedAt.Equal(sess.IssuedAt) {
-			delete(s.sessions, cookie.Value)
+		if s.shared != nil {
+			// Tokens are 24 random bytes, so the row is this session.
+			_ = s.dropSession(r.Context(), cookie.Value)
+		} else {
+			s.sessMu.Lock()
+			// Re-check identity before deleting: deleting a session this goroutine never
+			// validated is wrong even if a re-mint under one key cannot happen today.
+			if cur, still := s.sessions[cookie.Value]; still && cur.IssuedAt.Equal(sess.IssuedAt) {
+				delete(s.sessions, cookie.Value)
+			}
+			s.sessMu.Unlock()
 		}
-		s.sessMu.Unlock()
-		return AuthContext{}, false
+		return AuthContext{}, false, nil
 	}
 
 	// Sliding idle window for active users; IssuedAt is deliberately carried
 	// through unchanged so the absolute ceiling still applies. Only written when
 	// the window has moved by sessionSlideGranularity — rewriting a 24-hour horizon
-	// because 40 milliseconds elapsed buys nothing and costs an exclusive lock on
-	// the hot path.
+	// because 40 milliseconds elapsed buys nothing and costs an exclusive lock (or a
+	// database write) on the hot path. A lost race to another request's touch is fine.
 	if now.Sub(sess.ExpiresAt.Add(-sessionIdleTimeout)) >= sessionSlideGranularity {
-		s.sessMu.Lock()
-		if cur, still := s.sessions[cookie.Value]; still {
+		if _, err := s.changeSession(r.Context(), cookie.Value, func(cur *Session) bool {
 			cur.ExpiresAt = now.Add(sessionIdleTimeout)
-			s.sessions[cookie.Value] = cur
+			return true
+		}); err != nil {
+			return AuthContext{}, false, err
 		}
-		s.sessMu.Unlock()
 	}
 
-	u, err := s.users.Get(sess.UserID)
 	// An SSO session lives only as long as the link and the trust settings it
 	// was minted under.
-	ssoStale := sess.SSO.Subject != "" && (u.SSOLinkRevoked() || u.SSOSub != sess.SSO.Subject || sess.SSOEpoch != s.ssoEpoch.Load())
+	var epoch uint64
+	if sess.SSO.Subject != "" {
+		if epoch, err = s.currentSSOEpoch(r.Context()); err != nil {
+			return AuthContext{}, false, err
+		}
+	}
+	u, err := s.users.Get(sess.UserID)
+	ssoStale := sess.SSO.Subject != "" && (u.SSOLinkRevoked() || u.SSOSub != sess.SSO.Subject || sess.SSOEpoch != epoch)
 	if err != nil || !u.Active || ssoStale || s.requireAccountRestoreReleased(u) != nil {
-		s.sessMu.Lock()
-		delete(s.sessions, cookie.Value)
-		s.sessMu.Unlock()
-		return AuthContext{}, false
+		if derr := s.dropSession(r.Context(), cookie.Value); derr != nil {
+			return AuthContext{}, false, derr
+		}
+		return AuthContext{}, false, nil
 	}
 	role := u.Role
 	if sess.SSO.Subject != "" && !sess.SSOAppAdmin && role == users.RoleAdmin {
@@ -1243,7 +1325,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 		// This request authenticated by cookie, so it carries an ambient
 		// credential and csrfCheckOK must enforce the double submit.
 		SessionCSRFToken: sess.CSRFToken,
-	}, true
+	}, true, nil
 }
 
 // mustChangePasswordExemptPaths are the only authenticated routes a user with

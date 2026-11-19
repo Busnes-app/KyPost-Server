@@ -63,21 +63,33 @@ func newOfficeLoginBudget() *keyedLimiter {
 // a forwarding header counts only from a trusted proxy, and only its right-most
 // hop. A request counts as exempted only when it skipped the per-IP limit.
 func (s *Server) officeDraw(r *http.Request, budget *keyedLimiter) bool {
+	ok, _ := s.officeDrawGen(r, budget)
+	return ok
+}
+
+// officeDrawGen is officeDraw that also returns the shared window the request came from,
+// for officeRefund.
+func (s *Server) officeDrawGen(r *http.Request, budget *keyedLimiter) (bool, int64) {
 	list := s.exemptNetworks.Load()
 	addr, err := netip.ParseAddr(clientIP(r))
 	if err != nil || budget == nil || !list.Contains(addr) {
-		return false
+		return false, 0
 	}
-	if ok, _ := budget.allow(officeBudgetKey); !ok {
-		return false
+	ok, _, gen := budget.reserve(officeBudgetKey, 1)
+	if !ok {
+		return false, 0
 	}
 	list.Exempt(addr)
-	return true
+	return true, gen
 }
 
 // officeRefund hands back one request officeDraw took from budget, for an
 // attempt that turned out not to be a failure.
-func officeRefund(budget *keyedLimiter) {
+func officeRefund(budget *keyedLimiter, gen int64) {
+	if budget.shared != nil {
+		budget.give(officeBudgetKey, 1, gen)
+		return
+	}
 	budget.settleCost(officeBudgetKey, -1)
 }
 

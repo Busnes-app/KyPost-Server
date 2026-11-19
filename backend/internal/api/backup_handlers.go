@@ -24,6 +24,9 @@ const depositBudget = 16 * time.Minute
 // browser tab does not abandon a half-uploaded capsule or a long drill, bounded
 // by the run budget and tracked by the shutdown drain.
 func (s *Server) detachedBackup(w http.ResponseWriter, r *http.Request) (context.Context, func(), bool) {
+	if s.refuseWhileDraining(w) {
+		return nil, nil, false
+	}
 	if !s.beginBackupRun() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "server is shutting down; retry the backup after restart"})
 		return nil, nil, false

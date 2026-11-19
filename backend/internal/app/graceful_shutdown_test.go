@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
@@ -114,6 +115,7 @@ func TestRunServer_ShutsDownGracefullyOnCancel(t *testing.T) {
 // the HTTP server as well as the poller, without panicking or hanging when
 // cancellation arrives immediately after startup.
 func TestRunAll_ShutsDownGracefullyOnCancel(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "--mode all refuses PostgreSQL")
 	d := newGracefulShutdownTestDeps(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -139,6 +141,9 @@ func TestRunAll_ShutsDownGracefullyOnCancel(t *testing.T) {
 func TestHealthRestartShutsDownAndFails(t *testing.T) {
 	for name, run := range map[string]func(context.Context, runDeps) error{"daemon": runDaemon, "all": runAll} {
 		t.Run(name, func(t *testing.T) {
+			if name == "all" {
+				dbbackend.SkipOnPostgres(t, "--mode all refuses PostgreSQL")
+			}
 			shortenHealthCheck(t)
 			d := newGracefulShutdownTestDeps(t)
 			d.health.MarkUnhealthy("imap unreachable for all users")

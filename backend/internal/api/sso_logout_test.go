@@ -44,7 +44,7 @@ func logoutForm(token string) url.Values { return url.Values{"logout_token": {to
 func sessionAlive(srv *Server, c *http.Cookie) bool {
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	req.AddCookie(c)
-	_, ok := srv.currentUser(req)
+	_, ok, _ := srv.currentUser(req)
 	return ok
 }
 

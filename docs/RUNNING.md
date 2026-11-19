@@ -219,3 +219,29 @@ return and agent-token revocation runs on the staged files. The staged databases
 loaded into Postgres in one transaction and recounted, and only the other files are
 published to the target. A database that holds any row is refused unchanged; restore into
 a new, empty database.
+
+## Replicas on one host
+
+### Request deadline and proxy timeouts
+
+Every request answers within 14 seconds: past it KyPost answers `503` with `{"code":"request_timeout"}`. A `503` after the deadline does not prove the request had no effect; the work may still finish once the database answers, so check before retrying. The routes below keep their own, longer budgets and are not cut at 14 seconds. A proxy in front of KyPost (the replica profile's HAProxy, nginx, Nginx Proxy Manager) must allow each route at least the proxy timeout given here, which is the budget plus headroom. With one value for the whole site, use the largest: 17 minutes.
+
+| Route prefix | Budget | Proxy timeout |
+|---|---|---|
+| `/api/admin/backup/` | 16 min | 17 min |
+| `/api/export` | 10 min | 11 min |
+| `/api/contacts/export` | 10 min | 11 min |
+| `/api/mail/` | 10 min | 11 min |
+| `/api/inbox` | 10 min | 11 min |
+| `/api/rules/run` | 10 min | 11 min |
+| `/api/import` | 10 min | 11 min |
+| `/api/imap/` | 2 min | 3 min |
+| `/api/contacts/carddav-client/` | 2 min | 3 min |
+| `/api/contacts/import` | 2 min | 3 min |
+| `/api/kydrive/` | 2 min | 3 min |
+| `/api/pgp/pickup` | 2 min | 3 min |
+| `/api/admin/native-recovery/` | 2 min | 3 min |
+| `/api/admin/mail-relay` | 1 min | 2 min |
+| `/api/admin/mail-domain` | 1 min | 2 min |
+| `/api/admin/mail/poll-now` | 2 min | 3 min |
+| `/mcp` | 2 min | 3 min |

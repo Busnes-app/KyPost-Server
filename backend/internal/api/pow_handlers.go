@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/captcha"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 )
@@ -79,6 +81,21 @@ func resolvePoWSecret(keyPath string, logger *logging.Logger) []byte {
 	// Go 1.24+ crypto/rand.Read never returns an error.
 	_, _ = rand.Read(ephemeral)
 	return ephemeral
+}
+
+// CheckSharedPoWKey refuses a PostgreSQL replica start whose proof-of-work key cannot be
+// persisted to SECRET_DIR: the per-process fallback would make every replica refuse the
+// others' challenges. Run before NewServer; nothing to check for another provider or with
+// POW_SECRET set.
+func CheckSharedPoWKey() error {
+	if resolveCaptchaProvider(os.Getenv("CAPTCHA_PROVIDER")) != captcha.ProviderPoW || strings.TrimSpace(os.Getenv("POW_SECRET")) != "" {
+		return nil
+	}
+	path := config.SecretFile("POW_SECRET_FILE", "pow.key")
+	if _, err := cryptutil.LoadOrCreateKey(path); err != nil {
+		return fmt.Errorf("the proof-of-work key %s cannot be persisted, and replicas cannot each use a key of their own: %w", path, err)
+	}
+	return nil
 }
 
 // handlePoWChallenge issues a proof-of-work challenge for the login form. It

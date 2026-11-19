@@ -602,7 +602,11 @@ func (s *Server) mailFor(r *http.Request) (imapadapter.Client, error) {
 // Mobile never sees or sets raw IMAP/SMTP credentials; it only acts on an
 // account already configured through the web UI.
 func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
-	if ac, ok := s.currentUser(r); ok {
+	ac, ok, err := s.currentUser(r)
+	if err != nil {
+		return AuthContext{}, fmt.Errorf("%w: %v", errSharedUnavailable, err)
+	}
+	if ok {
 		if _, _, err := s.nativeMailAssignment(r.Context(), ac.UserID); err != nil {
 			return ac, mailAdmissionError(err)
 		}
@@ -967,13 +971,16 @@ func (s *Server) revokeNativeRecoveryCredentials(u users.User) error {
 }
 
 func (s *Server) revokeUserCredentials(u users.User, keepSessionToken string, preserveSSOLink bool) error {
-	s.revokeUserSessions(u.ID, keepSessionToken)
+	sessionsErr := s.revokeUserSessions(u.ID, keepSessionToken)
 	// Native registration holds this lock from its final subscriber-generation
 	// check through device commit. Keep deletion and subscriber rotation in the
 	// same critical section so the two credential paths cannot interleave.
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
 	var errs []error
+	if sessionsErr != nil {
+		errs = append(errs, sessionsErr)
+	}
 	if err := s.revokeUserDevices(u.ID); err != nil {
 		errs = append(errs, err)
 	}

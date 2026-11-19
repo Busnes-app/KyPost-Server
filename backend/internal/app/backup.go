@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -245,17 +247,22 @@ func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 	return err
 }
 
-// backupLoop polls the admin's schedule every minute in the daemon process and
-// runs when due. It never exits on error; a dead destination is retried once
-// per interval because Run stamps the attempt first.
-func backupLoop(ctx context.Context, svc *backup.Service, logger *logging.Logger) {
+// backupLoop polls the admin's schedule every minute in the daemon role's owner and runs
+// when due. It never exits on error; a dead destination is retried once per interval because
+// Run stamps the attempt first. A run is detached from ctx and tracked by runs, so losing the
+// role (shutdown, takeover) does not cut a deposit short; the run's own lock fences overlap.
+func backupLoop(ctx context.Context, svc *backup.Service, logger *logging.Logger, runs *sync.WaitGroup) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
+	var running atomic.Bool
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+		if running.Load() {
+			continue
 		}
 		configured, err := svc.Configured()
 		if err != nil {
@@ -268,38 +275,50 @@ func backupLoop(ctx context.Context, svc *backup.Service, logger *logging.Logger
 		next, on, err := svc.NextRun()
 		if err != nil {
 			logger.Error("backup schedule unreadable", "error", recoveryclient.AuditSafe(err.Error()))
+			if aerr := svc.Audit("admin.backup_failed", "kypost-scheduler", "run", "failed", map[string]any{"reason": "the schedule could not be read"}); aerr != nil {
+				logger.Error("backup audit write failed", "error", aerr.Error())
+			}
 			continue
 		}
 		if !on || time.Now().Before(next) {
 			continue
 		}
-		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), svc.RunBudget())
-		if err := svc.Audit("admin.backup_intent", "kypost-scheduler", "run", "started", nil); err != nil {
-			cancel()
-			logger.Error("backup intent audit unavailable")
-			continue
-		}
-		res, err := svc.Run(runCtx)
-		cancel()
-		action, outcome, details := recoveryclient.Outcome(res, err)
-		if aerr := svc.Audit(action, "kypost-scheduler", res.Manifest.CapsuleID, outcome, details); aerr != nil {
-			logger.Error("backup audit write failed", "error", aerr.Error())
-		}
-		if err != nil && !errors.Is(err, recoveryclient.ErrReceiptUnrecorded) {
-			logger.Error("scheduled backup failed", "error", recoveryclient.AuditSafe(err.Error()))
-			continue
-		}
-		logger.Info("scheduled backup done", "capsule_id", res.Manifest.CapsuleID, "bytes", strconv.Itoa(res.SizeBytes))
+		running.Store(true)
+		runs.Go(func() {
+			defer running.Store(false)
+			scheduledRun(context.WithoutCancel(ctx), svc, logger)
+		})
 	}
 }
 
-func startBackupLoop(ctx context.Context, d runDeps) (<-chan struct{}, error) {
+// scheduledRun is one scheduled backup: intent audit, the run within its budget, outcome
+// audit.
+func scheduledRun(ctx context.Context, svc *backup.Service, logger *logging.Logger) {
+	runCtx, cancel := context.WithTimeout(ctx, svc.RunBudget())
+	defer cancel()
+	if err := svc.Audit("admin.backup_intent", "kypost-scheduler", "run", "started", nil); err != nil {
+		logger.Error("backup intent audit unavailable")
+		return
+	}
+	res, err := svc.Run(runCtx)
+	action, outcome, details := recoveryclient.Outcome(res, err)
+	if aerr := svc.Audit(action, "kypost-scheduler", res.Manifest.CapsuleID, outcome, details); aerr != nil {
+		logger.Error("backup audit write failed", "error", aerr.Error())
+	}
+	if err != nil && !errors.Is(err, recoveryclient.ErrReceiptUnrecorded) {
+		logger.Error("scheduled backup failed", "error", recoveryclient.AuditSafe(err.Error()))
+		return
+	}
+	logger.Info("scheduled backup done", "capsule_id", res.Manifest.CapsuleID, "bytes", strconv.Itoa(res.SizeBytes))
+}
+
+func startBackupLoop(ctx context.Context, d runDeps, runs *sync.WaitGroup) (<-chan struct{}, error) {
 	svc, err := newBackupService(d.store)
 	if err != nil {
 		return nil, err
 	}
 	done := make(chan struct{})
-	go func() { defer close(done); backupLoop(ctx, svc, d.logger) }()
+	go func() { defer close(done); backupLoop(ctx, svc, d.logger, runs) }()
 	return done, nil
 }
 
