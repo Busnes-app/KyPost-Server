@@ -31,3 +31,6 @@ frontend/dist/
 # Not referenced by any build stage (TUNING.md is COPY'd, so it stays).
 fonts/
 docs/
+
+# Developer-only native-mail harness (docs/DEVELOPMENT.md); not part of the image.
+scripts/dev
