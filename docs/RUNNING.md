@@ -340,7 +340,7 @@ settings that differ.
 
 **Upgrades** stop every replica, because mixed versions are not supported:
 `docker compose pull && docker compose stop kypost-server && docker compose up -d --wait`.
-That is a full outage: the command took 14 to 21 seconds in six runs for two replicas on
+That is a full outage: the command took 14 to 21 seconds in eight runs for two replicas on
 the test host with the image already pulled (stop, then start and ready; the outage users see
 is shorter), and longer while a backup drains (up to 16 minutes). `./scripts/update-host.sh`
 is for the single container: with replicas it refuses and prints these commands, so
