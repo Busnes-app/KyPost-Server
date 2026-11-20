@@ -37,6 +37,16 @@ var (
 // any row, before writing; it never writes a source (an older file is brought up to date
 // on a private copy under scratch). It is migrate-to-postgres and restore into Postgres.
 func ImportDatabases(ctx context.Context, roots []Root, scratch string) (Counts, error) {
+	return importDatabases(ctx, roots, scratch, false)
+}
+
+// CheckImport is ImportDatabases up to and including every count and content check, then
+// rolls back: the target is left exactly as it was.
+func CheckImport(ctx context.Context, roots []Root, scratch string) (Counts, error) {
+	return importDatabases(ctx, roots, scratch, true)
+}
+
+func importDatabases(ctx context.Context, roots []Root, scratch string, check bool) (Counts, error) {
 	type source struct{ path, rel, kind string }
 	var sources []source
 	for _, r := range roots {
@@ -108,6 +118,9 @@ func ImportDatabases(ctx context.Context, roots []Root, scratch string) (Counts,
 	}
 	if err := importStep(); err != nil {
 		return nil, err
+	}
+	if check {
+		return copied, nil // the deferred rollback leaves the target as it was
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, hintLocks(err)

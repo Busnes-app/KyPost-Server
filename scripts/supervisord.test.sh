@@ -63,4 +63,25 @@ result = subprocess.run(
 )
 assert "container stopped" not in result.stderr, result
 print("ok: optional accelerator FATAL keeps the container up; core FATAL still stops it")
+result = subprocess.run(["sh", "-c", script], input=fatal("startfailure"), capture_output=True, text=True, check=True, timeout=5)
+assert "container stopped" not in result.stderr and result.stdout == "READY\nRESULT 2\nOKREADY\n", result
+print("ok: a failed startfailure listener never stops the container")
+
+# A refused start reaches the container's own stderr: the listener copies the end of the
+# program's error log there (supervisord points its stderr at /dev/fd/2).
+import os, tempfile
+assert cfg["eventlistener:startfailure"]["stderr_logfile"] == "/dev/fd/2", "start refusals must reach docker logs"
+assert cfg["eventlistener:startfailure"]["events"] == "PROCESS_STATE_BACKOFF"
+starts = (pathlib.Path(path).parent / "scripts" / "start-failure.sh").read_text()
+def backoff(name):
+    payload = f"processname:{name} groupname:{name} from_state:STARTING tries:1"
+    return f"ver:3.0 eventname:PROCESS_STATE_BACKOFF len:{len(payload)}\n{payload}"
+with tempfile.TemporaryDirectory() as logs:
+    pathlib.Path(logs, "api.err.log").write_text("\n".join(f"line {i}" for i in range(9)) + "\nsettings differ from the deployment's: SERVER_BASE_URL\n")
+    result = subprocess.run(["sh", "-c", starts], input=backoff("api") + backoff("ollama"),
+        capture_output=True, text=True, check=True, timeout=5, env=os.environ | {"KYPOST_LOG_DIR": logs})
+assert result.stdout == "READY\nRESULT 2\nOKREADY\nRESULT 2\nOKREADY\n", result
+assert "kypost api did not start" in result.stderr and "SERVER_BASE_URL" in result.stderr, result
+assert "line 4" not in result.stderr and "ollama" not in result.stderr, result
+print("ok: a refused API or daemon start shows its reason on the container's stderr")
 PY

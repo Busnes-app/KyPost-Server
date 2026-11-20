@@ -58,7 +58,7 @@ func TestNativeCardDAVRestoreHoldRejectsColdAndCachedCredentials(t *testing.T) {
 			if got := request(u); got != http.StatusMultiStatus {
 				t.Fatalf("live native CardDAV: %d", got)
 			}
-			if _, ok := s.davCredentials.get(u.Username, secret); !ok {
+			if _, _, ok := s.davCredentials.get(u.Username, secret); !ok {
 				t.Fatal("control did not warm actual credential cache")
 			}
 			if !cached {

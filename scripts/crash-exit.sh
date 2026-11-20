@@ -40,6 +40,12 @@ while IFS= read -r header; do
 	# socket is absent. Leave it FATAL after bounded retries, without taking
 	# the API, daemon and receiver down with it. Keep listening for core failures.
 	case " $payload " in
+		*" processname:startfailure "*)
+			# A diagnostic: losing it must never stop KyPost.
+			printf '%s\n' "supervisord: the startfailure listener entered FATAL; start refusals stay in each program's error log: $payload" >&2
+			printf 'RESULT 2\nOKREADY\n'
+			continue
+			;;
 		*" processname:receiving-server "*)
 			printf '%s\n' "supervisord: optional receiving-server entered FATAL; checks will run in process: $payload" >&2
 			printf 'RESULT 2\nOKREADY\n'

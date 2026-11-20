@@ -38,12 +38,12 @@ const (
 )
 
 type ssoStepUp struct {
-	session  string
-	action   string
-	created  time.Time
-	expires  time.Time
-	started  bool
-	verified bool
+	Session  string    `json:"session"` // sessionHash of the session it belongs to
+	Action   string    `json:"action"`
+	Created  time.Time `json:"created"`
+	Expires  time.Time `json:"expires"`
+	Started  bool      `json:"started"`
+	Verified bool      `json:"verified"`
 }
 
 type actionDigestKey struct{}
@@ -78,10 +78,8 @@ func (s *Server) sessionOf(r *http.Request) (Session, string, bool) {
 	if err != nil || c.Value == "" {
 		return Session{}, "", false
 	}
-	s.sessMu.RLock()
-	sess, ok := s.sessions[c.Value]
-	s.sessMu.RUnlock()
-	return sess, c.Value, ok
+	sess, ok, err := s.lookupSession(r.Context(), c.Value)
+	return sess, c.Value, ok && err == nil
 }
 
 // confirmActor is the step-up a sensitive action takes: a fresh action-bound
@@ -111,12 +109,12 @@ func (s *Server) confirmSSOStepUp(w http.ResponseWriter, r *http.Request, sessio
 	}
 	now := time.Now()
 	if id := r.Header.Get(stepUpHeader); id != "" {
-		s.stepUpMu.Lock()
-		c, ok := s.stepUps[id]
-		if ok = ok && c.session == sessionToken && c.action == action && c.verified && now.Before(c.expires); ok {
-			delete(s.stepUps, id)
-		}
-		s.stepUpMu.Unlock()
+		ok := s.editStepUp(id, func(c *ssoStepUp, found bool) (rowEdit, bool) {
+			if found && c.Session == sessionHash(sessionToken) && c.Action == action && c.Verified && now.Before(c.Expires) {
+				return rowDrop, true
+			}
+			return rowKeep, false
+		})
 		if !ok {
 			http.Error(w, "the KySignOn confirmation is expired, spent or for a different action; try again", http.StatusForbidden)
 			return false
@@ -130,15 +128,10 @@ func (s *Server) confirmSSOStepUp(w http.ResponseWriter, r *http.Request, sessio
 		return false
 	}
 	id = "rea_" + id
-	s.stepUpMu.Lock()
-	// One live challenge per session, and nothing expired kept around.
-	for k, c := range s.stepUps {
-		if !now.Before(c.expires) || c.session == sessionToken {
-			delete(s.stepUps, k)
-		}
+	if err := s.putStepUp(id, ssoStepUp{Session: sessionHash(sessionToken), Action: action, Created: now, Expires: now.Add(ssoStepUpTTL)}); err != nil {
+		writeUnavailable(w)
+		return false
 	}
-	s.stepUps[id] = ssoStepUp{session: sessionToken, action: action, created: now, expires: now.Add(ssoStepUpTTL)}
-	s.stepUpMu.Unlock()
 	writeJSON(w, http.StatusForbidden, map[string]any{
 		"error":     "sso_step_up_required",
 		"message":   "Confirm this action with KySignOn",
@@ -170,13 +163,13 @@ func (s *Server) handleSSOStepUpStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	s.stepUpMu.Lock()
-	c, ok := s.stepUps[req.Challenge]
-	if ok = ok && c.session == token && !c.started && now.Before(c.expires); ok {
-		c.started = true
-		s.stepUps[req.Challenge] = c
-	}
-	s.stepUpMu.Unlock()
+	ok = s.editStepUp(req.Challenge, func(c *ssoStepUp, found bool) (rowEdit, bool) {
+		if found && c.Session == sessionHash(token) && !c.Started && now.Before(c.Expires) {
+			c.Started = true
+			return rowWrite, true
+		}
+		return rowKeep, false
+	})
 	if !ok {
 		http.Error(w, "unknown or already started confirmation; restart the action", http.StatusForbidden)
 		return
@@ -195,15 +188,16 @@ func (s *Server) handleSSOStepUpStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, token, _ := s.sessionOf(r)
 	id := r.PathValue("id")
-	s.stepUpMu.Lock()
-	c, ok := s.stepUps[id]
-	ok = ok && c.session == token && time.Now().Before(c.expires)
-	s.stepUpMu.Unlock()
+	var verified bool
+	ok := s.editStepUp(id, func(c *ssoStepUp, found bool) (rowEdit, bool) {
+		verified = c.Verified
+		return rowKeep, found && c.Session == sessionHash(token) && time.Now().Before(c.Expires)
+	})
 	if !ok {
 		http.Error(w, "unknown or expired confirmation", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"verified": c.verified})
+	writeJSON(w, http.StatusOK, map[string]any{"verified": verified})
 }
 
 // handleSSOStepUpCancel drops a challenge the user gave up on. Only an
@@ -212,12 +206,12 @@ func (s *Server) handleSSOStepUpCancel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, token, _ := s.sessionOf(r)
 	id := r.PathValue("id")
-	s.stepUpMu.Lock()
-	c, ok := s.stepUps[id]
-	if ok = ok && c.session == token; ok {
-		delete(s.stepUps, id)
-	}
-	s.stepUpMu.Unlock()
+	ok := s.editStepUp(id, func(c *ssoStepUp, found bool) (rowEdit, bool) {
+		if found && c.Session == sessionHash(token) {
+			return rowDrop, true
+		}
+		return rowKeep, false
+	})
 	if ok {
 		s.logger.Info("SSO step-up cancelled", "challenge_id", id)
 	}
@@ -231,7 +225,10 @@ func (s *Server) handleSSOStepUpCancel(w http.ResponseWriter, r *http.Request) {
 // challenge, so the action has to be restarted rather than retried.
 func (s *Server) completeSSOStepUp(w http.ResponseWriter, r *http.Request, id string, claims *sso.SSOTokenClaims) {
 	w.Header().Set("Cache-Control", "no-store")
-	if _, ok := s.currentUser(r); !ok {
+	if _, ok, err := s.currentUser(r); err != nil {
+		writeUnavailable(w)
+		return
+	} else if !ok {
 		http.Error(w, "sign in before confirming an action", http.StatusUnauthorized)
 		return
 	}
@@ -241,23 +238,22 @@ func (s *Server) completeSSOStepUp(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	now := time.Now()
-	s.stepUpMu.Lock()
-	c, ok := s.stepUps[id]
-	mine := ok && c.session == token
-	proven := mine && c.started && !c.verified && now.Before(c.expires) &&
-		claims.Issuer == sess.SSO.Issuer && claims.Sub == sess.SSO.Subject &&
-		claims.FreshProof(c.created, now)
-	switch {
-	case proven:
-		c.verified = true
-		if grant := now.Add(ssoStepUpGrantTTL); grant.Before(c.expires) {
-			c.expires = grant
+	proven := s.editStepUp(id, func(c *ssoStepUp, found bool) (rowEdit, bool) {
+		mine := found && c.Session == sessionHash(token)
+		switch {
+		case mine && c.Started && !c.Verified && now.Before(c.Expires) &&
+			claims.Issuer == sess.SSO.Issuer && claims.Sub == sess.SSO.Subject &&
+			claims.FreshProof(c.Created, now):
+			c.Verified = true
+			if grant := now.Add(ssoStepUpGrantTTL); grant.Before(c.Expires) {
+				c.Expires = grant
+			}
+			return rowWrite, true
+		case mine:
+			return rowDrop, false
 		}
-		s.stepUps[id] = c
-	case mine:
-		delete(s.stepUps, id)
-	}
-	s.stepUpMu.Unlock()
+		return rowKeep, false
+	})
 	if !proven {
 		http.Error(w, "fresh KySignOn authentication was not proven for this session; restart the action", http.StatusForbidden)
 		return

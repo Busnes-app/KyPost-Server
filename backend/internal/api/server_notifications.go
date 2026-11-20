@@ -585,6 +585,12 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	// and device commit so an old token cannot recreate access after the purge.
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
+	release, err := s.holdUserPairing(r.Context(), ownerID)
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
+	defer release()
 	store, err := s.userStore(ownerID)
 	if err != nil {
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)

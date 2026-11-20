@@ -35,7 +35,7 @@ Important files:
 - `/kypost/state/mailboxes/<mailboxID>/` (an administrator-created extra native mailbox: `native-mailbox.json`, `mailbox/mailbox.db` and a mail-only `state.db`; devices and subscriptions stay with the owner's primary)
 - `/kypost/config/admin.env` (legacy single-admin seed. KyPost imports it once, then stops reading it.)
 
-On Postgres (`KYPOST_DATABASE_URL`, [RUNNING.md](RUNNING.md#postgres)) the `.db` files above are schemas in that database, one per file, listed in `kypost_catalog.stores`; every other file stays in its volume. Back up the volumes and the database together, or use sealed capsules, which carry both. The manual volume procedure below covers SQLite only.
+On Postgres (`KYPOST_DATABASE_URL`, [RUNNING.md](RUNNING.md#postgres)) the `.db` files above are schemas in that database, one per file, listed in `kypost_catalog.stores`; every other file stays in its volume. Back up the volumes and the database together, or use sealed capsules, which carry both. The manual volume procedure below covers SQLite only. With replicas on one host, every replica shares these three volumes; what stays per replica and what moves into the database is listed under [Replicas on one host](RUNNING.md#what-is-shared-and-how). The replica files `replica-volume.id` (in each root) and `state/server-instance.lock` (SQLite) are small markers, not data.
 
 ## Backup and Restore
 

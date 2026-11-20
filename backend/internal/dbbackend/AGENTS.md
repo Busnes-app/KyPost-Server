@@ -6,7 +6,7 @@ Chooses where every store keeps its databases: SQLite files (default) or one Pos
 
 ## Ownership
 
-`dbbackend.go` (selection, startup checks, schema names, catalog, opens, staging for mailbox preparation), `copy.go` (the SQLite↔Postgres table copy, export, import, fingerprint, row counts), `testing.go` (the test hook), and `pgdialect/` (KyIdentity's translator and `kypg` driver).
+`dbbackend.go` (selection, startup checks, schema names, catalog, opens, staging for mailbox preparation), `copy.go` (the SQLite↔Postgres table copy, export, import, fingerprint, row counts), `testing.go` (the test hook), and `pgdialect/` (KyIdentity's translator and `kypg` driver), and `pgtest/` (test-only: a freezable TCP relay for outage tests).
 
 ## Local Contracts
 
@@ -16,6 +16,7 @@ Chooses where every store keeps its databases: SQLite files (default) or one Pos
 - `Held(path)` decides every open of an existing database and returns any catalog error, so callers fail closed: on Postgres a path under STATE_DIR/CONFIG_DIR (outside `backup-scratch`) is always Postgres; `Open` with `Create` is for openers that create. `Stage`/`Settle`/`Unstage` publish a prepared directory's schemas; pending rows are never opened.
 - The copy matches tables and columns by name: a SQLite side with an unknown table or column is a newer release and refused; one lacking some is older and upgraded on a private copy (`Kind.CreateSQLite`). Store packages register their `Kind`.
 - `bool` arguments bind as SQLite stores them (1/0 into BIGINT, a boolean where one is expected).
+- `ImportSQLite` verifies every table inside its transaction before the caller commits: the row count and an order-independent content digest (`verifyTable`: each row normalized by the Postgres column type, int8 as decimal, text as its bytes, bytea byte-exact, NULL distinct; row hashes sorted and hashed), so migrate-to-postgres and restore refuse a lost, changed or extra value (`ErrDigestMismatch`). `TestCopyVerifiesEveryTableByContent` drops a table's rows and flips one BLOB byte through the test-only copy hook, and checks that every identity ends above the copied maximum.
 
 ## Work Guidance
 

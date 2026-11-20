@@ -151,7 +151,7 @@ func TestNativeRecoveryLargeSSOStepUpBindsExactReplay(t *testing.T) {
 	grant := challengeFrom(t, gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", body, ""))
 	srv.stepUpMu.Lock()
 	proof := srv.stepUps[grant]
-	proof.verified = true
+	proof.Verified = true
 	srv.stepUps[grant] = proof
 	srv.stepUpMu.Unlock()
 	altered := strings.Replace(body, `"authSecret":"`+authSecretFor(srv, "operator-test-password")+`"`, `"authSecret":"`+authSecretFor(srv, "different")+`"`, 1)
@@ -180,7 +180,7 @@ func TestNativeRecoveryRefusesAdminCycleAfterStepUp(t *testing.T) {
 	grant := challengeFrom(t, gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", body, ""))
 	srv.stepUpMu.Lock()
 	proof := srv.stepUps[grant]
-	proof.verified = true
+	proof.Verified = true
 	srv.stepUps[grant] = proof
 	srv.stepUpMu.Unlock()
 	release, err := fsutil.LockFile(filepath.Join(srv.configDir, "sso.json"))
@@ -267,7 +267,7 @@ func TestNativeRecoveryChallengeRefusesStaleSSOAuthority(t *testing.T) {
 			grant := challengeFrom(t, gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/challenge", body, ""))
 			srv.stepUpMu.Lock()
 			proof := srv.stepUps[grant]
-			proof.verified = true
+			proof.Verified = true
 			srv.stepUps[grant] = proof
 			srv.stepUpMu.Unlock()
 			if err := mutate(srv, sess); err != nil {

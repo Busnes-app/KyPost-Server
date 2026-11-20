@@ -7,7 +7,7 @@ import { MailImportAccount } from "./MailImportAccount";
 
 type Mailbox = { id: string; addresses: { address: string }[] };
 export type ImportStatus = {
-  state: "idle" | "uploading" | "running" | "finished" | "failed" | "cancelled";
+  state: "idle" | "uploading" | "running" | "finished" | "failed" | "cancelled" | "interrupted";
   folder?: string;
   imported: number;
   duplicates: number;
@@ -171,5 +171,6 @@ export function MailImport() {
     {status?.state === "finished" && <p className="notice" role="status">Import{source} finished into {status.folder}: {counts}.</p>}
     {status?.state === "cancelled" && <p className="notice" role="status">Import cancelled: {counts}.</p>}
     {status?.state === "failed" && <p className="notice notice-error" role="alert">Import failed: {status.error ?? "unknown error"} ({counts}).</p>}
+    {status?.state === "interrupted" && <p className="notice notice-error" role="alert">Import interrupted ({counts}). {status.error ?? "The server running it stopped."}</p>}
   </div>;
 }

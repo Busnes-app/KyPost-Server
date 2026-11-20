@@ -49,8 +49,20 @@ Out of scope: an attacker who already runs code in the container or holds both t
 1. **Browser and apps → KyPost.** KyPost serves plain HTTP unless `TLS_CERT_FILE` is set. The
    entrypoint refuses a non-loopback cleartext publish without `ALLOW_INSECURE_HTTP=true`
    (`scripts/entrypoint.sh`, proved by the `ci-docker` job). Forwarded headers are read only
-   from peers in `TRUSTED_PROXY_CIDRS`, one named header, right-most hop
-   (`clientIP` in `backend/internal/api/server_request_context.go`).
+   from peers in `TRUSTED_PROXY_CIDRS`, one named header, the right-most hop that is not
+   itself a trusted proxy (`clientIP` in `backend/internal/api/server_request_context.go`).
+1a. **Replica → replica (PostgreSQL, one host).** Replicas never talk to each other: they trust
+   the shared database credentials and the shared `SECRET_DIR`. A start refuses a replica on
+   another kernel or volume set, `KYPOST_NATIVE_RECEIVER`, a per-process proof-of-work key, and
+   shared settings that differ from the record, which is HMAC-keyed by `totp-secret.key` so a
+   database writer reads no value (`backend/internal/replica/`). Sessions are stored as token
+   hashes; one-time sign-in steps are spent by compare-and-swap; lockout windows run on database
+   time, refund by generation and deny on a store failure; replay guards fail closed
+   (`backend/internal/state/coordination.go`, `backend/internal/api/shared_state.go`,
+   `shared_rows.go`). A database error answers 503, never 401. The pinned recovery key is
+   sealed in the database under `totp-secret.key` with its key ID as associated data, so a
+   database writer without the key file cannot substitute a key
+   (`backend/internal/backup/replica.go`). Separate-host safety is unproven and refused.
 2. **Mail content → the web app.** Mail HTML is sanitised with DOMPurify and rendered in an
    iframe whose sandbox does not allow scripts (`FRAME_SANDBOX` in
    `frontend/src/pages/read/EmailBodyFrame.tsx`), under a CSP without `'unsafe-inline'` scripts.
@@ -141,7 +153,9 @@ Out of scope: an attacker who already runs code in the container or holds both t
 
 Known limitations are listed, not hidden: anyone with both the config and private volumes can
 decrypt IMAP credentials and TOTP secrets, account metadata and mailbox state are stored
-unencrypted, DOMPurify is a defence layer rather than a boundary, rate limits are process-local,
+unencrypted, DOMPurify is a defence layer rather than a boundary, rate limits are process-local
+(on PostgreSQL replicas the lockouts, login budget and office budgets are shared; the per-account
+meters stay per replica, so N replicas allow N times them),
 and native receiving is still in qualification. Each is in
 [SECURITY.md](../SECURITY.md#known-limitations--trust-boundaries) with what to do about it.
 

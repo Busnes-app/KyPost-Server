@@ -100,6 +100,22 @@ func randomTwoDigits() (string, error) {
 // Locking on the first wrong number rather than counting toward a budget is the
 // point of maxMatchAttempts — read its comment before adding retries back.
 func (s *Store) ResolvePushWithMatch(id, deviceID string, approve bool, matchDigits string) (string, error) {
+	if s.rows != nil {
+		var status string
+		var verdict error
+		err := s.mutateRow(id, func(ch *Challenge) error {
+			var write bool
+			status, write, verdict = resolvePush(ch, deviceID, approve, matchDigits)
+			if !write {
+				return errNoWrite
+			}
+			return nil
+		})
+		if err != nil && !errors.Is(err, errNoWrite) {
+			return "", err
+		}
+		return status, verdict
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.m[id]
@@ -107,16 +123,28 @@ func (s *Store) ResolvePushWithMatch(id, deviceID string, approve bool, matchDig
 		delete(s.m, id)
 		return "", ErrChallengeNotFound
 	}
+	status, write, verdict := resolvePush(&ch, deviceID, approve, matchDigits)
+	if write {
+		s.m[id] = ch
+	}
+	return status, verdict
+}
+
+// errNoWrite leaves a shared challenge as it is (mutateRow).
+var errNoWrite = errors.New("mfa: no change")
+
+// resolvePush is one push answer applied to ch: the resulting status, whether ch changed,
+// and the verdict for the device.
+func resolvePush(ch *Challenge, deviceID string, approve bool, matchDigits string) (string, bool, error) {
 	if isPushResolved(ch.PushStatus) {
 		if ch.PushStatus == PushLocked {
 			// Terminal, but not a decision anyone made — report it as the lock
 			// it is so the device says "use your authenticator" rather than
 			// "already answered".
-			return ch.PushStatus, ErrMatchAttemptsExhausted
+			return ch.PushStatus, false, ErrMatchAttemptsExhausted
 		}
-		return ch.PushStatus, ErrChallengeAlreadyResolved
+		return ch.PushStatus, false, ErrChallengeAlreadyResolved
 	}
-
 	if approve {
 		// Constant-time: the comparison is cheap and the value is short-lived,
 		// but a length-or-prefix leak here would shrink an already small space.
@@ -124,14 +152,12 @@ func (s *Store) ResolvePushWithMatch(id, deviceID string, approve bool, matchDig
 			ch.MatchAttempts++
 			ch.PushStatus = PushLocked
 			ch.RespondedBy = deviceID
-			s.m[id] = ch
-			return PushLocked, ErrMatchAttemptsExhausted
+			return PushLocked, true, ErrMatchAttemptsExhausted
 		}
 		ch.PushStatus = PushApproved
 	} else {
 		ch.PushStatus = PushDenied
 	}
 	ch.RespondedBy = deviceID
-	s.m[id] = ch
-	return ch.PushStatus, nil
+	return ch.PushStatus, true, nil
 }

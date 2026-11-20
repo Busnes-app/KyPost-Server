@@ -75,7 +75,7 @@ LABEL org.opencontainers.image.source="https://github.com/Busnes-app/KyPost-Serv
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends supervisor tzdata curl ca-certificates zstd liblzma5 tar util-linux restic \
 	&& rm -rf /var/lib/apt/lists/* \
-	&& useradd -m -s /bin/bash kypost
+	&& useradd -m -s /bin/bash --uid 1000 kypost
 
 # Pinned release tarball verified against its published SHA-256. Never replace
 # this with `curl https://ollama.com/install.sh | sh`: that is unpinned remote

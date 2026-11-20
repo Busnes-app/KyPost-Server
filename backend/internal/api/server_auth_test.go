@@ -18,10 +18,17 @@ import (
 func authRequestAs(s *Server, req *http.Request, userID string) {
 	token := "session-token-" + userID
 	csrfToken := "csrf-token-" + userID
-	s.sessMu.Lock()
 	// SteppedUpAt survives, so a test can step a session up between requests.
-	s.sessions[token] = Session{UserID: userID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken, SteppedUpAt: s.sessions[token].SteppedUpAt}
-	s.sessMu.Unlock()
+	if s.shared != nil {
+		ctx := context.Background()
+		old, _, _ := s.lookupSession(ctx, token)
+		_ = s.dropSession(ctx, token)
+		_ = s.putSharedSession(ctx, token, Session{UserID: userID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken, SteppedUpAt: old.SteppedUpAt})
+	} else {
+		s.sessMu.Lock()
+		s.sessions[token] = Session{UserID: userID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken, SteppedUpAt: s.sessions[token].SteppedUpAt}
+		s.sessMu.Unlock()
+	}
 	// Represent a fully-onboarded session: users are created with
 	// MustChangePassword=true, which is now enforced server-side (see withAuth),
 	// so clear it here to model a user past first login. Tests that specifically
@@ -448,7 +455,7 @@ func TestSessionAbsoluteLifetimeCapsRenewal(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
-	if _, ok := srv.currentUser(req); ok {
+	if _, ok, _ := srv.currentUser(req); ok {
 		t.Fatal("a session past sessionMaxLifetime authenticated; the absolute cap is not enforced")
 	}
 
@@ -530,7 +537,7 @@ func TestSessionSlideIsQuantized(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 
 	// A request arriving immediately must NOT rewrite the expiry.
-	if _, ok := srv.currentUser(req); !ok {
+	if _, ok, _ := srv.currentUser(req); !ok {
 		t.Fatal("currentUser rejected a live session")
 	}
 	srv.sessMu.RLock()
@@ -554,7 +561,7 @@ func TestSessionSlideIsQuantized(t *testing.T) {
 	}
 	srv.sessMu.Unlock()
 
-	if _, ok := srv.currentUser(req); !ok {
+	if _, ok, _ := srv.currentUser(req); !ok {
 		t.Fatal("currentUser rejected a live session on the second pass")
 	}
 	srv.sessMu.RLock()
@@ -579,7 +586,7 @@ func TestSessionSlideIsQuantized(t *testing.T) {
 		CSRFToken: "csrf",
 	}
 	srv.sessMu.Unlock()
-	if _, ok := srv.currentUser(req); ok {
+	if _, ok, _ := srv.currentUser(req); ok {
 		t.Error("currentUser accepted a session past sessionMaxLifetime")
 	}
 	srv.sessMu.RLock()

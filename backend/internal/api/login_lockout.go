@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -161,6 +162,10 @@ type failureLockout struct {
 	hardCap        int
 	// now is time.Now; a field so tests can drive the window.
 	now func() time.Time
+	// shared, when set (UseSharedState), holds the strikes in the database instead, under
+	// name; the in-memory fields above are then unused.
+	shared *state.Store
+	name   string
 }
 
 // sweepMinInterval is the shortest gap between two crowded-table sweeps, so a
@@ -207,6 +212,9 @@ func newLoginLockout() *failureLockout {
 //     accounts
 //   - nothing at all on a failure — the strike is already counted
 func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.Duration, res lockoutReservation) {
+	if l.shared != nil {
+		return l.takeShared(username)
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -249,6 +257,9 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 // lockedFor is how long key stays locked, or 0. Read-only: a pre-check, not a
 // reservation.
 func (l *failureLockout) lockedFor(key string) time.Duration {
+	if l.shared != nil {
+		return l.lockedForShared(key)
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if e, ok := l.entries[key]; ok {
@@ -262,6 +273,10 @@ func (l *failureLockout) lockedFor(key string) time.Duration {
 type lockoutReservation struct {
 	key string
 	at  time.Time
+	gen int64 // the shared window's generation (UseSharedState)
+	// unavailable marks a refusal because the shared counter could not answer: callers
+	// that can say so answer 503, never as a credential failure.
+	unavailable bool
 }
 
 // cancelAttempt returns a strike reserved by tryAttempt, for a path that turned
@@ -271,6 +286,10 @@ type lockoutReservation struct {
 // A reservation whose strike is already gone (the window reset under it) is a
 // no-op, so a refund can never become credit for extra attempts.
 func (l *failureLockout) cancelAttempt(res lockoutReservation) {
+	if l.shared != nil {
+		l.releaseShared(res)
+		return
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e, exists := l.entries[res.key]
@@ -372,6 +391,10 @@ func (l *failureLockout) Saturated() bool {
 // recordSuccess clears any strike history for username, so a successful
 // login always starts the next set of attempts with a clean slate.
 func (l *failureLockout) recordSuccess(username string) {
+	if l.shared != nil {
+		l.clearShared(username)
+		return
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.entries, username)
@@ -483,14 +506,20 @@ var loginKDFBilledSeconds = billMeasuredTime
 // The zero value (no limiter configured, or no reservation taken) is inert.
 type loginBudget struct {
 	limiter *keyedLimiter
+	gen     int64 // the shared window the reservation came from
 }
 
-// settle bills delta (actual cost minus the reservation) and releases the hold.
+// settle bills delta (actual cost minus the reservation) and releases the hold. A shared
+// budget counts reservations, not seconds: only a full refund hands one back.
 func (b *loginBudget) settle(delta float64) {
 	if b.limiter == nil {
 		return
 	}
-	b.limiter.settleCost(loginRateLimitKey, delta)
+	if b.limiter.shared == nil {
+		b.limiter.settleCost(loginRateLimitKey, delta)
+	} else if delta <= -loginKDFReserveSeconds {
+		b.limiter.give(loginRateLimitKey, loginKDFReserveSeconds, b.gen)
+	}
 	b.limiter = nil
 }
 

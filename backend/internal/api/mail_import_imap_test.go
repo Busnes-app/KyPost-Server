@@ -472,7 +472,7 @@ func TestIMAPImport(t *testing.T) {
 	}
 	srv.stepUpMu.Lock()
 	sc := srv.stepUps[challenge.Challenge]
-	sc.verified = true
+	sc.Verified = true
 	srv.stepUps[challenge.Challenge] = sc
 	srv.stepUpMu.Unlock()
 	if w = call("/api/import/imap", meSSO, `{`+account+`"mailbox":""}`, map[string]string{stepUpHeader: challenge.Challenge}); w.Code != 200 {
@@ -574,15 +574,26 @@ func TestIMAPImport(t *testing.T) {
 	if w.Code != 200 || got.Target != "Imported/imap-example-com" {
 		t.Fatal("listing", w.Code, w.Body)
 	}
-	heldPassword := func(token string) []byte {
+	held := func(token string) (importGrant, bool) {
 		srv.importMu.Lock()
 		defer srv.importMu.Unlock()
-		return srv.importGrants[token].imap.password
+		g, ok := srv.importGrants[token]
+		return g, ok
 	}
-	wiped := func(b []byte) bool { return len(b) > 0 && bytes.Count(b, []byte{0}) == len(b) }
-	jobPassword := heldPassword(token)
-	if string(jobPassword) != fake.pass {
-		t.Fatal("the grant does not hold the password for the job")
+	// The grant holds the password only sealed to itself: it opens for this grant and
+	// user, and for no other.
+	g, _ := held(token)
+	if sealed := g.IMAP.Password; len(sealed) == 0 || bytes.Contains(sealed, []byte(fake.pass)) {
+		t.Fatal("the grant does not hold the password sealed")
+	}
+	if pw, err := openIMAPPassword(g.User, token, g.IMAP.Password); err != nil || string(pw) != fake.pass {
+		t.Fatal("the sealed password does not open for its grant", err)
+	}
+	if _, err := openIMAPPassword(g.User, "another-grant", g.IMAP.Password); err == nil {
+		t.Fatal("the sealed password opened for another grant")
+	}
+	if _, err := openIMAPPassword("another-user", token, g.IMAP.Password); err == nil {
+		t.Fatal("the sealed password opened for another user")
 	}
 	var names []string
 	for _, f := range got.Folders {
@@ -625,9 +636,6 @@ func TestIMAPImport(t *testing.T) {
 		t.Fatal("grant reused", w.Code)
 	}
 	st := wait()
-	if !wiped(jobPassword) {
-		t.Fatal("the job kept the password after signing in")
-	}
 	if st.State != "finished" || st.Host != "imap.example.com" || st.Folder != "Imported/imap-example-com" || st.Imported != 3 || st.Skipped != 2 || st.Duplicates != 0 || st.FoldersDone != 2 || st.FoldersTotal != 2 {
 		t.Fatalf("import status %+v", st)
 	}
@@ -707,7 +715,7 @@ func TestIMAPImport(t *testing.T) {
 	if cmds := tlsFake.recorded(); len(cmds) == 0 || !strings.HasPrefix(cmds[0], "STARTTLS") {
 		t.Fatal("first command was not STARTTLS", cmds)
 	}
-	replaced := heldPassword(token)
+	replaced := token
 
 	// An untrusted certificate is refused before any credential is sent.
 	imapRoots = x509.NewCertPool()
@@ -734,8 +742,8 @@ func TestIMAPImport(t *testing.T) {
 	// A name resolving to a private address is refused without dialling.
 	resolved = "10.0.0.7"
 	token = grant(account)
-	if !wiped(replaced) {
-		t.Fatal("a replaced grant kept its password")
+	if _, ok := held(replaced); ok {
+		t.Fatal("a replaced grant kept its sealed password")
 	}
 	if w, got = list(me, token, fake.pass); w.Code != 400 || !strings.Contains(got.Error, "private") || len(dialedList()) != 0 {
 		t.Fatal("private address", w.Code, w.Body, dialedList())

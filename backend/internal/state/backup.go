@@ -33,6 +33,30 @@ func (s *Store) Setting(key string) (string, error) {
 // SetSetting writes one install-wide key.
 func (s *Store) SetSetting(key, value string) error { return setMeta(s.db, key, value) }
 
+// SettingsWithPrefixes reads every meta key starting with one of prefixes in one statement:
+// a coherent snapshot of a pairing, never one half of two.
+func (s *Store) SettingsWithPrefixes(prefixes ...string) (map[string]string, error) {
+	q, args := `SELECT key, value FROM meta WHERE 1=0`, []any{}
+	for _, p := range prefixes {
+		q += ` OR substr(key, 1, ?) = ?`
+		args = append(args, len(p), p)
+	}
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
+}
+
 // DeleteSetting removes one key; absent is not an error.
 func (s *Store) DeleteSetting(key string) error {
 	_, err := s.db.Exec(`DELETE FROM meta WHERE key = ?`, key)

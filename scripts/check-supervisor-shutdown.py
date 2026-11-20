@@ -33,6 +33,18 @@ def check_contract(root):
     grace = sum(int(value) * {"h": 3600, "m": 60, "s": 1}[unit] for value, unit in parts)
     assert grace >= waits + 60, f"Docker grace {grace}s cannot cover serial Supervisor waits {waits}s plus 60s teardown"
     print(f"ok: Docker grace {grace}s covers serial waits {waits}s plus teardown")
+    # The api's own SIGTERM sequence: readiness drain (PostgreSQL), ordinary requests, then
+    # detached backups. Supervisor must wait for all of it before SIGKILL.
+    def go_duration(path, name):
+        text = (root / "backend" / path).read_text()
+        value, unit = re.search(name + r" = (\d+) \* time\.(Second|Minute)", text).groups()
+        return int(value) * {"Second": 1, "Minute": 60}[unit]
+    drain = (go_duration("internal/app/app.go", "readinessDrainDelay")
+             + go_duration("internal/app/app.go", "shutdownTimeout")
+             + go_duration("internal/api/backup_handlers.go", "depositBudget"))
+    api_wait = config.getint("program:api", "stopwaitsecs")
+    assert api_wait >= drain, f"api stopwaitsecs {api_wait}s is shorter than its drain {drain}s"
+    print(f"ok: api stopwaitsecs {api_wait}s covers its drain {drain}s (readiness, requests, backups)")
 
 
 def check_runtime():

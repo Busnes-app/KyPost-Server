@@ -32,7 +32,7 @@ Native direct outbound delivery is available as an explicit protected-API profil
 - Optional KyMessages pairing: **Chat** beside a sender or a contact who is in the organisation opens a direct chat in KyMessages. See [docs/KYMESSAGES.md](docs/KYMESSAGES.md).
 - AI agent access over MCP: an agent such as OpenClaw, Hermes Agent or Claude Code searches, reads and organizes your mail and saves drafts, with a token you create and can revoke. It never sees encrypted mail and cannot send or delete. See [Connect an AI agent](#connect-an-ai-agent).
 - Sealed configuration and state backups to KyRecovery or a local directory, with restic for mail databases.
-- SQLite by default, or one Postgres database (16 or newer) with `KYPOST_DATABASE_URL`; `migrate-to-postgres` moves an existing install. See [Postgres](docs/RUNNING.md#postgres).
+- SQLite by default, or one Postgres database (16 or newer) with `KYPOST_DATABASE_URL`; `migrate-to-postgres` moves an existing install. See [Postgres](docs/RUNNING.md#postgres). On Postgres, several containers can run on one Docker host behind HAProxy for restart continuity (not database or host high availability): [Replicas on one host](docs/RUNNING.md#replicas-on-one-host).
 - Single Docker container managed by supervisord, with shared JSON logs.
 
 The full list, with the trade-offs each feature carries, is in [docs/FEATURES.md](docs/FEATURES.md).

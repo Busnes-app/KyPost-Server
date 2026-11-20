@@ -4,6 +4,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 // keyedLimiterSweepThreshold bounds how large a limiter's map may grow before
@@ -33,6 +35,9 @@ type keyedLimiter struct {
 	// now is overridable in tests so refill behavior can be exercised
 	// without sleeping.
 	now func() time.Time
+	// shared, when set (UseSharedState), keeps the bucket as a database window under name.
+	shared *state.Store
+	name   string
 }
 
 func newKeyedLimiter(burst, refillPerSec float64) *keyedLimiter {
@@ -51,6 +56,10 @@ func newKeyedLimiter(burst, refillPerSec float64) *keyedLimiter {
 func (l *keyedLimiter) allow(key string) (ok bool, retryAfter time.Duration) {
 	if l == nil {
 		return true, 0
+	}
+	if l.shared != nil {
+		ok, retryAfter, _ = l.take(key, 1)
+		return ok, retryAfter
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
