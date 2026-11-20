@@ -62,7 +62,7 @@ drive the design:
 
 | # | Decision | Why |
 |---|---|---|
-| K1 | `KYPOST_TENANCY=single` (default) or `multi`. A multi install records `tenancy_mode=multi` in the root `state.db` `meta` at first start. A start whose mode differs from the record refuses to start. Single-tenant writes nothing: no record means single. It stays out of R's replica fingerprint, and the record is what refuses a mismatched replica (Replicas). | Install-time, as T D1. Writing nothing keeps upgrades byte-for-byte unchanged. A replica started in the wrong mode must not serve. |
+| K1 | `KYPOST_TENANCY=single` (default) or `multi`. A multi install records `tenancy_mode=multi` and `staff_org_id` (K7) in the root `state.db` `meta` at first start. A start whose mode or `KYPOST_STAFF_ORG_ID` differs from the record refuses to start. Single-tenant writes nothing: no record means single. It stays out of R's replica fingerprint, and the record is what refuses a mismatched replica (Replicas). | Install-time, as T D1. Writing nothing keeps upgrades byte-for-byte unchanged. A replica started in the wrong mode must not serve. |
 | K2 | **Multi-tenant requires** PostgreSQL (`KYPOST_DATABASE_URL`, `docs/CONFIGURATION.md:124`), native mail (`KYPOST_NATIVE_MAIL=true`), the v3 authority database, a configured KyIdentity issuer, and an **empty install** at first start. Converting a single-tenant install is out of scope, as in T. | T requires Postgres too (T D2). The external-IMAP profile and local accounts have no place in a hosted mail service (K6). Starting empty avoids a migration with no org to assign. |
 | K3 | Multi-tenant schema additions are created only by a multi install's first start. A single-tenant install never gets them, so its databases, `users.json` and every file stay byte-for-byte as they are. | This is the zero-change argument. T adds columns on both modes because its SQL is shared. KyPost's org-owned rows (below) are few, and every one of them sits in a store that only a multi install creates. |
 | K4 | The org is recorded on two roots only: `users.User.OrgID` (write-once, `omitempty`) and `org_id` on the authority `directory` and `accounts` rows. Every per-user and per-mailbox store is **derived**: it inherits the org of the ID that owns it. Cross-user aggregates in the root `state.db` (`send_ledger`, `agent_tokens`, `scheduled_sends`) carry `org_id` so per-org counts need no join. | Per-user data is already separated by user ID (above). Adding `org_id` to hundreds of per-user schemas would add a column nobody could set wrongly. The risk sits on the hops *between* users, so that is where the checks go (K5). |
@@ -243,6 +243,24 @@ A later write with a different value returns an error from the users store.
 Hosted members are provisioned the native-mail way. There is no JIT account at sign-in
 (`api/sso_handlers.go:629-631`). An account appears when the signed `user.created` event has
 been applied and a mailbox address has been allocated (Mail, open question 1).
+
+**Staff accounts** come from the path administrators already use in native mode. A signed
+directory event whose roles name `kypost.admin` skips mailbox allocation and creates a
+mailbox-less, non-native account (`provisionDirectoryUser`,
+`api/sync_handlers.go:138-141,175-190`; administrators own no mailbox,
+`sso/native_provision.go:686-689`). Multi mode keeps that path and adds two rules:
+
+- The event's `org_id` must equal `KYPOST_STAFF_ORG_ID`. It is written to `OrgID` exactly as for
+  members. A `kypost.admin` event from any other org is applied as a member (K7).
+- A staff-org account without `kypost.admin` gets no KyPost account. Staff-org accounts never get
+  mailboxes, so such an event is a no-op, and that person's sign-in is refused like an
+  unprovisioned one.
+
+The first staff administrator therefore needs only KyIdentity's own bootstrap (T "Emergency
+access and recovery") and the `kypost.admin` app role in the staff org. KyPost has no bootstrap
+administrator of its own in multi mode (K6). Losing the role demotes the account through today's
+role-change path (`api/sync_handlers.go:155-166`), and the last-administrator refusal
+(`:213`) still applies.
 
 ## Mail
 
