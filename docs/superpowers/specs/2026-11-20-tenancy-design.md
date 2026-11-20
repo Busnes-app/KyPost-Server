@@ -170,9 +170,15 @@ created exclusively, like R's keys, and backed up, because a restore needs it (M
   caller. Multi mode adds `orgAdmit` there, so a foreign mailbox ID answers like an unknown one.
 - **Root-store rows** (`agent_tokens`, `scheduled_sends`, `send_ledger`) are keyed by the writer's
   `user_id`, as today, and reach their org through `user_orgs`.
-- **Background workers** (provisioning, sweeps, outbox recovery, receiving import) work from the
-  ledger, where every mailbox resolves to an account with an `org_id`. The purge and the
-  entitlement poller are the only workers that act on an org as a whole.
+- **Background workers** (provisioning, sweeps, outbox recovery, scheduled sends, receiving and
+  Cloudflare pickup import) work from the ledger, where every mailbox resolves to an account and
+  so to an org. Each one checks the org's status in the `orgs` cache before it writes:
+  - A worker skips a mailbox whose org is not `active`.
+  - An import leaves the delivery pending, so it is never lost and never written into storage the
+    purge is removing.
+  - Outbox and scheduled sends are held (Lifecycle).
+
+  The purge and the entitlement poller are the only workers that act on an org as a whole.
 
 ### The cross-user hops (`orgAdmit` call sites)
 
@@ -423,22 +429,31 @@ The elected poller (K8) reads `/api/suite/orgs?since=<revision>` through ky-prim
 ### Purge (`deleted`)
 
 Run by the elected `api-sweepers` worker (R `app/replica.go:96-102`). One `org_purges` row per org
-records progress, so the purge is **idempotent and resumable**: each step checks what is already
-gone and skips it, and a purge that died halfway continues from its row. Steps:
+records that a purge started and its last finished step. The purge is **idempotent and
+resumable**:
+- A resumed purge re-runs every step from the start. Each step deletes whatever still exists,
+  re-listing schemas, directories and rows rather than trusting the row.
+- Before the purge is marked done, a final check walks the store classification and confirms that
+  nothing of the org remains.
+- No worker can write for the org once it is `deleted` (the Background workers rule in
+  Isolation), so nothing reappears between steps.
+
+Steps:
 
 1. **Block new use.** Bump R's `session_revocations` for each of the org's users, which ends every
    session on every replica as suspension does. Delete the org's `agent_tokens` and
    `scheduled_sends` rows through `user_orgs`, and cancel its import jobs (R `import_jobs`).
-2. **Remove storage.** For each of the org's users and mailboxes, drop the per-user and per-mailbox
+2. **Receiving and quarantine first.** Delete `ingress.db` `routes` and `bindings` for the org's
+   mailboxes. A delivery whose every binding was in the org is deleted. For a delivery shared with
+   another org, only this org's bindings go.
+   This comes before storage, so no pending delivery is left that an import could write back.
+3. **Remove storage.** For each of the org's users and mailboxes, drop the per-user and per-mailbox
    PostgreSQL schemas through the catalog (`dbbackend/dbbackend.go:205-247`). Then remove their
    directories under `CONFIG_DIR` and `STATE_DIR` (`users/<id>`, `mailboxes/<id>`), and delete
    their pickup records and import uploads. This step deletes the remaining credentials:
    - paired devices (`native_devices`, in the per-user `state.db`);
    - CardDAV app passwords (`carddav-auth.json`);
    - sealed IMAP and CardDAV client credentials (`imap-config.json`, `carddav-client.json`).
-3. **Receiving and quarantine.** Delete `ingress.db` `routes` and `bindings` for the org's
-   mailboxes. A delivery whose every binding was in the org is deleted. For a delivery shared with
-   another org, only this org's bindings go.
 4. **Ledger tombstones (K10).** Scrub account and mailbox rows: state `purged`, `state_root`
    cleared, the subject kept (it is an opaque KyIdentity ID, not personal data). Each address
    becomes an HMAC of the address under the tombstone key, held in a new `address_tombstones`
