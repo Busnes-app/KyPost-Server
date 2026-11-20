@@ -533,3 +533,53 @@ func TestSessionChangesAreCompareAndSwap(t *testing.T) {
 		}
 	}
 }
+
+// A device approval on one replica and a credential revocation (a password change) on
+// another: whichever runs first, no approved device credential survives the revocation.
+// The approval is held after its subscriber check and before its device write while the
+// revocation runs; with only a per-process lock the revocation finished in that gap and the
+// device was written after it.
+func TestApprovalCannotOutliveARevocationOnAnotherReplica(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	a, u := newPendingServer(t)
+	a.configPath = filepath.Join(a.configDir, "config.yaml")
+	if err := config.Save(a.configPath, a.cfg); err != nil {
+		t.Fatal(err)
+	}
+	b := replicaOf(t, a)
+	a.UseSharedState(a.globalStore)
+	b.UseSharedState(b.globalStore)
+	_, reg := webPairAndRegister(t, a, u.ID, "phone-race")
+	if reg.Status != "pending" {
+		t.Fatalf("registration: %+v", reg)
+	}
+	checked, proceed := make(chan struct{}), make(chan struct{})
+	a.nativeApproveBeforePersist = func() { close(checked); <-proceed }
+	approved := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/api/notifications/native/pending/"+reg.DeviceID+"/approve", nil)
+		authRequestAs(a, req, u.ID)
+		rec := httptest.NewRecorder()
+		a.routes().ServeHTTP(rec, req)
+		approved <- rec.Code
+	}()
+	<-checked
+	revoked := make(chan error, 1)
+	go func() { revoked <- b.revokeAllUserCredentials(u) }()
+	// Without the shared lock the revocation completes here, inside the approval's gap.
+	select {
+	case err := <-revoked:
+		revoked <- err
+	case <-time.After(3 * time.Second): // waiting for the approval's lock
+	}
+	close(proceed)
+	<-approved
+	if err := <-revoked; err != nil {
+		t.Fatal("revocation:", err)
+	}
+	for name, srv := range map[string]*Server{"A": a, "B": b} {
+		if rec := deviceCall(srv, "/api/notifications/native/pull", reg.DeviceID, reg.DeviceSecret); rec.Code == http.StatusOK {
+			t.Fatalf("the device approved during a revocation still works on %s", name)
+		}
+	}
+}

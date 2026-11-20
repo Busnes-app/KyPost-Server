@@ -18,10 +18,17 @@ import (
 func authRequestAs(s *Server, req *http.Request, userID string) {
 	token := "session-token-" + userID
 	csrfToken := "csrf-token-" + userID
-	s.sessMu.Lock()
 	// SteppedUpAt survives, so a test can step a session up between requests.
-	s.sessions[token] = Session{UserID: userID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken, SteppedUpAt: s.sessions[token].SteppedUpAt}
-	s.sessMu.Unlock()
+	if s.shared != nil {
+		ctx := context.Background()
+		old, _, _ := s.lookupSession(ctx, token)
+		_ = s.dropSession(ctx, token)
+		_ = s.putSharedSession(ctx, token, Session{UserID: userID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken, SteppedUpAt: old.SteppedUpAt})
+	} else {
+		s.sessMu.Lock()
+		s.sessions[token] = Session{UserID: userID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken, SteppedUpAt: s.sessions[token].SteppedUpAt}
+		s.sessMu.Unlock()
+	}
 	// Represent a fully-onboarded session: users are created with
 	// MustChangePassword=true, which is now enforced server-side (see withAuth),
 	// so clear it here to model a user past first login. Tests that specifically

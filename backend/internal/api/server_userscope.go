@@ -974,12 +974,19 @@ func (s *Server) revokeUserCredentials(u users.User, keepSessionToken string, pr
 	sessionsErr := s.revokeUserSessions(u.ID, keepSessionToken)
 	// Native registration holds this lock from its final subscriber-generation
 	// check through device commit. Keep deletion and subscriber rotation in the
-	// same critical section so the two credential paths cannot interleave.
+	// same critical section so the two credential paths cannot interleave; on
+	// replicas the user's pairing lock makes it one section across processes.
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
 	var errs []error
 	if sessionsErr != nil {
 		errs = append(errs, sessionsErr)
+	}
+	// Unable to take it, revoke anyway: an unserialized revocation still beats none.
+	if release, err := s.holdUserPairing(context.Background(), u.ID); err != nil {
+		errs = append(errs, fmt.Errorf("pairing lock: %w", err))
+	} else {
+		defer release()
 	}
 	if err := s.revokeUserDevices(u.ID); err != nil {
 		errs = append(errs, err)

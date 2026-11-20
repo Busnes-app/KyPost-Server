@@ -124,6 +124,9 @@ type Server struct {
 	nativeSignOnAfterAdmit  func()
 	nativeSignOnBeforeIssue func()
 	ssoCallbackAfterResolve func()
+	// nativeApproveBeforePersist runs between a device approval's subscriber check and
+	// its device write.
+	nativeApproveBeforePersist func()
 	// nativeReleaseHit crashes a hold release at "intent", "lifecycle" or "rename".
 	nativeReleaseHit func(point string) error
 

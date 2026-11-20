@@ -343,6 +343,13 @@ func (s *Server) handleNativePendingApprove(w http.ResponseWriter, r *http.Reque
 	id := strings.TrimSpace(r.PathValue("deviceId"))
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
+	// Through the device write: a revocation on another replica waits for it, or runs first.
+	release, err := s.holdUserPairing(r.Context(), ac.UserID)
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
+	defer release()
 	// Claim the entry first: of two approvals racing on two replicas, one persists the device.
 	var p pendingDevice
 	if !s.pendingEdit(id, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
@@ -373,6 +380,9 @@ func (s *Server) handleNativePendingApprove(w http.ResponseWriter, r *http.Reque
 		drop()
 		writeJSON(w, http.StatusGone, map[string]any{"error": "this pairing request is no longer valid; pair the device again"})
 		return
+	}
+	if s.nativeApproveBeforePersist != nil {
+		s.nativeApproveBeforePersist()
 	}
 	registeredID, devices, ok := s.persistNativeDevice(w, r, store, ac.UserID, p.Device, p.EncryptionEnrolled)
 	if !ok {

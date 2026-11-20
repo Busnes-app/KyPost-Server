@@ -60,6 +60,22 @@ func sharedKey(name, key string) string {
 	return name + ":" + hex.EncodeToString(sum[:])
 }
 
+// pairingLockWait bounds waiting for a user's pairing lock: another replica's revocation or
+// approval holds it for at most a few file and database writes.
+const pairingLockWait = 10 * time.Second
+
+// holdUserPairing serializes userID's device approval, native registration and credential
+// revocation across replicas on PostgreSQL, from the subscriber check through the device
+// write; pairingMu covers one process only. Taken after pairingMu. A no-op in memory mode.
+func (s *Server) holdUserPairing(ctx context.Context, userID string) (func(), error) {
+	if s.shared == nil {
+		return func() {}, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, pairingLockWait)
+	defer cancel()
+	return s.shared.Hold(ctx, "pairing:"+userID)
+}
+
 func sharedContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), sharedTimeout)
 }

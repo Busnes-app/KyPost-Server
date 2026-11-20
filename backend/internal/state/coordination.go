@@ -270,18 +270,30 @@ func discard(conn *sql.Conn) {
 // Serialized runs work while holding name, waiting for another holder. PostgreSQL only;
 // SQLite runs work directly (its writers already serialize on the file).
 func (s *Store) Serialized(ctx context.Context, name string, work func(context.Context) error) error {
-	if !dbbackend.Postgres() {
-		return work(ctx)
-	}
-	conn, err := s.db.Conn(ctx)
+	release, err := s.Hold(ctx, name)
 	if err != nil {
 		return err
 	}
-	defer discard(conn)
-	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(`+advisoryKey(spaceLock)+`)`, name); err != nil {
-		return err
-	}
+	defer release()
 	return work(ctx)
+}
+
+// Hold takes name as Serialized does, waiting while ctx allows, and returns its release. The
+// lock is a session advisory lock on a connection of its own, discarded on release.
+// SQLite: a no-op.
+func (s *Store) Hold(ctx context.Context, name string) (release func(), err error) {
+	if !dbbackend.Postgres() {
+		return func() {}, nil
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(`+advisoryKey(spaceLock)+`)`, name); err != nil {
+		discard(conn)
+		return nil, err
+	}
+	return func() { discard(conn) }, nil
 }
 
 // withFlock holds an exclusive flock on a persistent file beside the database for name.
