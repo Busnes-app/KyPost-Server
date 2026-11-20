@@ -190,7 +190,7 @@ grep -q '^HTTP/1.1 503' <<<"$unavailable" && grep -qi '^retry-after: 5' <<<"$una
 # ./restore as RUNNING.md makes it (mkdir -m 700, owned by UID 1000), here a volume.
 docker volume create "${project}_restore" >/dev/null
 "${replicas[@]}" run --rm --no-deps --user 0 -v "${project}_restore:/restore" --entrypoint sh kypost-server \
-  -c 'chown kypost:kypost /restore && chmod 700 /restore'
+  -c 'chmod 700 /restore && chown kypost:kypost /restore'
 # shellcheck disable=SC2016 # expanded by the container's shell
 "${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server \
   -c 'umask 077 && cp "$(ls -t /kypost/state/backups/*.kycap | head -n 1)" /restore/backup.kycap'
