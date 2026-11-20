@@ -280,6 +280,7 @@ cmd_up() {
   [ -f "$REPO/frontend/dist/index.html" ] || die "build the frontend first (cd frontend && npm ci && npm run build)"
   [ ! -e "$HOST_DIR" ] || die "$HOST_DIR exists; run down first"
   mkdir -p "$HOST_DIR"/{bin,dns,logs,run,secrets,shots}
+  : >"$HOST_DIR/.kypost-native-harness"  # down deletes only directories carrying this marker
   echo "building kypost-server and kyidentity ..."
   (cd "$REPO/backend" && CGO_ENABLED=0 go build -trimpath -o "$HOST_DIR/bin/kypost-server" ./cmd/)
   (cd "$KPH_KYIDENTITY_SRC" && CGO_ENABLED=0 go build -trimpath -o "$HOST_DIR/bin/kyidentity" ./cmd/kyidentity)
@@ -300,6 +301,8 @@ cmd_up() {
 
 cmd_down() {
   local p ns q
+  [ -e "$HOST_DIR" ] || { echo "down: nothing at $HOST_DIR"; return 0; }
+  [ -f "$HOST_DIR/.kypost-native-harness" ] || die "$HOST_DIR is not a harness state directory; not deleting it"
   if p=$(cat "$HOST_DIR/ns.pid" 2>/dev/null) && ns=$(readlink "/proc/$p/ns/net" 2>/dev/null); then
     # Every harness process, whichever session started it, shares the holder's
     # network namespace; nothing else does.

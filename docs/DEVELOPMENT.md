@@ -93,7 +93,7 @@ Then set:
   keeping the binary anywhere outside the checkout.
 - `KPH_PLAYWRIGHT`: the path to `@playwright/test`'s `index.mjs`, unless Node
   can resolve `@playwright/test` itself. Chromium must already be installed.
-- Optional `KPH_DIR`: the state directory, default `~/.cache/kypost-native-harness`.
+- Optional `KPH_DIR`: the state directory, default `~/.cache/kypost-native-harness`. `down` deletes it only if `up` created it.
   Keep it on a disk with over 5 GiB free; KyPost refuses mail below its reserve.
 
 The host needs `unshare` and `nsenter` (util-linux 2.38+, unprivileged user

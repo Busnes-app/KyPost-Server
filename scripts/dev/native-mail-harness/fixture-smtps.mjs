@@ -7,6 +7,7 @@
 import tls from 'node:tls';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { inspect } from 'node:util';
 
 const root = process.argv[2];
 const mod = (p) => import(pathToFileURL(join(root, 'src', p)).href);
@@ -16,7 +17,9 @@ const { ensureCert } = await mod('tls.js');
 const env = process.env;
 const { key, cert } = ensureCert({ keyDir: env.TLS_KEY_DIR, publishDir: env.TLS_PUBLISH_DIR, hostnames: [], ips: [], log: () => {} });
 const allowed = new Set(env.ALLOWED_CLIENT_IPS.split(','));
-const log = (...a) => console.log(new Date().toISOString(), 'smtps', ...a);
+// Client-supplied values reach the log; flatten line breaks so they can't forge entries.
+const clean = (v) => (typeof v === 'string' ? v : inspect(v)).replace(/[\r\n]+/g, ' ');
+const log = (...a) => console.log(new Date().toISOString(), 'smtps', ...a.map(clean));
 const server = tls.createServer({ key, cert, minVersion: 'TLSv1.2' }, (socket) => {
   socket.on('error', (e) => log('socket error', e.message));
   createSmtpSession(socket, { log, secureContext: null, secure: true, allowLogin: (u, p) => Boolean(u && p) });
