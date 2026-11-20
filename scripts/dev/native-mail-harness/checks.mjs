@@ -68,7 +68,9 @@ function smtpIn(to, subject, body) {
 // Headers of the relay's (fixture SMTP) accepted message with this subject.
 async function relayed(subject) {
   for (let i = 0; i < 40; i++) {
-    const out = harness('relay-sent');
+    let out = '';
+    // The outbox relays asynchronously; an empty or not-yet-ready fixture mailbox is a retry, not a failure.
+    try { out = harness('relay-sent'); } catch { /* retry */ }
     const block = out.split(/^\* \d+ FETCH/m).find((b) => b.includes(`Subject: ${subject}`));
     if (block) return block.trim().split(/\r?\n/).filter((l) => /^(From|To|Subject):/.test(l));
     await new Promise((r) => setTimeout(r, 1500));

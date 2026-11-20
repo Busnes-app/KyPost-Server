@@ -22,7 +22,7 @@ Go-test coverage only. They were run with the
 - Replies leave through the saved domain relay to the fixture on 465, and are
   read back over the fixture's IMAPS.
 - `evidence.json` holds the SMTP replies and the relayed headers.
-- All 10 driver assertions passed on the final clean run (`down`, then `up`
+- All 10 driver assertions passed on two consecutive clean runs (`down`, then `up`
   through `check4`).
 
 ## Check 3: plus addressing
@@ -38,9 +38,9 @@ Go-test coverage only. They were run with the
 | Step | Result | Evidence |
 | --- | --- | --- |
 | Admin ticks `harness.test` under Mail addresses → Masked addresses | pass: "Saved. Users can make masked addresses on these domains." | `04-1-admin-masked-domain-enabled.png` |
-| User creates one (note "example-shop") | pass: `calm.raven.3458@harness.test`, Active | `04-2-masked-created.png` |
+| User creates one (note "example-shop") | pass: `nimble.ferret.5873@harness.test`, Active | `04-2-masked-created.png` |
 | Mail to it arrives | pass: RCPT `250` | `04-3-masked-arrived.png` |
-| Reply From is the masked address | pass: compose preselects it; relay received `From: calm.raven.3458@harness.test` | `04-4-masked-reply-from.png`, `evidence.json` |
+| Reply From is the masked address | pass: compose preselects it; relay received `From: nimble.ferret.5873@harness.test` | `04-4-masked-reply-from.png`, `evidence.json` |
 | Paused address refuses mail | pass: `550 5.1.1 Recipient unavailable`, the same reply as a never-existing address | `04-5-masked-paused.png`, `evidence.json` `paused`/`unknown` |
 | Resume restores delivery | pass: RCPT `250`, and the mail arrives | `04-6-masked-resumed-arrived.png` |
 | Deleted address refuses mail and is listed as deleted | pass: `550 5.1.1`, same as unknown | `04-7-masked-deleted.png` |

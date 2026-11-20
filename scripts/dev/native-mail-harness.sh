@@ -305,7 +305,8 @@ cmd_down() {
     # network namespace; nothing else does.
     for sig in TERM KILL; do
       for q in $(pgrep -u "$(id -u)"); do
-        [ "$(readlink "/proc/$q/ns/net" 2>/dev/null)" = "$ns" ] && kill "-$sig" "$q" 2>/dev/null
+        # It may already have exited (TERM cascades); that must not stop the teardown.
+        [ "$(readlink "/proc/$q/ns/net" 2>/dev/null)" = "$ns" ] && { kill "-$sig" "$q" 2>/dev/null || true; }
       done
       [ $sig = TERM ] && sleep 5
     done

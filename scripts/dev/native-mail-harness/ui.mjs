@@ -64,6 +64,15 @@ export async function adminLogin(page) {
   }
 }
 
+// Polls the pathname: the SPA moves between routes without the load event waitForURL waits for.
+async function atPath(page, paths, ms = 45000) {
+  for (const end = Date.now() + ms; Date.now() < end; await page.waitForTimeout(250)) {
+    const u = new URL(page.url());
+    if (u.origin === ORIGIN && paths.includes(u.pathname)) return;
+  }
+  throw new Error(`never reached ${paths.join(' or ')} (at ${page.url()})`);
+}
+
 // Native user sign-in: KyPost → "Continue with single sign-on" → KyIdentity.
 export async function ssoLogin(page, username = 'owner') {
   await page.goto(`${ORIGIN}/login`);
@@ -71,12 +80,12 @@ export async function ssoLogin(page, username = 'owner') {
   await page.locator('#username').fill(username);
   await page.locator('#password').fill(secretFile(username));
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.waitForURL((u) => u.origin === ORIGIN && ['/read', '/setup/encryption'].includes(u.pathname));
+  await atPath(page, ['/read', '/setup/encryption']);
   await page.waitForLoadState('networkidle');
   // Admin setup made the key Optional, so the setup page offers "Not now".
   const notNow = page.getByRole('button', { name: /Not now/ });
   if (await notNow.isVisible().catch(() => false)) await notNow.click();
-  await page.waitForURL((u) => u.pathname === '/read');
+  await atPath(page, ['/read']);
 }
 
 // Waits for a subject in the inbox list, reloading while the daemon imports it.
