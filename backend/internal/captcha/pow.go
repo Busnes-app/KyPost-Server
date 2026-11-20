@@ -107,6 +107,15 @@ type PoWVerifier struct {
 
 	mu    sync.Mutex
 	spent map[string]time.Time // salt -> the challenge's own expiry
+	// spend, when set (SetSpender), records salts in the database PostgreSQL replicas share
+	// instead of spent; a store failure refuses the solution.
+	spend func(ctx context.Context, salt string, expiresMs int64) (bool, error)
+}
+
+// SetSpender makes every replica's spent salts one set: spend records a salt until its
+// challenge's expiry and reports whether it was unspent. Call before use.
+func (v *PoWVerifier) SetSpender(spend func(ctx context.Context, salt string, expiresMs int64) (bool, error)) {
+	v.spend = spend
 }
 
 // NewPoWVerifier builds a proof-of-work verifier. hmacKey must be non-empty:
@@ -203,7 +212,7 @@ func (v *PoWVerifier) BaseMaxNumber() int { return v.maxNumber }
 //
 // The spent-salt burn comes last so only a fully valid solution consumes an
 // entry, which keeps garbage out of the cache.
-func (v *PoWVerifier) Verify(_ context.Context, token, remoteIP string) (bool, error) {
+func (v *PoWVerifier) Verify(ctx context.Context, token, remoteIP string) (bool, error) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(token))
 	if err != nil {
 		return false, nil
@@ -237,6 +246,9 @@ func (v *PoWVerifier) Verify(_ context.Context, token, remoteIP string) (bool, e
 	sum := sha256.Sum256([]byte(sol.Salt + strconv.Itoa(sol.Number)))
 	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(sol.Challenge)) != 1 {
 		return false, nil
+	}
+	if v.spend != nil {
+		return v.spend(ctx, "pow:"+sol.Salt, time.Unix(sol.Expires, 0).UnixMilli())
 	}
 	if !v.consume(sol.Salt, time.Unix(sol.Expires, 0)) {
 		return false, nil

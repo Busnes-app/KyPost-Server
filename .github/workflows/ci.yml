@@ -326,7 +326,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$LEG" = stores ]; then
-            go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/...
+            go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/... ./internal/worker/... ./internal/replica/... ./internal/mfa/... ./internal/captcha/... ./internal/kycalendar/... ./internal/suitepair/...
             exit
           fi
           go test -race -list . ./internal/api/ | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > "$RUNNER_TEMP/all"
@@ -588,11 +588,14 @@ jobs:
       - name: cumulative supervisor shutdown budget
         run: python3 scripts/check-supervisor-shutdown.py --contract-only
 
+      - name: replica Compose profile
+        run: python3 scripts/check-replicas-compose.py
+
   docker:
     name: ci-docker
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -747,6 +750,9 @@ jobs:
           done
           echo "container never became healthy" >&2
           exit 1
+
+      - name: replica cutover (SQLite -> PostgreSQL -> two replicas)
+        run: bash scripts/check-replica-cutover.sh kypost-server:ci
 
       - name: container logs
         if: always()

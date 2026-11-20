@@ -158,6 +158,9 @@ func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 	destroysClientKey := before.PGPProtection() == users.PGPProtectionClient
+	if !s.revokeSessionsFirst(w, id, "") {
+		return
+	}
 
 	u, err := s.users.SetPassword(r.Context(), id, req.Password, true, &before.PGPRevision)
 	if err != nil {
@@ -203,6 +206,9 @@ func (s *Server) handleUsersDeactivate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot deactivate the last active admin", http.StatusBadRequest)
 		return
 	}
+	if !s.revokeSessionsFirst(w, id, "") {
+		return
+	}
 	u, err := s.users.Deactivate(id)
 	if err != nil {
 		writeUserStoreError(w, err)
@@ -237,6 +243,9 @@ func (s *Server) handleUsersReactivate(w http.ResponseWriter, r *http.Request) {
 // authenticator, e.g. a new device with no recovery codes saved.
 func (s *Server) handleUsersClearMFA(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !s.revokeSessionsFirst(w, id, "") {
+		return
+	}
 	u, err := s.users.DisableTOTP(id)
 	if err != nil {
 		writeUserStoreError(w, err)

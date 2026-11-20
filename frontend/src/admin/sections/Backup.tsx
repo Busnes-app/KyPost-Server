@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { credentialFields, deriveCredential } from "../../api/auth";
 import { withSSOStepUp } from "../../api/stepup";
 import { useAuth } from "../../auth";
 import {
   deleteJSON,
   getJSON,
+  HttpError,
   postBlob,
   postJSON,
   putJSON,
@@ -57,6 +58,12 @@ export function Backup() {
   // password it does not have; see api/stepup.ts.
   const ssoSession = useAuth().ssoSession === true;
   const [status, setStatus] = useState<Status | null>(null);
+  // A status read that failed: what is configured is unknown, so no fact or action shows.
+  const [loadError, setLoadError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  // A Refresh that loaded the page moves focus to its heading, not to <body>.
+  const heading = useRef<HTMLHeadingElement>(null);
+  const [focusHeading, setFocusHeading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,16 +76,42 @@ export function Backup() {
   const [minutes, setMinutes] = useState(1440);
   const unlocked = ssoSession || password.length > 0;
   async function refresh() {
-    const value = await getJSON<Status>(base + "status");
-    setStatus(value);
-    setMinutes(value.intervalSec / 60);
-    return value;
+    try {
+      const value = await getJSON<Status>(base + "status");
+      setStatus(value);
+      setLoadError("");
+      setMinutes(value.intervalSec / 60);
+      return value;
+    } catch (e) {
+      setStatus(null);
+      const unreadable = e instanceof HttpError && (e.body as { code?: string } | null)?.code === "unavailable";
+      setLoadError(unreadable
+        ? "Could not load backup status. The server could not read it; try Refresh in a moment."
+        : "Could not load backup status: " + toErrorMessage(e, "the server did not answer"));
+      throw e;
+    }
+  }
+  async function retryLoad() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refresh();
+      setFocusHeading(true);
+    } catch {
+      // The error view stays, with focus on Refresh.
+    } finally {
+      setRefreshing(false);
+    }
   }
   useEffect(() => {
-    void refresh().catch((e) =>
-      setError(toErrorMessage(e, "Unable to load backup status")),
-    );
+    void refresh().catch(() => {});
   }, []);
+  useEffect(() => {
+    if (focusHeading && status !== null) {
+      heading.current?.focus();
+      setFocusHeading(false);
+    }
+  }, [focusHeading, status]);
   async function act(
     action:
       | "run"
@@ -152,8 +185,8 @@ export function Backup() {
         );
         setCode("");
       }
-      const updated = await refresh();
-      if (action === "pair-remote" || action === "pin-key") {
+      const updated = await refresh().catch(() => null);
+      if (updated && (action === "pair-remote" || action === "pin-key")) {
         setNotice(
           (previous) =>
             `${previous} Fingerprint: ${updated.keyId || "Unavailable — reload to verify the key"}`,
@@ -166,11 +199,31 @@ export function Backup() {
       setBusy(false);
     }
   }
+  if (status === null) {
+    return (
+      <div className="config-section backup-section">
+        <h3>Sealed backups</h3>
+        <p>Encrypted server backups, recoverable only by your custodians.</p>
+        {notice && <p className="notice" role="status">{notice}</p>}
+        {loadError ? (
+          <>
+            <p className="notice notice-error" role="alert">{loadError}</p>
+            {/* aria-disabled, not disabled: focus stays on the button while it loads. */}
+            <button className="button secondary" type="button" aria-disabled={refreshing} onClick={() => void retryLoad()}>
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </>
+        ) : (
+          <p role="status">Loading backup status…</p>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="config-section backup-section">
-      <h3>Sealed backups</h3>
+      <h3 ref={heading} tabIndex={-1}>Sealed backups</h3>
       <p>Encrypted server backups, recoverable only by your custodians.</p>
-      {status && <p>{status.excluded}</p>}
+      <p>{status.excluded}</p>
       {error && (
         <p className="notice notice-error" role="alert">
           {error}

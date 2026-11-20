@@ -98,7 +98,7 @@ func TestAdminStepUpKySignOnSession(t *testing.T) {
 	}
 	srv.stepUpMu.Lock()
 	c := srv.stepUps[refusal.Challenge]
-	c.verified = true
+	c.Verified = true
 	srv.stepUps[refusal.Challenge] = c
 	srv.stepUpMu.Unlock()
 	if rec = call("/api/users/"+member.ID+"/clear-mfa", refusal.Challenge); rec.Code != 403 {

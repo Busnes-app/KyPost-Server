@@ -178,7 +178,7 @@ func TestNativeAuthRestoreDeniesSSOAndPendingStepUp(t *testing.T) {
 		t.Fatalf("held step-up callback: %d", w.Code)
 	}
 	s.stepUpMu.Lock()
-	verified := s.stepUps[challenge].verified
+	verified := s.stepUps[challenge].Verified
 	s.stepUpMu.Unlock()
 	if verified {
 		t.Fatal("held SSO callback authorized step-up")

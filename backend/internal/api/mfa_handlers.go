@@ -219,11 +219,17 @@ func (s *Server) handleMFADisable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.revokeSessionsFirst(w, u.ID, currentSessionToken(r)) {
+		return
+	}
 	if _, err := s.users.DisableTOTP(u.ID); err != nil {
 		http.Error(w, "failed to disable two-factor auth", http.StatusInternalServerError)
 		return
 	}
-	s.revokeUserSessions(u.ID, currentSessionToken(r))
+	if err := s.revokeUserSessions(u.ID, currentSessionToken(r)); err != nil {
+		http.Error(w, "two-factor auth disabled, but signing out your other sessions failed; retry", http.StatusServiceUnavailable)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -241,11 +247,17 @@ func (s *Server) handleMFARecoveryCodesRegenerate(w http.ResponseWriter, r *http
 		http.Error(w, "failed to generate recovery codes", http.StatusInternalServerError)
 		return
 	}
+	if !s.revokeSessionsFirst(w, u.ID, currentSessionToken(r)) {
+		return
+	}
 	if _, err := s.users.ReplaceRecoveryCodes(u.ID, hashes); err != nil {
 		http.Error(w, "failed to store recovery codes", http.StatusInternalServerError)
 		return
 	}
-	s.revokeUserSessions(u.ID, currentSessionToken(r))
+	if err := s.revokeUserSessions(u.ID, currentSessionToken(r)); err != nil {
+		http.Error(w, "recovery codes replaced, but signing out your other sessions failed; regenerate again", http.StatusServiceUnavailable)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "recoveryCodes": codes})
 }
 

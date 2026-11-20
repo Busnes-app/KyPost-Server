@@ -41,33 +41,66 @@ func AtomicWriteFile(path string, payload []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, base+".tmp.*")
+	tmpName, err := writeTemp(dir, base, payload, perm)
 	if err != nil {
 		return err
 	}
-	tmpName := tmp.Name()
-	defer func() {
-		_ = os.Remove(tmpName)
-	}()
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(payload); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := Sync(tmp); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
+	defer func() { _ = os.Remove(tmpName) }()
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
 	return SyncDir(dir)
+}
+
+// CreateExclusive writes payload to path only if path does not exist, durably and never
+// partially: a temp file is synced and then linked into place, which fails if another
+// writer got there first. created is false when the file already existed; the caller reads
+// the winner's copy. Two processes on one volume (or replicas sharing it on one host) thus
+// agree on one file.
+func CreateExclusive(path string, payload []byte, perm os.FileMode) (created bool, err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return false, err
+	}
+	tmpName, err := writeTemp(dir, filepath.Base(path), payload, perm)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := os.Link(tmpName, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	// After the link, or the link itself can be lost.
+	return true, SyncDir(dir)
+}
+
+// writeTemp writes payload to a synced temp file in dir and returns its name. The file
+// must be synced before it is renamed or linked into place, or the name can reach the disk
+// before the bytes behind it.
+func writeTemp(dir, base string, payload []byte, perm os.FileMode) (string, error) {
+	tmp, err := os.CreateTemp(dir, base+".tmp.*")
+	if err != nil {
+		return "", err
+	}
+	name := tmp.Name()
+	err = tmp.Chmod(perm)
+	if err == nil {
+		_, err = tmp.Write(payload)
+	}
+	if err == nil {
+		err = Sync(tmp)
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
 }
 
 // syncSlots bounds this process's concurrent fsyncs. An fsync holds an OS

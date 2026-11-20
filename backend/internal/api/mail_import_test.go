@@ -181,7 +181,7 @@ func TestMailImport(t *testing.T) {
 	}
 	srv.stepUpMu.Lock()
 	sc := srv.stepUps[challenge.Challenge]
-	sc.verified = true
+	sc.Verified = true
 	srv.stepUps[challenge.Challenge] = sc
 	srv.stepUpMu.Unlock()
 	if w = call("POST", "/api/import", meSSO, `{"folder":"Other"}`, map[string]string{stepUpHeader: challenge.Challenge}); w.Code != 403 {

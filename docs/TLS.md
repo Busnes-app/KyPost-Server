@@ -79,7 +79,7 @@ client:
 
 - nginx or Caddy: `x-forwarded-for` (the default). In nginx,
   `proxy_set_header X-Forwarded-For $remote_addr;`
-  (`$proxy_add_x_forwarded_for` also works; the right-most element is used).
+  (`$proxy_add_x_forwarded_for` also works; the right-most element that is not a trusted proxy is used).
 - cloudflared: `cf-connecting-ip`. cloudflared appends its own hop to
   `X-Forwarded-For`, so XFF would make every visitor look like the tunnel.
 - cloudflared → nginx → KyPost: `cf-connecting-ip`, with nginx passing it on

@@ -327,6 +327,24 @@ func TestMigrateToPostgresRefusals(t *testing.T) {
 			}
 			return func() {}
 		}, "newer release"},
+		{"a running server holds the instance lock", func(t *testing.T, stateDir string) func() {
+			release, err := state.HoldInstance(stateDir, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return release
+		}, "KyPost is running"},
+		{"a pinned key without recovery.pub", func(t *testing.T, stateDir string) func() {
+			db, err := sql.Open("sqlite", filepath.Join(stateDir, "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(`INSERT INTO meta VALUES ('kyrecovery_key_id', 'pinned-id')`); err != nil {
+				t.Fatal(err)
+			}
+			return func() {}
+		}, "recovery key is pinned"},
 		{"failure inside the transaction", func(t *testing.T, _ string) func() {
 			backup.SetImportHooksForTest(t, func() error { return errors.New("injected failure") }, nil)
 			return func() {}
@@ -479,5 +497,67 @@ func TestRestoreCLIIntoPostgres(t *testing.T) {
 	}
 	if after, err := dbbackend.RowCounts(context.Background()); err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("a refused restore changed the database", err)
+	}
+}
+
+// AC23: a URL in argv is refused before anything runs; --check copies and verifies, then
+// leaves the target empty; plaintext scratch lives 0700 under the data root and is gone after.
+func TestMigrateToPostgresCheckAndArgv(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	base := t.TempDir()
+	t.Run("fixture on SQLite", func(t *testing.T) {
+		dbbackend.SetURLForTest(t, "")
+		migrateFixture(t, base)
+	})
+	stateDir, configDir := filepath.Join(base, "state"), filepath.Join(base, "config")
+	t.Setenv("STATE_DIR", stateDir)
+	t.Setenv("CONFIG_DIR", configDir)
+	dbbackend.FreshDatabaseForTest(t)
+	hashes := databaseFiles(t, stateDir, configDir)
+	var out bytes.Buffer
+	err := runMigrateToPostgres([]string{"-from", stateDir, "-config", configDir, "postgres://user:secret-pw@db/kypost"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "command line is refused") || strings.Contains(err.Error(), "secret-pw") {
+		t.Fatalf("argv URL: %v", err)
+	}
+	// Watch the scratch directory while the check runs.
+	var seen []string
+	backup.SetImportHooksForTest(t, func() error {
+		entries, _ := os.ReadDir(filepath.Join(stateDir, dbbackend.ScratchDir))
+		for _, e := range entries {
+			info, err := os.Stat(filepath.Join(stateDir, dbbackend.ScratchDir, e.Name()))
+			if err == nil && info.IsDir() && strings.HasPrefix(e.Name(), "migrate-") {
+				seen = append(seen, e.Name()+":"+info.Mode().Perm().String())
+			}
+		}
+		return nil
+	}, nil)
+	if err := runMigrateToPostgres([]string{"--check", "-from", stateDir, "-config", configDir}, &out); err != nil {
+		t.Fatalf("--check: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "check passed") {
+		t.Fatalf("--check output: %s", out.String())
+	}
+	if len(seen) != 1 || !strings.HasSuffix(seen[0], ":-rwx------") {
+		t.Fatalf("scratch during the check: %v", seen)
+	}
+	entries, _ := os.ReadDir(filepath.Join(stateDir, dbbackend.ScratchDir))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "migrate-") {
+			t.Fatalf("scratch %s left behind", e.Name())
+		}
+	}
+	counts, err := dbbackend.RowCounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rel, tables := range counts {
+		for table, n := range tables {
+			if n != 0 {
+				t.Fatalf("--check left %d rows in %s %s", n, rel, table)
+			}
+		}
+	}
+	if got := databaseFiles(t, stateDir, configDir); !reflect.DeepEqual(got, hashes) {
+		t.Fatal("--check changed a source file")
 	}
 }

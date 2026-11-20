@@ -285,7 +285,8 @@ checkpoints.
   leaves existing IMAP accounts working as they are.
 - To bring old mail across, use **Settings → Security → Import Mail** in the new native
   account and import from another mail account. The IMAP password is used for that
-  import only and never stored; only public servers over verified TLS are accepted. See
+  import only, kept encrypted until it starts (10 minutes at most) and never saved after
+  that; only public servers over verified TLS are accepted. See
   [Import from another mail account](../NATIVE_PROVISIONING.md#import-from-another-mail-account).
 
 ## 10. Troubleshooting

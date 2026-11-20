@@ -24,6 +24,9 @@ const depositBudget = 16 * time.Minute
 // browser tab does not abandon a half-uploaded capsule or a long drill, bounded
 // by the run budget and tracked by the shutdown drain.
 func (s *Server) detachedBackup(w http.ResponseWriter, r *http.Request) (context.Context, func(), bool) {
+	if s.refuseWhileDraining(w) {
+		return nil, nil, false
+	}
 	if !s.beginBackupRun() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "server is shutting down; retry the backup after restart"})
 		return nil, nil, false
@@ -83,6 +86,15 @@ func (s *Server) backupGate(w http.ResponseWriter, r *http.Request, into any) (a
 func backupError(w http.ResponseWriter, err error) {
 	msg := recoveryclient.AuditSafe(err.Error())
 	switch {
+	case errors.Is(err, backup.ErrSettingsUnreadable):
+		w.Header().Set("Retry-After", "5")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"code": "unavailable", "error": "the backup settings could not be read; nothing was changed or sent"})
+	case errors.Is(err, backup.ErrTopologyPinned):
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "this key is already pinned with another custodian topology; the stored topology is unchanged"})
+	case errors.Is(err, backup.ErrPinNotRecorded):
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "the key is pinned but its record was not stored; pin the same key again to store it"})
+	case errors.Is(err, backup.ErrAnchor):
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": msg})
 	case errors.Is(err, recoveryclient.ErrNotPaired):
 		writeJSON(w, http.StatusPreconditionFailed, map[string]any{"error": "no recovery key: pair with KyRecovery or pin the suite public key first"})
 	case errors.Is(err, recoveryclient.ErrNoDestination):
@@ -90,7 +102,7 @@ func backupError(w http.ResponseWriter, err error) {
 	case errors.Is(err, backup.ErrKeyAlreadyPinned):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "a different recovery key is already pinned; unpairing does not remove it"})
 	case errors.Is(err, recoveryclient.ErrInProgress):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "a backup is already running"})
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "busy", "error": "a backup is already running"})
 	case errors.Is(err, recoveryclient.ErrKeyPinMissing), errors.Is(err, recoveryclient.ErrKeyMismatch):
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": msg})
 	case errors.Is(err, recoveryclient.ErrRemote):
@@ -116,8 +128,15 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, err := s.backup.Status()
-	if err != nil {
+	if errors.Is(err, recoveryclient.ErrInProgress) {
 		backupError(w, err)
+		return
+	}
+	if err != nil {
+		// Unknown is never "not paired" or "no key pinned": the page shows it could not load.
+		s.logger.Error("backup status unreadable", "error", recoveryclient.AuditSafe(err.Error()))
+		w.Header().Set("Retry-After", "5")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"code": "unavailable", "error": "backup status could not be read"})
 		return
 	}
 	writeJSON(w, http.StatusOK, st)

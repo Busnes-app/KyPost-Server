@@ -62,6 +62,11 @@ type SSOSettings struct {
 	// (Provider.KySignOn). Written only by the server after discovery, never
 	// from an admin request; false means generic or not yet confirmed.
 	KySignOn bool `json:"kySignOn,omitempty"`
+
+	// EndSessionsPending records, in the same write as the settings, that the SSO sessions
+	// of a change have not been ended yet; the next save ends them even if nothing else
+	// changed. Written only by the server.
+	EndSessionsPending bool `json:"endSessionsPending,omitempty"`
 }
 
 // SuiteDirectory is KyPost's own OAuth client at the issuer, which KyIdentity's

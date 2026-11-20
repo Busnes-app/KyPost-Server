@@ -57,6 +57,7 @@ Classification flow:
 
 - `backend/internal/sso/hr_mailbox.go` and `backend/internal/api/hr_mailbox.go`: signed pre-identity HR address reservations in native authority storage. KyIdentity owns HR source mapping, account creation and email writeback. See [contract](NATIVE_PROVISIONING.md#hr-address-reservations).
 
+- `docker-compose.replicas.yml` and `deploy/replicas/haproxy.cfg`: PostgreSQL replicas on one Docker host behind HAProxy, with one shared Ollama; see [Replicas on one host](RUNNING.md#replicas-on-one-host). `backend/internal/replica/` refuses a topology the shared flocks cannot cover and checks the shared settings; `backend/internal/worker/` runs each background role on one replica.
 - `docker-compose.strong-crypto.yml`: optional strong-key profile, `GODEBUG=fips140=on` only; see [STRONG-CRYPTO.md](STRONG-CRYPTO.md).
 - `docker-compose.rspamd.yml`: optional pinned private scanner sidecar; fixed configuration in `scripts/rspamd/rspamd.conf`.
 - `docker-compose.receiving.yml`: optional controlled receiver supervision and explicit SMTP publish with operator-supplied read-only engine/TLS mounts.

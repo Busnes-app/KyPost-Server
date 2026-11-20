@@ -161,7 +161,7 @@ func (s *Server) scheduledSendKey() ([]byte, error) {
 	return cryptutil.LoadOrCreateKey(filepath.Join(config.SecretDir(), "scheduled-send.key"))
 }
 
-func sealScheduled(key []byte, v any) ([]byte, error) {
+func sealJSON(key []byte, v any) ([]byte, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
@@ -173,7 +173,7 @@ func sealScheduled(key []byte, v any) ([]byte, error) {
 	return json.Marshal(env)
 }
 
-func openScheduled(key, blob []byte, v any) error {
+func openJSON(key, blob []byte, v any) error {
 	var env cryptutil.EncryptedPayload
 	if err := json.Unmarshal(blob, &env); err != nil {
 		return err
@@ -189,7 +189,7 @@ func openScheduled(key, blob []byte, v any) error {
 // so a blob copied between rows or users cannot be sent as theirs.
 func openScheduledRow(key []byte, r state.ScheduledSend) (scheduledJob, error) {
 	var j scheduledJob
-	if err := openScheduled(key, r.Sealed, &j); err != nil {
+	if err := openJSON(key, r.Sealed, &j); err != nil {
 		return j, err
 	}
 	if j.ID != r.ID || j.UserID != r.UserID || j.Mailbox != r.Mailbox {
@@ -257,8 +257,8 @@ func (s *Server) scheduleSend(w http.ResponseWriter, r *http.Request, ac AuthCon
 		}
 		j.Job.FromGeneration = fromAddress.Generation
 	}
-	sealed, err := sealScheduled(key, j)
-	summary, summaryErr := sealScheduled(key, scheduledSummary{Subject: subject, To: to, Delayed: j.Delayed})
+	sealed, err := sealJSON(key, j)
+	summary, summaryErr := sealJSON(key, scheduledSummary{Subject: subject, To: to, Delayed: j.Delayed})
 	if err != nil || summaryErr != nil {
 		http.Error(w, "scheduled send unavailable; send now or retry later", http.StatusServiceUnavailable)
 		return
@@ -304,7 +304,7 @@ func (s *Server) handleScheduledList(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		var sum scheduledSummary
-		_ = openScheduled(key, row.Summary, &sum)
+		_ = openJSON(key, row.Summary, &sum)
 		out = append(out, map[string]any{"id": row.ID, "status": row.Status, "reason": row.Reason, "sendAt": time.Unix(row.SendAt, 0).UTC().Format(time.RFC3339), "subject": sum.Subject, "to": sum.To, "delayed": sum.Delayed})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"scheduled": out})
@@ -357,16 +357,16 @@ func currentScheduledStatus(ctx context.Context, store *state.Store, row state.S
 	return row.Status
 }
 
-// StartScheduledSendSweeper sends due scheduled mail. API process only: the
-// claim is atomic in SQLite, so a second runner could not double-send, but
-// one would mark the other's in-flight rows uncertain at its start.
+// StartScheduledSendSweeper sends due scheduled mail on the owner of the api-sweepers role.
+// The claim is atomic, so a second runner could not double-send. At its start, and on
+// PostgreSQL at every sweep, rows a stopped process left mid-work are interrupted: only
+// those whose claimant is no longer a live replica, so a restart of one replica never marks
+// another's in-flight send uncertain.
 func (s *Server) StartScheduledSendSweeper(ctx context.Context) {
 	if s.globalStore == nil {
 		return
 	}
-	if err := s.globalStore.InterruptScheduledSends(context.WithoutCancel(ctx)); err != nil {
-		s.logger.Error("scheduled send recovery failed", "error", err.Error())
-	}
+	s.interruptScheduled(ctx)
 	ticker := time.NewTicker(scheduledSweepInterval)
 	defer ticker.Stop()
 	for {
@@ -383,6 +383,9 @@ func (s *Server) StartScheduledSendSweeper(ctx context.Context) {
 // are read when each row is worked, never from the sweep's start, so a long
 // sweep cannot send past a row's deadline.
 func (s *Server) sweepScheduledSends(ctx context.Context, now func() time.Time) {
+	if s.instanceLive != nil {
+		s.interruptScheduled(ctx)
+	}
 	// An idle server never touches the key: only scheduling creates it.
 	if pending, err := s.globalStore.HasScheduledWork(ctx); err != nil || !pending {
 		_ = s.globalStore.PruneScheduledSends(ctx, now().Add(-scheduledRetention).Unix())
@@ -397,7 +400,7 @@ func (s *Server) sweepScheduledSends(ctx context.Context, now func() time.Time) 
 	for range scheduledWorkers {
 		wg.Go(func() {
 			for ctx.Err() == nil {
-				row, ok, err := s.globalStore.ClaimScheduledSend(ctx, now().Unix())
+				row, ok, err := s.globalStore.ClaimScheduledSend(ctx, now().Unix(), s.instanceID)
 				if err != nil || !ok {
 					return
 				}
@@ -601,8 +604,12 @@ func (s *Server) scheduledSMTPAccount(j scheduledJob) (smtpAccount, string, erro
 // saveScheduledDraft files a returning row's draft and marks it returned. A
 // failed save keeps it returning for a later sweep; it reports success.
 func (s *Server) saveScheduledDraft(ctx context.Context, key []byte, row state.ScheduledSend, now func() time.Time) bool {
+	// Claim before saving: of two sweepers racing this row, one saves the draft.
+	if claimed, err := s.globalStore.ClaimScheduledReturn(ctx, row.ID, s.instanceID); err != nil || !claimed {
+		return false
+	}
 	move := func(to, reason string, next int64) {
-		if _, err := s.globalStore.MoveScheduledSend(context.WithoutCancel(ctx), row.ID, state.ScheduledReturning, to, reason, next); err != nil {
+		if _, err := s.globalStore.MoveScheduledSend(context.WithoutCancel(ctx), row.ID, state.ScheduledDrafting, to, reason, next); err != nil {
 			s.logger.Error("scheduled send state update failed", "correlation_id", row.ID, "error", err.Error())
 		}
 	}
@@ -635,4 +642,19 @@ func (s *Server) saveScheduledDraft(ctx context.Context, key []byte, row state.S
 	}
 	move("returned", row.Reason, 0)
 	return true
+}
+
+// interruptScheduled hands back rows a stopped process left sending or drafting (see
+// state.InterruptScheduledSends): every such row on SQLite, only dead claimants' on
+// PostgreSQL.
+func (s *Server) interruptScheduled(ctx context.Context) {
+	if err := s.globalStore.InterruptScheduledSends(context.WithoutCancel(ctx), s.instanceLive); err != nil {
+		s.logger.Error("scheduled send recovery failed", "error", err.Error())
+	}
+}
+
+// SetReplicaInstance names this process's live replica instance and how to ask whether
+// another instance is live (PostgreSQL only).
+func (s *Server) SetReplicaInstance(id string, live func(ctx context.Context, id string) (bool, error)) {
+	s.instanceID, s.instanceLive = id, live
 }

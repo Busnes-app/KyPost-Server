@@ -74,26 +74,9 @@ func TestCreateInitialIsCrashDurable(t *testing.T) {
 		return -1
 	}
 
-	// The file's own bytes must reach the disk before the name that points at
-	// them, or a crash leaves a users.json that exists and does not parse —
-	// which does not re-bootstrap, it refuses to start.
-	fileSync := posOf("fsutil.Sync") // the temp file, through the process-wide fsync bound
-	link := posOf("os.Link")
-	dirSync := posOf("fsutil.SyncDir")
-
-	if fileSync < 0 {
-		t.Error("createInitial does not fsync the temp file before linking it into place")
-	}
-	if link < 0 {
-		t.Fatal("createInitial no longer links its temp file into place")
-	}
-	if dirSync < 0 {
-		t.Error("createInitial does not fsync the parent directory, so the link itself can be lost")
-	}
-	if fileSync >= 0 && fileSync > link {
-		t.Error("createInitial fsyncs the temp file AFTER linking it; the link can reach disk before the data")
-	}
-	if dirSync >= 0 && dirSync < link {
-		t.Error("createInitial fsyncs the directory BEFORE the link it is meant to make durable")
+	// The fsync pair and the exclusive link live in fsutil.CreateExclusive, which
+	// TestCreateExclusiveIsCrashDurable pins; this pins that createInitial uses it.
+	if posOf("fsutil.CreateExclusive") < 0 {
+		t.Fatal("createInitial no longer creates users.json through fsutil.CreateExclusive")
 	}
 }

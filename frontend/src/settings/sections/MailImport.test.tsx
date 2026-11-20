@@ -185,7 +185,7 @@ it("imports from another account: confirms without the provider password, lists,
   });
   view();
   fireEvent.click(await screen.findByLabelText("From another mail account"));
-  expect(screen.getByText(/used only for this import and is never stored/)).toBeTruthy();
+  expect(screen.getByText(/used only for this import: it is kept encrypted until the import starts/)).toBeTruthy();
   expect(screen.getByText(/need an app password/)).toBeTruthy();
   expect(screen.getByText(/Nothing is changed on the other account/)).toBeTruthy();
   expect(screen.getByText(/signs in to your other mail provider/)).toBeTruthy();
@@ -249,4 +249,12 @@ it("confirms an account import with KySignOn and starts over when the grant expi
   fireEvent.change(screen.getByLabelText("Provider password"), { target: { value: "again" } });
   fireEvent.click(screen.getByRole("button", { name: "List folders" }));
   await waitFor(() => expect(vi.mocked(withSSOStepUp)).toHaveBeenCalledTimes(2));
+});
+
+it("says an import stopped with the replica running it, not that it is still running", async () => {
+  statuses = [{ ...idle, state: "interrupted", imported: 3, error: "The server running this import stopped. Import again to continue; messages already imported are skipped." }];
+  view({ ...user, ssoSession: true });
+  const alert = await screen.findByText(/^Import interrupted \(.*\)\. The server running this import stopped\. Import again/);
+  expect(alert.getAttribute("role")).toBe("alert");
+  expect(screen.queryByRole("button", { name: "Cancel import" })).toBeNull();
 });

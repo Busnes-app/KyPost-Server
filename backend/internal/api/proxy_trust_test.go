@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -107,16 +108,64 @@ func TestForwardedHeadersAllUseRightmostHop(t *testing.T) {
 
 	// In each case the left-most value is what a client prepended and the
 	// right-most is what the trusted proxy actually appended.
-	req.Header.Set("X-Forwarded-For", "1.1.1.1, 203.0.113.77")
+	req.Header.Set("X-Forwarded-For", "1.1.1.1, 198.51.100.77")
 	req.Header.Set("X-Forwarded-Proto", "https, http")
 	req.Header.Set("X-Forwarded-Host", "attacker.example, real.example")
 
-	if got := clientIP(req); got != "203.0.113.77" {
-		t.Errorf("clientIP = %q, want the right-most hop 203.0.113.77 (not the client-prepended 1.1.1.1)", got)
+	if got := clientIP(req); got != "198.51.100.77" {
+		t.Errorf("clientIP = %q, want the right-most hop 198.51.100.77 (not the client-prepended 1.1.1.1)", got)
 	}
 	if isRequestSecure(req) {
 		t.Error("isRequestSecure honored the client-prepended https over the proxy's own http; " +
 			"this decides the session cookie's Secure flag")
+	}
+}
+
+// Behind a TLS edge and the replicas' HAProxy, both trusted, the client is the right-most
+// address that is not a proxy: what the edge saw, never what the client prepended.
+func TestClientIPWalksPastTrustedProxies(t *testing.T) {
+	trustProxyCIDRsForTest(t, "172.31.5.2/32,10.89.0.20/32") // HAProxy, the edge
+	for chain, want := range map[string]string{
+		"203.0.113.7, 10.89.0.20":                 "203.0.113.7",
+		"6.6.6.6, 203.0.113.7, 10.89.0.20":        "203.0.113.7",
+		"203.0.113.7":                             "203.0.113.7", // no edge: HAProxy's own hop
+		"10.89.0.20":                              "172.31.5.2",  // every hop a proxy: the peer
+		"203.0.113.7, not-an-address, 10.89.0.20": "172.31.5.2",  // unparsable: the peer
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://backend.internal/api/x", nil)
+		req.RemoteAddr = "172.31.5.2:5000"
+		req.Header.Set("X-Forwarded-For", chain)
+		if got := clientIP(req); got != want {
+			t.Errorf("chain %q: clientIP = %q, want %q", chain, got, want)
+		}
+	}
+}
+
+// Two people signing in through one TLS edge and HAProxy keep their own lockouts: one
+// person's failures never lock out another. Read only the right-most hop, every caller was
+// the edge and shared one bucket.
+func TestLockoutsBehindAProxyChainAreScopedPerClient(t *testing.T) {
+	trustProxyCIDRsForTest(t, "172.31.5.2/32,10.89.0.20/32")
+	srv := newTestServer(t)
+	attempt := func(client string) int {
+		body, _ := json.Marshal(map[string]string{"username": "victim", "authSecret": testAuthSecret(srv, "victim", "wrong")})
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+		req.RemoteAddr = "172.31.5.2:5000"
+		req.Header.Set("X-Forwarded-For", client+", 10.89.0.20")
+		rec := httptest.NewRecorder()
+		srv.handleLogin(rec, req)
+		return rec.Code
+	}
+	for i := range loginMaxFailures {
+		if code := attempt("203.0.113.10"); code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d", i+1, code)
+		}
+	}
+	if code := attempt("203.0.113.10"); code != http.StatusTooManyRequests {
+		t.Fatalf("the failing client was not locked out: %d", code)
+	}
+	if code := attempt("198.51.100.7"); code != http.StatusUnauthorized {
+		t.Fatalf("another client behind the same proxies was locked out: %d", code)
 	}
 }
 

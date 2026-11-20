@@ -73,10 +73,8 @@ func isTrustedProxy(addr string) bool {
 // client-supplied value.
 //
 // Every header line counts: a proxy that adds its own line after the client's
-// would otherwise leave the client's value first.
-//
-// Assumes a single trusted proxy in front; multi-proxy deployments should
-// terminate the chain at a known hop.
+// would otherwise leave the client's value first. The client address walks the
+// chain instead (forwardedClient).
 func lastForwardedValue(r *http.Request, header string) string {
 	raw := strings.Join(r.Header.Values(header), ",")
 	if strings.TrimSpace(raw) == "" {
@@ -84,6 +82,24 @@ func lastForwardedValue(r *http.Request, header string) string {
 	}
 	parts := strings.Split(raw, ",")
 	return strings.TrimSpace(parts[len(parts)-1])
+}
+
+// forwardedClient is the right-most address in the forwarded chain that is not
+// a trusted proxy: the client the outermost trusted hop saw, behind a chain such
+// as a TLS edge then the replicas' HAProxy. Values left of it are the client's
+// own. "" when a value does not parse or every hop is trusted (the peer is used).
+func forwardedClient(r *http.Request, header string) string {
+	parts := strings.Split(strings.Join(r.Header.Values(header), ","), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		ip := parseClientAddr(strings.TrimSpace(parts[i]))
+		if ip == "" {
+			return ""
+		}
+		if !isTrustedProxy(ip) {
+			return ip
+		}
+	}
+	return ""
 }
 
 // There is deliberately no externalBaseURL here. Every URL this server hands
@@ -96,12 +112,12 @@ func lastForwardedValue(r *http.Request, header string) string {
 // see pickupBaseURL and pairingBaseURL in pickup_handlers.go.
 
 // clientIP is the caller's address: from clientIPHeader when the peer is a
-// trusted proxy (right-most hop for XFF), else the peer itself. The other header
-// is never read, since a proxy passes unknown headers through from the client.
-// Lockout callers must fold it with lockoutKeyForIP.
+// trusted proxy, else the peer itself. The other header is never read, since a
+// proxy passes unknown headers through from the client. Lockout callers must
+// fold it with lockoutKeyForIP.
 func clientIP(r *http.Request) string {
 	if proxyHeadersTrusted(r) {
-		if ip := parseClientAddr(lastForwardedValue(r, clientIPHeader)); ip != "" {
+		if ip := forwardedClient(r, clientIPHeader); ip != "" {
 			return ip
 		}
 	}
