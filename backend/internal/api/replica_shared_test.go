@@ -660,3 +660,45 @@ func TestFailedSSODisableIsRetried(t *testing.T) {
 		}
 	}
 }
+
+// A sign-in on replica B reads the old settings between the save's first session end and its
+// write, so its session carries the current epoch; the end after the write then fails. Saving
+// the same settings again must still end that session, on both replicas.
+func TestUnchangedSaveFinishesAPendingSSOInvalidation(t *testing.T) {
+	a, b, idp := ssoPair(t)
+	var calls atomic.Int32
+	a.ssoSessionsEndFault = func() error {
+		if calls.Add(1) == 2 { // the end after the write
+			return errors.New("injected: the database dropped the connection")
+		}
+		return nil
+	}
+	admin, err := a.users.Create(context.Background(), "sso-admin", "long-password-for-sso-admin", users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disable := func() int {
+		body, _ := json.Marshal(sso.SSOSettings{Enabled: false, IssuerURL: idp.URL(), ClientID: idp.ClientID, AutoProvision: true})
+		req := httptest.NewRequest(http.MethodPut, "/api/admin/sso", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		a.handleAdminSSOPut(rec, req.WithContext(context.WithValue(req.Context(), authContextKey{}, AuthContext{UserID: admin.ID, Username: admin.Username, Role: users.RoleAdmin})))
+		return rec.Code
+	}
+	var raced *http.Cookie
+	a.ssoSaveBeforeWrite = func() { raced = ssoSignIn(t, b, idp, "carol", "sid-raced") }
+	if code := disable(); code == http.StatusOK {
+		t.Fatal("the save reported success although ending the sessions after it failed")
+	}
+	a.ssoSaveBeforeWrite = nil
+	if raced == nil || !sessionAlive(b, raced) {
+		t.Fatal("the racing sign-in did not mint a live session; the test proves nothing")
+	}
+	if code := disable(); code != http.StatusOK {
+		t.Fatal("saving the same settings again:", code)
+	}
+	for name, srv := range map[string]*Server{"A": a, "B": b} {
+		if sessionAlive(srv, raced) {
+			t.Fatalf("the racing SSO session still works on %s after SSO was disabled", name)
+		}
+	}
+}

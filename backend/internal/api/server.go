@@ -130,6 +130,9 @@ type Server struct {
 	// ssoSessionsEndFault, when it returns an error, fails endSSOSessions and
 	// revokeSessionsCoveredBy before they change anything.
 	ssoSessionsEndFault func() error
+	// ssoSaveBeforeWrite runs in an SSO settings save after the first session end, before
+	// the settings are written.
+	ssoSaveBeforeWrite func()
 	// nativeReleaseHit crashes a hold release at "intent", "lifecycle" or "rename".
 	nativeReleaseHit func(point string) error
 

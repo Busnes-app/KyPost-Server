@@ -63,7 +63,7 @@ func (s *Server) handleSSOConfig(w http.ResponseWriter, r *http.Request) {
 // write-only, reported only as set or not.
 func adminSSOView(settings sso.SSOSettings) any {
 	set := settings.ClientSecret != ""
-	settings.ClientSecret = ""
+	settings.ClientSecret, settings.EndSessionsPending = "", false
 	return struct {
 		sso.SSOSettings
 		ClientSecretSet bool `json:"clientSecretSet"`
@@ -135,8 +135,10 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 	// under; a change to any of them, or disabling SSO, ends them all. They end
 	// before the save, so a failure leaves the old settings and the next save
 	// sees the same change and tries again; and once more after it, for a
-	// sign-in that minted one under the old settings in between.
-	ends := req.Enabled != stored.Enabled || req.IssuerURL != stored.IssuerURL || req.ClientID != stored.ClientID || req.AdminGroup != stored.AdminGroup
+	// sign-in that minted one under the old settings in between. The save
+	// records that second end as pending until it succeeds, so a later save of
+	// the same settings still makes it.
+	ends := req.Enabled != stored.Enabled || req.IssuerURL != stored.IssuerURL || req.ClientID != stored.ClientID || req.AdminGroup != stored.AdminGroup || stored.EndSessionsPending
 	if ends {
 		if err := s.endSSOSessions(); err != nil {
 			s.logger.Error("sso: settings not saved: ending the existing SSO sessions failed", "error", err.Error())
@@ -144,6 +146,10 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.ssoSaveBeforeWrite != nil {
+		s.ssoSaveBeforeWrite()
+	}
+	req.EndSessionsPending = ends
 	if err := s.ssoStore.Save(req); err != nil {
 		http.Error(w, "failed to save SSO settings: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -152,6 +158,10 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 		if err := s.endSSOSessions(); err != nil {
 			http.Error(w, "settings saved, but ending the existing SSO sessions failed; save again", http.StatusInternalServerError)
 			return
+		}
+		req.EndSessionsPending = false
+		if err := s.ssoStore.Save(req); err != nil { // still pending: the next save ends them again
+			s.logger.Error("sso: sessions ended, but clearing the pending mark failed", "error", err.Error())
 		}
 	}
 	// Links made at another provider name other people here. Idempotent, so a
