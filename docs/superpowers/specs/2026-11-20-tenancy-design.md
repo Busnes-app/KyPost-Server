@@ -64,8 +64,8 @@ drive the design:
 |---|---|---|
 | K1 | `KYPOST_TENANCY=single` (default) or `multi`. A multi install records `tenancy_mode=multi` and `staff_org_id` (K7) in the root `state.db` `meta` at first start. A start whose mode or `KYPOST_STAFF_ORG_ID` differs from the record refuses to start. Single-tenant writes nothing: no record means single. It stays out of R's replica fingerprint, and the record is what refuses a mismatched replica (Replicas). | Install-time, as T D1. Writing nothing keeps upgrades byte-for-byte unchanged. A replica started in the wrong mode must not serve. |
 | K2 | **Multi-tenant requires** PostgreSQL (`KYPOST_DATABASE_URL`, `docs/CONFIGURATION.md:124`), native mail (`KYPOST_NATIVE_MAIL=true`), the v3 authority database, a configured KyIdentity issuer, and an **empty install** at first start. Converting a single-tenant install is out of scope, as in T. | T requires Postgres too (T D2). The external-IMAP profile and local accounts have no place in a hosted mail service (K6). Starting empty avoids a migration with no org to assign. |
-| K3 | Multi-tenant schema additions are created only by a multi install's first start. A single-tenant install never gets them, so its databases, `users.json` and every file stay byte-for-byte as they are. | This is the zero-change argument. T adds columns on both modes because its SQL is shared. KyPost's org-owned rows (below) are few, and every one of them sits in a store that only a multi install creates. |
-| K4 | The org is recorded on two roots only: `users.User.OrgID` (write-once, `omitempty`) and `org_id` on the authority `directory` and `accounts` rows. Every per-user and per-mailbox store is **derived**: it inherits the org of the ID that owns it. Cross-user aggregates in the root `state.db` (`send_ledger`, `agent_tokens`, `scheduled_sends`) carry `org_id` so per-org counts need no join. | Per-user data is already separated by user ID (above). Adding `org_id` to hundreds of per-user schemas would add a column nobody could set wrongly. The risk sits on the hops *between* users, so that is where the checks go (K5). |
+| K3 | **No existing table changes shape.** The org mapping lives in new, multi-only side tables that a multi install's first start creates: `user_orgs(user_id PK, org_id)` in the root `state.db`, and `subject_orgs(issuer, subject, org_id, PRIMARY KEY(issuer, subject))` in `native-authority.db`. Both are write-once, refusing an update. Shared tables keep one schema in both modes, so no shared query or migration branches on mode. Only multi-mode code reads the side tables. `users.User.OrgID` is a JSON field with `omitempty`, so it is absent from single-tenant `users.json`. A single-tenant install never gets any of this, and its databases, `users.json` and every file stay byte-for-byte as they are. | This is the zero-change argument. Columns added only in one mode would give one table two schemas, and every query on it would need a branch. A side table is a join that only multi mode makes. |
+| K4 | The org is recorded on two roots only: the user (`users.User.OrgID`, mirrored in `user_orgs`) and the KyIdentity subject (`subject_orgs`), both write-once. Every other store is **derived**: it inherits the org of the user, mailbox or subject that owns it. That includes the root-store aggregates (`send_ledger`, `agent_tokens`, `scheduled_sends`), which join `user_orgs` on `user_id` for per-org counts and the purge. | Per-user data is already separated by user ID (above). Adding `org_id` to hundreds of per-user schemas would add a column nobody could set wrongly. The risk sits on the hops *between* users, so that is where the checks go (K5). |
 | K5 | `AuthContext.OrgID` is set by `currentUser` from the re-read user record, never from the request. Every **cross-user hop** goes through one function, `orgAdmit(ac, target)`: from the caller to another user, mailbox, address, device, delivery or peer subject. On a mismatch it gives the same answer as a missing target. The hops form a named list (Isolation). | One choke point, as KyIdentity's `OrgStore`. KyPost has no single SQL layer to bind, but it does have a single per-request identity. |
 | K6 | Off in multi-tenant v1, answering `404`: local password sign-in, local user creation, password reset, SSO link and unlink, `AutoProvision`, the external-IMAP mail source, administrator-assigned IMAP and CardDAV accounts, and HR mailbox reservation (`/api/sync/hr-mailbox`). The first-run bootstrap administrator (`app/bootstrap.go:41-42`) is not created. | Accounts come only from KyIdentity (T decision 5). Staff must never hold a customer's credentials. T switches HR off in multi mode (T "Per-org features"). |
 | K7 | **Staff = `kypost.admin` role *and* a token whose `org_id` equals `KYPOST_STAFF_ORG_ID`.** A customer account is never an administrator, whatever roles a token or sync event carries. | `HasAdminRole` (`sso/directory.go:24-31`) trusts the role alone. T's D8 refuses KyIdentity's *own* admin role outside the staff org, but app-role assignment is "per org, run by staff" (T "Per-org features"). So a staff mistake could give a customer `kypost.admin`. KyPost pins the org independently. |
@@ -84,16 +84,18 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | Store | Defined | Class | Reasoning |
 |---|---|---|---|
 | Root `state.db` `meta` | `state/schema.go:74-290` (SQLite), `state/pg_schema.go:11-69` | P | Settings, health, update dedup. Adds `tenancy_mode` (multi-only). |
-| Root `state.db` `agent_tokens` | `state/schema.go:269` | O (multi-only column) | Keyed by `user_id`. `org_id` lets the purge delete an org's tokens in one statement. |
-| Root `state.db` `scheduled_sends` | `state/scheduled_sends.go`, `state/schema.go` | O (multi-only column) | Keyed by `user_id` and `mailbox`. A suspended org's due sends are held (open question 6). |
-| Root `state.db` `send_ledger` | `state/send_ledger.go:27-38` | O (multi-only column) | Counts the per-user quota today (`api/send_quota.go:25`). Per-org quotas sum it by `org_id`. |
+| Root `state.db` `agent_tokens` | `state/schema.go:269` | D (`user_id`, via `user_orgs`) | The purge deletes an org's tokens with one join. |
+| Root `state.db` `scheduled_sends` | `state/scheduled_sends.go`, `state/schema.go` | D (`user_id`, via `user_orgs`) | Keyed by `user_id` and `mailbox`. A suspended org's due sends are held (open question 6). |
+| Root `state.db` `send_ledger` | `state/send_ledger.go:27-38` | D (`user_id`, via `user_orgs`) | Counts the per-user quota today (`api/send_quota.go:25`). Per-org quotas sum it through `user_orgs`. |
+| New `user_orgs` | (multi-only) | O | K3. The user root: one row per account, written once with `users.User.OrgID`. |
 | Root `state.db` `backup_audit` | `state/schema.go` | P | Whole-install backups. |
 | New `orgs` cache | (multi-only) | P | K8. The registry every org check reads. |
 | New `org_purges` | (multi-only) | P | Purge progress, one row per deleted org, so a purge that died halfway resumes (Lifecycle). |
 | Per-user / per-mailbox `state.db` (`processed`, `decisions`, `notifications`, `native_devices`, `pull_notifications`, `deferrals`, `sorter_*`, `snoozes`, `ooo_*`) | `api/server_userscope.go:86-92`; same schema as root | D (user or mailbox directory) | The directory, or on Postgres the `kypost_f_*` schema, is the owner. |
 | `mailbox.db` (messages, folders, labels, receipts, usage, `outbox*`, …) | `mailbox/store.go:118-132`, `mailbox/pg_schema.go:17-32` | D (mailbox) | The `identity` row names `(issuer, subject, mailbox)` (`mailbox/store.go:118`). It gains no `org_id`: the mailbox's account carries it. |
-| `native-authority.db` `directory`, `directory_primary_emails` | `sso/authority_v3.go:39-48` | O (multi-only column on `directory`) | The KyIdentity directory mirror, keyed `(issuer, subject)`. `org_id` is written from the signed webhook (Identity binding) and never changes. |
-| `native-authority.db` `accounts` | `sso/authority_v3.go:49-55` | O (multi-only column) | The ledger root of a person's mailboxes. |
+| `native-authority.db` `directory`, `directory_primary_emails` | `sso/authority_v3.go:39-48` | D (`(issuer, subject)`, via `subject_orgs`) | The KyIdentity directory mirror. |
+| `native-authority.db` `accounts` | `sso/authority_v3.go:49-55` | D (`(issuer, subject)`, via `subject_orgs`) | The ledger root of a person's mailboxes. |
+| New `subject_orgs` | (multi-only, `native-authority.db`) | O | K3. The subject root, written once from the signed webhook (Identity binding). |
 | `native-authority.db` `mailboxes` | `sso/authority_v3.go:56-63` | D (`(issuer, subject)` FK to `accounts`) | |
 | `native-authority.db` `addresses`, `address_history`, `routes_pending` | `sso/authority_v3.go:65-76` | D while live (via `mailbox`), P as tombstones | Address keys are global (M D4). After org deletion they become platform tombstones (K10). |
 | `native-authority.db` `directory_events`, `logouts`, `sign_ons`, floors, barriers, `lifecycle_records` | `sso/authority_v3.go:77-88` | P | Replay and recovery ledgers keyed by event or JTI. Restore authority is whole-install. |
@@ -166,8 +168,8 @@ created exclusively, like R's keys, and backed up, because a restore needs it (M
 - **Per-mailbox stores** are admitted by `admitMailbox` from `X-KyPost-Mailbox`
   (`api/native_mailbox_handlers.go:19,31-68`). It already checks that the mailbox belongs to the
   caller. Multi mode adds `orgAdmit` there, so a foreign mailbox ID answers like an unknown one.
-- **Root-store rows** (`agent_tokens`, `scheduled_sends`, `send_ledger`) take `org_id` from the
-  `AuthContext` that writes them.
+- **Root-store rows** (`agent_tokens`, `scheduled_sends`, `send_ledger`) are keyed by the writer's
+  `user_id`, as today, and reach their org through `user_orgs`.
 - **Background workers** (provisioning, sweeps, outbox recovery, receiving import) work from the
   ledger, where every mailbox resolves to an account with an `org_id`. The purge and the
   entitlement poller are the only workers that act on an org as a whole.
@@ -231,14 +233,17 @@ that builds a multi install from fixtures:
 | Account lookup | Binds to `(issuer, sub, org_id)`. `GetBySSOSubIssuer` finds the user. A user whose `OrgID` differs from the token's `org_id` gets `ErrNativeAccountConflict`, the error a wrong issuer gets today (`users/users.go:1176`). The session is not created, and the event is logged as a security event, with no org names. | `api/sso_handlers.go:599-600`, `users/users.go:1170-1180` |
 | Device-assertion sign-on | The same rule. T adds `org_id` to the device-assertion token. | `api/native_signon.go:26-112` |
 | Back-channel logout | `Covers` also requires the token's `org_id` to match the account's. One without `org_id` is refused in multi mode. Refusing loses nothing: suspension also revokes locally (Lifecycle). | `api/sso_logout.go:37-107`, `sso/lifecycle.go:42` |
-| Signed sync webhook | `sso.DirectoryUser` gains `OrgID`, covered by `syncauth` (T "Outbound sync"). A missing `org_id` is refused. The first event for a `sub` writes `directory.org_id`. A later event with a different `org_id` is refused, audited and changes nothing. | `api/sync_handlers.go:29-133`, `sso/directory.go:60-74,181` |
+| Signed sync webhook | `sso.DirectoryUser` gains `OrgID`, covered by `syncauth` (T "Outbound sync"). A missing `org_id` is refused. The first event for a `sub` writes its `subject_orgs` row. A later event with a different `org_id` is refused, audited and changes nothing. | `api/sync_handlers.go:29-133`, `sso/directory.go:60-74,181` |
 | Admin role | K7: `kypost.admin` in the token or event, **and** `org_id == KYPOST_STAFF_ORG_ID`. In multi mode `KYPOST_STAFF_ORG_ID` is required, and startup refuses without it. A customer event naming `kypost.admin` is applied as a member and logged. | `sso/sso.go:334-345`, `sso/directory.go:24-31`, `api/sync_handlers.go:128-131` |
 | Session | Unchanged, except that `currentUser` also kills a session whose user's org is not `active` in the `orgs` cache (Lifecycle). | `api/server_auth_session.go:1224` |
 | URL, form or header | Never a source of org. The one exception is the staff org selection on admin routes (Admin surface). | — |
 
 The org therefore comes only from a verified token, a signed webhook or a suite answer (T point 4).
 `users.User.OrgID` is written only by provisioning from the signed directory event, and only once.
-A later write with a different value returns an error from the users store.
+A later write with a different value returns an error from the users store. Provisioning writes
+`user_orgs` first, then `users.json`, with the same value. A retry after a crash between the two
+writes the same value again and converges. A user whose two records disagree is refused at
+sign-in, as a mismatch is.
 
 Hosted members are provisioned the native-mail way. There is no JIT account at sign-in
 (`api/sso_handlers.go:629-631`). An account appears when the signed `user.created` event has
@@ -258,9 +263,12 @@ mailbox-less, non-native account (`provisionDirectoryUser`,
 
 The first staff administrator therefore needs only KyIdentity's own bootstrap (T "Emergency
 access and recovery") and the `kypost.admin` app role in the staff org. KyPost has no bootstrap
-administrator of its own in multi mode (K6). Losing the role demotes the account through today's
-role-change path (`api/sync_handlers.go:155-166`), and the last-administrator refusal
-(`:213`) still applies.
+administrator of its own in multi mode (K6). Losing the role does **not** use today's role-change
+path (`api/sync_handlers.go:155-166`). That path would leave a staff-org member, which the rule
+above forbids. In multi mode a staff account that loses `kypost.admin` is deactivated and its
+credentials revoked (`deactivateAndRevoke`, `api/sync_handlers.go:199-208`), and it never gets a
+mailbox. Regaining the role reactivates it. The last-administrator refusal (`:213`) still
+applies, so the last staff administrator cannot be demoted this way.
 
 ## Mail
 
@@ -351,7 +359,7 @@ waits for.
 
 | Limit | Today's key | Hosted |
 |---|---|---|
-| Sending | Per user, 60 messages an hour and 1000 recipients a day (`api/send_quota.go:23-54`, `config/config.go:568`) | Per user as today, plus an org cap from `quotas_json` (`sendPerHour`, `recipientsPerDay`), summed from `send_ledger.org_id` |
+| Sending | Per user, 60 messages an hour and 1000 recipients a day (`api/send_quota.go:23-54`, `config/config.go:568`) | Per user as today, plus an org cap from `quotas_json` (`sendPerHour`, `recipientsPerDay`), summed from `send_ledger` through `user_orgs` |
 | Masked creation | Per user, 100 live and 20 a day (`api/masked_addresses.go:31-37`) | M D7: `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`, plus M's platform-wide circuit breaker |
 | Mailbox storage | Per mailbox, install default (`config/native_mail.go:33-52`) | `mailboxBytes` per mailbox, and `storageBytes` across the org, both from `quotas_json` |
 | Extra mailboxes | Administrator's choice | `mailboxes` from `quotas_json` |
@@ -419,8 +427,8 @@ records progress, so the purge is **idempotent and resumable**: each step checks
 gone and skips it, and a purge that died halfway continues from its row. Steps:
 
 1. **Block new use.** Bump R's `session_revocations` for each of the org's users, which ends every
-   session as suspension does. Delete the org's `agent_tokens` and `scheduled_sends` rows by
-   `org_id`, and cancel its import jobs (R `import_jobs`).
+   session on every replica as suspension does. Delete the org's `agent_tokens` and
+   `scheduled_sends` rows through `user_orgs`, and cancel its import jobs (R `import_jobs`).
 2. **Remove storage.** For each of the org's users and mailboxes, drop the per-user and per-mailbox
    PostgreSQL schemas through the catalog (`dbbackend/dbbackend.go:205-247`). Then remove their
    directories under `CONFIG_DIR` and `STATE_DIR` (`users/<id>`, `mailboxes/<id>`), and delete
@@ -435,9 +443,13 @@ gone and skips it, and a purge that died halfway continues from its row. Steps:
    cleared, the subject kept (it is an opaque KyIdentity ID, not personal data). Each address
    becomes an HMAC of the address under the tombstone key, held in a new `address_tombstones`
    table that the conflict check consults first (M open question 4). Then `directory` is scrubbed
-   the same way.
-5. **Root store.** Delete the org's `send_ledger` rows, then its `users.json` records, which hold
-   the password hashes, sealed TOTP secrets, recovery codes and PGP keys.
+   the same way. `subject_orgs` rows stay: they hold only opaque IDs, and they stop a subject from
+   ever joining another org.
+5. **Root store.** Through `user_orgs`, delete the org's rows in `send_ledger` and in R's
+   `sessions`, `auth_challenges` (by owner `user_id`), `import_jobs` and `session_revocations`.
+   Then delete its `users.json` records, which hold the password hashes, sealed TOTP secrets,
+   recovery codes and PGP keys. Its `user_orgs` rows go last, because every earlier step finds the
+   org's users through them.
 6. **Record the purge.** Write a platform audit line with the org ID and the row and file counts,
    and no content. Mark the `org_purges` row done.
 
@@ -509,8 +521,8 @@ Tenancy fits on top:
 | # | T requires | KyPost multi mode | Proof |
 |---|---|---|---|
 | 1 | Refuse a token without `org_id` | ID token, device-assertion token and logout token without `org_id` are refused. KyPost accepts no access token. | Token tests per input (Identity binding) |
-| 2 | Key every row by `org_id` | `org_id` on the two roots and on root-store aggregates. Every per-user and per-mailbox store is derived from its owning ID (K4, Store inventory). | `TestEveryStoreIsClassified` (Phased build plan, PR 1) |
-| 3 | Bind accounts to `(sub, org_id)` and refuse a known `sub` with a different `org_id` | Write-once `OrgID` and `directory.org_id`. A mismatch at sign-in, device sign-on, logout, webhook or peer call is refused like a wrong issuer. | Mismatch tests per input, `TestCrossOrgMatrix` |
+| 2 | Key every row by `org_id` | `org_id` on the two roots (`user_orgs`, `subject_orgs`). Every other store is derived from its owning ID (K3, K4, Store inventory). | `TestEveryStoreIsClassified` (Phased build plan, PR 1) |
+| 3 | Bind accounts to `(sub, org_id)` and refuse a known `sub` with a different `org_id` | Write-once `OrgID`, `user_orgs` and `subject_orgs`. A mismatch at sign-in, device sign-on, logout, webhook or peer call is refused like a wrong issuer. | Mismatch tests per input, `TestCrossOrgMatrix` |
 | 4 | Org only from a verified token, signed webhook or suite answer | `OrgID` is written only from the signed directory event. Sessions read it from the user record. Only staff org selection reads a header, and only after K7. | Identity-binding tests, `orgAdmit` scan |
 | 5 | Stop serving a non-`active` org; keep data unless `deleted` | Lifecycle table. The purge runs only on `deleted`. | Lifecycle tests (PR 5, PR 6) |
 | 6 | Enforce own quotas from `/api/suite/orgs` | Abuse limits table, from the `orgs` cache | Quota tests per limit (PR 5) |
@@ -539,7 +551,7 @@ PR 2 onward needs KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and web
 `/api/suite/orgs`).
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
-   the multi-only schema additions (`orgs`, `org_purges`, the `org_id` columns), `users.User.OrgID`
+   the multi-only side tables (`orgs`, `org_purges`, `user_orgs`, `subject_orgs`), `users.User.OrgID`
    (`omitempty`), and `KYPOST_STAFF_ORG_ID`. Tests:
    - `TestEveryStoreIsClassified` requires every table in every schema (`state`, `mailbox`,
      `ingress`, `cfreceiving`, `sso/authority_*`, and R's tables once merged) and every registered
@@ -549,7 +561,7 @@ PR 2 onward needs KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and web
      install and an R replica install, with `KYPOST_TENANCY` unset and with `single`.
    - The full `go test -race ./...` and the `postgres` job.
 2. **Identity binding.** `org_id` parsing and refusal for ID tokens, device-assertion tokens,
-   logout tokens and sync events. Write-once `OrgID` and `directory.org_id`, and the K7 admin rule.
+   logout tokens and sync events. Write-once `OrgID`, `user_orgs` and `subject_orgs`, and the K7 admin rule.
    Tests: each refusal, each mismatch, and the single-tenant sign-in golden path unchanged.
 3. **The org gate.** `AuthContext.OrgID`, `orgAdmit`, the hop list, `org_id` on peer bodies (in step
    with each peer's own spec), and the call-site scan. `TestCrossOrgMatrix` starts here and grows
