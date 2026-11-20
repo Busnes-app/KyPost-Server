@@ -62,7 +62,7 @@ drive the design:
 
 | # | Decision | Why |
 |---|---|---|
-| K1 | `KYPOST_TENANCY=single` (default) or `multi`. A multi install records `tenancy_mode=multi` in the root `state.db` `meta` at first start. A start whose mode differs from the record refuses to start. Single-tenant writes nothing: no record means single. The variable joins the replica configuration fingerprint (R `replica/config.go:35`). | Install-time, as T D1. Writing nothing keeps upgrades byte-for-byte unchanged. A replica started in the wrong mode must not serve. |
+| K1 | `KYPOST_TENANCY=single` (default) or `multi`. A multi install records `tenancy_mode=multi` in the root `state.db` `meta` at first start. A start whose mode differs from the record refuses to start. Single-tenant writes nothing: no record means single. The variable joins the replica configuration fingerprint (R `replica/config.go:35`), which cannot refuse an upgraded single-tenant replica (Replicas). | Install-time, as T D1. Writing nothing keeps upgrades byte-for-byte unchanged. A replica started in the wrong mode must not serve. |
 | K2 | **Multi-tenant requires** PostgreSQL (`KYPOST_DATABASE_URL`, `docs/CONFIGURATION.md:124`), native mail (`KYPOST_NATIVE_MAIL=true`), the v3 authority database, a configured KyIdentity issuer, and an **empty install** at first start. Converting a single-tenant install is out of scope, as in T. | T requires Postgres too (T D2). The external-IMAP profile and local accounts have no place in a hosted mail service (K6). Starting empty avoids a migration with no org to assign. |
 | K3 | Multi-tenant schema additions are created only by a multi install's first start. A single-tenant install never gets them, so its databases, `users.json` and every file stay byte-for-byte as they are. | This is the zero-change argument. T adds columns on both modes because its SQL is shared. KyPost's org-owned rows (below) are few, and every one of them sits in a store that only a multi install creates. |
 | K4 | The org is recorded on two roots only: `users.User.OrgID` (write-once, `omitempty`) and `org_id` on the authority `directory` and `accounts` rows. Every per-user and per-mailbox store is **derived**: it inherits the org of the ID that owns it. Cross-user aggregates in the root `state.db` (`send_ledger`, `agent_tokens`, `scheduled_sends`) carry `org_id` so per-org counts need no join. | Per-user data is already separated by user ID (above). Adding `org_id` to hundreds of per-user schemas would add a column nobody could set wrongly. The risk sits on the hops *between* users, so that is where the checks go (K5). |
@@ -84,7 +84,7 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | Store | Defined | Class | Reasoning |
 |---|---|---|---|
 | Root `state.db` `meta` | `state/schema.go:74-290` (SQLite), `state/pg_schema.go:11-69` | P | Settings, health, update dedup. Adds `tenancy_mode` (multi-only). |
-| Root `state.db` `agent_tokens` | `state/schema.go:269` | O (multi-only column) | Keyed by `user_id`. `org_id` lets suspension revoke an org's tokens in one statement. |
+| Root `state.db` `agent_tokens` | `state/schema.go:269` | O (multi-only column) | Keyed by `user_id`. `org_id` lets the purge delete an org's tokens in one statement. |
 | Root `state.db` `scheduled_sends` | `state/scheduled_sends.go`, `state/schema.go` | O (multi-only column) | Keyed by `user_id` and `mailbox`. A suspended org's due sends are held (open question 6). |
 | Root `state.db` `send_ledger` | `state/send_ledger.go:27-38` | O (multi-only column) | Counts the per-user quota today (`api/send_quota.go:25`). Per-org quotas sum it by `org_id`. |
 | Root `state.db` `backup_audit` | `state/schema.go` | P | Whole-install backups. |
@@ -377,7 +377,7 @@ The elected poller (K8) reads `/api/suite/orgs?since=<revision>` through ky-prim
 | Status | Sign-in and sessions | Sending | Receiving | Data |
 |---|---|---|---|---|
 | `active` | Normal | Normal | Normal | Kept |
-| `suspended` | Sign-in and device sign-on refused. All of the org's sessions are revoked: R `session_revocations` is bumped for each of its users, and `agent_tokens` rows are deleted by `org_id`. CardDAV and device requests are refused while the org is not `active`. | Outbox admission refuses. Queued and scheduled sends are held, not sent (open question 6). | `451` (Mail) | Kept, nothing changed |
+| `suspended` | Sign-in and device sign-on refused. All of the org's sessions are revoked: R `session_revocations` is bumped for each of its users. Sessions are short-lived and members sign in again on resume, as T does. Agent tokens, paired devices and CardDAV passwords are **kept but refused** while the org is not `active`: every auth path checks the org's status (Isolation). They work again on resume with nothing to re-issue. Only the purge deletes them. | Outbox admission refuses. Queued and scheduled sends are held, not sent (open question 6). | `451` (Mail) | Kept, nothing changed |
 | `deletion_scheduled` | As suspended | As suspended | `550` like unknown | Kept until `deleted` |
 | `deleted` | As suspended | As suspended | `550` like unknown | Purged |
 | Not in the cache | Refused | Refused | Temporary refusal | Kept |
@@ -443,6 +443,13 @@ Tenancy fits on top:
   fingerprint (R `replica/config.go:35`). A replica started with another mode or staff org
   refuses, and `accept-replica-config` (R `app/replica.go:143`) is the deliberate way to change
   them, which K1 refuses for the mode anyway.
+  - **Upgrade.** R's `Diff` counts a setting known on only one side as no difference, and merges
+    it into the record (R `replica/config.go:138-152`). An upgraded single-tenant replica install
+    therefore starts without `accept-replica-config`. The merge adds two entries to R's own
+    fingerprint record, as it does for any new shared setting. That is R's bookkeeping, not
+    behaviour. Unset values canonicalise to the empty string, so every replica agrees.
+  - PR 1's upgrade test starts an R-format replica install under the new binary. It must start
+    with no refusal, and nothing but the fingerprint record may change.
 - **Shared org state.** The `orgs` cache and `org_purges` live in the root `state.db` on
   PostgreSQL, so every replica answers from the same status. One elected runner polls and purges
   (R `worker/worker.go:49`).
@@ -573,7 +580,13 @@ PostgreSQL, and a measured capacity target (open question 8).
    - *Recommend (a)*, because no lock-in is a product promise. It needs a T change. Until it lands,
      (b).
 5. **When a stale entitlement cache fails closed.** *Recommend* 15 minutes for sign-in and sending
-   (the token lifetime). Receiving gives temporary refusals while stale, so no mail is lost.
+   (the token lifetime). Receiving keeps answering from the last known status, which is the
+   Lifecycle table's rule, so a poller outage changes no SMTP answer. That is safe:
+   - `deleted` is terminal (T "Account holder guard"), so its `550` cannot become wrong.
+   - Leaving `deletion_scheduled` or `suspended` takes a billing call, which the next good poll
+     applies.
+   - An `active` org keeps receiving, so no mail is lost.
+   - An org never seen by a good poll gets a temporary refusal.
 6. **Mail held during suspension.** *Recommend* holding queued sends without sending them. On
    resume, a scheduled send whose time has passed returns to Drafts, as R's Send delay does, rather
    than going out late without the user knowing.
