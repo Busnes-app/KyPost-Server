@@ -71,7 +71,8 @@ def main():
     elif command == "pin-key":
         username, password, key_file = sys.argv[4], os.environ["CUTOVER_PASSWORD"], sys.argv[5]
         secret, _ = c.secret(username, password)
-        key = open(key_file).read().strip()
+        with open(key_file) as f:
+            key = f.read().strip()
         status, body = c.call("POST", "/api/admin/backup/pin-key", {"authSecret": secret, "publicKey": key, "threshold": 2, "totalShares": 3})
         assert status == 200, f"pin-key: {status} {body.get('error', '')}"
     elif command == "backup-now":

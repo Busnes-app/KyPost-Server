@@ -288,7 +288,7 @@ func (s *Store) Serialized(ctx context.Context, name string, work func(context.C
 // Closing the descriptor (or process exit) releases it; the inode is never unlinked.
 func withFlock(ctx context.Context, dbPath, name string, work func(context.Context) error) (bool, error) {
 	path := fmt.Sprintf("%s.%x.lock", dbPath, sha256.Sum256([]byte(name)))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return false, err
 	}
