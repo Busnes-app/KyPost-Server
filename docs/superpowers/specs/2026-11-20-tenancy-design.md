@@ -582,7 +582,7 @@ PR 2 onward needs KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and web
 `/api/suite/orgs`).
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
-   the multi-only side tables (`orgs`, `org_purges`, `user_orgs`, `subject_orgs`), `users.User.OrgID`
+   the multi-only side tables (`orgs`, `user_orgs`, `subject_orgs`; PR 6 adds the purge tables), `users.User.OrgID`
    (`omitempty`), and `KYPOST_STAFF_ORG_ID`. Tests:
    - `TestEveryStoreIsClassified` requires every table in every schema (`state`, `mailbox`,
      `ingress`, `cfreceiving`, `sso/authority_*`, and R's tables once merged) and every registered
@@ -605,7 +605,7 @@ PR 2 onward needs KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and web
    against each surface, the stale-cache bound, each quota, two replicas seeing one suspension
    (R's PostgreSQL job), and staff still reaching the console with the poller failing and the
    staff org absent from the cache.
-6. **Purge.** `org_purges`, the purge steps, the tombstone key, the `address_tombstones` table, and
+6. **Purge.** Creates `org_purges` and the `org_purge_members` snapshot table (Lifecycle), the purge steps, the tombstone key, the `address_tombstones` table, and
    the named trigger exception (after the owner's answer to open question 9). Tests: a purge killed
    at every step resumes and finishes; nothing of the org remains, checked against the
    classification; tombstones refuse reuse, including after a restore with the same key.
