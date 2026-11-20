@@ -17,10 +17,10 @@ const { ensureCert } = await mod('tls.js');
 const env = process.env;
 const { key, cert } = ensureCert({ keyDir: env.TLS_KEY_DIR, publishDir: env.TLS_PUBLISH_DIR, hostnames: [], ips: [], log: () => {} });
 const allowed = new Set(env.ALLOWED_CLIENT_IPS.split(','));
-// Client-supplied values reach the log; flatten line breaks so they can't forge entries.
+// Client-supplied values reach the log; drop line breaks so they can't forge entries.
 const log = (...a) => {
   const line = a.map((v) => (typeof v === 'string' ? v : inspect(v))).join(' ');
-  console.log(`${new Date().toISOString()} smtps ${line.replace(/\n|\r/g, ' ')}`);
+  console.log(`${new Date().toISOString()} smtps ${line.replace(/\r/g, '').replace(/\n/g, '')}`);
 };
 const server = tls.createServer({ key, cert, minVersion: 'TLSv1.2' }, (socket) => {
   socket.on('error', (e) => log('socket error', e.message));
