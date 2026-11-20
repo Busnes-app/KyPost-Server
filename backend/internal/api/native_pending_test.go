@@ -423,51 +423,93 @@ func TestStaleApprovingClaimIsReclaimable(t *testing.T) {
 
 // When the final pendingEdit fails after persisting the device (for example a
 // PostgreSQL store error), approval must return 503 rather than silently report
-// 200 OK; once the store recovers and the claim lapses, retrying finishes it.
+// 200 OK. Once the store recovers and the claim lapses, retrying finishes it,
+// and denying instead revokes the partially persisted credential.
 func TestApproveReturnsUnavailableWhenFinalPendingUpdateFails(t *testing.T) {
-	srv, u := newPendingServer(t)
-	sharedDir := t.TempDir()
-	shared, err := state.New(sharedDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv.UseSharedState(shared)
-
-	_, reg := webPairAndRegister(t, srv, u.ID, "phone-final-edit-fail")
-	srv.nativeApproveBeforePersist = func() {
-		srv.nativeApproveBeforePersist = nil
-		_ = shared.Close()
-	}
-
-	if rec := decide(t, srv, u.ID, reg.DeviceID, "approve"); rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("approve with failing final pendingEdit = %d %s, want 503", rec.Code, rec.Body.String())
-	}
-
-	reopened, err := state.New(sharedDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = reopened.Close() })
-	srv.UseSharedState(reopened)
-
-	// Simulate the claim lease expiring after the failed update so the owner can retry.
-	srv.pairingMu.Lock()
-	ok := srv.pendingEdit(reg.DeviceID, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
-		if !found {
-			return rowKeep, false
+	failFinalEdit := func(t *testing.T, deviceID string) (*Server, string, pendingRegistration) {
+		t.Helper()
+		srv, u := newPendingServer(t)
+		sharedDir := t.TempDir()
+		shared, err := state.New(sharedDir)
+		if err != nil {
+			t.Fatal(err)
 		}
-		v.ApprovingUntil = time.Now().UTC().Add(-time.Second)
-		return rowWrite, true
-	})
-	srv.pairingMu.Unlock()
-	if !ok {
-		t.Fatal("pending entry missing after failed final edit")
+		srv.UseSharedState(shared)
+
+		_, reg := webPairAndRegister(t, srv, u.ID, deviceID)
+		srv.nativeApproveBeforePersist = func() {
+			srv.nativeApproveBeforePersist = nil
+			_ = shared.Close()
+		}
+
+		if rec := decide(t, srv, u.ID, reg.DeviceID, "approve"); rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("approve with failing final pendingEdit = %d %s, want 503", rec.Code, rec.Body.String())
+		}
+
+		reopened, err := state.New(sharedDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = reopened.Close() })
+		srv.UseSharedState(reopened)
+
+		// Simulate the claim lease expiring after the failed update.
+		srv.pairingMu.Lock()
+		ok := srv.pendingEdit(reg.DeviceID, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
+			if !found {
+				return rowKeep, false
+			}
+			v.ApprovingUntil = time.Now().UTC().Add(-time.Second)
+			return rowWrite, true
+		})
+		srv.pairingMu.Unlock()
+		if !ok {
+			t.Fatal("pending entry missing after failed final edit")
+		}
+		return srv, u.ID, reg
 	}
 
-	if rec := decide(t, srv, u.ID, reg.DeviceID, "approve"); rec.Code != http.StatusOK {
-		t.Fatalf("retry approve after store recovery = %d %s", rec.Code, rec.Body.String())
-	}
-	if st := pairingStatus(srv, reg.DeviceID, reg.DeviceSecret); st.Code != http.StatusOK || !strings.Contains(st.Body.String(), `"status":"approved"`) {
-		t.Fatalf("status after retry approve = %d %s", st.Code, st.Body.String())
-	}
+	t.Run("retry approve completes after recovery", func(t *testing.T) {
+		srv, userID, reg := failFinalEdit(t, "phone-final-edit-retry")
+		if rec := decide(t, srv, userID, reg.DeviceID, "approve"); rec.Code != http.StatusOK {
+			t.Fatalf("retry approve after store recovery = %d %s", rec.Code, rec.Body.String())
+		}
+		if st := pairingStatus(srv, reg.DeviceID, reg.DeviceSecret); st.Code != http.StatusOK || !strings.Contains(st.Body.String(), `"status":"approved"`) {
+			t.Fatalf("status after retry approve = %d %s", st.Code, st.Body.String())
+		}
+		if got := deviceCall(srv, "/api/notifications/native/pull", reg.DeviceID, reg.DeviceSecret); got.Code != http.StatusOK {
+			t.Fatalf("approved device pull = %d %s, want 200", got.Code, got.Body.String())
+		}
+	})
+
+	t.Run("deny revokes partially persisted credential", func(t *testing.T) {
+		srv, userID, reg := failFinalEdit(t, "phone-final-edit-deny")
+
+		// Another legitimately paired device on the same account must remain untouched.
+		_, existing := webPairAndRegister(t, srv, userID, "phone-already-paired")
+		if rec := decide(t, srv, userID, existing.DeviceID, "approve"); rec.Code != http.StatusOK {
+			t.Fatalf("approve existing device = %d %s", rec.Code, rec.Body.String())
+		}
+
+		// Confirm the failed approval left a usable persisted credential before denial.
+		if got := deviceCall(srv, "/api/notifications/native/pull", reg.DeviceID, reg.DeviceSecret); got.Code != http.StatusOK {
+			t.Fatalf("expected persisted credential before deny to work, got %d %s", got.Code, got.Body.String())
+		}
+
+		if rec := decide(t, srv, userID, reg.DeviceID, "deny"); rec.Code != http.StatusOK {
+			t.Fatalf("deny after store recovery = %d %s", rec.Code, rec.Body.String())
+		}
+		if st := pairingStatus(srv, reg.DeviceID, reg.DeviceSecret); st.Code != http.StatusGone {
+			t.Fatalf("status after deny = %d, want 410", st.Code)
+		}
+		if got := deviceCall(srv, "/api/notifications/native/pull", reg.DeviceID, reg.DeviceSecret); got.Code != http.StatusUnauthorized {
+			t.Fatalf("denied device pull = %d, want 401", got.Code)
+		}
+		if got := deviceCall(srv, "/api/inbox?mailbox=INBOX", reg.DeviceID, reg.DeviceSecret); got.Code != http.StatusUnauthorized {
+			t.Fatalf("denied device inbox = %d, want 401", got.Code)
+		}
+		if got := deviceCall(srv, "/api/notifications/native/pull", existing.DeviceID, existing.DeviceSecret); got.Code != http.StatusOK {
+			t.Fatalf("existing paired device pull after denying another = %d, want 200", got.Code)
+		}
+	})
 }

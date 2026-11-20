@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -417,7 +418,8 @@ func (s *Server) handleNativePendingApprove(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deviceId": registeredID, "devices": devices})
 }
 
-// handleNativePendingDeny deletes the signed-in user's pending device at once.
+// handleNativePendingDeny deletes the signed-in user's pending device at once,
+// revoking any persisted credential left behind by an interrupted approval.
 func (s *Server) handleNativePendingDeny(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)
 	if !ok {
@@ -427,16 +429,66 @@ func (s *Server) handleNativePendingDeny(w http.ResponseWriter, r *http.Request)
 	id := strings.TrimSpace(r.PathValue("deviceId"))
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
+	// Serialize denial against in-flight approval and revocation across replicas.
+	release, err := s.holdUserPairing(r.Context(), ac.UserID)
+	if err != nil {
+		writeUnavailable(w)
+		return
+	}
+	defer release()
 	denyAt := time.Now().UTC()
+	p, found := s.pendingGet(id, denyAt)
+	if !found || p.OwnerID != ac.UserID || p.ApprovedID != "" || p.approving(denyAt) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no device with that id is waiting for approval; it may have expired"})
+		return
+	}
+	if err := s.revokePendingDevice(ac.UserID, p.Device.SecretHash); err != nil {
+		s.logger.Error("native device denial failed to revoke persisted credential", "user_id", ac.UserID, "device_id", id, "error", err.Error())
+		http.Error(w, "failed to revoke pending device", http.StatusInternalServerError)
+		return
+	}
 	if !s.pendingEdit(id, denyAt, func(v *pendingDevice, found bool) (rowEdit, bool) {
 		if !found || v.OwnerID != ac.UserID || v.ApprovedID != "" || v.approving(denyAt) {
 			return rowKeep, false
 		}
 		return rowDrop, true
 	}) {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no device with that id is waiting for approval; it may have expired"})
+		writeUnavailable(w)
 		return
 	}
 	s.logger.Info("native device pairing denied", "user_id", ac.UserID, "device_id", id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// revokePendingDevice removes any persisted native device carrying secretHash
+// for userID, handling an approval that persisted the device before failing to
+// update its pending record. Matching on SecretHash avoids disturbing any
+// already-paired device with a different credential. Caller holds pairingMu.
+func (s *Server) revokePendingDevice(userID, secretHash string) error {
+	if secretHash == "" {
+		return nil
+	}
+	store, err := s.userStore(userID)
+	if err != nil {
+		return err
+	}
+	devices, err := store.ListNativeDevicesStrict()
+	if err != nil {
+		return err
+	}
+	for _, d := range devices {
+		if subtle.ConstantTimeCompare([]byte(d.SecretHash), []byte(secretHash)) != 1 {
+			continue
+		}
+		removed, err := store.RemoveNativeDevice(d.DeviceID)
+		if err != nil {
+			return err
+		}
+		if removed {
+			s.userMu.Lock()
+			delete(s.deviceIndex, d.DeviceID)
+			s.userMu.Unlock()
+		}
+	}
+	return nil
 }
