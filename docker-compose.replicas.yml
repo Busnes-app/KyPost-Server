@@ -31,8 +31,9 @@ services:
       # One shared Ollama service; the replicas start none of their own.
       OLLAMA_BASE_URL: http://ollama:11434
       # HAProxy talks plain HTTP to the replicas and publishes cleartext: TLS ends in a proxy
-      # in front of it. A replica with a certificate would fail every readiness check.
-      TLS_CERT_FILE: ${TLS_CERT_FILE:+${KYPOST_TLS_WITH_REPLICAS:?TLS_CERT_FILE cannot be used with docker-compose.replicas.yml - HAProxy publishes cleartext and speaks HTTP to the replicas; end TLS in a proxy in front of HAProxy and unset TLS_CERT_FILE (docs/RUNNING.md, Replicas on one host)}}
+      # in front of it. A replica with a certificate would fail every readiness check. The
+      # name below exists only to carry the refusal; never set it (it would pass the file on).
+      TLS_CERT_FILE: ${TLS_CERT_FILE:+${KYPOST_REPLICAS_REFUSE_TLS_NEVER_SET:?TLS_CERT_FILE cannot be used with docker-compose.replicas.yml - HAProxy publishes cleartext and speaks HTTP to the replicas; end TLS in a proxy in front of HAProxy and unset TLS_CERT_FILE (docs/RUNNING.md, Replicas on one host)}}
       TLS_KEY_FILE: ""
     # The three data volumes are shared: every replica on this host mounts the same ones
     # (checked at startup through replica-volume.id). Logs and the model cache are not.
@@ -99,7 +100,7 @@ services:
     # default, and non-loopback cleartext needs ALLOW_INSECURE_HTTP=true (checked by the
     # replicas at startup, which see the same value).
     ports:
-      - "${KYPOST_BIND:?set KYPOST_BIND in .env — 127.0.0.1 for a proxy on this host, your LAN IP for a proxy elsewhere, or 0.0.0.0 to deliberately publish on every interface (always cleartext with replicas)}:5866:5866"
+      - "${KYPOST_BIND:?set KYPOST_BIND in .env — where HAProxy publishes cleartext: 127.0.0.1 for this host only, your LAN IP, or 0.0.0.0 for every interface. A TLS proxy in front must run in a container on kypost-net (docs/RUNNING.md, Replicas on one host)}:5866:5866"
     networks:
       # The single container's address and name, so a TLS proxy pointed at either
       # (http://KyPost-Server:5866 is the documented target) reaches HAProxy unchanged.

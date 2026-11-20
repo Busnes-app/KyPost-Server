@@ -55,6 +55,10 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
 - Encrypted domain relay configuration and its matching dedicated master key. Collection and drills decrypt the collected bytes and check the historical domain/issuer binding. A missing or corrupt key refuses backup; see [relay recovery](DOMAIN_RELAY.md#storage-recovery-and-activation).
 
 - Configuration and accounts, including opaque client-wrapped PGP keys.
+- An IMAP import started in the 10 minutes before a backup: its grant row (PostgreSQL) holds the
+  provider password sealed under `SECRET_DIR/imap-import.key`, and the capsule carries both. A
+  restore clears the row, so it is never used again; anyone holding the capsule and the kit
+  could open it.
 - Deployment secrets in SECRET_DIR, including totp-secret.key, which seals the
   KyRecovery token under a distinct derivation label. Never replace this key.
 - Install-wide and per-user state.db snapshots including committed WAL rows,

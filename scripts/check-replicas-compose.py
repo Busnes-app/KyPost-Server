@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Render docker-compose.replicas.yml merges with synthetic inputs and check the replica
 profile's contract; start no containers."""
+import base64
+import hashlib
 import json
 import os
 import re
@@ -91,8 +93,9 @@ print("PASS replicas: HAProxy probes /readyz and its timeouts are the proxy tabl
 # Only the edge proxy may name the client or the scheme: HAProxy drops those headers from
 # every other source, and with no edge the ACL matches no TCP source at all.
 assert 'acl from_edge src "${KYPOST_EDGE_TRUSTED_PROXY}"' in cfg, "HAProxy has no edge-proxy ACL"
-for header in ("X-Forwarded-For", "CF-Connecting-IP", "X-Forwarded-Proto"):
+for header in ("X-Forwarded-For", "X-Forwarded-Proto"):
     assert f"http-request del-header {header} unless from_edge" in cfg, f"HAProxy passes a client's {header} through"
+assert "http-request set-header CF-Connecting-IP %[src] unless from_edge" in cfg, "HAProxy passes a client's CF-Connecting-IP through"
 edge = proxy["environment"].get("KYPOST_EDGE_TRUSTED_PROXY")
 assert edge == "255.255.255.255", f"with no edge set HAProxy must trust no source, got {edge}"
 print("PASS replicas: HAProxy keeps forwarded client headers only from the edge proxy")
@@ -102,11 +105,17 @@ page = (root / "deploy/replicas/503.http").read_bytes()
 assert "errorfile 503 /usr/local/etc/haproxy/503.http" in cfg and page.startswith(b"HTTP/1.1 503 ") and b"Retry-After:" in page and b"You have not been signed out" in page
 head, body = page.split(b"\n\n", 1)
 assert f"Content-Length: {len(body)}".encode() in head, "503.http Content-Length is wrong"
+assert b'<meta name="color-scheme" content="light dark">' in body, "503.http does not follow the browser's dark mode"
+inline = re.search(rb"<style>(.*?)</style>", body).group(1)
+digest = base64.b64encode(hashlib.sha256(inline).digest())
+assert b"style-src 'sha256-" + digest + b"'" in head, "503.http's CSP hash does not match its style"
 print("PASS replicas: HAProxy's 503 is KyPost's unavailable page")
 
 # TLS ends in front of HAProxy: a certificate on the replicas is refused, by name.
 result = compose(files, base_env | required | {"TLS_CERT_FILE": "/kypost/config/tls/cert.pem"})
 assert result.returncode != 0 and "TLS_CERT_FILE cannot be used with docker-compose.replicas.yml" in result.stderr, f"TLS_CERT_FILE rendered with replicas: {result.stderr}"
+sentinel = re.search(r"TLS_CERT_FILE: \$\{TLS_CERT_FILE:\+\$\{([A-Z_]+):\?", (root / "docker-compose.replicas.yml").read_text()).group(1)
+assert sentinel not in (root / ".env.example").read_text() and sentinel not in (root / "docs/RUNNING.md").read_text(), f"{sentinel} must never be offered as a setting"
 assert app["environment"].get("TLS_CERT_FILE", "") == "", "replicas would serve TLS that HAProxy cannot read"
 print("PASS replicas: TLS_CERT_FILE is refused with a message")
 
@@ -126,7 +135,19 @@ assert "docker compose pull && docker compose stop kypost-server && docker compo
 for step in ("createdb -U kypost kypost_restored", "/usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered",
              'find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"'):
     assert step in running and step in cutover, f"the replica restore step {step!r} is not both documented and run by the cutover check"
+backup_step = "tar -cf /restore/keep.tar -C /kypost config private state"
+assert backup_step in running and backup_step in cutover and running.index(backup_step) < running.index('find "/kypost/$r" -mindepth 1 -delete'), "the restore must copy the volumes before the step that empties them"
+assert "remove `./restore`" in running, "RUNNING.md must say to remove ./restore (it holds every private key unencrypted)"
 print("PASS replicas: RUNNING.md's start, upgrade and restore commands match what the cutover check runs")
+
+# A TLS proxy on the host cannot be the edge: the docs say so in every place that offers it.
+proxies = (root / "docs/Reverse_Proxy_Networking.md").read_text()
+host_row = next(line for line in proxies.splitlines() if "on the host, via `127.0.0.1:5866`" in line)
+assert "single container only" in host_row, "Reverse_Proxy_Networking.md offers a host proxy without 'single container only'"
+bind = next(line for line in (root / "docker-compose.replicas.yml").read_text().splitlines() if "KYPOST_BIND:?" in line)
+assert bind and "proxy on this host" not in bind and "container on kypost-net" in bind, f"the overlay's KYPOST_BIND message offers a host proxy: {bind}"
+assert "A TLS proxy on the host" in running, "RUNNING.md must tell a host-proxy admin what to do"
+print("PASS replicas: a TLS proxy on the host is single-container only, everywhere it is offered")
 
 for overlay in ["docker-compose.receiving.yml", "docker-compose.rspamd.yml", "docker-compose.lan-dns.yml"]:
     chain = ["docker-compose.yml", overlay, "docker-compose.replicas.yml"]

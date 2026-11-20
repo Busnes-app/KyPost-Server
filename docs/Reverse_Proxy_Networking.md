@@ -19,7 +19,7 @@ failures from anyone locks out everyone.
 Put the proxy on `kypost-net` and address the container by name. Container-to-
 container traffic ignores published ports, so nothing needs publishing at all.
 
-Verify with `GET /api/status`: `clientIp` must be your own public address and
+Verify, signed in, with `GET /api/status`: `clientIp` must be your own public address and
 `proxyHeadersTrusted` must be `true`. Do not assume — check.
 
 ## Trusting the proxy
@@ -34,7 +34,7 @@ client pick its own address.
 | nginx or Caddy container on `kypost-net` | its pinned address, e.g. `10.89.0.10/32` | `x-forwarded-for` |
 | cloudflared container on `kypost-net` | its pinned address | `cf-connecting-ip` |
 | cloudflared → nginx → KyPost | nginx's address | `cf-connecting-ip` |
-| nginx or cloudflared on the host, via `127.0.0.1:5866` | `10.89.0.1/32` | as above |
+| nginx or cloudflared on the host, via `127.0.0.1:5866` (single container only; with replicas move it into a container on `kypost-net`) | `10.89.0.1/32` | as above |
 | Cloudflare proxied DNS (CDN) → nginx → KyPost | nginx's address | `x-forwarded-for`, with nginx restoring the visitor address (below) |
 
 - nginx with `x-forwarded-for`: `proxy_set_header X-Forwarded-For $remote_addr;`.

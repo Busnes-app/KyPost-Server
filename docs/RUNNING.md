@@ -310,13 +310,21 @@ else is per container.
    `X-Forwarded-For`). Behind a TLS proxy (nginx, Nginx Proxy Manager, Caddy, cloudflared),
    run that proxy on `kypost-net` with a fixed address and set `KYPOST_EDGE_TRUSTED_PROXY`
    to it: HAProxy keeps `X-Forwarded-For`, `CF-Connecting-IP` and `X-Forwarded-Proto` only
-   from that address and drops them from everyone else, and the replicas take the client as
+   from that address; from everyone else it drops them (and sets `CF-Connecting-IP` to the
+   caller's own address), and the replicas take the client as
    the right-most address that is neither proxy. Never the network gateway: a proxy on the
    host reaches HAProxy from the gateway, which every other host-side caller shares, so it
    cannot be told apart and its forwarded addresses are dropped (every user would share one
-   lockout bucket). Check it: `GET /api/status` through your proxy shows your own address as
-   `clientIp`. `KYPOST_BIND` now gates HAProxy's publish, with the same rules as before.
-3. `docker compose up -d --wait`. Your proxy's target (`http://KyPost-Server:5866` or
+   lockout bucket). Check it: signed in, `GET /api/status` through your proxy shows your own
+   address as `clientIp`; the gateway (`.1` of `KYPOST_SUBNET`) means every user shares one
+   lockout. `KYPOST_BIND` now gates HAProxy's publish, with the same rules as before.
+   - **A TLS proxy on the host** (an nginx or Caddy package, a systemd cloudflared) or on
+     another host: move it into a container on `kypost-net` with a fixed address before the
+     cutover, or stay on the single container. With replicas, `TRUSTED_PROXY_CIDRS` from
+     `.env` is not used.
+3. `docker compose pull`, then `docker compose up -d --wait`: the first start downloads the
+   shared Ollama image (several GB, even with AI sorting off), and `--wait` shows no progress
+   while it does. Your proxy's target (`http://KyPost-Server:5866` or
    `KYPOST_IP`) now reaches HAProxy unchanged. For AI sorting, the shared Ollama uses the
    same model folder as the single container (`OLLAMA_MODELS_HOST_DIR`, by default
    `./share/ollama/models`), so a migrated install already has the model; otherwise pull it
@@ -329,10 +337,12 @@ settings that differ.
 
 **Upgrades** stop every replica, because mixed versions are not supported:
 `docker compose pull && docker compose stop kypost-server && docker compose up -d --wait`.
-That is a full outage: 14 to 21 seconds measured (two runs) for two replicas on the test
-host with the image already pulled (stop, then start and ready), and longer while a backup drains (up to 16
-minutes). `./scripts/update-host.sh` is for the single container: with replicas it refuses
-and prints these commands. A release that changes a shared setting's default also needs
+That is a full outage: the command took 14 to 21 seconds in five runs for two replicas on
+the test host with the image already pulled (stop, then start and ready; the outage users see
+is shorter), and longer while a backup drains (up to 16 minutes). `./scripts/update-host.sh`
+is for the single container: with replicas it refuses and prints these commands, so
+automatic updates stop too. Disable the timer
+(`systemctl --user disable --now kypost-update.timer`) and upgrade by hand. A release that changes a shared setting's default also needs
 `accept-replica-config` (below) after the replicas stop.
 
 **Shared and per-host settings.** Every replica must have the same shared settings: the
@@ -362,18 +372,25 @@ restore checks out. The cutover check (`scripts/check-replica-cutover.sh`) runs 
      /usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered
    ```
 
-   `./restore` must be writable by the container's `kypost` user. This loads the databases
-   into `kypost_restored` and writes the files to `./restore/recovered`.
-4. Keep a copy of the three volumes, then replace their contents with `recovered/config`,
-   `recovered/private` and `recovered/state`:
+   `./restore` must be writable by the container's `kypost` user, UID 1000
+   (`mkdir -p restore && sudo chown 1000:1000 restore`, then copy the capsule in). This loads
+   the databases into `kypost_restored` and writes the files to `./restore/recovered`.
+4. Copy the three volumes into `./restore/keep.tar` first (the next command empties them), then
+   replace their contents with `recovered/config`, `recovered/private` and `recovered/state`:
+
+   ```bash
+   docker compose run --rm --no-deps --user kypost -v "$PWD/restore:/restore" --entrypoint sh kypost-server \
+     -c 'tar -cf /restore/keep.tar -C /kypost config private state'
+   ```
 
    ```bash
    docker compose run --rm --no-deps --user kypost -v "$PWD/restore:/restore" --entrypoint sh kypost-server \
      -c 'for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"; done'
    ```
 5. `docker compose up -d --wait`, then sign in again: the restore cleared every session. The
-   first replica records new volume IDs and settings. Drop the old database only after the
-   restored deployment checks out.
+   first replica records new volume IDs and settings. Once the restored deployment checks out,
+   drop the old database and remove `./restore`: `keep.tar` and `recovered` hold every
+   private key unencrypted.
 
 ### Drain and readiness
 

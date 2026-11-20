@@ -150,8 +150,9 @@ done
 # edge proxy's is used, and the edge reaches HAProxy by the single container's name.
 client_ip() { python3 -c 'import json, sys; print(json.load(sys.stdin)["clientIp"])'; }
 forged=$(curl -fsS --max-time 10 -H "Cookie: kypost_session=${cookie}" -H 'CF-Connecting-IP: 203.0.113.9' "$base/api/status" | client_ip)
-if [ "$forged" = 203.0.113.9 ]; then
-  echo "a direct caller chose its own client address with CF-Connecting-IP" >&2
+# A caller on this host arrives from the kypost-net gateway; HAProxy stamps that as its address.
+if [ "$forged" != "10.199.${net}.1" ]; then
+  echo "a direct caller's CF-Connecting-IP read as $forged, not its own address 10.199.${net}.1" >&2
   exit 1
 fi
 edged=$(docker run --rm --name "$project-edge" --network "${project}-net" --ip "$edge_ip" --entrypoint curl "$image" \
@@ -194,6 +195,9 @@ docker volume create "${project}_restore" >/dev/null
 sed -i "s|^KYPOST_DATABASE_URL=.*|KYPOST_DATABASE_URL=postgres://kypost:${pg_pw}@postgres:5432/kypost_restored?sslmode=disable|" "$work/env"
 "${replicas[@]}" run --rm --no-deps -T --user kypost -v "${project}_restore:/restore" kypost-server \
   /usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered <testdata/cutover-recovery-test-shares.txt >"$work/restore.out"
+# The volumes are copied before the step that empties them, and the copy holds them.
+"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server \
+  -c 'tar -cf /restore/keep.tar -C /kypost config private state && tar -tf /restore/keep.tar | grep -q "^private/totp-secret.key$"'
 # shellcheck disable=SC2016 # expanded by the container's shell
 "${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server \
   -c 'for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"; done'
