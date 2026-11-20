@@ -29,10 +29,21 @@ MADDY_SHA=6ea4b951f15b91fd81d98957e4d4bad7a0cec6d6e1d66b011c765cc9a14e05db
 die() { echo "native-mail-harness: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "missing $1"; }
 
+# The network namespace up created, if it can still be alive: recorded in this
+# boot and never the host's own. A PID alone can be reused by a host process.
+harness_ns() {
+  local ns
+  ns=$(cat "$HOST_DIR/ns.net" 2>/dev/null) || return 1
+  [ "$(cat "$HOST_DIR/ns.boot" 2>/dev/null)" = "$(cat /proc/sys/kernel/random/boot_id)" ] || return 1
+  [ "$ns" != "$(readlink /proc/self/ns/net)" ] || return 1
+  echo "$ns"
+}
+
 holder_pid() {
-  local p
+  local p ns
+  ns=$(harness_ns) || die "not running in this boot (see $HOST_DIR); run down, then up"
   p=$(cat "$HOST_DIR/ns.pid" 2>/dev/null) || die "not running (no $HOST_DIR/ns.pid); run up first"
-  kill -0 "$p" 2>/dev/null || die "namespace holder $p is gone; run down, then up"
+  [ "$(readlink "/proc/$p/ns/net" 2>/dev/null)" = "$ns" ] || die "namespace holder $p is gone; run down, then up"
   echo "$p"
 }
 
@@ -40,7 +51,9 @@ holder_pid() {
 # KPH_INSIDE marks commands already in the namespace (drivers calling send/relay-sent).
 ns_root() {
   if [ -n "${KPH_INSIDE:-}" ]; then "$@"; return; fi
-  KPH_INSIDE=1 nsenter -t "$(holder_pid)" -U -n -m --preserve-credentials --wd="$PWD" -- "$@"
+  local p
+  p=$(holder_pid) || exit 1
+  KPH_INSIDE=1 nsenter -t "$p" -U -n -m --preserve-credentials --wd="$PWD" -- "$@"
 }
 # ... or as uid 1000 in a nested user namespace, which is how every service runs.
 ns_user() {
@@ -288,7 +301,7 @@ cmd_up() {
   openssl rand -base64 32 | tr -d '\n' >"$HOST_DIR/secrets/pairing"
   # The holder keeps the namespaces alive; everything else joins them.
   # shellcheck disable=SC2016 # expanded by the inner bash
-  KPH_FIXTURE=$KPH_FIXTURE KPH_KYIDENTITY_SRC=$KPH_KYIDENTITY_SRC setsid unshare -rmn -- bash -c 'echo $$ >"$1/ns.pid"; bash "$2" _inner_up "$1" || echo failed >"$1/run/failed"; exec sleep infinity' \
+  KPH_FIXTURE=$KPH_FIXTURE KPH_KYIDENTITY_SRC=$KPH_KYIDENTITY_SRC setsid unshare -rmn -- bash -c 'echo $$ >"$1/ns.pid"; readlink /proc/self/ns/net >"$1/ns.net"; cat /proc/sys/kernel/random/boot_id >"$1/ns.boot"; bash "$2" _inner_up "$1" || echo failed >"$1/run/failed"; exec sleep infinity' \
     _ "$HOST_DIR" "$0" >"$HOST_DIR/logs/harness.log" 2>&1 &
   for _ in $(seq 240); do
     [ -f "$HOST_DIR/run/ready" ] && { echo "up: $KYPOST_ORIGIN (inside the namespace); state in $HOST_DIR"; return 0; }
@@ -300,12 +313,12 @@ cmd_up() {
 }
 
 cmd_down() {
-  local p ns q
+  local ns q
   [ -e "$HOST_DIR" ] || { echo "down: nothing at $HOST_DIR"; return 0; }
   [ -f "$HOST_DIR/.kypost-native-harness" ] || die "$HOST_DIR is not a harness state directory; not deleting it"
-  if p=$(cat "$HOST_DIR/ns.pid" 2>/dev/null) && ns=$(readlink "/proc/$p/ns/net" 2>/dev/null); then
-    # Every harness process, whichever session started it, shares the holder's
-    # network namespace; nothing else does.
+  if ns=$(harness_ns); then
+    # Every harness process, whichever session started it, shares this network
+    # namespace; nothing else does. It outlives the holder if services survive it.
     for sig in TERM KILL; do
       for q in $(pgrep -u "$(id -u)"); do
         # It may already have exited (TERM cascades); that must not stop the teardown.
@@ -313,6 +326,8 @@ cmd_down() {
       done
       [ $sig = TERM ] && sleep 5
     done
+  else
+    echo "down: no harness namespace from this boot; nothing to stop"
   fi
   rm -rf "$HOST_DIR"
   echo "down: removed $HOST_DIR"
