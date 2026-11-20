@@ -373,16 +373,18 @@ func runDaemon(ctx context.Context, d runDeps) error {
 // phishing, heartbeat, WKD recheck, retention cleanup), the classifier warmup and the backup
 // schedule. Standby daemons idle until they win the role.
 func runDaemonRole(owned context.Context, d runDeps, backups *sync.WaitGroup) error {
-	receivingDone, err := startReceivingImport(owned, d)
+	roleCtx, cancel := context.WithCancel(owned)
+	defer cancel()
+	receivingDone, err := startReceivingImport(roleCtx, d)
 	if err != nil {
 		return err
 	}
-	defer func() { <-receivingDone }()
-	cloudflareDone, err := startCloudflareReceiving(owned, d)
+	defer func() { cancel(); <-receivingDone }()
+	cloudflareDone, err := startCloudflareReceiving(roleCtx, d)
 	if err != nil {
 		return err
 	}
-	defer func() { <-cloudflareDone }()
+	defer func() { cancel(); <-cloudflareDone }()
 	classifierClient := newClassifierClient(d.cfg)
 	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, classifierClient, d.wkdStore)
 	if err != nil {
@@ -393,15 +395,17 @@ func runDaemonRole(owned context.Context, d runDeps, backups *sync.WaitGroup) er
 	if d.nativeMail {
 		poller.EnableNativeMail()
 	}
-	warmupDone, err := startClassifier(owned, d, classifierClient, poller)
+	warmupDone, err := startClassifier(roleCtx, d, classifierClient, poller)
 	if err != nil {
 		return err
 	}
-	backupDone, err := startBackupLoop(owned, d, backups)
+	backupDone, err := startBackupLoop(roleCtx, d, backups)
 	if err != nil {
+		cancel()
+		awaitWarmup(d.logger, warmupDone)
 		return err
 	}
-	defer func() { <-backupDone }()
+	defer func() { cancel(); <-backupDone }()
 	poller.Start()
 	d.logger.Info("poller goroutine started")
 	<-owned.Done()
