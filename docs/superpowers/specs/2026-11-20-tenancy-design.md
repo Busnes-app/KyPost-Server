@@ -247,10 +247,21 @@ that builds a multi install from fixtures:
 
 The org therefore comes only from a verified token, a signed webhook or a suite answer (T point 4).
 `users.User.OrgID` is written only by provisioning from the signed directory event, and only once.
-A later write with a different value returns an error from the users store. Provisioning writes
-`user_orgs` first, then `users.json`, with the same value. A retry after a crash between the two
-writes the same value again and converges. A user whose two records disagree is refused at
-sign-in, as a mismatch is.
+A later write with a different value returns an error from the users store. The two records are written in a
+fixed order, so a retry always converges:
+
+1. `subject_orgs` first, from the signed event. Its `(issuer, subject)` key is the idempotency key.
+2. Then the account in `users.json`, with `OrgID`. This write mints the user ID
+   (`users/users.go:56`). A retry looks the account up by `(issuer, sub)` (`GetBySSOSubIssuer`)
+   before creating one, so it never mints a second ID. Whether today's native provisioning reuses
+   an ID across a crash in its own steps is unverified; PR 2 must prove it with a crash test.
+3. Last, `user_orgs`, keyed by the ID now in `users.json`. A crash before it is repaired on the
+   retry, or by a reconciliation sweep run by the elected `api-sweepers` worker. The sweep adds
+   the missing row for any multi-mode account that has `OrgID` and deletes any `user_orgs` row
+   whose user does not exist.
+
+A user whose two records disagree is refused at sign-in, as a mismatch is. The purge snapshot
+(Lifecycle) is taken after the sweep has run for the org, so it never starts from an orphan.
 
 Hosted members are provisioned the native-mail way. There is no JIT account at sign-in
 (`api/sso_handlers.go:629-631`). An account appears when the signed `user.created` event has
