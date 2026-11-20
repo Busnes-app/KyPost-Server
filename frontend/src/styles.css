@@ -5769,6 +5769,11 @@ thead:has(.inbox-bulk-head) th { background: var(--accent-soft); }
   .due-custom input { width: 100%; min-height: 44px; }
 }
 
+/* The unavailable card spaces its text with the card's gap, like the sign-in form. */
+.ky-unavailable p {
+  margin: 0;
+}
+
 /* "Try again" and Refresh while they run: aria-disabled keeps focus on the button, so it
    gets ky-ui's disabled look here, under the pointer too (the hover rule would otherwise
    win over it: :disabled never matches). */

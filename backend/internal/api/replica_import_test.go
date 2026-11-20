@@ -100,6 +100,15 @@ func TestImportIsSharedAcrossReplicas(t *testing.T) {
 
 	// One link, uploaded on both at once: spent exactly once.
 	url := link()
+	// Bound to its user, not only to the session: another user with this session's cookie
+	// does not hold it.
+	linkToken := strings.TrimPrefix(url, "/api/import/")
+	if _, ok := b.importGrantOf(linkToken, one.ID, token, false); !ok {
+		t.Fatal("the link's own user and session do not hold it on B")
+	}
+	if _, ok := b.importGrantOf(linkToken, "another-user", token, false); ok {
+		t.Fatal("a grant was held by another user with the same session")
+	}
 	codes := make(chan int, 2)
 	var wg sync.WaitGroup
 	for _, srv := range []*Server{a, b} {
@@ -121,6 +130,12 @@ func TestImportIsSharedAcrossReplicas(t *testing.T) {
 	for deadline := time.Now().Add(20 * time.Second); status(a).State != "finished"; time.Sleep(20 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatal("the racing import never finished")
+		}
+	}
+	// Nothing runs now, so only the spent grant can refuse a second upload, on either replica.
+	for _, srv := range []*Server{a, b} {
+		if w := call(srv, "POST", url, mbox); w.Code != http.StatusNotFound {
+			t.Fatal("a spent link was accepted again", w.Code, w.Body)
 		}
 	}
 

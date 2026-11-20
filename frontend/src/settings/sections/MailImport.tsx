@@ -171,6 +171,6 @@ export function MailImport() {
     {status?.state === "finished" && <p className="notice" role="status">Import{source} finished into {status.folder}: {counts}.</p>}
     {status?.state === "cancelled" && <p className="notice" role="status">Import cancelled: {counts}.</p>}
     {status?.state === "failed" && <p className="notice notice-error" role="alert">Import failed: {status.error ?? "unknown error"} ({counts}).</p>}
-    {status?.state === "interrupted" && <p className="notice notice-error" role="alert">Import interrupted: {status.error ?? "the server running it stopped"} ({counts}).</p>}
+    {status?.state === "interrupted" && <p className="notice notice-error" role="alert">Import interrupted ({counts}). {status.error ?? "The server running it stopped."}</p>}
   </div>;
 }

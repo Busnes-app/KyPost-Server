@@ -24,7 +24,7 @@ const importRow = "import"
 
 var importPublishEvery = time.Second
 
-const importInterrupted = "the server running this import stopped; import again to continue (messages already imported are skipped as duplicates)"
+const importInterrupted = "The server running this import stopped. Import again to continue; messages already imported are skipped."
 
 // importListing is a user's IMAP listing in flight on this replica; a new grant cancels it.
 type importListing struct {

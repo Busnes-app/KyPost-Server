@@ -252,9 +252,9 @@ it("confirms an account import with KySignOn and starts over when the grant expi
 });
 
 it("says an import stopped with the replica running it, not that it is still running", async () => {
-  statuses = [{ ...idle, state: "interrupted", imported: 3, error: "the server running this import stopped; import again to continue" }];
+  statuses = [{ ...idle, state: "interrupted", imported: 3, error: "The server running this import stopped. Import again to continue; messages already imported are skipped." }];
   view({ ...user, ssoSession: true });
-  const alert = await screen.findByText(/Import interrupted: the server running this import stopped/);
+  const alert = await screen.findByText(/^Import interrupted \(.*\)\. The server running this import stopped\. Import again/);
   expect(alert.getAttribute("role")).toBe("alert");
   expect(screen.queryByRole("button", { name: "Cancel import" })).toBeNull();
 });

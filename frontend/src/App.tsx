@@ -585,7 +585,7 @@ export function App() {
             <AppMark size={56} />
             <h1>KyPost</h1>
           </div>
-          <div className="ky-auth-card">
+          <div className="ky-auth-card ky-unavailable">
             <div role="alert">
               <h2>KyPost is temporarily unavailable</h2>
               <p>You have not been signed out. Try again in a moment.</p>
