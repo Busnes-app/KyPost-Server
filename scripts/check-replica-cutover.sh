@@ -25,7 +25,7 @@ cleanup() {
   docker rm -f "$project-intruder" "$project-edge" >/dev/null 2>&1 || true
   docker ps -aq --filter "label=com.docker.compose.project=$project" | xargs -r docker rm -f >/dev/null 2>&1 || true
   docker volume ls -q --filter "label=com.docker.compose.project=$project" | xargs -r docker volume rm >/dev/null 2>&1 || true
-  docker volume rm "${project}_fresh_config" "${project}_restore" >/dev/null 2>&1 || true
+  docker volume rm "${project}_fresh_config" "${project}_restore" "${project}_no_keep" >/dev/null 2>&1 || true
   docker network ls -q --filter "label=com.docker.compose.project=$project" | xargs -r docker network rm >/dev/null 2>&1 || true
   # The single container's model mount is created by Docker; clear it as root.
   docker run --rm --user 0 -v "$work:/w" --entrypoint sh "$image" -c 'rm -rf /w/models' >/dev/null 2>&1 || true
@@ -198,19 +198,46 @@ docker volume create "${project}_restore" >/dev/null
 sed -i "s|^KYPOST_DATABASE_URL=.*|KYPOST_DATABASE_URL=postgres://kypost:${pg_pw}@postgres:5432/kypost_restored?sslmode=disable|" "$work/env"
 "${replicas[@]}" run --rm --no-deps -T --user kypost -v "${project}_restore:/restore" kypost-server \
   /usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered <testdata/cutover-recovery-test-shares.txt >"$work/restore.out"
-# Step 4, one guarded command: the copy (private, 600) comes before the emptying, and a
-# second run refuses without touching the copy or the volumes.
+# Step 4, one guarded command: the copy (private, 600, renamed only when complete) comes
+# before the emptying, and a second run refuses, saying why, without touching anything.
+in_restore() { "${replicas[@]}" run --rm --no-deps --user kypost -v "${1}:/restore" --entrypoint sh kypost-server -c "$2"; }
 # shellcheck disable=SC2016 # expanded by the container's shell
-step4='test ! -e /restore/keep.tar && umask 077 && tar -cf /restore/keep.tar -C /kypost config private state && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"; done'
-"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$step4"
+step4='if [ -e /restore/keep.tar ]; then echo "restore/keep.tar already exists: this step ran before. Roll back (below) or check the volumes, then move keep.tar aside to run it again." >&2; exit 1; fi; umask 077 && tar -cf /restore/keep.tar.part -C /kypost config private state && mv /restore/keep.tar.part /restore/keep.tar && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/" || exit 1; done'
 # shellcheck disable=SC2016 # expanded by the container's shell
-keep_check='test "$(stat -c %a /restore/keep.tar)" = 600 && tar -tf /restore/keep.tar | grep -q "^private/totp-secret.key$"'
-"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$keep_check"
-if "${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$step4" >/dev/null 2>&1; then
+rollback='tar -tf /restore/keep.tar >/dev/null && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete || exit 1; done && tar -xpf /restore/keep.tar -C /kypost'
+# shellcheck disable=SC2016 # expanded by the container's shell
+keep_check='test "$(stat -c %a /restore/keep.tar)" = 600 && test ! -e /restore/keep.tar.part && tar -tf /restore/keep.tar | grep -q "^private/totp-secret.key$"'
+# A marker only the pre-restore volumes hold: it shows which state the volumes are in.
+marked='test -e /kypost/state/cutover-marker && test -e /kypost/private/totp-secret.key'
+in_restore "${project}_restore" 'touch /kypost/state/cutover-marker'
+in_restore "${project}_restore" "$step4"
+in_restore "${project}_restore" "$keep_check"
+if in_restore "${project}_restore" 'test -e /kypost/state/cutover-marker'; then
+  echo "step 4 did not replace the volumes" >&2
+  exit 1
+fi
+if in_restore "${project}_restore" "$step4" 2>"$work/step4-again.err"; then
   echo "a second run of restore step 4 overwrote keep.tar" >&2
   exit 1
 fi
-"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$keep_check"
+grep -q 'restore/keep.tar already exists' "$work/step4-again.err"
+in_restore "${project}_restore" "$keep_check"
+
+# The rollback empties nothing without a readable keep.tar, and puts the old volumes back
+# from a real one. Then, as the refusal says, keep.tar is moved aside and step 4 runs again.
+docker volume create "${project}_no_keep" >/dev/null
+in_restore "${project}_restore" 'touch /kypost/state/cutover-marker'
+if in_restore "${project}_no_keep" "$rollback" >/dev/null 2>&1; then
+  echo "the rollback ran without keep.tar" >&2
+  exit 1
+fi
+in_restore "${project}_no_keep" "$marked"
+in_restore "${project}_restore" 'rm /kypost/state/cutover-marker'
+in_restore "${project}_restore" "$rollback"
+in_restore "${project}_restore" "$marked"
+in_restore "${project}_restore" 'mv /restore/keep.tar /restore/keep.tar.rolled-back'
+in_restore "${project}_restore" "$step4"
+in_restore "${project}_restore" "$keep_check"
 "${replicas[@]}" up -d --wait kypost-server proxy >/dev/null
 wait_ready
 rm -f "$work/jar"
