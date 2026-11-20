@@ -90,7 +90,7 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | New `user_orgs` | (multi-only) | O | K3. The user root: one row per account, written once with `users.User.OrgID`. |
 | Root `state.db` `backup_audit` | `state/schema.go` | P | Whole-install backups. |
 | New `orgs` cache | (multi-only) | P | K8. The registry every org check reads. |
-| New `org_purges` | (multi-only) | P | Purge progress, one row per deleted org, so a purge that died halfway resumes (Lifecycle). |
+| New `org_purges`, `org_purge_members` | (multi-only) | P | Purge progress, one row per deleted org, plus the snapshot of its user, mailbox and subject IDs taken at purge start, so a purge that died halfway resumes (Lifecycle). The snapshot is deleted when the purge is marked done. |
 | Per-user / per-mailbox `state.db` (`processed`, `decisions`, `notifications`, `native_devices`, `pull_notifications`, `deferrals`, `sorter_*`, `snoozes`, `ooo_*`) | `api/server_userscope.go:86-92`; same schema as root | D (user or mailbox directory) | The directory, or on Postgres the `kypost_f_*` schema, is the owner. |
 | `mailbox.db` (messages, folders, labels, receipts, usage, `outbox*`, …) | `mailbox/store.go:118-132`, `mailbox/pg_schema.go:17-32` | D (mailbox) | The `identity` row names `(issuer, subject, mailbox)` (`mailbox/store.go:118`). It gains no `org_id`: the mailbox's account carries it. |
 | `native-authority.db` `directory`, `directory_primary_emails` | `sso/authority_v3.go:39-48` | D (`(issuer, subject)`, via `subject_orgs`) | The KyIdentity directory mirror. |
@@ -431,8 +431,14 @@ The elected poller (K8) reads `/api/suite/orgs?since=<revision>` through ky-prim
 Run by the elected `api-sweepers` worker (R `app/replica.go:96-102`). One `org_purges` row per org
 records that a purge started and its last finished step. The purge is **idempotent and
 resumable**:
+- **Snapshot first.** The purge starts by recording the org's user IDs (from `user_orgs`), mailbox
+  IDs and `(issuer, subject)` pairs in `org_purge_members`, in the same transaction that creates
+  the `org_purges` row. Every step and the final check are driven by that snapshot, never by
+  `user_orgs`. A purge that dies after step 5 deletes `user_orgs` can therefore still find
+  everything.
 - A resumed purge re-runs every step from the start. Each step deletes whatever still exists,
-  re-listing schemas, directories and rows rather than trusting the row.
+  re-listing schemas, directories and rows for the snapshot's IDs rather than trusting the
+  progress row.
 - Before the purge is marked done, a final check walks the store classification and confirms that
   nothing of the org remains.
 - No worker can write for the org once it is `deleted` (the Background workers rule in
@@ -454,19 +460,30 @@ Steps:
    - paired devices (`native_devices`, in the per-user `state.db`);
    - CardDAV app passwords (`carddav-auth.json`);
    - sealed IMAP and CardDAV client credentials (`imap-config.json`, `carddav-client.json`).
-4. **Ledger tombstones (K10).** Scrub account and mailbox rows: state `purged`, `state_root`
-   cleared, the subject kept (it is an opaque KyIdentity ID, not personal data). Each address
-   becomes an HMAC of the address under the tombstone key, held in a new `address_tombstones`
-   table that the conflict check consults first (M open question 4). Then `directory` is scrubbed
-   the same way. `subject_orgs` rows stay: they hold only opaque IDs, and they stop a subject from
-   ever joining another org.
+4. **Ledger tombstones (K10).** Each table in `native-authority.db`, by name:
+   - `accounts`, `mailboxes`: kept as tombstones, with state `purged`, `state_root` cleared and
+     the subject kept (an opaque KyIdentity ID, not personal data).
+   - `addresses`, `address_history`, `routes_pending`: the org's rows are deleted. First, each
+     address is written as an HMAC under the tombstone key into a new `address_tombstones` table,
+     which the conflict check consults first (M open question 4). No plain address remains.
+   - `directory`: kept, with `resource` (the SCIM body, which holds names and emails) set to NULL,
+     so the revision fence still refuses a replayed event.
+   - `directory_primary_emails`: the org's rows are deleted.
+   - `subject_orgs`: kept. It holds only opaque IDs, and it stops a subject from ever joining
+     another org.
+   - `directory_events`, `logouts`, `sign_ons`, floors, barriers, `lifecycle_records`: platform
+     replay and recovery ledgers keyed by event or JTI. They expire on their own and are not
+     touched.
+
+   Only the deletes and updates above use the named trigger exception (open question 9).
 5. **Root store.** Through `user_orgs`, delete the org's rows in `send_ledger` and in R's
    `sessions`, `auth_challenges` (by owner `user_id`), `import_jobs` and `session_revocations`.
    Then delete its `users.json` records, which hold the password hashes, sealed TOTP secrets,
    recovery codes and PGP keys. Its `user_orgs` rows go last, because every earlier step finds the
    org's users through them.
-6. **Record the purge.** Write a platform audit line with the org ID and the row and file counts,
-   and no content. Mark the `org_purges` row done.
+6. **Record the purge.** Run the final check over the snapshot. Write a platform audit line with
+   the org ID and the row and file counts, and no content. In one transaction, mark the
+   `org_purges` row done and delete its `org_purge_members` snapshot.
 
 - **One-way.** Step 4 is the only write that touches rows the authority triggers protect. It needs
   a named trigger exception keyed on a live `org_purges` row (open question 9). It cannot be
