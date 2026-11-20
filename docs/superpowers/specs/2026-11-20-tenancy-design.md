@@ -149,8 +149,12 @@ created exclusively, like R's keys, and backed up, because a restore needs it (M
   account's `OrgID` is written once, by native provisioning, from the signed directory event. It
   is never written from a token.
 - **`currentUser`** puts `user.OrgID` into `AuthContext.OrgID` on every request
-  (`api/server_auth_session.go:1235`). In multi mode an `AuthContext` without an org is refused
-  with the same `401` as an expired session.
+  (`api/server_auth_session.go:1235`). So do the other paths that build an `AuthContext`: paired
+  devices (`api/server_userscope.go:604-630`), CardDAV Basic (`api/dav_auth.go:112`) and MCP
+  agent tokens (`api/mcp.go:138-143`). Each reads the org from the user record. In multi mode an
+  `AuthContext` without an org is refused with the same `401` as an expired session.
+- **Signed public links** (`/pickup/{id}`, export and import links) resolve to an owning user.
+  For a user whose org is not `active`, they answer as an expired link does.
 - **Per-user stores** are opened by `AuthContext.UserID` (`api/server_userscope.go:308-603`). A
   handler cannot reach another user's store without naming that user, and naming another user is
   a cross-user hop.
@@ -376,7 +380,8 @@ The elected poller (K8) reads `/api/suite/orgs?since=<revision>` through ky-prim
 | `suspended` | Sign-in and device sign-on refused. All of the org's sessions are revoked: R `session_revocations` is bumped for each of its users, and `agent_tokens` rows are deleted by `org_id`. CardDAV and device requests are refused while the org is not `active`. | Outbox admission refuses. Queued and scheduled sends are held, not sent (open question 6). | `451` (Mail) | Kept, nothing changed |
 | `deletion_scheduled` | As suspended | As suspended | `550` like unknown | Kept until `deleted` |
 | `deleted` | As suspended | As suspended | `550` like unknown | Purged |
-| Not in the cache, or the cache is stale | Refused once the cache is older than 15 minutes | Refused when stale | Temporary refusal | Kept |
+| Not in the cache | Refused | Refused | Temporary refusal | Kept |
+| Known, but the cache is stale | Refused once the last good poll is more than 15 minutes old | Refused when stale | Last known status | Kept |
 
 - **Speed.** Sessions are re-read on every request (`currentUser`), so a suspension takes effect on
   the next request after the poll. That is within about 60 s, as T promises.
