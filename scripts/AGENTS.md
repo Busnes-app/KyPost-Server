@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Container initialization, process orchestration, Ollama model management, host-side image updates, and controlled operator mail setup.
+Container initialization, process orchestration, Ollama model management, host-side image updates, controlled operator mail setup, and the developer-only native-mail harness under `dev/` (excluded from the image by `.dockerignore`).
 
 ## Ownership
 
@@ -26,6 +26,8 @@ All files under `scripts/`.
 - `update-host.sh`: runs only on the Docker host. It refuses the replica overlay (it would recreate replicas in place, mixing versions) and prints the documented upgrade commands. It resolves the official image to a digest, verifies its GitHub attestation, locks, waits for health, and recreates the prior digest if the new container fails. It recreates with the compose files recorded on the running container (`com.docker.compose.project.config_files`, minus its own deleted `.kypost-update.*.yml` override; else `COMPOSE_FILE`, else the base file) so overlays survive, and re-points the local tag at the deployed digest after an update, a rollback or an already-current run so a plain `docker compose up -d` cannot downgrade. It never enters the image or receives the Docker socket.
 - `test-relays.sh`: the canonical Cloudflare Worker test command, run by CI and by `npm test` in both push Worker packages. It discovers `*.test.mts` and `*.test.mjs` under `push-relay-shared/`, `worker/src/`, `worker-apns/src/` and `receiving-worker/`; it prunes `node_modules` and fails when it finds nothing. Install `worker/` dependencies first: the FCM key-floor fixture executes its locked native workerd with an explicit isolated provider service.
 - `install-auto-update.sh`: explicitly enables lingering, then installs a daily per-user systemd timer that calls `update-host.sh --auto`; it is opt-in and runs as the user already authorized to operate Docker, never as root from a mutable checkout.
+
+- `dev/native-mail-harness.sh` (with `dev/native-mail-harness/`): developer-only native-mail harness, never shipped in the image. It runs a real KyIdentity, KyPost, dnsmasq, Maddy (through `start-receiving.sh`) and the kypost-demo-IMAP fixture inside one `unshare -rmn` loopback-only namespace, and drives browser checks with Playwright. It must never need a fake inside KyPost: no build tag, flag or environment variable in the product may exist for it. DNS goes through bind-mounted `/etc/resolv.conf` and `/etc/nsswitch.conf`, and stand-ins live only outside KyPost (`tls-front.mjs`, `fixture-smtps.mjs`). Nothing may bind a host interface. Usage and inputs: `docs/DEVELOPMENT.md#native-mail-harness`.
 
 ### Supervisord Programs (from `supervisord.conf` at repo root)
 
@@ -53,6 +55,8 @@ All files under `scripts/`.
 - Do not raise `startretries` to "fix" a crash loop, and keep `crashexit` active for core programs. Only `receiving-server` may degrade to in-process checks; the actual receiver must still take the container down after persistent startup failure.
 
 ## Verification
+
+- `shellcheck scripts/dev/native-mail-harness.sh`. The harness itself is verified by running it end to end (`docs/DEVELOPMENT.md#native-mail-harness`); CI does not run it.
 
 - `bash scripts/ensure-network.test.sh` uses two disposable Docker networks to prove network-only bootstrap, unchanged matching reruns and foreign-network preservation.
 
