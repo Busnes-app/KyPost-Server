@@ -14,8 +14,8 @@ required = {
     "KYPOST_BIND": "127.0.0.1",
     "KYPOST_DATABASE_URL": "postgres://kypost:synthetic@postgres:5432/kypost?sslmode=disable",
     "KYPOST_POSTGRES_PASSWORD": "synthetic-postgres-password",
-    "KYPOST_PROXY_IP": "172.31.251.2",
-    "KYPOST_REPLICA_SUBNET": "172.31.251.0/24",
+    "KYPOST_PROXY_IP": "10.89.1.2",
+    "KYPOST_REPLICA_SUBNET": "10.89.1.0/24",
 }
 base_env = {k: v for k, v in os.environ.items() if not k.startswith("KYPOST_") and k not in ("TRUSTED_PROXY_CIDRS", "OLLAMA_BASE_URL")}
 files = ["docker-compose.yml", "docker-compose.replicas.yml"]
@@ -132,11 +132,15 @@ running = (root / "docs/RUNNING.md").read_text()
 cutover = (root / "scripts/check-replica-cutover.sh").read_text()
 assert "replicas.yml up -d --wait postgres" in running, "RUNNING.md starts the database without --wait; the next command would fail"
 assert "docker compose pull && docker compose stop kypost-server && docker compose up -d --wait" in running, "RUNNING.md's upgrade does not pull, then stop every replica"
+step4 = ('test ! -e /restore/keep.tar && umask 077 && tar -cf /restore/keep.tar -C /kypost config private state && for r in config private state; '
+         'do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"; done')
 for step in ("createdb -U kypost kypost_restored", "/usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered",
-             'find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"'):
+             "umask 077 && cp \"$(ls -t /kypost/state/backups/*.kycap | head -n 1)\" /restore/backup.kycap", step4):
     assert step in running and step in cutover, f"the replica restore step {step!r} is not both documented and run by the cutover check"
-backup_step = "tar -cf /restore/keep.tar -C /kypost config private state"
-assert backup_step in running and backup_step in cutover and running.index(backup_step) < running.index('find "/kypost/$r" -mindepth 1 -delete'), "the restore must copy the volumes before the step that empties them"
+# keep.tar holds every private key: a private folder, written under umask 077, checked 600 by
+# the cutover, and one guarded command so a failed or repeated copy never empties the volumes.
+assert "mkdir -m 700 restore" in running, "RUNNING.md must create ./restore private (mode 700)"
+assert 'test "$(stat -c %a /restore/keep.tar)" = 600' in cutover, "the cutover must check keep.tar is mode 600"
 assert "remove `./restore`" in running, "RUNNING.md must say to remove ./restore (it holds every private key unencrypted)"
 print("PASS replicas: RUNNING.md's start, upgrade and restore commands match what the cutover check runs")
 
@@ -145,7 +149,10 @@ proxies = (root / "docs/Reverse_Proxy_Networking.md").read_text()
 host_row = next(line for line in proxies.splitlines() if "on the host, via `127.0.0.1:5866`" in line)
 assert "single container only" in host_row, "Reverse_Proxy_Networking.md offers a host proxy without 'single container only'"
 bind = next(line for line in (root / "docker-compose.replicas.yml").read_text().splitlines() if "KYPOST_BIND:?" in line)
-assert bind and "proxy on this host" not in bind and "container on kypost-net" in bind, f"the overlay's KYPOST_BIND message offers a host proxy: {bind}"
+assert "proxy on this host" not in bind and "container on kypost-net" in bind, f"the overlay's KYPOST_BIND message offers a host proxy: {bind}"
+# Compose interpolates the base file first, so its message is the one an admin sees.
+base_bind = next(line for line in (root / "docker-compose.yml").read_text().splitlines() if "KYPOST_BIND:?" in line)
+assert "single container only; with replicas see docs/RUNNING.md" in base_bind, f"the base KYPOST_BIND message offers a host proxy to replicas: {base_bind}"
 assert "A TLS proxy on the host" in running, "RUNNING.md must tell a host-proxy admin what to do"
 print("PASS replicas: a TLS proxy on the host is single-container only, everywhere it is offered")
 

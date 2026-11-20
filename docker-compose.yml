@@ -55,7 +55,7 @@ services:
     # kypost-net and point it at http://KyPost-Server:5866.
     # See docs/Reverse_Proxy_Networking.md.
     ports:
-      - "${KYPOST_BIND:?set KYPOST_BIND in .env — 127.0.0.1 for a proxy on this host, your LAN IP for a proxy elsewhere, or 0.0.0.0 to deliberately publish on every interface (cleartext unless TLS_CERT_FILE is set)}:5866:5866"
+      - "${KYPOST_BIND:?set KYPOST_BIND in .env — 127.0.0.1 for a proxy on this host (single container only; with replicas see docs/RUNNING.md), your LAN IP for a proxy elsewhere, or 0.0.0.0 to deliberately publish on every interface (cleartext unless TLS_CERT_FILE is set)}:5866:5866"
     #  - "127.0.0.1:11434:11434"  #Uncomment to expose Ollama API
     environment:
       WEB_PORT: 5866

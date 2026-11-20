@@ -46,8 +46,8 @@ KYPOST_BIND=127.0.0.1
 KYPOST_NETWORK=${project}-net
 KYPOST_SUBNET=10.199.${net}.0/24
 KYPOST_IP=10.199.${net}.5
-KYPOST_REPLICA_SUBNET=172.31.${net}.0/24
-KYPOST_PROXY_IP=172.31.${net}.2
+KYPOST_REPLICA_SUBNET=10.198.${net}.0/24
+KYPOST_PROXY_IP=10.198.${net}.2
 KYPOST_REPLICAS=2
 KYPOST_POSTGRES_PASSWORD=${pg_pw}
 KYPOST_DISABLE_AI_SORTING=true
@@ -187,20 +187,30 @@ echo "== 8. Restore that capsule into a new, empty database (docs/RUNNING.md)"
 # With no replica ready, HAProxy answers with KyPost's own page, never a sign-in prompt.
 unavailable=$(curl -sS --max-time 10 -D - "$base/" || true)
 grep -q '^HTTP/1.1 503' <<<"$unavailable" && grep -qi '^retry-after: 5' <<<"$unavailable" && grep -q 'You have not been signed out' <<<"$unavailable"
+# ./restore as RUNNING.md makes it (mkdir -m 700, owned by UID 1000), here a volume.
 docker volume create "${project}_restore" >/dev/null
-# shellcheck disable=SC2016 # expanded by the container's shell
 "${replicas[@]}" run --rm --no-deps --user 0 -v "${project}_restore:/restore" --entrypoint sh kypost-server \
-  -c 'cp "$(ls -t /kypost/state/backups/*.kycap | head -n 1)" /restore/backup.kycap && chown -R kypost:kypost /restore'
+  -c 'chown kypost:kypost /restore && chmod 700 /restore'
+# shellcheck disable=SC2016 # expanded by the container's shell
+"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server \
+  -c 'umask 077 && cp "$(ls -t /kypost/state/backups/*.kycap | head -n 1)" /restore/backup.kycap'
 "${replicas[@]}" exec -T postgres createdb -U kypost kypost_restored
 sed -i "s|^KYPOST_DATABASE_URL=.*|KYPOST_DATABASE_URL=postgres://kypost:${pg_pw}@postgres:5432/kypost_restored?sslmode=disable|" "$work/env"
 "${replicas[@]}" run --rm --no-deps -T --user kypost -v "${project}_restore:/restore" kypost-server \
   /usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered <testdata/cutover-recovery-test-shares.txt >"$work/restore.out"
-# The volumes are copied before the step that empties them, and the copy holds them.
-"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server \
-  -c 'tar -cf /restore/keep.tar -C /kypost config private state && tar -tf /restore/keep.tar | grep -q "^private/totp-secret.key$"'
+# Step 4, one guarded command: the copy (private, 600) comes before the emptying, and a
+# second run refuses without touching the copy or the volumes.
 # shellcheck disable=SC2016 # expanded by the container's shell
-"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server \
-  -c 'for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"; done'
+step4='test ! -e /restore/keep.tar && umask 077 && tar -cf /restore/keep.tar -C /kypost config private state && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/"; done'
+"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$step4"
+# shellcheck disable=SC2016 # expanded by the container's shell
+keep_check='test "$(stat -c %a /restore/keep.tar)" = 600 && tar -tf /restore/keep.tar | grep -q "^private/totp-secret.key$"'
+"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$keep_check"
+if "${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$step4" >/dev/null 2>&1; then
+  echo "a second run of restore step 4 overwrote keep.tar" >&2
+  exit 1
+fi
+"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$keep_check"
 "${replicas[@]}" up -d --wait kypost-server proxy >/dev/null
 wait_ready
 rm -f "$work/jar"
