@@ -97,7 +97,8 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | `native-authority.db` `accounts` | `sso/authority_v3.go:49-55` | D (`(issuer, subject)`, via `subject_orgs`) | The ledger root of a person's mailboxes. |
 | New `subject_orgs` | (multi-only, `native-authority.db`) | O | K3. The subject root, written once from the signed webhook (Identity binding). |
 | `native-authority.db` `mailboxes` | `sso/authority_v3.go:56-63` | D (`(issuer, subject)` FK to `accounts`) | |
-| `native-authority.db` `addresses`, `address_history`, `routes_pending` | `sso/authority_v3.go:65-76` | D while live (via `mailbox`), P as tombstones | Address keys are global (M D4). After org deletion they become platform tombstones (K10). |
+| `native-authority.db` `addresses`, `address_history`, `routes_pending` | `sso/authority_v3.go:65-76` | D (via `mailbox`) | Address keys are global (M D4). The purge deletes an org's rows after writing their hashes to `address_tombstones` (K10). |
+| New `address_tombstones` | (multi-only, `native-authority.db`, PR 6) | P | K10. HMACs of every address a deleted org held, under the tombstone key. No org or owner, never deleted, consulted first by the conflict check. |
 | `native-authority.db` `directory_events`, `logouts`, `sign_ons`, floors, barriers, `lifecycle_records` | `sso/authority_v3.go:77-88` | P | Replay and recovery ledgers keyed by event or JTI. Restore authority is whole-install. |
 | `ingress.db` `routes`, `bindings` | `ingress/store.go:108,110` | D (`mailbox`) | Recipient bindings name the mailbox. |
 | `ingress.db` `deliveries`, `archived`, `limits` | `ingress/store.go:107,109,117` | P, with org found through `bindings` | The receiving buffer and quarantine. A delivery can bind several recipients in several orgs, so it has no single org. Staff-only (Admin surface). |
@@ -309,6 +310,10 @@ account to its `org_id`. No receiving path takes an org from the message.
   - `active`: today's path.
   - `suspended`: temporary refusal (`451 4.2.1`), so senders retry (M open question 2).
   - `deletion_scheduled` and later: the same `550 5.1.1` as an unknown address (M open question 2).
+    **Mail sent during `deletion_scheduled` is lost if billing later resumes the org.** A `451`
+    would not save it. Sending servers typically give up after about 5 days (unverified per
+    sender), and the grace period is 7–90 days (T `schedule-deletion`), so most of it would bounce
+    anyway, only later and less clearly. Open question 11 asks the owner to accept this.
   - Not in the cache: temporary refusal.
 - **Cloudflare continuous.** `buildRoutes` (`app/receiving_cfcontinuous.go:342-441`) omits the
   addresses of orgs that are not `active`. The Worker's table holds at most **5000 routes**
@@ -681,3 +686,7 @@ PostgreSQL, and a measured capacity target (open question 8).
 10. **Per-customer custom domains (later).** As M "Per-customer custom domains", the domain proof
     must bind the org as well as the issuer. `native-domains.json` holds one issuer
     (`sso/native_domain.go:68-74`) and would need a per-domain `org_id`. Out of scope for v1.
+11. **Receiving while deletion is scheduled.** A `550` from `deletion_scheduled` on, as M open
+    question 2 recommends, loses mail sent during the grace period if the org is resumed. A `451`
+    would only delay most of those bounces, given the 7–90-day grace. *Recommend* keeping the
+    `550`, and having billing's deletion notice tell the account holder that mail stops at once.
