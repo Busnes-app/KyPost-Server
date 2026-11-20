@@ -62,7 +62,7 @@ drive the design:
 
 | # | Decision | Why |
 |---|---|---|
-| K1 | `KYPOST_TENANCY=single` (default) or `multi`. A multi install records `tenancy_mode=multi` in the root `state.db` `meta` at first start. A start whose mode differs from the record refuses to start. Single-tenant writes nothing: no record means single. The variable joins the replica configuration fingerprint (R `replica/config.go:35`), which cannot refuse an upgraded single-tenant replica (Replicas). | Install-time, as T D1. Writing nothing keeps upgrades byte-for-byte unchanged. A replica started in the wrong mode must not serve. |
+| K1 | `KYPOST_TENANCY=single` (default) or `multi`. A multi install records `tenancy_mode=multi` in the root `state.db` `meta` at first start. A start whose mode differs from the record refuses to start. Single-tenant writes nothing: no record means single. It stays out of R's replica fingerprint, and the record is what refuses a mismatched replica (Replicas). | Install-time, as T D1. Writing nothing keeps upgrades byte-for-byte unchanged. A replica started in the wrong mode must not serve. |
 | K2 | **Multi-tenant requires** PostgreSQL (`KYPOST_DATABASE_URL`, `docs/CONFIGURATION.md:124`), native mail (`KYPOST_NATIVE_MAIL=true`), the v3 authority database, a configured KyIdentity issuer, and an **empty install** at first start. Converting a single-tenant install is out of scope, as in T. | T requires Postgres too (T D2). The external-IMAP profile and local accounts have no place in a hosted mail service (K6). Starting empty avoids a migration with no org to assign. |
 | K3 | Multi-tenant schema additions are created only by a multi install's first start. A single-tenant install never gets them, so its databases, `users.json` and every file stay byte-for-byte as they are. | This is the zero-change argument. T adds columns on both modes because its SQL is shared. KyPost's org-owned rows (below) are few, and every one of them sits in a store that only a multi install creates. |
 | K4 | The org is recorded on two roots only: `users.User.OrgID` (write-once, `omitempty`) and `org_id` on the authority `directory` and `accounts` rows. Every per-user and per-mailbox store is **derived**: it inherits the org of the ID that owns it. Cross-user aggregates in the root `state.db` (`send_ledger`, `agent_tokens`, `scheduled_sends`) carry `org_id` so per-org counts need no join. | Per-user data is already separated by user ID (above). Adding `org_id` to hundreds of per-user schemas would add a column nobody could set wrongly. The risk sits on the hops *between* users, so that is where the checks go (K5). |
@@ -444,23 +444,20 @@ are in PostgreSQL. Accounts (`users.json`), per-user JSON and `config.yaml`, DKI
 secret keys stay on the volumes behind host-local file locks (R `docs/RUNNING.md:242-245,283`).
 Tenancy fits on top:
 
-- **Mode and staff org.** `KYPOST_TENANCY` and `KYPOST_STAFF_ORG_ID` join R's shared-configuration
-  fingerprint (R `replica/config.go:35`). A replica started with another mode or staff org
-  refuses, and `accept-replica-config` (R `app/replica.go:143`) is the deliberate way to change
-  them, which K1 refuses for the mode anyway.
-  - **Upgrade.** R's `Diff` counts a setting known on only one side as no difference, and merges
-    it into the record (R `replica/config.go:138-152`). An upgraded single-tenant replica install
-    therefore starts without `accept-replica-config`. The merge adds two entries to R's own
-    fingerprint record, as it does for any new shared setting. That is R's bookkeeping, not
-    behaviour.
-  - **Canonical values.** `KYPOST_TENANCY` canonicalises unset or empty to its default,
-    `single`, and lowercases the value, before fingerprinting. So an explicit `single` and an
-    unset variable give the same fingerprint, and a correctly configured replica never refuses.
-    `KYPOST_STAFF_ORG_ID` has no default (it is required only in multi mode), so unset stays
-    `""`.
-  - PR 1's upgrade test starts an R-format replica install under the new binary. It must start
-    with no refusal, and nothing but the fingerprint record may change. It also runs two
-    replicas, one with `KYPOST_TENANCY=single` and one with it unset, which must agree.
+- **Mode and staff org stay out of R's fingerprint.** Adding them would make R's `Diff` merge new
+  entries into every upgraded install's fingerprint record (R `replica/config.go:138-152`). That
+  write would break decision 1. Instead, K1's own record guards replicas:
+  - A multi install records `tenancy_mode=multi` and `staff_org_id` in `meta` at first start. A
+    replica started with `KYPOST_TENANCY` unset or `single`, or with another
+    `KYPOST_STAFF_ORG_ID`, refuses.
+  - A replica started with `multi` against a database with no record refuses as well. K2 allows
+    `multi` only on an empty install, and that check runs under R's `replica-config` lock
+    (R `replica/config.go:167`), so two replicas starting together cannot both claim the mode.
+  - With no record, unset and `single` are the same, so explicit-versus-unset can never disagree.
+  - A single-tenant install writes nothing: no `meta` key and no fingerprint entry.
+  - PR 1's upgrade test starts an R-format replica install under the new binary, once with
+    `KYPOST_TENANCY` unset and once with `single`. Both start with no refusal and leave every
+    database row, the fingerprint record included, and every file byte-for-byte unchanged.
 - **Shared org state.** The `orgs` cache and `org_purges` live in the root `state.db` on
   PostgreSQL, so every replica answers from the same status. One elected runner polls and purges
   (R `worker/worker.go:49`).
@@ -523,7 +520,8 @@ PR 2 onward needs KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and web
      `ingress`, `cfreceiving`, `sso/authority_*`, and R's tables once merged) and every registered
      file store to have exactly one class. A new store with no class fails the build.
    - A single-tenant upgrade test: a fixture install started under the new binary keeps
-     `users.json`, every schema dump and every file byte-for-byte identical.
+     `users.json`, every schema dump and every file byte-for-byte identical. That covers a SQLite
+     install and an R replica install, with `KYPOST_TENANCY` unset and with `single`.
    - The full `go test -race ./...` and the `postgres` job.
 2. **Identity binding.** `org_id` parsing and refusal for ID tokens, device-assertion tokens,
    logout tokens and sync events. Write-once `OrgID` and `directory.org_id`, and the K7 admin rule.
