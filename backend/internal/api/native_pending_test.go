@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -375,5 +376,98 @@ func TestApprovedOutcomeOutlivesThePendingWindow(t *testing.T) {
 	srv.pairingMu.Unlock()
 	if left < pendingDeviceTTL-time.Minute {
 		t.Fatalf("approved outcome readable for %v more, want about %v", left, pendingDeviceTTL)
+	}
+}
+
+// A crashed replica can leave a pending entry claimed with ApprovingUntil set.
+// While the claim is active, approve and deny refuse it; once it lapses, either
+// can reclaim it instead of leaving the entry wedged until ExpiresAt.
+func TestStaleApprovingClaimIsReclaimable(t *testing.T) {
+	srv, u := newPendingServer(t)
+
+	_, approveReg := webPairAndRegister(t, srv, u.ID, "phone-stale-approve")
+	srv.pairingMu.Lock()
+	srv.pendingDevices[approveReg.DeviceID].ApprovingUntil = time.Now().UTC().Add(time.Minute)
+	srv.pairingMu.Unlock()
+
+	if rec := decide(t, srv, u.ID, approveReg.DeviceID, "approve"); rec.Code != http.StatusNotFound {
+		t.Fatalf("approve during active claim = %d, want 404", rec.Code)
+	}
+	if rec := decide(t, srv, u.ID, approveReg.DeviceID, "deny"); rec.Code != http.StatusNotFound {
+		t.Fatalf("deny during active claim = %d, want 404", rec.Code)
+	}
+
+	srv.pairingMu.Lock()
+	srv.pendingDevices[approveReg.DeviceID].ApprovingUntil = time.Now().UTC().Add(-time.Second)
+	srv.pairingMu.Unlock()
+
+	if rec := decide(t, srv, u.ID, approveReg.DeviceID, "approve"); rec.Code != http.StatusOK {
+		t.Fatalf("approve after stale claim = %d %s", rec.Code, rec.Body.String())
+	}
+	if st := pairingStatus(srv, approveReg.DeviceID, approveReg.DeviceSecret); st.Code != http.StatusOK || !strings.Contains(st.Body.String(), `"status":"approved"`) {
+		t.Fatalf("status after reclaimed approve = %d %s", st.Code, st.Body.String())
+	}
+
+	_, denyReg := webPairAndRegister(t, srv, u.ID, "phone-stale-deny")
+	srv.pairingMu.Lock()
+	srv.pendingDevices[denyReg.DeviceID].ApprovingUntil = time.Now().UTC().Add(-time.Second)
+	srv.pairingMu.Unlock()
+
+	if rec := decide(t, srv, u.ID, denyReg.DeviceID, "deny"); rec.Code != http.StatusOK {
+		t.Fatalf("deny after stale claim = %d %s", rec.Code, rec.Body.String())
+	}
+	if st := pairingStatus(srv, denyReg.DeviceID, denyReg.DeviceSecret); st.Code != http.StatusGone {
+		t.Fatalf("status after reclaimed deny = %d, want 410", st.Code)
+	}
+}
+
+// When the final pendingEdit fails after persisting the device (for example a
+// PostgreSQL store error), approval must return 503 rather than silently report
+// 200 OK; once the store recovers and the claim lapses, retrying finishes it.
+func TestApproveReturnsUnavailableWhenFinalPendingUpdateFails(t *testing.T) {
+	srv, u := newPendingServer(t)
+	sharedDir := t.TempDir()
+	shared, err := state.New(sharedDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.UseSharedState(shared)
+
+	_, reg := webPairAndRegister(t, srv, u.ID, "phone-final-edit-fail")
+	srv.nativeApproveBeforePersist = func() {
+		srv.nativeApproveBeforePersist = nil
+		_ = shared.Close()
+	}
+
+	if rec := decide(t, srv, u.ID, reg.DeviceID, "approve"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("approve with failing final pendingEdit = %d %s, want 503", rec.Code, rec.Body.String())
+	}
+
+	reopened, err := state.New(sharedDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	srv.UseSharedState(reopened)
+
+	// Simulate the claim lease expiring after the failed update so the owner can retry.
+	srv.pairingMu.Lock()
+	ok := srv.pendingEdit(reg.DeviceID, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
+		if !found {
+			return rowKeep, false
+		}
+		v.ApprovingUntil = time.Now().UTC().Add(-time.Second)
+		return rowWrite, true
+	})
+	srv.pairingMu.Unlock()
+	if !ok {
+		t.Fatal("pending entry missing after failed final edit")
+	}
+
+	if rec := decide(t, srv, u.ID, reg.DeviceID, "approve"); rec.Code != http.StatusOK {
+		t.Fatalf("retry approve after store recovery = %d %s", rec.Code, rec.Body.String())
+	}
+	if st := pairingStatus(srv, reg.DeviceID, reg.DeviceSecret); st.Code != http.StatusOK || !strings.Contains(st.Body.String(), `"status":"approved"`) {
+		t.Fatalf("status after retry approve = %d %s", st.Code, st.Body.String())
 	}
 }

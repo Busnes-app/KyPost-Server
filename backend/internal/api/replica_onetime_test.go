@@ -94,11 +94,12 @@ func TestOneTimeAuthorityIsSpentOnceAcrossReplicas(t *testing.T) {
 		if n := race(func(srv *Server) bool {
 			srv.pairingMu.Lock()
 			defer srv.pairingMu.Unlock()
-			return srv.pendingEdit(dev, time.Now(), func(v *pendingDevice, found bool) (rowEdit, bool) {
-				if !found || v.ApprovedID != "" || v.Approving {
+			at := time.Now().UTC()
+			return srv.pendingEdit(dev, at, func(v *pendingDevice, found bool) (rowEdit, bool) {
+				if !found || v.ApprovedID != "" || v.approving(at) {
 					return rowKeep, false
 				}
-				v.Approving = true
+				v.ApprovingUntil = at.Add(pendingApproveClaimTTL)
 				return rowWrite, true
 			})
 		}, a, b); n != 1 {

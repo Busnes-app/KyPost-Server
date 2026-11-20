@@ -35,6 +35,9 @@ const (
 	// pendingDeviceTTL bounds how long a pending device waits for approval and
 	// how long an approved outcome stays readable at the status endpoint.
 	pendingDeviceTTL = 5 * time.Minute
+	// pendingApproveClaimTTL bounds how long an in-flight approval claims a
+	// pending entry before another replica may reclaim or deny it.
+	pendingApproveClaimTTL = 30 * time.Second
 	// maxPendingDevicesPerUser caps entries one account can hold. Each needs a
 	// fresh step-up-minted token, so this only bounds memory.
 	maxPendingDevicesPerUser = 5
@@ -53,12 +56,17 @@ type pendingDevice struct {
 	ApprovalCode       string    `json:"approvalCode"`
 	RequestedAt        time.Time `json:"requestedAt"`
 	ExpiresAt          time.Time `json:"expiresAt"`
-	// Approving claims the entry for one approval across replicas while it is persisted.
-	Approving bool `json:"approving,omitempty"`
+	// ApprovingUntil claims the entry for one approval across replicas while it
+	// is persisted; once past this time the claim is stale and reclaimable.
+	ApprovingUntil time.Time `json:"approvingUntil,omitempty"`
 	// ApprovedID is set once approved: the id the device was persisted under,
 	// which differs from the pending id when the upsert merged it into an
 	// existing row. The entry stays until ExpiresAt so the device can read it.
 	ApprovedID string `json:"approvedId,omitempty"`
+}
+
+func (p pendingDevice) approving(now time.Time) bool {
+	return !p.ApprovingUntil.IsZero() && now.Before(p.ApprovingUntil)
 }
 
 // Pending devices live in memory (callers hold pairingMu), or on PostgreSQL as
@@ -351,12 +359,13 @@ func (s *Server) handleNativePendingApprove(w http.ResponseWriter, r *http.Reque
 	}
 	defer release()
 	// Claim the entry first: of two approvals racing on two replicas, one persists the device.
+	claimAt := time.Now().UTC()
 	var p pendingDevice
-	if !s.pendingEdit(id, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
-		if !found || v.OwnerID != ac.UserID || v.ApprovedID != "" || v.Approving {
+	if !s.pendingEdit(id, claimAt, func(v *pendingDevice, found bool) (rowEdit, bool) {
+		if !found || v.OwnerID != ac.UserID || v.ApprovedID != "" || v.approving(claimAt) {
 			return rowKeep, false
 		}
-		v.Approving = true
+		v.ApprovingUntil = claimAt.Add(pendingApproveClaimTTL)
 		p = *v
 		return rowWrite, true
 	}) {
@@ -392,13 +401,18 @@ func (s *Server) handleNativePendingApprove(w http.ResponseWriter, r *http.Reque
 	// The outcome stays readable for a full window after approval. A merge
 	// into an existing row (same push token) gives the device another id, and
 	// this entry is the only place the device can learn it.
-	s.pendingEdit(id, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
+	approvedAt := time.Now().UTC()
+	if !s.pendingEdit(id, approvedAt, func(v *pendingDevice, found bool) (rowEdit, bool) {
 		if !found {
 			return rowKeep, false
 		}
-		v.ApprovedID, v.Approving, v.ExpiresAt = registeredID, false, time.Now().UTC().Add(pendingDeviceTTL)
+		v.ApprovedID, v.ApprovingUntil, v.ExpiresAt = registeredID, time.Time{}, approvedAt.Add(pendingDeviceTTL)
 		return rowWrite, true
-	})
+	}) {
+		s.logger.Error("native device approved but pending record update failed", "user_id", ac.UserID, "device_id", registeredID)
+		writeUnavailable(w)
+		return
+	}
 	s.logger.Info("native device pairing approved", "user_id", ac.UserID, "device_id", registeredID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deviceId": registeredID, "devices": devices})
 }
@@ -413,8 +427,9 @@ func (s *Server) handleNativePendingDeny(w http.ResponseWriter, r *http.Request)
 	id := strings.TrimSpace(r.PathValue("deviceId"))
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
-	if !s.pendingEdit(id, time.Now().UTC(), func(v *pendingDevice, found bool) (rowEdit, bool) {
-		if !found || v.OwnerID != ac.UserID || v.ApprovedID != "" || v.Approving {
+	denyAt := time.Now().UTC()
+	if !s.pendingEdit(id, denyAt, func(v *pendingDevice, found bool) (rowEdit, bool) {
+		if !found || v.OwnerID != ac.UserID || v.ApprovedID != "" || v.approving(denyAt) {
 			return rowKeep, false
 		}
 		return rowDrop, true
