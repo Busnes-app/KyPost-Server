@@ -370,12 +370,17 @@ use `sudo` to copy into it or remove it.
 1. Stop every replica: `docker compose stop kypost-server`.
 2. Create the new database: `docker compose exec postgres createdb -U kypost kypost_restored`,
    and point `KYPOST_DATABASE_URL` in `.env` at it (`.../kypost_restored?sslmode=disable`).
-3. Put the capsule in `./restore/backup.kycap`: copy one you keep elsewhere
+3. Make the folder, then put the capsule in `./restore/backup.kycap`:
+
+   ```bash
+   mkdir -p -m 700 restore && sudo chown 1000:1000 restore
+   ```
+
+   Copy one you keep elsewhere
    (`sudo install -o 1000 -g 1000 -m 600 /path/to/backup.kycap restore/backup.kycap`), or take
    the newest local copy from the state volume (`KYPOST_BACKUP_DIR=/kypost/state/backups`):
 
    ```bash
-   mkdir -m 700 restore && sudo chown 1000:1000 restore
    docker compose run --rm --no-deps --user kypost -v "$PWD/restore:/restore" --entrypoint sh kypost-server \
      -c 'umask 077 && cp "$(ls -t /kypost/state/backups/*.kycap | head -n 1)" /restore/backup.kycap'
    ```
@@ -394,7 +399,7 @@ use `sudo` to copy into it or remove it.
 
    ```bash
    docker compose run --rm --no-deps --user kypost -v "$PWD/restore:/restore" --entrypoint sh kypost-server \
-     -c 'if [ -e /restore/keep.tar ]; then echo "restore/keep.tar already exists: this step ran before. Roll back (below) or check the volumes, then move keep.tar aside to run it again." >&2; exit 1; fi; umask 077 && tar -cf /restore/keep.tar.part -C /kypost config private state && mv /restore/keep.tar.part /restore/keep.tar && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/" || exit 1; done'
+     -c 'if [ -e /restore/keep.tar ]; then echo "restore/keep.tar already exists: nothing was changed. To try again, roll back first, then follow \"To try again\" below the rollback." >&2; exit 1; fi; umask 077 && tar -cf /restore/keep.tar.part -C /kypost config private state && mv /restore/keep.tar.part /restore/keep.tar && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/" || exit 1; done'
    ```
 
    The copy is written as `keep.tar.part` and renamed only once it is complete. A
@@ -413,6 +418,16 @@ The command reads the whole archive first and empties nothing unless it is reada
 ```bash
 docker compose run --rm --no-deps --user kypost -v "$PWD/restore:/restore" --entrypoint sh kypost-server \
   -c 'tar -tf /restore/keep.tar >/dev/null && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete || exit 1; done && tar -xpf /restore/keep.tar -C /kypost'
+```
+
+**To try again**, with every replica stopped (`docker compose stop kypost-server`): move
+`restore/keep.tar` out of `./restore` and keep it until the new restore checks out, clear what
+the last attempt left, drop its database, then start again at step 2:
+
+```bash
+sudo mv restore/keep.tar keep.tar.first
+sudo rm -rf restore/recovered restore/.kypost-restore-*
+docker compose exec postgres dropdb -U kypost kypost_restored
 ```
 
 ### Drain and readiness

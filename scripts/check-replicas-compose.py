@@ -132,19 +132,26 @@ running = (root / "docs/RUNNING.md").read_text()
 cutover = (root / "scripts/check-replica-cutover.sh").read_text()
 assert "replicas.yml up -d --wait postgres" in running, "RUNNING.md starts the database without --wait; the next command would fail"
 assert "docker compose pull && docker compose stop kypost-server && docker compose up -d --wait" in running, "RUNNING.md's upgrade does not pull, then stop every replica"
-step4 = ('if [ -e /restore/keep.tar ]; then echo "restore/keep.tar already exists: this step ran before. Roll back (below) or check the volumes, '
-         'then move keep.tar aside to run it again." >&2; exit 1; fi; umask 077 && tar -cf /restore/keep.tar.part -C /kypost config private state && '
+step4 = ('if [ -e /restore/keep.tar ]; then echo "restore/keep.tar already exists: nothing was changed. To try again, roll back first, '
+         'then follow \\"To try again\\" below the rollback." >&2; exit 1; fi; umask 077 && tar -cf /restore/keep.tar.part -C /kypost config private state && '
          'mv /restore/keep.tar.part /restore/keep.tar && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && '
          'cp -pR "/restore/recovered/$r/." "/kypost/$r/" || exit 1; done')
 rollback = ('tar -tf /restore/keep.tar >/dev/null && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete || exit 1; done && '
             'tar -xpf /restore/keep.tar -C /kypost')
 for step in ("createdb -U kypost kypost_restored", "/usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered",
-             "umask 077 && cp \"$(ls -t /kypost/state/backups/*.kycap | head -n 1)\" /restore/backup.kycap", step4, rollback):
+             "umask 077 && cp \"$(ls -t /kypost/state/backups/*.kycap | head -n 1)\" /restore/backup.kycap", step4, rollback,
+             "dropdb -U kypost kypost_restored"):
     assert step in running and step in cutover, f"the replica restore step {step!r} is not both documented and run by the cutover check"
 # keep.tar holds every private key: a private folder, written under umask 077, checked 600 by
 # the cutover, and one guarded command so a failed or repeated copy never empties the volumes.
-assert "mkdir -m 700 restore" in running, "RUNNING.md must create ./restore private (mode 700)"
-assert "sudo install -o 1000 -g 1000 -m 600" in running, "a capsule copied in by another user must be installed as kypost, mode 600"
+assert "mkdir -p -m 700 restore" in running, "RUNNING.md must create ./restore private (mode 700), rerunnably"
+assert "sudo install -o 1000 -g 1000 -m 600" in running and running.index("mkdir -p -m 700 restore") < running.index("sudo install -o 1000 -g 1000 -m 600"), \
+    "a capsule copied in by another user is installed as kypost, mode 600, after ./restore exists"
+# After a rollback, trying again starts over with every replica stopped; the host-side moves
+# are documented here (the cutover does the same inside its volumes).
+for line in ("**To try again**, with every replica stopped", "sudo mv restore/keep.tar keep.tar.first",
+             "sudo rm -rf restore/recovered restore/.kypost-restore-*", "then start again at step 2"):
+    assert line in running and running.index(line) > running.index("**If the restore does not check out**"), f"RUNNING.md's 'To try again' lacks {line!r}"
 assert "run **Back up now**" in running and running.index("run **Back up now**") < running.index("sudo rm -rf restore"), "RUNNING.md must say to back up before removing ./restore"
 assert 'test "$(stat -c %a /restore/keep.tar)" = 600' in cutover, "the cutover must check keep.tar is mode 600"
 assert "remove `./restore`" in running, "RUNNING.md must say to remove ./restore (it holds every private key unencrypted)"

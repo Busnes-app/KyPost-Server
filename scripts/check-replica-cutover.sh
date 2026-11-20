@@ -25,7 +25,7 @@ cleanup() {
   docker rm -f "$project-intruder" "$project-edge" >/dev/null 2>&1 || true
   docker ps -aq --filter "label=com.docker.compose.project=$project" | xargs -r docker rm -f >/dev/null 2>&1 || true
   docker volume ls -q --filter "label=com.docker.compose.project=$project" | xargs -r docker volume rm >/dev/null 2>&1 || true
-  docker volume rm "${project}_fresh_config" "${project}_restore" "${project}_no_keep" >/dev/null 2>&1 || true
+  docker volume rm "${project}_fresh_config" "${project}_restore" "${project}_no_keep" "${project}_kept" "${project}_scratch_kypost" "${project}_scratch_restore" >/dev/null 2>&1 || true
   docker network ls -q --filter "label=com.docker.compose.project=$project" | xargs -r docker network rm >/dev/null 2>&1 || true
   # The single container's model mount is created by Docker; clear it as root.
   docker run --rm --user 0 -v "$work:/w" --entrypoint sh "$image" -c 'rm -rf /w/models' >/dev/null 2>&1 || true
@@ -192,8 +192,8 @@ docker volume create "${project}_restore" >/dev/null
 "${replicas[@]}" run --rm --no-deps --user 0 -v "${project}_restore:/restore" --entrypoint sh kypost-server \
   -c 'chmod 700 /restore && chown kypost:kypost /restore'
 # shellcheck disable=SC2016 # expanded by the container's shell
-"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server \
-  -c 'umask 077 && cp "$(ls -t /kypost/state/backups/*.kycap | head -n 1)" /restore/backup.kycap'
+copy_in='umask 077 && cp "$(ls -t /kypost/state/backups/*.kycap | head -n 1)" /restore/backup.kycap'
+"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" --entrypoint sh kypost-server -c "$copy_in"
 "${replicas[@]}" exec -T postgres createdb -U kypost kypost_restored
 sed -i "s|^KYPOST_DATABASE_URL=.*|KYPOST_DATABASE_URL=postgres://kypost:${pg_pw}@postgres:5432/kypost_restored?sslmode=disable|" "$work/env"
 "${replicas[@]}" run --rm --no-deps -T --user kypost -v "${project}_restore:/restore" kypost-server \
@@ -202,7 +202,7 @@ sed -i "s|^KYPOST_DATABASE_URL=.*|KYPOST_DATABASE_URL=postgres://kypost:${pg_pw}
 # before the emptying, and a second run refuses, saying why, without touching anything.
 in_restore() { "${replicas[@]}" run --rm --no-deps --user kypost -v "${1}:/restore" --entrypoint sh kypost-server -c "$2"; }
 # shellcheck disable=SC2016 # expanded by the container's shell
-step4='if [ -e /restore/keep.tar ]; then echo "restore/keep.tar already exists: this step ran before. Roll back (below) or check the volumes, then move keep.tar aside to run it again." >&2; exit 1; fi; umask 077 && tar -cf /restore/keep.tar.part -C /kypost config private state && mv /restore/keep.tar.part /restore/keep.tar && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/" || exit 1; done'
+step4='if [ -e /restore/keep.tar ]; then echo "restore/keep.tar already exists: nothing was changed. To try again, roll back first, then follow \"To try again\" below the rollback." >&2; exit 1; fi; umask 077 && tar -cf /restore/keep.tar.part -C /kypost config private state && mv /restore/keep.tar.part /restore/keep.tar && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete && cp -pR "/restore/recovered/$r/." "/kypost/$r/" || exit 1; done'
 # shellcheck disable=SC2016 # expanded by the container's shell
 rollback='tar -tf /restore/keep.tar >/dev/null && for r in config private state; do find "/kypost/$r" -mindepth 1 -delete || exit 1; done && tar -xpf /restore/keep.tar -C /kypost'
 # shellcheck disable=SC2016 # expanded by the container's shell
@@ -235,7 +235,38 @@ in_restore "${project}_no_keep" "$marked"
 in_restore "${project}_restore" 'rm /kypost/state/cutover-marker'
 in_restore "${project}_restore" "$rollback"
 in_restore "${project}_restore" "$marked"
-in_restore "${project}_restore" 'mv /restore/keep.tar /restore/keep.tar.rolled-back'
+# As RUNNING.md: the URL back on kypost and start; the old deployment answers.
+use_db() { sed -i "s|^KYPOST_DATABASE_URL=.*|KYPOST_DATABASE_URL=postgres://kypost:${pg_pw}@postgres:5432/${1}?sslmode=disable|" "$work/env"; }
+use_db kypost
+"${replicas[@]}" up -d --wait kypost-server proxy >/dev/null
+wait_ready
+rm -f "$work/jar"
+CUTOVER_PASSWORD="$new_pw" $client login "$base" "$work/jar" admin
+test "$($client key-id "$base" "$work/jar")" = "$key_id"
+
+# A refill that fails stops step 4 with an error (scratch volumes, never the deployment's).
+for v in scratch_kypost scratch_restore; do docker volume create "${project}_$v" >/dev/null; done
+scratch=(docker run --rm -v "${project}_scratch_kypost:/kypost" -v "${project}_scratch_restore:/restore" --entrypoint sh)
+# shellcheck disable=SC2016 # expanded by the container's shell
+"${scratch[@]}" --user 0 "$image" -c 'for r in config private state; do mkdir -p "/kypost/$r" && echo old >"/kypost/$r/f"; done; mkdir -p /restore/recovered/private /restore/recovered/state; chown -R kypost:kypost /kypost /restore'
+if "${scratch[@]}" --user kypost "$image" -c "$step4" >/dev/null 2>&1; then
+  echo "step 4 reported success with a refill missing" >&2
+  exit 1
+fi
+
+# "To try again", as RUNNING.md: every replica stopped, keep.tar moved out of ./restore and
+# kept, the last attempt's files and database gone, then step 2 onward.
+"${replicas[@]}" stop kypost-server >/dev/null
+docker volume create "${project}_kept" >/dev/null
+"${replicas[@]}" run --rm --no-deps --user 0 -v "${project}_kept:/kept" --entrypoint sh kypost-server -c 'chmod 700 /kept && chown kypost:kypost /kept'
+"${replicas[@]}" run --rm --no-deps --user kypost -v "${project}_restore:/restore" -v "${project}_kept:/kept" --entrypoint sh kypost-server \
+  -c 'mv /restore/keep.tar /kept/keep.tar.first && rm -rf /restore/recovered /restore/.kypost-restore-*'
+"${replicas[@]}" exec -T postgres dropdb -U kypost kypost_restored
+"${replicas[@]}" exec -T postgres createdb -U kypost kypost_restored
+use_db kypost_restored
+in_restore "${project}_restore" "$copy_in"
+"${replicas[@]}" run --rm --no-deps -T --user kypost -v "${project}_restore:/restore" kypost-server \
+  /usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered <testdata/cutover-recovery-test-shares.txt >"$work/restore-again.out"
 in_restore "${project}_restore" "$step4"
 in_restore "${project}_restore" "$keep_check"
 "${replicas[@]}" up -d --wait kypost-server proxy >/dev/null
@@ -243,6 +274,13 @@ wait_ready
 rm -f "$work/jar"
 CUTOVER_PASSWORD="$new_pw" $client login "$base" "$work/jar" admin
 test "$($client key-id "$base" "$work/jar")" = "$key_id"
+cookie=$($client session-cookie "$base" "$work/jar")
+mapfile -t apps < <("${replicas[@]}" ps -q kypost-server)
+test "${#apps[@]}" = 2
+for app in "${apps[@]}"; do
+  docker exec "$app" printenv KYPOST_DATABASE_URL | grep -q '/kypost_restored?'
+  docker exec "$app" curl -fsS --max-time 10 -H "Cookie: kypost_session=${cookie}" http://127.0.0.1:5866/api/admin/backup/status | grep -q "\"keyId\":\"${key_id}\""
+done
 
 echo "== 9. A container with a fresh config volume is refused"
 docker volume create "${project}_fresh_config" >/dev/null
