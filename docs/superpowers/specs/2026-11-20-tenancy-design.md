@@ -69,7 +69,7 @@ drive the design:
 | K5 | `AuthContext.OrgID` is set by `currentUser` from the re-read user record, never from the request. Every **cross-user hop** goes through one function, `orgAdmit(ac, target)`: from the caller to another user, mailbox, address, device, delivery or peer subject. On a mismatch it gives the same answer as a missing target. The hops form a named list (Isolation). | One choke point, as KyIdentity's `OrgStore`. KyPost has no single SQL layer to bind, but it does have a single per-request identity. |
 | K6 | Off in multi-tenant v1, answering `404`: local password sign-in, local user creation, password reset, SSO link and unlink, `AutoProvision`, the external-IMAP mail source, administrator-assigned IMAP and CardDAV accounts, and HR mailbox reservation (`/api/sync/hr-mailbox`). The first-run bootstrap administrator (`app/bootstrap.go:41-42`) is not created. | Accounts come only from KyIdentity (T decision 5). Staff must never hold a customer's credentials. T switches HR off in multi mode (T "Per-org features"). |
 | K7 | **Staff = `kypost.admin` role *and* a token whose `org_id` equals `KYPOST_STAFF_ORG_ID`.** A customer account is never an administrator, whatever roles a token or sync event carries. | `HasAdminRole` (`sso/directory.go:24-31`) trusts the role alone. T's D8 refuses KyIdentity's *own* admin role outside the staff org, but app-role assignment is "per org, run by staff" (T "Per-org features"). So a staff mistake could give a customer `kypost.admin`. KyPost pins the org independently. |
-| K8 | Entitlements are pulled from `GET /api/suite/orgs` (T D6) by one elected worker about every 60 s. They are cached in a platform table, `orgs(id, status, revision, enabled, quotas_json, polled_at)`, in the root `state.db`, so every replica reads the same answer. An org missing from the cache is not served. | T's contract point 6. A shared table keeps replicas consistent (R `worker.Run` elects one runner per role). |
+| K8 | Entitlements are pulled from `GET /api/suite/orgs` (T D6) by one elected worker about every 60 s. They are cached in a platform table, `orgs(id, status, revision, enabled, quotas_json, polled_at)`, in the root `state.db`, so every replica reads the same answer. An org missing from the cache is not served. **The staff org (`KYPOST_STAFF_ORG_ID`) is exempt**: it is never gated by the cache, so staff keep the console during a poller or KyIdentity outage. | T's contract point 6. A shared table keeps replicas consistent (R `worker.Run` elects one runner per role). The staff exemption is safe: KyIdentity still decides whether a staff account signs in at all (T `active_principals`). It is unverified whether `/api/suite/orgs` lists the staff org. |
 | K9 | Hosted mail domains, the platform primary domain(s) and the relay domain (M D2) are **platform assets**: staff configure, prove, sign and retire them through today's admin routes. No customer configures a domain in v1. | No customer administrators (decision 4). Per-customer custom domains come later (M "Per-customer custom domains"). |
 | K10 | Org deletion **scrubs** rather than deletes in the authority database. Account and mailbox rows stay as tombstones with storage removed and no personal fields. Addresses become keyed hashes, as M open question 4 recommends. Everything else the org owns is deleted. | `authority_v3.go:89-99` forbids deletes, so that "never reuse" holds. M D5 needs the tombstone and the privacy rule needs the content gone. One named purge path with its own migration is the only exception to those triggers (open question 9). |
 
@@ -380,6 +380,7 @@ The elected poller (K8) reads `/api/suite/orgs?since=<revision>` through ky-prim
 | `suspended` | Sign-in and device sign-on refused. All of the org's sessions are revoked: R `session_revocations` is bumped for each of its users. Sessions are short-lived and members sign in again on resume, as T does. Agent tokens, paired devices and CardDAV passwords are **kept but refused** while the org is not `active`: every auth path checks the org's status (Isolation). They work again on resume with nothing to re-issue. Only the purge deletes them. | Outbox admission refuses. Queued and scheduled sends are held, not sent (open question 6). | `451` (Mail) | Kept, nothing changed |
 | `deletion_scheduled` | As suspended | As suspended | `550` like unknown | Kept until `deleted` |
 | `deleted` | As suspended | As suspended | `550` like unknown | Purged |
+| Staff org (`KYPOST_STAFF_ORG_ID`) | Never gated by the cache (K8). KyIdentity's own refusal still applies at sign-in. | Normal | Normal (staff own no mailboxes, `sso/native_provision.go:686-689`) | Kept |
 | Not in the cache | Refused | Refused | Temporary refusal | Kept |
 | Known, but the cache is stale | Refused once the last good poll is more than 15 minutes old | Refused when stale | Last known status | Kept |
 
@@ -394,12 +395,16 @@ Run by the elected `api-sweepers` worker (R `app/replica.go:96-102`). One `org_p
 records progress, so the purge is **idempotent and resumable**: each step checks what is already
 gone and skips it, and a purge that died halfway continues from its row. Steps:
 
-1. **Block new use.** Revoke sessions and tokens (as for suspension), delete scheduled sends, and
-   cancel import jobs.
+1. **Block new use.** Bump R's `session_revocations` for each of the org's users, which ends every
+   session as suspension does. Delete the org's `agent_tokens` and `scheduled_sends` rows by
+   `org_id`, and cancel its import jobs (R `import_jobs`).
 2. **Remove storage.** For each of the org's users and mailboxes, drop the per-user and per-mailbox
    PostgreSQL schemas through the catalog (`dbbackend/dbbackend.go:205-247`). Then remove their
    directories under `CONFIG_DIR` and `STATE_DIR` (`users/<id>`, `mailboxes/<id>`), and delete
-   their pickup records and import uploads.
+   their pickup records and import uploads. This step deletes the remaining credentials:
+   - paired devices (`native_devices`, in the per-user `state.db`);
+   - CardDAV app passwords (`carddav-auth.json`);
+   - sealed IMAP and CardDAV client credentials (`imap-config.json`, `carddav-client.json`).
 3. **Receiving and quarantine.** Delete `ingress.db` `routes` and `bindings` for the org's
    mailboxes. A delivery whose every binding was in the org is deleted. For a delivery shared with
    another org, only this org's bindings go.
@@ -408,8 +413,8 @@ gone and skips it, and a purge that died halfway continues from its row. Steps:
    becomes an HMAC of the address under the tombstone key, held in a new `address_tombstones`
    table that the conflict check consults first (M open question 4). Then `directory` is scrubbed
    the same way.
-5. **Root store.** Delete the org's `send_ledger` and `agent_tokens` rows, then its `users.json`
-   records.
+5. **Root store.** Delete the org's `send_ledger` rows, then its `users.json` records, which hold
+   the password hashes, sealed TOTP secrets, recovery codes and PGP keys.
 6. **Record the purge.** Write a platform audit line with the org ID and the row and file counts,
    and no content. Mark the `org_purges` row done.
 
@@ -447,9 +452,15 @@ Tenancy fits on top:
     it into the record (R `replica/config.go:138-152`). An upgraded single-tenant replica install
     therefore starts without `accept-replica-config`. The merge adds two entries to R's own
     fingerprint record, as it does for any new shared setting. That is R's bookkeeping, not
-    behaviour. Unset values canonicalise to the empty string, so every replica agrees.
+    behaviour.
+  - **Canonical values.** `KYPOST_TENANCY` canonicalises unset or empty to its default,
+    `single`, and lowercases the value, before fingerprinting. So an explicit `single` and an
+    unset variable give the same fingerprint, and a correctly configured replica never refuses.
+    `KYPOST_STAFF_ORG_ID` has no default (it is required only in multi mode), so unset stays
+    `""`.
   - PR 1's upgrade test starts an R-format replica install under the new binary. It must start
-    with no refusal, and nothing but the fingerprint record may change.
+    with no refusal, and nothing but the fingerprint record may change. It also runs two
+    replicas, one with `KYPOST_TENANCY=single` and one with it unset, which must agree.
 - **Shared org state.** The `orgs` cache and `org_purges` live in the root `state.db` on
   PostgreSQL, so every replica answers from the same status. One elected runner polls and purges
   (R `worker/worker.go:49`).
@@ -525,8 +536,9 @@ PR 2 onward needs KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and web
    called as a customer member.
 5. **Entitlements and lifecycle.** The `suitedir` `Orgs` poller under election, the `orgs` cache,
    status effects on sign-in, sending and receiving, held sends, and quotas. Tests: each status
-   against each surface, the stale-cache bound, each quota, and two replicas seeing one suspension
-   (R's PostgreSQL job).
+   against each surface, the stale-cache bound, each quota, two replicas seeing one suspension
+   (R's PostgreSQL job), and staff still reaching the console with the poller failing and the
+   staff org absent from the cache.
 6. **Purge.** `org_purges`, the purge steps, the tombstone key, the `address_tombstones` table, and
    the named trigger exception (after the owner's answer to open question 9). Tests: a purge killed
    at every step resumes and finishes; nothing of the org remains, checked against the
@@ -553,6 +565,8 @@ PostgreSQL, and a measured capacity target (open question 8).
   (`dbbackend/dbbackend.go:241-247`). Behaviour at hosted scale is unverified.
 - **Offline window.** A suspended org keeps working for up to one poll (about 60 s). Up to 15
   minutes if the poll fails.
+- **Staff exemption.** The staff org is never gated by KyPost's cache (K8). Stopping staff
+  access depends on KyIdentity alone: disabling the account or the staff org there.
 
 ## Open questions, with recommendations
 
