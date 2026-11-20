@@ -127,6 +127,9 @@ type Server struct {
 	// nativeApproveBeforePersist runs between a device approval's subscriber check and
 	// its device write.
 	nativeApproveBeforePersist func()
+	// ssoSessionsEndFault, when it returns an error, fails endSSOSessions and
+	// revokeSessionsCoveredBy before they change anything.
+	ssoSessionsEndFault func() error
 	// nativeReleaseHit crashes a hold release at "intent", "lifecycle" or "rename".
 	nativeReleaseHit func(point string) error
 

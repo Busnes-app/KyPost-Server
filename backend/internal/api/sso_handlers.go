@@ -131,13 +131,24 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 		req.KySignOn = ok
 	}
 
+	// Sessions carry the issuer, client and admin ceiling they were minted
+	// under; a change to any of them, or disabling SSO, ends them all. They end
+	// before the save, so a failure leaves the old settings and the next save
+	// sees the same change and tries again; and once more after it, for a
+	// sign-in that minted one under the old settings in between.
+	ends := req.Enabled != stored.Enabled || req.IssuerURL != stored.IssuerURL || req.ClientID != stored.ClientID || req.AdminGroup != stored.AdminGroup
+	if ends {
+		if err := s.endSSOSessions(); err != nil {
+			s.logger.Error("sso: settings not saved: ending the existing SSO sessions failed", "error", err.Error())
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"code": "unavailable", "error": "nothing was saved: the existing SSO sessions could not be ended first; try again"})
+			return
+		}
+	}
 	if err := s.ssoStore.Save(req); err != nil {
 		http.Error(w, "failed to save SSO settings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Sessions carry the issuer, client and admin ceiling they were minted
-	// under; a change to any of them, or disabling SSO, ends them all.
-	if req.Enabled != stored.Enabled || req.IssuerURL != stored.IssuerURL || req.ClientID != stored.ClientID || req.AdminGroup != stored.AdminGroup {
+	if ends {
 		if err := s.endSSOSessions(); err != nil {
 			http.Error(w, "settings saved, but ending the existing SSO sessions failed; save again", http.StatusInternalServerError)
 			return

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -580,6 +582,81 @@ func TestApprovalCannotOutliveARevocationOnAnotherReplica(t *testing.T) {
 	for name, srv := range map[string]*Server{"A": a, "B": b} {
 		if rec := deviceCall(srv, "/api/notifications/native/pull", reg.DeviceID, reg.DeviceSecret); rec.Code == http.StatusOK {
 			t.Fatalf("the device approved during a revocation still works on %s", name)
+		}
+	}
+}
+
+// ssoPair is two replicas sharing SSO settings, sessions and the provider; ssoSessionsEndFault
+// fails A's first attempt to end sessions.
+func ssoPair(t *testing.T) (*Server, *Server, *ssotest.IdP) {
+	t.Helper()
+	dbbackend.RequirePostgres(t)
+	a, idp := setupSSOTestServer(t)
+	a.configPath = filepath.Join(a.configDir, "config.yaml")
+	if err := config.Save(a.configPath, a.cfg); err != nil {
+		t.Fatal(err)
+	}
+	b := replicaOf(t, a)
+	b.serverBaseURL = a.serverBaseURL
+	a.UseSharedState(a.globalStore)
+	b.UseSharedState(b.globalStore)
+	var calls atomic.Int32
+	a.ssoSessionsEndFault = func() error {
+		if calls.Add(1) == 1 {
+			return errors.New("injected: the database dropped the connection")
+		}
+		return nil
+	}
+	return a, b, idp
+}
+
+// A back-channel logout whose session deletion fails is not consumed: the provider's retry
+// ends the covered session on every replica.
+func TestFailedBackchannelLogoutIsRetried(t *testing.T) {
+	a, b, idp := ssoPair(t)
+	c := ssoSignIn(t, a, idp, "alice", "sid-retry")
+	token := idp.LogoutToken(t, "alice", "sid-retry", nil)
+	if rec := postLogout(a, logoutForm(token)); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("logout with a failing deletion: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := postLogout(a, logoutForm(token)); rec.Code != http.StatusOK {
+		t.Fatalf("the provider's retry: %d %s", rec.Code, rec.Body.String())
+	}
+	for name, srv := range map[string]*Server{"A": a, "B": b} {
+		if sessionAlive(srv, c) {
+			t.Fatalf("the logged-out session still works on %s", name)
+		}
+	}
+}
+
+// Disabling SSO when ending its sessions fails changes nothing; saving again disables it and
+// ends them on every replica.
+func TestFailedSSODisableIsRetried(t *testing.T) {
+	a, b, idp := ssoPair(t)
+	c := ssoSignIn(t, a, idp, "alice", "sid-disable")
+	admin, err := a.users.Create(context.Background(), "sso-admin", "long-password-for-sso-admin", users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disable := func() int {
+		body, _ := json.Marshal(sso.SSOSettings{Enabled: false, IssuerURL: idp.URL(), ClientID: idp.ClientID, AutoProvision: true})
+		req := httptest.NewRequest(http.MethodPut, "/api/admin/sso", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		a.handleAdminSSOPut(rec, req.WithContext(context.WithValue(req.Context(), authContextKey{}, AuthContext{UserID: admin.ID, Username: admin.Username, Role: users.RoleAdmin})))
+		return rec.Code
+	}
+	if code := disable(); code == http.StatusOK {
+		t.Fatal("disabling SSO reported success while its sessions could not be ended")
+	}
+	if code := disable(); code != http.StatusOK {
+		t.Fatal("saving again:", code)
+	}
+	if a.ssoStore.Load().Enabled {
+		t.Fatal("SSO is still enabled")
+	}
+	for name, srv := range map[string]*Server{"A": a, "B": b} {
+		if sessionAlive(srv, c) {
+			t.Fatalf("an SSO session still works on %s after SSO was disabled", name)
 		}
 	}
 }
