@@ -153,6 +153,11 @@ created exclusively, like R's keys, and backed up, because a restore needs it (M
   devices (`api/server_userscope.go:604-630`), CardDAV Basic (`api/dav_auth.go:112`) and MCP
   agent tokens (`api/mcp.go:138-143`). Each reads the org from the user record. In multi mode an
   `AuthContext` without an org is refused with the same `401` as an expired session.
+- **Every one of those builders also checks the org's status** in the `orgs` cache (K8), with the
+  staff exemption. An org that is not `active` is refused like a revoked credential. That is what
+  keeps paired devices, CardDAV passwords and agent tokens unusable during a suspension without
+  deleting them (Lifecycle). One shared function makes the check, so the four paths cannot drift.
+  PR 5's tests call each path for a suspended org.
 - **Signed public links** (`/pickup/{id}`, export and import links) resolve to an owning user.
   For a user whose org is not `active`, they answer as an expired link does.
 - **Per-user stores** are opened by `AuthContext.UserID` (`api/server_userscope.go:308-603`). A
@@ -450,9 +455,11 @@ Tenancy fits on top:
   - A multi install records `tenancy_mode=multi` and `staff_org_id` in `meta` at first start. A
     replica started with `KYPOST_TENANCY` unset or `single`, or with another
     `KYPOST_STAFF_ORG_ID`, refuses.
-  - A replica started with `multi` against a database with no record refuses as well. K2 allows
-    `multi` only on an empty install, and that check runs under R's `replica-config` lock
-    (R `replica/config.go:167`), so two replicas starting together cannot both claim the mode.
+  - A start with `multi` and no record writes the record only if the install is empty (K2). It
+    refuses when the database or volumes already hold data. The check and the write run as one
+    step under R's `replica-config` lock (R `replica/config.go:167`), so the first replica writes
+    the record and the others then find it. On SQLite, which multi mode refuses anyway (K2),
+    nothing is written.
   - With no record, unset and `single` are the same, so explicit-versus-unset can never disagree.
   - A single-tenant install writes nothing: no `meta` key and no fingerprint entry.
   - PR 1's upgrade test starts an R-format replica install under the new binary, once with
