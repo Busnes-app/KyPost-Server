@@ -1,0 +1,42 @@
+{
+  "check3": {
+    "smtpIn": {
+      "rcpt": "250 2.0.0 I'll make sure <owner+news@harness.test> gets this",
+      "queued": true
+    },
+    "relayedHeaders": [
+      "From: owner+news@harness.test",
+      "To: friend@outside.test",
+      "Subject: Re: Plus addressing check"
+    ]
+  },
+  "check4": {
+    "adminNotice": "Saved. Users can make masked addresses on these domains.",
+    "masked": "nimble.ferret.5873@harness.test",
+    "active": {
+      "rcpt": "250 2.0.0 I'll make sure <nimble.ferret.5873@harness.test> gets this",
+      "queued": true
+    },
+    "relayedHeaders": [
+      "From: nimble.ferret.5873@harness.test",
+      "To: friend@outside.test",
+      "Subject: Re: Masked address check"
+    ],
+    "paused": {
+      "rcpt": "550 5.1.1 Recipient unavailable (msg ID = bf7e9b13)",
+      "queued": false
+    },
+    "unknown": {
+      "rcpt": "550 5.1.1 Recipient unavailable (msg ID = 89507946)",
+      "queued": false
+    },
+    "resumed": {
+      "rcpt": "250 2.0.0 I'll make sure <nimble.ferret.5873@harness.test> gets this",
+      "queued": true
+    },
+    "deleted": {
+      "rcpt": "550 5.1.1 Recipient unavailable (msg ID = 12d6c6b1)",
+      "queued": false
+    }
+  }
+}
