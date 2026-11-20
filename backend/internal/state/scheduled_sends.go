@@ -15,11 +15,15 @@ import (
 // are final and hold no sealed job.
 //
 //	scheduled --claim--> sending --> sent | queued | uncertain | scheduled (retry) | returning
-//	scheduled --cancel--> returning --draft saved--> returned
+//	scheduled --cancel--> returning --claim--> drafting --draft saved--> returned
+//
+// The two claims record the claimant, the process's replica instance ID on PostgreSQL ("" on
+// SQLite), so interruption touches only rows a process that is no longer live left behind.
 const (
 	ScheduledWaiting   = "scheduled"
 	ScheduledSending   = "sending"
 	ScheduledReturning = "returning"
+	ScheduledDrafting  = "drafting"
 )
 
 var ErrScheduledFull = errors.New("too many scheduled messages, or too much scheduled data; send or cancel one first")
@@ -32,7 +36,7 @@ type ScheduledSend struct {
 }
 
 func scheduledFinal(status string) bool {
-	return status != ScheduledWaiting && status != ScheduledSending && status != ScheduledReturning
+	return status != ScheduledWaiting && status != ScheduledSending && status != ScheduledReturning && status != ScheduledDrafting
 }
 
 // AddScheduledSend inserts a waiting row unless the user already has limit
@@ -61,12 +65,12 @@ func (s *Store) AddScheduledSend(ctx context.Context, r ScheduledSend, limit int
 // the exclusivity: across goroutines and processes only one caller gets a row.
 // A user with a row already sending is skipped, so one account's slow relay
 // holds at most one worker; fresh rows go before retries.
-func (s *Store) ClaimScheduledSend(ctx context.Context, now int64) (ScheduledSend, bool, error) {
+func (s *Store) ClaimScheduledSend(ctx context.Context, now int64, claimant string) (ScheduledSend, bool, error) {
 	r := ScheduledSend{Status: ScheduledSending}
-	err := s.db.QueryRowContext(ctx, `UPDATE scheduled_sends SET status='sending'
+	err := s.db.QueryRowContext(ctx, `UPDATE scheduled_sends SET status='sending', claimant=?2
 		WHERE id=(SELECT id FROM scheduled_sends WHERE status='scheduled' AND send_at<=?1 AND next_attempt<=?1
 			AND user_id NOT IN (SELECT user_id FROM scheduled_sends WHERE status='sending') ORDER BY next_attempt, send_at LIMIT 1) AND status='scheduled'
-		RETURNING id,user_id,mailbox,send_at,reason,sealed,summary,created_at`, now).
+		RETURNING id,user_id,mailbox,send_at,reason,sealed,summary,created_at`, now, claimant).
 		Scan(&r.ID, &r.UserID, &r.Mailbox, &r.SendAt, &r.Reason, &r.Sealed, &r.Summary, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ScheduledSend{}, false, nil
@@ -80,7 +84,7 @@ func (s *Store) ClaimScheduledSend(ctx context.Context, now int64) (ScheduledSen
 func (s *Store) MoveScheduledSend(ctx context.Context, id, from, to, reason string, nextAttempt int64) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status=?, reason=?, next_attempt=?, sealed=CASE WHEN ? THEN NULL ELSE sealed END,
 		returning_since=CASE WHEN ? THEN unixepoch() ELSE returning_since END WHERE id=? AND status=?`,
-		to, reason, nextAttempt, scheduledFinal(to), to == ScheduledReturning && from != ScheduledReturning, id, from)
+		to, reason, nextAttempt, scheduledFinal(to), to == ScheduledReturning && from != ScheduledReturning && from != ScheduledDrafting, id, from)
 	if err != nil {
 		return false, err
 	}
@@ -88,12 +92,64 @@ func (s *Store) MoveScheduledSend(ctx context.Context, id, from, to, reason stri
 	return n == 1, err
 }
 
-// InterruptScheduledSends marks rows a stopped process left mid-send uncertain:
-// they may have reached the relay, so they are never retried. Run only before
-// this process claims anything.
-func (s *Store) InterruptScheduledSends(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status='uncertain', reason=?, sealed=NULL WHERE status='sending'`, ScheduledInterrupted)
-	return err
+// ClaimScheduledReturn takes a returning row for claimant before its draft is saved: of two
+// sweepers racing one row, one saves the draft.
+func (s *Store) ClaimScheduledReturn(ctx context.Context, id, claimant string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status='drafting', claimant=? WHERE id=? AND status='returning'`, claimant, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// InterruptScheduledSends handles rows a stopped process left mid-work: a send may have
+// reached the relay, so it is marked uncertain and never retried; a draft save goes back to
+// returning. live reports whether a claimant still runs; nil (SQLite, one process) treats
+// every claimant as stopped, so run it only before this process claims anything.
+func (s *Store) InterruptScheduledSends(ctx context.Context, live func(ctx context.Context, claimant string) (bool, error)) error {
+	if live == nil {
+		_, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status='uncertain', reason=?, sealed=NULL WHERE status='sending'`, ScheduledInterrupted)
+		if err == nil {
+			_, err = s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status='returning' WHERE status='drafting'`)
+		}
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT claimant FROM scheduled_sends WHERE status IN ('sending','drafting')`)
+	if err != nil {
+		return err
+	}
+	var claimants []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			rows.Close()
+			return err
+		}
+		claimants = append(claimants, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, c := range claimants {
+		if c != "" {
+			alive, err := live(ctx, c)
+			if err != nil {
+				return err
+			}
+			if alive {
+				continue
+			}
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status='uncertain', reason=?, sealed=NULL WHERE status='sending' AND claimant=?`, ScheduledInterrupted, c); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status='returning' WHERE status='drafting' AND claimant=?`, c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const ScheduledInterrupted = "the server stopped while sending; check with your recipients before sending again"
@@ -131,7 +187,7 @@ func (s *Store) GetScheduledSend(ctx context.Context, id string) (ScheduledSend,
 
 // PruneScheduledSends drops final rows created before the cutoff.
 func (s *Store) PruneScheduledSends(ctx context.Context, before int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM scheduled_sends WHERE created_at<? AND status NOT IN ('scheduled','sending','returning')`, before)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM scheduled_sends WHERE created_at<? AND status NOT IN ('scheduled','sending','returning','drafting')`, before)
 	return err
 }
 

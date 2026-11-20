@@ -92,14 +92,21 @@ func TestWithMailAuthDoesNotMeterReads(t *testing.T) {
 func mintSessionForTest(srv *Server, userID string) (string, string) {
 	token := "session-" + userID
 	csrf := "csrf-" + userID
-	srv.sessMu.Lock()
-	srv.sessions[token] = Session{
+	sess := Session{
 		UserID:    userID,
 		IssuedAt:  time.Now(),
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 		CSRFToken: csrf,
 	}
-	srv.sessMu.Unlock()
+	if srv.shared != nil {
+		if err := srv.putSharedSession(context.Background(), token, sess); err != nil {
+			panic(err)
+		}
+	} else {
+		srv.sessMu.Lock()
+		srv.sessions[token] = sess
+		srv.sessMu.Unlock()
+	}
 	_, _ = srv.users.ClearMustChangePassword(userID)
 	return token, csrf
 }

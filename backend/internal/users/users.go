@@ -889,8 +889,8 @@ func WriteFirstRunPassword(configDir, username, password string) (string, error)
 // between the link and the writeback lost users.json while the state written
 // alongside it survived — and the next boot would mint a DIFFERENT admin ID,
 // orphaning all of it. Link rather than Rename is what makes the creation
-// exclusive (Rename would clobber a file the other process just won), so
-// AtomicWriteFile cannot be reused wholesale; only its durability can.
+// exclusive (Rename would clobber a file the other process just won): see
+// fsutil.CreateExclusive.
 func (s *Store) createInitial(f usersFile) (won bool, err error) {
 	if f.Version == 0 {
 		f.Version = 1
@@ -899,50 +899,7 @@ func (s *Store) createInitial(f usersFile) (won bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	// 0o700, matching fsutil.AtomicWriteFile's 0o700 for this same class of
-	// data. This directory holds users.json — every account record, the sealed
-	// TOTP secrets, the password hashes and the wrapped PGP envelopes —
-	// and was created world-readable while the file written into it was not.
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return false, err
-	}
-	tmp, err := os.CreateTemp(dir, ".users.json.tmp.*")
-	if err != nil {
-		return false, err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return false, err
-	}
-	if _, err := tmp.Write(b); err != nil {
-		_ = tmp.Close()
-		return false, err
-	}
-	// Before the link, or the link can reach the disk while the bytes behind it
-	// have not — leaving a users.json that exists and is empty, which is worse
-	// than one that is missing: the missing one re-bootstraps, the empty one
-	// fails to parse and the server will not start.
-	if err := fsutil.Sync(tmp); err != nil {
-		_ = tmp.Close()
-		return false, err
-	}
-	if err := tmp.Close(); err != nil {
-		return false, err
-	}
-	if err := os.Link(tmpName, s.path); err != nil {
-		if os.IsExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	// After the link, or the link itself can be lost.
-	if err := fsutil.SyncDir(dir); err != nil {
-		return false, err
-	}
-	return true, nil
+	return fsutil.CreateExclusive(s.path, b, 0o600)
 }
 
 func randomPassword() (string, error) {

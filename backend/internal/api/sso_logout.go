@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -69,7 +70,17 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 	if claims.ReplayUntil.After(retain) {
 		retain = claims.ReplayUntil
 	}
-	event, fresh, err := s.ssoLifecycle.RecordLogout(settings.ClientID, claims, retain)
+	// End the covered sessions before the token is spent: a failure leaves it unrecorded, so
+	// the provider's retry is not refused as a replay. A replayed token ends them again,
+	// which only repeats a logout.
+	event := sso.NewLogoutEvent(settings.ClientID, claims, retain)
+	revoked, err := s.revokeSessionsCoveredBy(event)
+	if err != nil {
+		s.logger.Error("SSO logout not applied: its sessions could not be ended", "error", err.Error())
+		writeUnavailable(w)
+		return
+	}
+	_, fresh, err := s.ssoLifecycle.RecordLogout(settings.ClientID, claims, retain)
 	if err != nil {
 		s.logger.Error("SSO logout was not recorded", "error", err.Error())
 		http.Error(w, "logout was not committed", http.StatusInternalServerError)
@@ -79,8 +90,16 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "logout token was already used", http.StatusBadRequest)
 		return
 	}
-
-	revoked := s.revokeSessionsCoveredBy(event)
+	// Once more after recording, for a sign-in that minted a covered session in between
+	// (recorded logouts fence later sign-ins). A failure here is finished by the retry,
+	// whose first pass above ends it.
+	again, err := s.revokeSessionsCoveredBy(event)
+	if err != nil {
+		s.logger.Error("SSO logout recorded but a racing session could not be ended", "error", err.Error())
+		writeUnavailable(w)
+		return
+	}
+	revoked += again
 	if s.loginParamsLimiter != nil {
 		s.loginParamsLimiter.settleCost(lockoutKeyForIP(clientIP(r)), -1)
 	}
@@ -90,7 +109,17 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 
 // endSSOSessions deletes every SSO session and bumps ssoEpoch under the same
 // lock, so a callback already past its settings read cannot mint one after.
-func (s *Server) endSSOSessions() {
+func (s *Server) endSSOSessions() error {
+	if s.ssoSessionsEndFault != nil {
+		if err := s.ssoSessionsEndFault(); err != nil {
+			return err
+		}
+	}
+	if s.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		return s.shared.EndSSOSessions(ctx)
+	}
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
 	s.ssoEpoch.Add(1)
@@ -99,12 +128,26 @@ func (s *Server) endSSOSessions() {
 			delete(s.sessions, token)
 		}
 	}
+	return nil
 }
 
 // revokeSessionsCoveredBy deletes every session the logout addresses and
 // returns how many. Scope is sso.LogoutEvent.Covers: a session by its sid,
 // or a subject's sessions issued no later than the token.
-func (s *Server) revokeSessionsCoveredBy(event sso.LogoutEvent) int {
+func (s *Server) revokeSessionsCoveredBy(event sso.LogoutEvent) (int, error) {
+	if s.ssoSessionsEndFault != nil {
+		if err := s.ssoSessionsEndFault(); err != nil {
+			return 0, err
+		}
+	}
+	if s.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		return s.shared.DeleteSSOSessionsWhere(ctx, func(data string) bool {
+			var sess Session
+			return json.Unmarshal([]byte(data), &sess) != nil || event.Covers(sess.SSO)
+		})
+	}
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
 	n := 0
@@ -114,5 +157,5 @@ func (s *Server) revokeSessionsCoveredBy(event sso.LogoutEvent) int {
 			n++
 		}
 	}
-	return n
+	return n, nil
 }

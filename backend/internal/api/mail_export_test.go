@@ -201,7 +201,7 @@ func TestMailExport(t *testing.T) {
 	}
 	srv.stepUpMu.Lock()
 	c := srv.stepUps[challenge.Challenge]
-	c.verified = true
+	c.Verified = true
 	srv.stepUps[challenge.Challenge] = c
 	srv.stepUpMu.Unlock()
 	if w = call("POST", "/api/export", meSSO, `{"format":"eml-zip"}`, map[string]string{stepUpHeader: challenge.Challenge}); w.Code != 403 {
@@ -279,7 +279,7 @@ func TestMailExport(t *testing.T) {
 	token := strings.TrimPrefix(url, "/api/export/")
 	srv.exportMu.Lock()
 	g := srv.exports[token]
-	g.expires = time.Now().Add(-time.Second)
+	g.Expires = time.Now().Add(-time.Second)
 	srv.exports[token] = g
 	srv.exportMu.Unlock()
 	if w = call("GET", url, me, "", nil); !bounced(w, "expired") || len(srv.exports) != 0 {

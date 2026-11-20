@@ -29,7 +29,14 @@ esac
 case "${KYPOST_DISABLE_AI_SORTING:-}" in
 	true) KYPOST_START_OLLAMA=false ;;
 	''|false)
-		if command -v ollama >/dev/null 2>&1; then
+		case "${OLLAMA_BASE_URL:-http://127.0.0.1:11434}" in
+			http://127.0.0.1:*|http://localhost:*) local_ollama=true ;;
+			# An external Ollama (the replica profile's one shared service): nothing to start here.
+			*) local_ollama=false ;;
+		esac
+		if [ "$local_ollama" = false ]; then
+			KYPOST_START_OLLAMA=false
+		elif command -v ollama >/dev/null 2>&1; then
 			KYPOST_START_OLLAMA=true
 		else
 			KYPOST_START_OLLAMA=false
@@ -47,12 +54,20 @@ export KYPOST_START_OLLAMA
 # volume or bind mount can be mounted over any of them, and `set -e` means a
 # chown against a missing path below would abort the boot.
 mkdir -p /kypost/config /kypost/private /kypost/logs /kypost/state /kypost/ollama-models
+# supervisord's socket and pid file are per container: replicas share /kypost/state.
+install -d -o kypost -g kypost -m 0700 /run/kypost
 # Bind mounts replace image permissions; protect authority, keys and mail
 # before bootstrap writes credentials or unprivileged services start.
 # CAP_CHOWN lets root take ownership before chmod without CAP_FOWNER.
 # Change only the roots here; the existing handoff below restores runtime ownership.
-chown root:root /kypost/config /kypost/private /kypost/state
-chmod 0700 /kypost/config /kypost/private /kypost/state
+# A root already kypost-owned and 0700 is left alone: replicas share these volumes, and taking
+# them to root:root would cut a running replica off until the handoff below.
+for root in /kypost/config /kypost/private /kypost/state; do
+	if [ "$(stat -c '%U:%G %a' "$root")" != "kypost:kypost 700" ]; then
+		chown root:root "$root"
+		chmod 0700 "$root"
+	fi
+done
 
 # Runs synchronously (as root, before the chown below) so admin.env exists
 # before any service starts — a hard guarantee that supervisord's
@@ -97,5 +112,11 @@ setpriv --reuid=kypost --regid=kypost --init-groups \
 # reasons: PID 1 itself is then unprivileged (so a container escape does not
 # start from root), and the drop no longer depends on a setting in a config
 # file that someone could edit without realizing it was load-bearing.
+#
+# The container's own stdout and stderr (Docker's log pipes) are handed to kypost first, so
+# supervisord can reopen them for the startfailure listener: a refused start then shows in
+# `docker compose logs`. They are this process's own output; nothing else is shared.
+# No redirect on this command: it would make its own fd 2 /dev/null instead of the pipe.
+chown kypost:kypost /proc/self/fd/1 /proc/self/fd/2 || echo "start refusals will show only in /kypost/logs" >&2
 exec setpriv --reuid=kypost --regid=kypost --init-groups \
 	supervisord -c /etc/supervisord.conf

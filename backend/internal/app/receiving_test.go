@@ -9,14 +9,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -452,5 +455,42 @@ func TestNativeReceivingPartialQuotaFailureRetriesWithoutDuplicate(t *testing.T)
 		if err != nil || !bytes.Equal(got, raw) {
 			t.Fatalf("owner %d lost accepted bytes: %v", index, err)
 		}
+	}
+}
+
+// Regression test: if a startup step fails after startReceivingImport launched its worker,
+// runDaemonRole must cancel that worker and return its error instead of waiting forever on
+// an owned context that only ends once runDaemonRole returns.
+func TestRunDaemonRoleReturnsOnStartFailure(t *testing.T) {
+	r, _ := receivingFixture(t)
+	t.Setenv("CONFIG_DIR", r.configDir)
+	t.Setenv("STATE_DIR", r.stateDir)
+	t.Setenv("KYPOST_NATIVE_MAIL", "true")
+	t.Setenv("KYPOST_NATIVE_RECEIVING", "true")
+	t.Setenv("KYPOST_CLOUDFLARE_RECEIVING_ORIGIN", "https://cf.example.test")
+	t.Setenv("KYPOST_RECEIVING_RSPAMD", "false")
+
+	logger, err := logging.NewWithOutput(io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, cancelOwned := context.WithCancel(context.Background())
+	defer cancelOwned()
+
+	done := make(chan error, 1)
+	go func() {
+		var backups sync.WaitGroup
+		done <- runDaemonRole(owned, runDeps{nativeReceiving: true, logger: logger}, &backups)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("runDaemonRole returned nil, want startCloudflareReceiving failure")
+		}
+	case <-time.After(5 * time.Second):
+		cancelOwned()
+		<-done
+		t.Fatal("runDaemonRole hung on startup failure instead of canceling started workers")
 	}
 }

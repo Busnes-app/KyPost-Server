@@ -124,6 +124,10 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 		}
 		ipKey := lockoutKeyForIP(clientIP(r))
 		allowed, retryAfter, strike := s.mcpLockout.tryAttempt(ipKey)
+		if !allowed && strike.unavailable {
+			writeUnavailable(w)
+			return
+		}
 		if !allowed {
 			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
 			http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
@@ -147,6 +151,7 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 				secretOK, _ = users.VerifyDeviceSecret(ctx, t.Hash, secret)
 			case !errors.Is(err, state.ErrAgentTokenNotFound):
 				s.mcpLockout.cancelAttempt(strike)
+				w.Header().Set("Retry-After", "5")
 				http.Error(w, "agent tokens are unavailable", http.StatusServiceUnavailable)
 				return
 			}
@@ -156,7 +161,12 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 		if found && !secretOK {
 			// Struck only for a wrong secret, and never checked before a right
 			// one: someone who knows a token ID cannot lock the owner's agents out.
-			if ok, wait, _ := s.mcpUserLockout.tryAttempt("user:" + tok.UserID); !ok {
+			if ok, wait, userStrike := s.mcpUserLockout.tryAttempt("user:" + tok.UserID); !ok {
+				if userStrike.unavailable {
+					s.mcpLockout.cancelAttempt(strike)
+					writeUnavailable(w)
+					return
+				}
 				w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 				http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 				return

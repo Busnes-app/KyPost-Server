@@ -252,7 +252,7 @@ func TestStepUpKeepsThePasswordForGenericProviderSessions(t *testing.T) {
 	// The UI is told this is not a KySignOn session, so it asks for the password.
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	req.AddCookie(cookie)
-	if ac, ok := srv.currentUser(req); !ok || ac.SSOSession {
+	if ac, ok, _ := srv.currentUser(req); !ok || ac.SSOSession {
 		t.Fatalf("generic-provider session reported as a KySignOn session: %+v %v", ac, ok)
 	}
 

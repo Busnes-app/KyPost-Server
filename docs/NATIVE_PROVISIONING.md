@@ -774,7 +774,8 @@ another account](#import-from-another-mail-account) adds its own below.
   import into another user's mailbox.
 - `POST /api/import/{token}` spends the link and takes the raw file as the body
   (`application/octet-stream`). It streams to a `0600` temp file in
-  `$STATE_DIR/imports/`, never to memory, refusing more than `maxBytes` (413)
+  `$STATE_DIR/imports/` (on PostgreSQL replicas, `$STATE_DIR/imports/<instance>/`),
+  never to memory, refusing more than `maxBytes` (413)
   and an empty body (400); the cap is the mailbox's whole storage quota
   (5 GiB by default), since nothing larger can fit. An upload that would cut
   into the [drive reserve](#mailbox-quotas) is refused (507, temp file
@@ -789,13 +790,23 @@ another account](#import-from-another-mail-account) adds its own below.
   after shutdown began starts no job (503).
 - `GET /api/import` is the caller's latest job: `{state, mailbox, folder,
   imported, duplicates, skipped, bytes, error?, maxBytes, maxMessageBytes}`
-  with `state` `idle`, `uploading`, `running`, `finished`, `failed` or
-  `cancelled`. `POST /api/import/cancel` (CSRF) stops a running job before
-  its next message; 409 when none runs.
+  with `state` `idle`, `uploading`, `running`, `finished`, `failed`,
+  `cancelled` or `interrupted`. `POST /api/import/cancel` (CSRF) stops a running
+  job before its next message; 409 when none runs.
 - One import uploads or runs per user and two server-wide (`maxImports`).
-  Jobs live in memory: a restart or shutdown cancels them and the startup
-  removes `$STATE_DIR/imports/`; every other path removes the temp file when
-  the job or upload ends. The user re-imports, and duplicates make that safe.
+  A job runs in the process that took its upload: a restart or shutdown cancels
+  it; every other path removes the temp file when the job or upload ends. The
+  user re-imports, and duplicates make that safe. On SQLite links and jobs live
+  in memory and the startup removes `$STATE_DIR/imports/`.
+- On PostgreSQL replicas the link is an `auth_challenges` row (keyed by a hash
+  of the token, spent by compare-and-delete), so it uploads on any replica,
+  once. The job's status is the user's `import_jobs` row, written by the
+  replica running it at least every second; status reads it on every replica,
+  and the two limits count the active rows of live replicas in one write
+  transaction. Cancel sets the row's flag, which the runner reads back within a
+  second. A job whose replica has stopped (its liveness lock gone) reads as
+  `interrupted` and no longer counts. A starting replica removes only loose
+  files and the upload folders of replicas that are not live.
 - Formats are detected by content: a zip (`PK`), an mbox (starts `From `),
   otherwise one EML. mbox splits at a `From ` line at the start of the file or
   after a blank line, drops that blank line, removes one `>` from every
@@ -873,9 +884,9 @@ message, under the settings lock) and shutdown are the file import's.
   scanner of other services. Plaintext and unverified certificates are not
   offered. `host` is a DNS name or IP literal. Answers `{token: <64 hex>,
   expiresInSeconds: 600, target: "Imported/<host with '.' as '-'>"}` (folder
-  names cannot contain `.`). The grant is in memory, one per user, bound to user,
-  session and mailbox like the upload link, and holds host, port, security and
-  username. Minting refuses (409) while the user's import runs or the server's
+  names cannot contain `.`). The grant is stored like the upload link (in memory,
+  or a row on PostgreSQL), one per user, bound to user, session and mailbox, and
+  holds host, port, security and username. Minting refuses (409) while the user's import runs or the server's
   two import slots are taken, and (503) once shutdown began; it cancels the
   user's previous grant, including a listing still in flight.
 - `POST /api/import/imap/{token}/folders` with `{password}` (the provider's)
@@ -893,11 +904,16 @@ message, under the settings lock) and shutdown are the file import's.
   KySignOn grant is bound to a SHA-256 of that request's body; an unsalted
   digest over otherwise guessable fields would be an offline guessing target
   wherever it was kept, and replaying the body after the KySignOn popup would
-  resend it. After a successful sign-in the grant keeps the password as a byte
-  slice; it is wiped when the job signs in, or when the grant is replaced or
-  expires (a timer at 10 minutes). The wipe is best effort: the JSON decoder's
-  string, the TLS buffers and the copies Go made along the way are only dropped
-  and left to the collector.
+  resend it. After a successful sign-in the grant keeps the password sealed
+  (AES-GCM under `SECRET_DIR/imap-import.key`, bound to the user and a hash of
+  the grant token, so a sealed value copied to another grant does not open), so
+  the start can run on any replica. The sealed value goes when the grant is
+  spent, replaced or expires (a timer at 10 minutes deletes it); the job's
+  opened copy is wiped when it signs in. The wipe is best effort: the JSON
+  decoder's string, the TLS buffers and the copies Go made along the way are
+  only dropped and left to the collector. A listing is in flight on one
+  replica: a new grant cancels it there, and on another replica the listing
+  finishes and finds its grant gone.
 - `POST /api/import/imap/{token}/start` with `{folders: [name], target}` spends
   the grant and answers `202` with the job status. Folders must come from the
   listing; `target` (default above) and each mapped folder must be valid folder

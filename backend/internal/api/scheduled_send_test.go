@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -473,7 +474,7 @@ func TestScheduledSweeperStartMarksInterruptedSendsUncertain(t *testing.T) {
 	f := newScheduledFixture(t, "250 queued")
 	at := sendTime()
 	id := f.schedule(t, at, nil)
-	if _, ok, err := f.srv.globalStore.ClaimScheduledSend(context.Background(), at.Unix()); err != nil || !ok {
+	if _, ok, err := f.srv.globalStore.ClaimScheduledSend(context.Background(), at.Unix(), ""); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -503,7 +504,7 @@ func TestScheduledCancelRacesClaim(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			row, ok, err := f.srv.globalStore.ClaimScheduledSend(context.Background(), at.Unix())
+			row, ok, err := f.srv.globalStore.ClaimScheduledSend(context.Background(), at.Unix(), "")
 			claimed = ok && err == nil && row.ID == id
 		}()
 		wg.Wait()
@@ -595,6 +596,59 @@ func TestScheduledReturnGivesUpAfterAWeek(t *testing.T) {
 	}
 	if dials, _ := f.smtp.counts(); dials != 0 {
 		t.Fatalf("%d SMTP connections for canceled mail", dials)
+	}
+}
+
+// countingDraftClient counts saved drafts and holds each save, so racing sweeps overlap.
+type countingDraftClient struct {
+	*fakeMailClient
+	saves *atomic.Int32
+}
+
+func (c countingDraftClient) SaveDraft(context.Context, imapadapter.DraftMessage) error {
+	c.saves.Add(1)
+	time.Sleep(50 * time.Millisecond)
+	return nil
+}
+
+// Two sweeps (two replicas' api-sweepers, or a sweep beside a request) returning one row to
+// Drafts save it once: the claim decides, not the save.
+func TestRacingSweepsSaveOneDraft(t *testing.T) {
+	f := newScheduledFixture(t, "250 OK")
+	id := f.schedule(t, sendTime(), nil)
+	f.srv.userMu.Lock()
+	f.srv.userMail[f.userID] = &serverMailEntry{client: failingDraftClient{f.fake}, updatedAt: "test"}
+	f.srv.userMu.Unlock()
+	if rec := f.post("/api/scheduled/"+id+"/cancel", map[string]any{}); rec.Code != 202 {
+		t.Fatalf("cancel: %d %s", rec.Code, rec.Body.String())
+	}
+	row := f.row(t, id)
+	if row.Status != state.ScheduledReturning {
+		t.Fatalf("row %+v, want returning", row)
+	}
+	var saves atomic.Int32
+	f.srv.userMu.Lock()
+	f.srv.userMail[f.userID] = &serverMailEntry{client: countingDraftClient{f.fake, &saves}, updatedAt: "test"}
+	f.srv.userMu.Unlock()
+	key, err := f.srv.scheduledSendKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var saved atomic.Int32
+	for range 2 {
+		wg.Go(func() {
+			if f.srv.saveScheduledDraft(context.Background(), key, row, time.Now) {
+				saved.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	if saves.Load() != 1 || saved.Load() != 1 {
+		t.Fatalf("racing sweeps saved %d drafts (%d reported), want 1", saves.Load(), saved.Load())
+	}
+	if got := f.row(t, id); got.Status != "returned" {
+		t.Fatalf("row %+v, want returned", got)
 	}
 }
 

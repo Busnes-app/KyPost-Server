@@ -57,6 +57,14 @@ fi
 if [[ ${#files[@]} -eq 0 ]]; then
   IFS="${COMPOSE_PATH_SEPARATOR:-:}" read -ra files <<<"${COMPOSE_FILE:-$repo_dir/docker-compose.yml}"
 fi
+# Replicas must all stop before the new version starts (mixed versions are not supported),
+# and this updater recreates them in place, so it leaves them to the documented steps.
+for file in "${files[@]}"; do
+  if [[ "$(basename -- "$file")" == docker-compose.replicas.yml ]]; then
+    echo "with replicas, upgrade with: docker compose pull && docker compose stop kypost-server && docker compose up -d --wait (docs/RUNNING.md, Replicas on one host)" >&2
+    exit 65
+  fi
+done
 base=(docker compose)
 for file in "${files[@]}"; do
   # The previous run's own image override is recorded too, and deleted.

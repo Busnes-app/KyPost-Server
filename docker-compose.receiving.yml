@@ -1,5 +1,7 @@
 # Controlled qualification only: prepare domain/accounts/spool using base Compose
 # first. Operator supplies the pinned Linux x86_64 engine and protected TLS files.
+# Refused together with docker-compose.replicas.yml, whose KYPOST_PROXY_IP is then set.
+x-single-container: ${KYPOST_PROXY_IP:+${KYPOST_RECEIVING_WITH_REPLICAS:?Maddy receiving (docker-compose.receiving.yml) needs one container on port 25 and runs only in the single-container profile; remove docker-compose.replicas.yml or this overlay}}
 services:
   kypost-server:
     environment:

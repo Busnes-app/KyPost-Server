@@ -53,7 +53,7 @@ import (
 // Server holds the HTTP surface and its process-wide state.
 //
 // LOCK ORDER: encPolicyMu before cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
-// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu before importMu. Never the reverse.
+// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu before importPublishMu before importMu. Never the reverse.
 // The sso-lifecycle file lock (sso.LifecycleStore) ranks before all of them and
 // is not modelled by lockRank or TestLockOrderIsRespected: hold no Server mutex
 // when calling LockDirectory, ApplyDirectory, RecordLogout or RecordSignOnJTI.
@@ -124,6 +124,15 @@ type Server struct {
 	nativeSignOnAfterAdmit  func()
 	nativeSignOnBeforeIssue func()
 	ssoCallbackAfterResolve func()
+	// nativeApproveBeforePersist runs between a device approval's subscriber check and
+	// its device write.
+	nativeApproveBeforePersist func()
+	// ssoSessionsEndFault, when it returns an error, fails endSSOSessions and
+	// revokeSessionsCoveredBy before they change anything.
+	ssoSessionsEndFault func() error
+	// ssoSaveBeforeWrite runs in an SSO settings save after the first session end, before
+	// the settings are written.
+	ssoSaveBeforeWrite func()
 	// nativeReleaseHit crashes a hold release at "intent", "lifecycle" or "rename".
 	nativeReleaseHit func(point string) error
 
@@ -163,13 +172,16 @@ type Server struct {
 	exportMu  sync.Mutex
 	exports   map[string]exportGrant
 	exporting map[string]bool
-	// importGrants are the unspent mail-import upload links and IMAP grants, keyed by token,
-	// and imports each user's latest import job. Innermost, taken alone,
-	// never while another Server mutex is held.
-	importMu     sync.Mutex
-	importGrants map[string]importGrant
-	imports      map[string]*importJob
-	importClosed bool // set at Shutdown: no new import job starts
+	// importGrants are the unspent mail-import upload links and IMAP grants, keyed by token
+	// (memory only; rows on PostgreSQL), imports each user's latest import job run here, and
+	// importListings each user's IMAP listing in flight here. Innermost, taken alone, never
+	// while another Server mutex is held. importPublishMu orders a job's status row writes.
+	importMu        sync.Mutex
+	importGrants    map[string]importGrant
+	imports         map[string]*importJob
+	importListings  map[string]importListing
+	importClosed    bool // set at Shutdown: no new import job starts
+	importPublishMu sync.Mutex
 	// importPending is the upload bytes promised but not yet written; see uploadSpace.
 	importPending atomic.Int64
 	// singleUse makes each one-shot token — PGP QR key exchange, native device
@@ -275,6 +287,10 @@ type Server struct {
 	officeLoginParams *keyedLimiter
 	officeLogin       *keyedLimiter
 	exemptNetworksEnv string
+	// exemptStored is the stored list exemptNetworks was last built from (followExemptNetworks).
+	exemptStored atomic.Pointer[string]
+	// cfgStamp is config.yaml as this process last read or wrote it (followConfig).
+	cfgStamp fileIdentity
 
 	// classifier and globalStore back the Ollama version/update-check block on the
 	// Prompt Tuning page and its admin-notification email. classifier is nil until
@@ -284,8 +300,18 @@ type Server struct {
 	// the daemon process's published health report (health.MergeDaemonReport) —
 	// which is the same store the daemon writes it to, since both processes are
 	// rooted at the same state directory.
-	classifier    *classifier.HTTPClient
-	globalStore   *state.Store
+	classifier  *classifier.HTTPClient
+	globalStore *state.Store
+	// shared is globalStore when this server is a PostgreSQL replica (UseSharedState): the
+	// security state every replica shares lives there. nil keeps it in memory.
+	shared *state.Store
+	// instanceID is this process's replica instance (claimant of its scheduled-send work) and
+	// instanceLive asks whether another is live; both unset on SQLite.
+	instanceID   string
+	instanceLive func(ctx context.Context, id string) (bool, error)
+	// draining is set at SIGTERM (StartDraining); ready caches /readyz's store ping.
+	draining      atomic.Bool
+	ready         readiness
 	backup        *backup.Service
 	ssoStore      *sso.Store
 	nativeDomains *sso.NativeDomainStore
@@ -602,7 +628,7 @@ func (s *Server) routes() http.Handler {
 	s.routesFrontend(mux)
 
 	// The paired KyDrive origin can change at run time, so the policy is per response.
-	return withGzip(withSecurityHeaders(mux, func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }, s.kydrive.Origin))
+	return withGzip(withSecurityHeaders(withDeadline(mux, requestDeadline), func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }, s.kydrive.Origin))
 }
 
 // routesAuth registers sign-in, session, and second-factor endpoints.
@@ -701,6 +727,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/backup/pin-key", s.withAdmin(withActionDigest(s.handleBackupPinKey)))
 	mux.HandleFunc("PUT /api/admin/backup/schedule", s.withAdmin(withActionDigest(s.handleBackupSchedule)))
 	mux.HandleFunc("/api/health", withPublicRoute(s.handleHealth))
+	mux.HandleFunc("GET /livez", withPublicRoute(s.handleLivez))
+	mux.HandleFunc("GET /readyz", withPublicRoute(s.handleReadyz))
 	mux.HandleFunc("GET /healthz", withPublicRoute(s.suiteHealthHandler().ServeHTTP))
 	mux.HandleFunc("POST /api/admin/mail/poll-now", s.withAdmin(s.handlePollNow))
 	mux.HandleFunc("GET /api/installer/network", withPublicRoute(s.handleInstallerNetwork))
@@ -1040,9 +1068,7 @@ func (s *Server) routesFrontend(mux *http.ServeMux) {
 // Serve and Run call Prepare automatically if it wasn't already called.
 func (s *Server) Prepare() {
 	// No import job survives a restart; its upload may have.
-	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
-		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
-	}
+	s.sweepImportUploads()
 	s.bindUnboundSSOLinks()
 	// Settings saved before KySignOn detection carry no mark; confirm it once.
 	if cfg := s.ssoStore.Load(); cfg.Enabled && !cfg.KySignOn {
@@ -1306,6 +1332,9 @@ func (s *Server) logSaturatedLockouts() {
 // sweepSessions drops every session dead as of now. Split out so tests can
 // drive it directly instead of waiting on the ticker.
 func (s *Server) sweepSessions(now time.Time) int {
+	if s.shared != nil {
+		return 0 // expired rows go with the elected coordination cleanup
+	}
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
 	removed := 0

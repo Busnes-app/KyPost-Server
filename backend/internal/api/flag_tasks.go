@@ -206,6 +206,12 @@ func (s *Server) handleTaskState(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"outcome": "duplicate"})
 		return
 	}
+	if errors.Is(err, syncauth.ErrReplayGuardFull) {
+		// The replay record could not decide: not a bad signature, retry later.
+		w.Header().Set("Retry-After", "5")
+		writeITIP(w, http.StatusServiceUnavailable, "unavailable", "KyPost cannot check this request right now; retry")
+		return
+	}
 	if err != nil {
 		s.logger.Info("kycalendar request refused", "reason", err.Error())
 		writeITIP(w, http.StatusUnauthorized, "bad_signature", "Bad signature")

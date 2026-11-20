@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.."
 allow='OLLAMA_MODELS_HOST_DIR' # bind-mount source in docker-compose.yml volumes
 allow="$allow KYPOST_DNS"      # docker-compose.lan-dns.yml only
 allow="$allow KYPOST_MADDY_BINARY KYPOST_RECEIVING_TLS_DIR KYPOST_RECEIVING_HOSTNAME KYPOST_SMTP_BIND KYPOST_SMTP_PORT" # docker-compose.receiving.yml only
+allow="$allow KYPOST_REPLICAS KYPOST_POSTGRES_PASSWORD KYPOST_POSTGRES_MAX_CONNECTIONS KYPOST_REPLICA_SUBNET KYPOST_PROXY_IP KYPOST_EDGE_TRUSTED_PROXY" # docker-compose.replicas.yml only
 
 compose=$(grep -vE '^[[:space:]]*#' docker-compose.yml)
 missing=$(sed -nE 's/^# ?([A-Z][A-Z0-9_]*)=.*/\1/p; s/^([A-Z][A-Z0-9_]*)=.*/\1/p' .env.example | sort -u |

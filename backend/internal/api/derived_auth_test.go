@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -495,5 +496,125 @@ func TestPasswordChangeCannotUndoAConcurrentReset(t *testing.T) {
 		if after, _ := srv.users.Get(u.ID); !after.MustChangePassword {
 			t.Fatalf("round %d: a password change overwrote the admin reset that landed during it", round)
 		}
+	}
+}
+
+// A credential change signs the user's other sessions out before it writes, so a revocation
+// that fails (possible on PostgreSQL) leaves nothing changed rather than a new password beside
+// a stolen session. Shown by a change whose write is then refused: the other session is
+// already gone, the caller's own is kept.
+func TestPasswordChangeSignsOthersOutBeforeWriting(t *testing.T) {
+	srv := newTestServer(t)
+	const oldPw = "correct-horse-battery-staple"
+	u, err := srv.users.Create(context.Background(), "revoke-first", oldPw, users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{"mine", "stolen"} {
+		srv.sessMu.Lock()
+		srv.sessions[token] = Session{UserID: u.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), CSRFToken: "c"}
+		srv.sessMu.Unlock()
+	}
+	raw, _ := json.Marshal(map[string]any{"oldAuthSecret": testAuthSecret(srv, u.Username, oldPw), "newAuthSecret": "not-a-derived-secret", "newLoginSalt": "c2FsdA=="})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(raw))
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: "mine"})
+	rec := httptest.NewRecorder()
+	srv.handleChangePassword(rec, req.WithContext(context.WithValue(req.Context(), authContextKey{},
+		AuthContext{UserID: u.ID, Username: u.Username, Role: users.RoleUser})))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed new secret: %d %s", rec.Code, rec.Body.String())
+	}
+	if after, _ := srv.users.Get(u.ID); after.PasswordHash != u.PasswordHash {
+		t.Fatal("a refused change replaced the credential")
+	}
+	srv.sessMu.Lock()
+	_, stolen := srv.sessions["stolen"]
+	_, mine := srv.sessions["mine"]
+	srv.sessMu.Unlock()
+	if stolen || !mine {
+		t.Fatalf("before the write: other session live=%v, own session live=%v; want signed out, kept", stolen, mine)
+	}
+}
+
+// Every credential change, not only the password, signs the user's other sessions out before
+// it writes. Each route here is driven to a write that fails (a read-only config directory):
+// the other session must already be gone, and a self-service caller's own session kept.
+func TestCredentialChangesSignOthersOutBeforeWriting(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through a read-only directory, so the write would not fail")
+	}
+	const pw = "correct-horse-battery-staple"
+	type route struct {
+		self bool // the caller is the user, and keeps its own session
+		call func(srv *Server, u, admin users.User) *httptest.ResponseRecorder
+	}
+	run := func(srv *Server, h http.HandlerFunc, as users.User, body string, id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: "mine"})
+		if id != "" {
+			req.SetPathValue("id", id)
+		}
+		rec := httptest.NewRecorder()
+		h(rec, req.WithContext(context.WithValue(req.Context(), authContextKey{}, AuthContext{UserID: as.ID, Username: as.Username, Role: as.Role})))
+		return rec
+	}
+	confirm := func(srv *Server, u users.User) string {
+		return `{"authSecret":"` + userAuthSecret(srv, u.ID, pw) + `"}`
+	}
+	for name, r := range map[string]route{
+		"MFA disable": {self: true, call: func(srv *Server, u, _ users.User) *httptest.ResponseRecorder {
+			return run(srv, srv.handleMFADisable, u, confirm(srv, u), "")
+		}},
+		"recovery codes": {self: true, call: func(srv *Server, u, _ users.User) *httptest.ResponseRecorder {
+			return run(srv, srv.handleMFARecoveryCodesRegenerate, u, confirm(srv, u), "")
+		}},
+		"admin reset password": {call: func(srv *Server, u, admin users.User) *httptest.ResponseRecorder {
+			return run(srv, srv.handleUsersResetPassword, admin, `{"password":"another-long-password-for-reset"}`, u.ID)
+		}},
+		"deactivate": {call: func(srv *Server, u, admin users.User) *httptest.ResponseRecorder {
+			return run(srv, srv.handleUsersDeactivate, admin, "", u.ID)
+		}},
+		"admin clear MFA": {call: func(srv *Server, u, admin users.User) *httptest.ResponseRecorder {
+			return run(srv, srv.handleUsersClearMFA, admin, "", u.ID)
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := newTestServer(t)
+			ctx := context.Background()
+			u, err := srv.users.Create(ctx, "revoke-first-user", pw, users.RoleUser)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := srv.users.SetPendingTOTPSecret(u.ID, "sealed-secret"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := srv.users.EnableTOTP(u.ID, "sealed-secret", "now", nil); err != nil {
+				t.Fatal(err)
+			}
+			admin, err := srv.users.Create(ctx, "revoke-first-admin", pw, users.RoleAdmin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, token := range []string{"mine", "stolen"} {
+				srv.sessMu.Lock()
+				srv.sessions[token] = Session{UserID: u.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), CSRFToken: "c"}
+				srv.sessMu.Unlock()
+			}
+			if err := os.Chmod(srv.configDir, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(srv.configDir, 0o700) })
+			rec := r.call(srv, u, admin)
+			if rec.Code == http.StatusOK {
+				t.Fatalf("the write did not fail, so this proves nothing: %d %s", rec.Code, rec.Body.String())
+			}
+			srv.sessMu.Lock()
+			_, stolen := srv.sessions["stolen"]
+			_, mine := srv.sessions["mine"]
+			srv.sessMu.Unlock()
+			if stolen || mine != r.self {
+				t.Fatalf("after a failed write (%d): other session live=%v, caller's session live=%v (want false, %v)", rec.Code, stolen, mine, r.self)
+			}
+		})
 	}
 }

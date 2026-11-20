@@ -50,7 +50,7 @@ func (s *Server) handleLoginParams(w http.ResponseWriter, r *http.Request) {
 	// session, and making them echo their own username back invites a caller to
 	// pass someone else's.
 	if username == "" {
-		if ac, ok := s.currentUser(r); ok {
+		if ac, ok, _ := s.currentUser(r); ok {
 			username = ac.Username
 		}
 	}

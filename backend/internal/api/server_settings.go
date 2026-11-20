@@ -44,6 +44,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, cfg)
 	case http.MethodPut:
+		if s.shared != nil {
+			s.followConfig() // another replica may have saved since: start from the file
+		}
 		var next config.Config
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&next); err != nil {
 			http.Error(w, "invalid config payload", http.StatusBadRequest)
@@ -91,7 +94,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		s.cfgMu.Lock()
 		revoked := s.cfg.OutOfOfficeRemote && !next.OutOfOfficeRemote
-		s.cfg = next
+		s.cfg, s.cfgStamp = next, fileIdentityOf(s.configPath)
 		s.cfgMu.Unlock()
 		if revoked {
 			go s.resyncOOOCalendars()

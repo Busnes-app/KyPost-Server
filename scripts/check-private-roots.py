@@ -55,7 +55,7 @@ print("ok: image data roots are owner-only")
 nodaemon=true
 loglevel=debug
 logfile=/kypost/logs/supervisord.log
-pidfile=/kypost/state/supervisord.pid
+pidfile=/tmp/supervisord.pid
 [program:check]
 command=python3 /tmp/check-private-roots.py
 startsecs=0

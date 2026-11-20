@@ -154,6 +154,13 @@ local finalization: inspect durable owner-scoped status separately. It identifie
 no SMTP command stage and does not prove recipient delivery. Old failures cannot
 be reconstructed from this new logging.
 
+On PostgreSQL replicas the recovery loop runs on the one replica holding the
+`mail-runtime` role, while request-path sends and held-send recovery run on any replica:
+the durable claim (`UPDATE ... state='submitting'` under the schema's writer lock, completion
+fenced by its claim token) is what keeps two replicas from submitting one recipient twice.
+Scheduled sends record their claimant replica instead (`scheduled_sends.claimant`): only a
+row whose replica is no longer live is marked uncertain.
+
 A killed submitter remains `submitting`; no lease expiry reclaims it. Bounded,
 oldest-first work discovery excludes both `submitting` and `uncertain`. These
 require provider evidence or a deliberate retry decision before future tooling

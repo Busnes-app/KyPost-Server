@@ -25,8 +25,9 @@ import (
 // mailbox. POST /api/import proves the account (step-up) and mints a
 // single-use upload link bound to user, session, mailbox and folder; the
 // upload streams to a temp file and a background job stores the messages.
-// A job lost to a restart leaves only its temp file, removed at startup;
-// re-importing is safe because duplicates are skipped.
+// A job lost to a restart leaves only its temp file, removed at startup (on
+// replicas, only a stopped replica's); re-importing is safe because duplicates
+// are skipped. import_rows.go shares grants and status between replicas.
 
 const (
 	importGrantTTL = 5 * time.Minute
@@ -59,11 +60,16 @@ type mailImporter interface {
 	ImportMessage(ctx context.Context, folder string, raw []byte, meta mailbox.ImportMeta) error
 }
 
-// importGrant is an unspent upload link, or with imap set an IMAP import.
+// importGrant is an unspent upload link, or with IMAP set an IMAP import. Session is the
+// hash of the browser session it is bound to.
 type importGrant struct {
-	user, session, mailbox, folder, correlation string
-	expires                                     time.Time
-	imap                                        *imapGrant
+	User        string     `json:"user"`
+	Session     string     `json:"session"`
+	Mailbox     string     `json:"mailbox"`
+	Folder      string     `json:"folder,omitempty"`
+	Correlation string     `json:"correlation"`
+	Expires     time.Time  `json:"expires"`
+	IMAP        *imapGrant `json:"imap,omitempty"`
 }
 
 // importJob is a user's latest import; the JSON fields are its status.
@@ -87,6 +93,24 @@ type importJob struct {
 }
 
 func (j *importJob) active() bool { return j.State == "uploading" || j.State == "running" }
+
+// importJobRow is a job's status row: its status, and the correlation its audit lines carry.
+type importJobRow struct {
+	importJob
+	Correlation string `json:"correlation,omitempty"`
+}
+
+func encodeImportRow(j importJob) []byte {
+	data, _ := json.Marshal(importJobRow{j, j.correlation})
+	return data
+}
+
+func decodeImportRow(data []byte, user string) (importJob, error) {
+	var r importJobRow
+	err := json.Unmarshal(data, &r)
+	r.user, r.correlation = user, r.Correlation
+	return r.importJob, err
+}
 
 // importBusy names why userID cannot start an import now. Hold importMu.
 func (s *Server) importBusy(userID string) string {
@@ -121,12 +145,11 @@ func (s *Server) importEncryptionOff(userID string) error {
 func (s *Server) handleImportStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ac, _ := authFromContext(r)
-	s.importMu.Lock()
-	status := importJob{State: "idle"}
-	if j := s.imports[ac.UserID]; j != nil {
-		status = *j
+	status, err := s.importStatus(ac.UserID)
+	if err != nil {
+		writeUnavailable(w)
+		return
 	}
-	s.importMu.Unlock()
 	writeJSON(w, http.StatusOK, struct {
 		importJob
 		MaxBytes        int64 `json:"maxBytes"`
@@ -169,11 +192,8 @@ func (s *Server) handleImportStart(w http.ResponseWriter, r *http.Request) {
 	if !s.confirmActor(w, r, ac.UserID, body.AuthSecret) {
 		return
 	}
-	s.importMu.Lock()
-	busy := s.importBusy(ac.UserID)
-	s.importMu.Unlock()
-	if busy != "" {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": busy})
+	if status, busy := s.importRefusal(ac.UserID); status != 0 {
+		writeJSON(w, status, map[string]any{"error": busy})
 		return
 	}
 	folder, err := im.ImportFolder(r.Context(), body.Folder, false)
@@ -198,20 +218,13 @@ func (s *Server) handleImportStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "import unavailable", http.StatusInternalServerError)
 		return
 	}
-	g := importGrant{user: ac.UserID, session: session, mailbox: ac.Mailbox, folder: folder, correlation: correlation, expires: time.Now().Add(importGrantTTL)}
-	s.importMu.Lock()
-	if s.importGrants == nil {
-		s.importGrants = map[string]importGrant{}
+	g := importGrant{User: ac.UserID, Session: sessionHash(session), Mailbox: ac.Mailbox, Folder: folder, Correlation: correlation, Expires: time.Now().Add(importGrantTTL)}
+	// One unspent link per user.
+	if err := s.putImportGrant(token, g); err != nil {
+		writeUnavailable(w)
+		return
 	}
-	// One unspent link per user, and nothing expired kept around.
-	for k, old := range s.importGrants {
-		if old.user == ac.UserID || !time.Now().Before(old.expires) {
-			s.dropImportGrantLocked(k)
-		}
-	}
-	s.importGrants[token] = g
-	s.importMu.Unlock()
-	s.auditImport(importJob{Mailbox: g.mailbox, Folder: folder, user: g.user, correlation: correlation}, "authorized", "")
+	s.auditImport(importJob{Mailbox: g.Mailbox, Folder: folder, user: g.User, correlation: correlation}, "authorized", "")
 	writeJSON(w, http.StatusOK, map[string]any{"url": "/api/import/" + token, "expiresInSeconds": int(importGrantTTL.Seconds()), "folder": folder, "maxBytes": importUploadCap})
 }
 
@@ -222,45 +235,48 @@ func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 	ac, _ := authFromContext(r)
 	_, session, ok := s.sessionOf(r)
 	token := r.PathValue("token")
-	now := time.Now()
-	s.importMu.Lock()
-	g, found := s.importGrants[token]
-	if found && !now.Before(g.expires) {
-		s.dropImportGrantLocked(token)
-	}
-	if !ok || !found || g.imap != nil || g.user != ac.UserID || g.session != session || !now.Before(g.expires) {
-		s.importMu.Unlock()
+	expired := func() {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "this upload link expired or was already used; start the import again"})
+	}
+	g, found := s.importGrantOf(token, ac.UserID, session, false)
+	if !ok || !found {
+		expired()
 		return
 	}
-	if s.importClosed {
-		s.importMu.Unlock()
+	s.importMu.Lock()
+	closed := s.importClosed
+	s.importMu.Unlock()
+	if closed {
 		http.Error(w, "the server is shutting down", http.StatusServiceUnavailable)
 		return
 	}
-	if busy := s.importBusy(g.user); busy != "" { // the link is kept for a retry
-		s.importMu.Unlock()
-		writeJSON(w, http.StatusConflict, map[string]any{"error": busy})
+	job := &importJob{State: "uploading", Mailbox: g.Mailbox, Folder: g.Folder, user: g.User, correlation: g.Correlation}
+	status, busy, undo := s.claimImport(job)
+	if status != 0 { // the link is kept for a retry
+		writeJSON(w, status, map[string]any{"error": busy})
 		return
 	}
-	delete(s.importGrants, token)
-	if s.imports == nil {
-		s.imports = map[string]*importJob{}
+	if !s.editImportGrant(token, func(v *importGrant, found bool) (rowEdit, bool) {
+		if !found || v.User != g.User || v.Session != g.Session || v.IMAP != nil {
+			return rowKeep, false
+		}
+		return rowDrop, true
+	}) {
+		undo()
+		expired()
+		return
 	}
-	job := &importJob{State: "uploading", Mailbox: g.mailbox, Folder: g.folder, user: g.user, correlation: g.correlation}
-	s.imports[g.user] = job
-	s.importMu.Unlock()
 
 	fail := func(status int, err error) {
 		s.finishImport(job, "failed", err.Error())
 		writeJSON(w, status, map[string]any{"error": err.Error()})
 	}
-	im, refused := nativeMail[mailImporter](s, r.Context(), g.user, g.mailbox, "import is available for native mailboxes")
+	im, refused := nativeMail[mailImporter](s, r.Context(), g.User, g.Mailbox, "import is available for native mailboxes")
 	if refused != nil {
 		fail(refused.status, errors.New(refused.error))
 		return
 	}
-	if err := s.importEncryptionOff(g.user); err != nil {
+	if err := s.importEncryptionOff(g.User); err != nil {
 		if !errors.Is(err, errImportIncomingEncryption) {
 			fail(http.StatusServiceUnavailable, errors.New("your settings are unavailable"))
 			return
@@ -273,7 +289,7 @@ func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 		fail(status, err)
 		return
 	}
-	if _, err = im.ImportFolder(r.Context(), g.folder, true); err != nil {
+	if _, err = im.ImportFolder(r.Context(), g.Folder, true); err != nil {
 		_ = os.Remove(path)
 		fail(http.StatusConflict, errors.New("the target folder could not be created; start the import again"))
 		return
@@ -290,6 +306,7 @@ func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 	job.State, job.cancel = "running", cancel
 	started := *job
 	s.importMu.Unlock()
+	s.publishImport(job)
 	s.auditImport(started, "started", "")
 	go s.runImport(ctx, job, im, path, size)
 	writeJSON(w, http.StatusAccepted, started)
@@ -312,7 +329,9 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 	} else {
 		space.chunked = true
 	}
-	dir := filepath.Join(s.stateDir, importDir)
+	// On replicas each instance uploads into its own folder, so a starting replica can tell a
+	// live replica's upload from a stopped one's (sweepImportUploads).
+	dir := filepath.Join(s.stateDir, importDir, s.instanceID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", 0, http.StatusServiceUnavailable, errors.New("import storage is unavailable")
 	}
@@ -516,20 +535,17 @@ func (s *Server) finishImport(job *importJob, state, reason string) {
 		job.cancel = nil
 	}
 	s.importMu.Unlock()
+	s.publishImport(job)
 }
 
 func (s *Server) handleImportCancel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ac, _ := authFromContext(r)
-	s.importMu.Lock()
-	j := s.imports[ac.UserID]
-	running := j != nil && j.State == "running" && j.cancel != nil
-	var status importJob
-	if running {
-		j.cancel()
-		status = *j
+	status, running, err := s.requestImportCancel(ac.UserID)
+	if err != nil {
+		writeUnavailable(w)
+		return
 	}
-	s.importMu.Unlock()
 	if !running {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "no import is running"})
 		return

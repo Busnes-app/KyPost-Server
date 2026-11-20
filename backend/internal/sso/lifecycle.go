@@ -167,14 +167,7 @@ func logoutKey(issuer, clientID, jti string) string {
 // both the token's own replay window and the longest login that could still
 // complete after it.
 func (s *LifecycleStore) RecordLogout(clientID string, c oidcverify.LogoutClaims, retainUntil time.Time) (LogoutEvent, bool, error) {
-	ev := LogoutEvent{
-		Issuer:      c.Issuer,
-		ClientID:    clientID,
-		Subject:     c.Subject,
-		SessionID:   c.SessionID,
-		IssuedAt:    c.IssuedAt.Unix(),
-		RetainUntil: retainUntil.Unix(),
-	}
+	ev := NewLogoutEvent(clientID, c, retainUntil)
 	fresh := false
 	err := s.update(func(w authorityWriter) error {
 		f, err := w.Lifecycle()
@@ -196,6 +189,18 @@ func (s *LifecycleStore) RecordLogout(clientID string, c oidcverify.LogoutClaims
 		return w.PutLifecycle(f)
 	})
 	return ev, fresh, err
+}
+
+// NewLogoutEvent is the event RecordLogout records for c, which says which sessions it ends.
+func NewLogoutEvent(clientID string, c oidcverify.LogoutClaims, retainUntil time.Time) LogoutEvent {
+	return LogoutEvent{
+		Issuer:      c.Issuer,
+		ClientID:    clientID,
+		Subject:     c.Subject,
+		SessionID:   c.SessionID,
+		IssuedAt:    c.IssuedAt.Unix(),
+		RetainUntil: retainUntil.Unix(),
+	}
 }
 
 // RecordSignOnJTI spends a native sign-on token's jti. It returns false when

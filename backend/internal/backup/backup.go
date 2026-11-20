@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	kylog "github.com/Busnes-app/ky-primitives/logging"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -17,11 +16,14 @@ import (
 	"syscall"
 	"time"
 
+	kylog "github.com/Busnes-app/ky-primitives/logging"
+
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
@@ -42,6 +44,9 @@ type Dirs struct{ Config, State, Secret string }
 type settings struct{ st *state.Store }
 
 func (s settings) Get(key string) (string, error) {
+	if err := settingsRead(); err != nil {
+		return "", err
+	}
 	v, err := s.st.Setting(key)
 	if errors.Is(err, state.ErrNotFound) {
 		return "", recoveryclient.ErrNotFound
@@ -165,29 +170,73 @@ func (s *Service) runConfig(sealer recoveryclient.Sealer) recoveryclient.RunConf
 }
 
 // Run seals once and delivers to every configured destination.
+// On PostgreSQL it holds backup-run; losing it cancels collection and deposit. Every
+// setting it reads comes from one statement.
 func (s *Service) Run(ctx context.Context) (recoveryclient.Result, error) {
+	return s.run(ctx, false, nil)
+}
+
+// ErrNotDue is a scheduled run another process already made: due is read under the locks.
+var ErrNotDue = errors.New("backup: not due")
+
+// RunIfDue is the scheduler's Run: it reads the schedule under the locks, so of several
+// processes that saw the same due tick, one makes the capsule. started runs once the run is
+// due and owned, before anything else (the intent audit).
+func (s *Service) RunIfDue(ctx context.Context, started func() error) (recoveryclient.Result, error) {
+	return s.run(ctx, true, started)
+}
+
+func (s *Service) run(ctx context.Context, dueOnly bool, started func() error) (recoveryclient.Result, error) {
 	release, err := s.lock()
 	if err != nil {
 		return recoveryclient.Result{}, err
 	}
 	defer release()
-	if err := s.settings.Set("backup_last_attempt", time.Now().UTC().Format(time.RFC3339)); err != nil {
-		return recoveryclient.Result{}, err
-	}
-	if _, err := s.pairingConfigured(); err != nil {
-		return recoveryclient.Result{}, err
-	}
-	sealer, err := s.loadSealer()
-	if err != nil {
-		return recoveryclient.Result{}, err
-	}
-	if _, err = s.loadKey(); err != nil {
-		return recoveryclient.Result{}, err
-	}
-	res, err := recoveryclient.Run(ctx, s.runConfig(sealer), s.settings, func() (recoveryclient.Payload, error) { return s.collect(ctx) }, s.client)
-	if res.LocalPath != "" || res.Receipt != nil {
-		s.recordBulk()
-	}
+	var res recoveryclient.Result
+	err = s.withRunLock(ctx, func(ctx context.Context) error {
+		if err := s.SyncRecoveryKey(); err != nil {
+			return err
+		}
+		f, err := s.snapshot()
+		if err != nil {
+			return err
+		}
+		if dueOnly {
+			next, on, err := recoveryclient.NextRun(s.cfg.DepositInterval, f)
+			if err != nil {
+				return err
+			}
+			if !on || time.Now().Before(next) {
+				return ErrNotDue
+			}
+		}
+		if started != nil {
+			if err := started(); err != nil {
+				return err
+			}
+		}
+		if err := f.Set("backup_last_attempt", time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
+		if _, err := pairingConfigured(f); err != nil {
+			return err
+		}
+		sealer, err := s.loadSealer()
+		if err != nil {
+			return err
+		}
+		if _, err = s.loadKey(f); err != nil {
+			return err
+		}
+		res, err = recoveryclient.Run(ctx, s.runConfig(sealer), f, func() (recoveryclient.Payload, error) { return s.collect(ctx) }, s.client)
+		if res.LocalPath != "" || res.Receipt != nil {
+			s.recordBulk()
+		}
+		if err == nil && ctx.Err() != nil {
+			err = context.Cause(ctx)
+		}
+		return err
+	})
 	return res, err
 }
 
@@ -198,15 +247,33 @@ func (s *Service) Export(ctx context.Context) ([]byte, capsule.Manifest, error) 
 		return nil, capsule.Manifest{}, err
 	}
 	defer release()
-	key, err := s.loadKey()
+	var out []byte
+	var manifest capsule.Manifest
+	err = s.withRunLock(ctx, func(ctx context.Context) error {
+		if err := s.SyncRecoveryKey(); err != nil {
+			return err
+		}
+		f, err := s.snapshot()
+		if err != nil {
+			return err
+		}
+		key, err := s.loadKey(f)
+		if err != nil {
+			return err
+		}
+		p, err := s.collect(ctx)
+		if err != nil {
+			return err
+		}
+		if out, manifest, err = recoveryclient.Seal(p, key); err == nil && ctx.Err() != nil {
+			err = context.Cause(ctx)
+		}
+		return err
+	})
 	if err != nil {
 		return nil, capsule.Manifest{}, err
 	}
-	p, err := s.collect(ctx)
-	if err != nil {
-		return nil, capsule.Manifest{}, err
-	}
-	return recoveryclient.Seal(p, key)
+	return out, manifest, nil
 }
 
 // Pair claims a pairing code, pins the key write-once and stores the sealed token.
@@ -227,16 +294,20 @@ func (s *Service) pair(ctx context.Context, rawURL, code string, onlyMissing boo
 	}
 	defer release()
 	if onlyMissing {
-		paired, err := s.pairingConfigured()
+		f, err := s.snapshot()
+		if err != nil {
+			return recoveryclient.RecoveryKey{}, err
+		}
+		paired, err := pairingConfigured(f)
 		if err != nil {
 			return recoveryclient.RecoveryKey{}, err
 		}
 		if paired {
-			existing, err := s.settings.Get("kyrecovery_url")
+			existing, err := f.Get("kyrecovery_url")
 			if err != nil || existing != rawURL {
 				return recoveryclient.RecoveryKey{}, errors.New("existing recovery destination differs; setup will not replace it")
 			}
-			return s.loadKey()
+			return s.loadKey(f)
 		}
 	}
 	sealer, err := s.loadSealer()
@@ -250,11 +321,46 @@ func (s *Service) pair(ctx context.Context, rawURL, code string, onlyMissing boo
 	if err != nil {
 		return recoveryclient.RecoveryKey{}, err
 	}
-	return res.Key, s.store.BackupSettingsTransaction(func(st recoveryclient.Settings) error {
-		if err := recoveryclient.StoreRecoveryKey(s.dirs.State, st, res.Key); err != nil {
-			return pinErr(err)
-		}
+	return res.Key, s.storePin(res.Key, func(st recoveryclient.Settings) error {
 		return recoveryclient.StorePairing(st, sealer, rawURL, res.APIToken)
+	})
+}
+
+// storePin pins k write-once (and runs also in the same transaction), records its sealed
+// anchor on PostgreSQL and reads the pin back, all under the recovery-pin lock. The same key
+// with the same topology succeeds again; another topology is ErrTopologyPinned.
+func (s *Service) storePin(k recoveryclient.RecoveryKey, also func(recoveryclient.Settings) error) error {
+	return s.withPinLock(func() error {
+		err := s.store.BackupSettingsTransaction(func(st recoveryclient.Settings) error {
+			if err := pinTopology(st, k); err != nil {
+				return err
+			}
+			if err := recoveryclient.StoreRecoveryKey(s.dirs.State, st, k); err != nil {
+				return pinErr(err)
+			}
+			if also != nil {
+				return also(st)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if err := s.recordAnchor(k); err != nil {
+			return err
+		}
+		f, err := s.snapshot()
+		if err != nil {
+			return err
+		}
+		got, err := s.loadKey(f)
+		if err != nil {
+			return err
+		}
+		if got.Public.ID() != k.Public.ID() || got.Threshold != k.Threshold || got.TotalShares != k.TotalShares {
+			return ErrKeyAlreadyPinned
+		}
+		return nil
 	})
 }
 
@@ -269,9 +375,7 @@ func (s *Service) PinKey(publicKeyB64 string, k, n int) error {
 		return err
 	}
 	defer release()
-	return s.store.BackupSettingsTransaction(func(st recoveryclient.Settings) error {
-		return pinErr(recoveryclient.StoreRecoveryKey(s.dirs.State, st, key))
-	})
+	return s.storePin(key, nil)
 }
 
 func pinErr(err error) error {
@@ -288,7 +392,7 @@ func (s *Service) Unpair() error {
 		return err
 	}
 	defer release()
-	return s.store.BackupSettingsTransaction(recoveryclient.ClearPairing)
+	return s.withPinLock(func() error { return s.store.BackupSettingsTransaction(recoveryclient.ClearPairing) })
 }
 
 // SetIntervalSeconds stores the admin's schedule; the library bounds it.
@@ -351,7 +455,11 @@ func (s *Service) InspectStatus() (Status, error) {
 	if st.LastBulk, err = s.lastBulk(); err != nil {
 		return st, err
 	}
-	key, err := s.loadKey()
+	f, err := s.snapshot()
+	if err != nil {
+		return st, err
+	}
+	key, err := s.loadKey(f)
 	switch {
 	case err == nil:
 		st.KeyID, st.Threshold, st.TotalShares = key.Public.ID(), key.Threshold, key.TotalShares
@@ -361,19 +469,24 @@ func (s *Service) InspectStatus() (Status, error) {
 	default:
 		return st, err
 	}
-	paired, err := s.pairingConfigured()
+	if st.KeyProblem == "" && dbbackend.Postgres() {
+		if err := s.checkAnchor(f); err != nil {
+			st.KeyProblem = err.Error()
+		}
+	}
+	paired, err := pairingConfigured(f)
 	if err != nil {
 		return st, err
 	}
 	st.Paired = paired
 	if paired {
-		st.KyRecoveryURL, err = s.settings.Get("kyrecovery_url")
+		st.KyRecoveryURL, err = f.Get("kyrecovery_url")
 		if err != nil {
 			return st, err
 		}
 	}
 
-	if r, ok, err := recoveryclient.LastDeposit(s.settings); err != nil {
+	if r, ok, err := recoveryclient.LastDeposit(f); err != nil {
 		return st, err
 	} else if ok {
 		st.LastReceipt = &r
@@ -386,12 +499,12 @@ func (s *Service) InspectStatus() (Status, error) {
 		// ListLocalCopies returns nil for an empty or missing directory; keep JSON `[]`.
 		st.LocalCopies = append(st.LocalCopies, copies...)
 	}
-	iv, err := recoveryclient.Interval(s.cfg.DepositInterval, s.settings)
+	iv, err := recoveryclient.Interval(s.cfg.DepositInterval, f)
 	if err != nil {
 		return st, err
 	}
 	st.IntervalSec = int64(iv / time.Second)
-	if next, on, err := s.NextRun(); err != nil {
+	if next, on, err := recoveryclient.NextRun(s.cfg.DepositInterval, f); err != nil {
 		return st, err
 	} else if on {
 		st.NextRun = next.UTC().Format(time.RFC3339)
@@ -434,10 +547,10 @@ func (s *Service) secretPath(env, name string) string {
 	}
 	return filepath.Join(s.dirs.Secret, name)
 }
-func (s *Service) loadKey() (recoveryclient.RecoveryKey, error) {
-	key, err := recoveryclient.LoadRecoveryKey(s.dirs.State, s.settings)
+func (s *Service) loadKey(f recoveryclient.Settings) (recoveryclient.RecoveryKey, error) {
+	key, err := recoveryclient.LoadRecoveryKey(s.dirs.State, f)
 	if errors.Is(err, recoveryclient.ErrNotPaired) {
-		_, pinErr := s.settings.Get("kyrecovery_key_id")
+		_, pinErr := f.Get("kyrecovery_key_id")
 		if pinErr == nil {
 			return key, recoveryclient.ErrKeyPinMissing
 		}
@@ -448,9 +561,9 @@ func (s *Service) loadKey() (recoveryclient.RecoveryKey, error) {
 	return key, err
 }
 
-func (s *Service) pairingConfigured() (bool, error) {
-	url, ue := s.settings.Get("kyrecovery_url")
-	token, te := s.settings.Get("kyrecovery_token_enc")
+func pairingConfigured(f recoveryclient.Settings) (bool, error) {
+	url, ue := f.Get("kyrecovery_url")
+	token, te := f.Get("kyrecovery_token_enc")
 	if ue != nil && !errors.Is(ue, recoveryclient.ErrNotFound) {
 		return false, ue
 	}
@@ -468,13 +581,13 @@ func (s *Service) pairingConfigured() (bool, error) {
 
 // Configured distinguishes a never-configured instance from a broken pin.
 func (s *Service) Configured() (bool, error) {
+	f, err := s.snapshot()
+	if err != nil {
+		return false, err
+	}
 	for _, key := range []string{"kyrecovery_key_id", "kyrecovery_url", "kyrecovery_token_enc"} {
-		_, err := s.settings.Get(key)
-		if err == nil {
+		if _, ok := f.vals[key]; ok {
 			return true, nil
-		}
-		if !errors.Is(err, recoveryclient.ErrNotFound) {
-			return false, err
 		}
 	}
 	return false, nil
@@ -487,7 +600,11 @@ func (s *Service) IntervalSeconds() (int64, error) {
 	return int64(d / time.Second), err
 }
 func (s *Service) PinnedKeyID() (string, error) {
-	key, err := s.loadKey()
+	f, err := s.snapshot()
+	if err != nil {
+		return "", err
+	}
+	key, err := s.loadKey(f)
 	if err != nil {
 		return "", err
 	}
@@ -501,7 +618,11 @@ func (s *Service) InspectPairing() (recoveryclient.Pairing, error) {
 	if err != nil {
 		return recoveryclient.Pairing{}, err
 	}
-	p, err := recoveryclient.LoadPairing(s.dirs.State, s.settings, sealer)
+	f, err := s.snapshot()
+	if err != nil {
+		return recoveryclient.Pairing{}, err
+	}
+	p, err := recoveryclient.LoadPairing(s.dirs.State, f, sealer)
 	if err != nil {
 		return p, err
 	}

@@ -72,8 +72,14 @@ func BootstrapAdmin() error {
 
 	env := fmt.Sprintf("ADMIN_USER=%s\nADMIN_PASS_HASH=%s\nADMIN_LOGIN_SALT=%s\nADMIN_LOGIN_ITERATIONS=%d\nMUST_CHANGE_PASSWORD=true\n",
 		username, cred.Hash, cred.Salt, cred.Iterations)
-	if err := fsutil.AtomicWriteFile(adminEnvPath, []byte(env), 0o600); err != nil {
+	// Exclusive: replicas starting together on one config volume each get here, and only the
+	// one whose admin.env lands may write the matching first-run password.
+	created, err := fsutil.CreateExclusive(adminEnvPath, []byte(env), 0o600)
+	if err != nil {
 		return fmt.Errorf("write admin.env: %w", err)
+	}
+	if !created {
+		return nil
 	}
 
 	if !generated {

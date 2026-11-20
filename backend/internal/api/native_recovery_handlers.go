@@ -75,6 +75,14 @@ func (s *Server) confirmNativeRecoveryOperator(w http.ResponseWriter, r *http.Re
 	return operator, s.confirmActor(w, r, ac.UserID, credential.AuthSecret)
 }
 
+// operatorSessionValid reports whether live is still the session the operator proved
+// themselves with, unexpired, and its SSO binding still current.
+func operatorSessionValid(live Session, exists bool, sess Session, actor users.User, current sso.SSOSettings) bool {
+	now := time.Now()
+	return exists && live.UserID == actor.ID && live.IssuedAt.Equal(sess.IssuedAt) && live.SSO.Issuer == sess.SSO.Issuer && live.SSO.ClientID == sess.SSO.ClientID && live.SSO.Subject == sess.SSO.Subject && live.SSO.SessionID == sess.SSO.SessionID && live.SSO.IssuedAt.Equal(sess.SSO.IssuedAt) && live.SSOKySignOn == sess.SSOKySignOn && now.Before(live.ExpiresAt) && now.Sub(live.IssuedAt) < sessionMaxLifetime &&
+		(live.SSO.Issuer == "" && !live.SSOKySignOn || current.Enabled && live.SSO.Issuer == current.IssuerURL && live.SSO.ClientID == current.ClientID && live.SSO.Subject == actor.SSOSub && actor.SSOSub != "" && actor.SSOLinkRevokedAt == 0 && live.SSOAppAdmin)
+}
+
 // Caller already holds settings -> directory -> users. The returned release
 // keeps the live session proof fenced through the caller's actual durable write.
 func (s *Server) lockNativeRecoveryOperator(operator nativeRecoveryOperator, current sso.SSOSettings, all []users.User) (func(), error) {
@@ -92,11 +100,18 @@ func (s *Server) lockNativeRecoveryOperator(operator nativeRecoveryOperator, cur
 	if !found {
 		return nil, sso.ErrNativeRecovery
 	}
+	if s.shared != nil {
+		// ponytail: across replicas the operator's session is rechecked here, not held for the
+		// operation: a revocation on another replica during it is seen by the next request.
+		live, exists, err := s.lookupSession(context.Background(), operator.token)
+		if err != nil || !operatorSessionValid(live, exists, operator.session, actor, current) {
+			return nil, sso.ErrNativeRecovery
+		}
+		return func() {}, nil
+	}
 	s.sessMu.RLock()
 	live, exists := s.sessions[operator.token]
-	now := time.Now()
-	sess := operator.session
-	if !exists || live.UserID != actor.ID || live.IssuedAt != sess.IssuedAt || live.SSO != sess.SSO || live.SSOKySignOn != sess.SSOKySignOn || !now.Before(live.ExpiresAt) || now.Sub(live.IssuedAt) >= sessionMaxLifetime || ((live.SSO.Issuer != "" || live.SSOKySignOn) && (!current.Enabled || live.SSO.Issuer != current.IssuerURL || live.SSO.ClientID != current.ClientID || live.SSO.Subject != actor.SSOSub || actor.SSOSub == "" || actor.SSOLinkRevokedAt != 0 || !live.SSOAppAdmin)) {
+	if !operatorSessionValid(live, exists, operator.session, actor, current) {
 		s.sessMu.RUnlock()
 		return nil, sso.ErrNativeRecovery
 	}
@@ -382,7 +397,7 @@ func (s *Server) releaseHit(point string) error {
 // revokeReleasedSessions signs out every account the release changed (a).
 func (s *Server) revokeReleasedSessions(record sso.NativeRestoreReleaseRecord) {
 	for _, id := range append(slices.Clone(record.Deactivated), record.Demoted...) {
-		s.revokeUserSessions(id, "")
+		_ = s.revokeUserSessions(id, "") // logged; the release's own checks refuse the account
 	}
 }
 

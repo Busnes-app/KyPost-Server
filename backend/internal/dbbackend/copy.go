@@ -1,7 +1,9 @@
 package dbbackend
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -330,6 +332,9 @@ func copyRows(ctx context.Context, src querier, dst execPreparer, name string, c
 	for rows.Next() {
 		if err := rows.Scan(ptrs...); err != nil {
 			return n, fmt.Errorf("reading %s: %w", name, err)
+		}
+		if copyHook != nil && copyHook(name, vals) {
+			continue
 		}
 		for i, c := range cols {
 			if vals[i], err = convert(vals[i], c.typ); err != nil {
@@ -696,6 +701,12 @@ func ImportSQLite(ctx context.Context, tx *sql.Tx, rel, kindName string, src *sq
 	if _, err := tx.ExecContext(ctx, `SET CONSTRAINTS ALL IMMEDIATE`); err != nil {
 		return nil, fmt.Errorf("%s: %w", rel, err)
 	}
+	// Every table's content, not just its count, must match the source before the commit.
+	for _, name := range order {
+		if err := verifyTable(ctx, src, tx, name, pg[name].cols); err != nil {
+			return nil, fmt.Errorf("%s: %w", rel, err)
+		}
+	}
 	// ALTER ... RESTART is transactional, unlike setval.
 	for _, name := range order {
 		for _, col := range pg[name].identity {
@@ -910,4 +921,81 @@ func StoresUnder(ctx context.Context, kind string, dirs ...string) ([]string, er
 		}
 	}
 	return out, nil
+}
+
+// copyHook lets a test drop (true) or alter a row on its way into the copy, to prove the
+// verification catches it. nil outside tests.
+var copyHook func(table string, row []any) (drop bool)
+
+// ErrDigestMismatch is a copied table whose content differs from its source.
+var ErrDigestMismatch = errors.New("the copied rows differ from the source")
+
+// verifyTable compares one table on both sides by row count and an order-independent digest
+// of its rows: each row's values normalized by the Postgres column type (integers as
+// decimal, text as its bytes, BLOB byte-exact, NULL distinct from empty), hashed, the
+// hashes sorted and hashed together. A value lost, changed or added fails it.
+func verifyTable(ctx context.Context, src, dst querier, name string, cols []copyColumn) error {
+	want, wantN, err := tableDigest(ctx, src, name, cols)
+	if err != nil {
+		return fmt.Errorf("digesting source %s: %w", name, err)
+	}
+	got, gotN, err := tableDigest(ctx, dst, name, cols)
+	if err != nil {
+		return fmt.Errorf("digesting copied %s: %w", name, err)
+	}
+	if wantN != gotN || want != got {
+		return fmt.Errorf("%w: table %s (%d rows in the source, %d copied)", ErrDigestMismatch, name, wantN, gotN)
+	}
+	return nil
+}
+
+func tableDigest(ctx context.Context, q querier, name string, cols []copyColumn) ([32]byte, int64, error) {
+	quoted := make([]string, len(cols))
+	for i, c := range cols {
+		quoted[i] = QuoteIdent(c.name)
+	}
+	rows, err := q.QueryContext(ctx, "SELECT "+strings.Join(quoted, ", ")+" FROM "+QuoteIdent(name))
+	if err != nil {
+		return [32]byte{}, 0, err
+	}
+	defer rows.Close()
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	var hashes [][32]byte
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			return [32]byte{}, 0, err
+		}
+		h := sha256.New()
+		for i, c := range cols {
+			v, err := toPostgres(vals[i], c.typ)
+			if err != nil {
+				return [32]byte{}, 0, fmt.Errorf("column %s: %w", c.name, err)
+			}
+			switch v := v.(type) {
+			case nil:
+				h.Write([]byte{'n'})
+			case int64:
+				fmt.Fprintf(h, "i%d;", v)
+			case string:
+				fmt.Fprintf(h, "t%d:%s", len(v), v)
+			case []byte:
+				fmt.Fprintf(h, "b%d:", len(v))
+				h.Write(v)
+			}
+		}
+		hashes = append(hashes, [32]byte(h.Sum(nil)))
+	}
+	if err := rows.Err(); err != nil {
+		return [32]byte{}, 0, err
+	}
+	slices.SortFunc(hashes, func(a, b [32]byte) int { return bytes.Compare(a[:], b[:]) })
+	all := sha256.New()
+	for _, h := range hashes {
+		all.Write(h[:])
+	}
+	return [32]byte(all.Sum(nil)), int64(len(hashes)), nil
 }

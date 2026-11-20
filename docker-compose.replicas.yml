@@ -1,0 +1,124 @@
+# PostgreSQL replicas on ONE Docker host: KYPOST_REPLICAS kypost-server containers sharing
+# the three data volumes and one PostgreSQL, behind HAProxy, which checks every replica's
+# /readyz each second. Add this file LAST to the COMPOSE_FILE chain in .env. See the
+# "Replicas on one host" section of docs/RUNNING.md before using it.
+#
+# One host, because host-local flocks on the shared volumes fence users.json, the native
+# authority and domain records and the DKIM keys: replicas on another host, on separate
+# volumes or on NFS/RWX volumes are refused at startup. This is not PostgreSQL high
+# availability and not host failover: every replica depends on the one database and the one
+# host. Receiving through Maddy (docker-compose.receiving.yml, docker-compose.rspamd.yml)
+# and docker-compose.lan-dns.yml run only in the single-container profile and refuse to
+# render with this file.
+#
+# Upgrade (a short full outage; mixed versions are not supported): docker compose pull &&
+# docker compose stop kypost-server && docker compose up -d --wait.
+services:
+  kypost-server:
+    container_name: !reset null
+    ports: !reset []
+    deploy:
+      replicas: ${KYPOST_REPLICAS:-2}
+    environment:
+      # Protected .env only, never argv. sslmode=disable is for the private database network
+      # below; use verified TLS for a database on another host.
+      KYPOST_DATABASE_URL: ${KYPOST_DATABASE_URL:?Set KYPOST_DATABASE_URL in .env, e.g. postgres://kypost:<KYPOST_POSTGRES_PASSWORD>@postgres:5432/kypost?sslmode=disable}
+      KYPOST_DATABASE_URL_FILE: ""
+      # HAProxy alone, plus your TLS proxy's own address on kypost-net when it is set (never
+      # the network gateway, a range or 0.0.0.0/0: anything that can arrive as a trusted
+      # address can forge X-Forwarded-For).
+      TRUSTED_PROXY_CIDRS: ${KYPOST_PROXY_IP:?Set KYPOST_PROXY_IP to the proxy address inside KYPOST_REPLICA_SUBNET}/32${KYPOST_EDGE_TRUSTED_PROXY:+,${KYPOST_EDGE_TRUSTED_PROXY}/32}
+      # One shared Ollama service; the replicas start none of their own.
+      OLLAMA_BASE_URL: http://ollama:11434
+      # HAProxy talks plain HTTP to the replicas and publishes cleartext: TLS ends in a proxy
+      # in front of it. A replica with a certificate would fail every readiness check. The
+      # name below exists only to carry the refusal; never set it (its value would become
+      # TLS_CERT_FILE).
+      TLS_CERT_FILE: ${TLS_CERT_FILE:+${KYPOST_REPLICAS_REFUSE_TLS_NEVER_SET:?TLS_CERT_FILE cannot be used with docker-compose.replicas.yml - HAProxy publishes cleartext and speaks HTTP to the replicas; end TLS in a proxy in front of HAProxy and unset TLS_CERT_FILE (docs/RUNNING.md, Replicas on one host)}}
+      TLS_KEY_FILE: ""
+    # The three data volumes are shared: every replica on this host mounts the same ones
+    # (checked at startup through replica-volume.id). Logs and the model cache are not.
+    volumes: !override
+      - kypost_config:/kypost/config
+      - kypost_private:/kypost/private
+      - kypost_state:/kypost/state
+      - /kypost/logs
+    networks: !override
+      # kypost-replica is the name HAProxy finds the replicas by (haproxy.cfg).
+      replicas:
+        aliases: [kypost-replica]
+      database: {}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine@sha256:526f86d93c6ea08fd3f1fe5605650cacc781b2c6013169a0ad8f42c7d3d84f32
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kypost
+      POSTGRES_PASSWORD: ${KYPOST_POSTGRES_PASSWORD:?Set KYPOST_POSTGRES_PASSWORD in .env; there is no default}
+      POSTGRES_DB: kypost
+      # KyPost compares names byte for byte, as SQLite does: UTF8 with the C locale.
+      POSTGRES_INITDB_ARGS: --locale=C --encoding=UTF8
+    # Room for KYPOST_REPLICAS times the per-replica budget in docs/RUNNING.md.
+    command: ["postgres", "-c", "max_connections=${KYPOST_POSTGRES_MAX_CONNECTIONS:-400}"]
+    volumes:
+      - kypost_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The entrypoint's temporary initialization server has only a Unix socket.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "kypost", "-d", "kypost"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks:
+      - database
+
+  ollama:
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
+    restart: unless-stopped
+    environment:
+      OLLAMA_MODELS: /models
+    volumes:
+      - ${OLLAMA_MODELS_HOST_DIR:-./share/ollama/models}:/models
+    networks:
+      - replicas
+
+  proxy:
+    image: haproxy:3.2-alpine@sha256:7816a9801a6846b912bc37e48529808e2fa87c3c47992441940f68e393ebcfeb
+    restart: unless-stopped
+    volumes:
+      - ./deploy/replicas/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./deploy/replicas/503.http:/usr/local/etc/haproxy/503.http:ro
+    # One server slot per replica; change the count through KYPOST_REPLICAS, never --scale.
+    environment:
+      KYPOST_REPLICAS: ${KYPOST_REPLICAS:-2}
+      # 255.255.255.255 is never a TCP source: with no edge, every forwarded header is dropped.
+      KYPOST_EDGE_TRUSTED_PROXY: ${KYPOST_EDGE_TRUSTED_PROXY:-255.255.255.255}
+    # KYPOST_BIND gates this publish exactly as it gates the single container's: no
+    # default, and non-loopback cleartext needs ALLOW_INSECURE_HTTP=true (checked by the
+    # replicas at startup, which see the same value).
+    ports:
+      - "${KYPOST_BIND:?set KYPOST_BIND in .env — where HAProxy publishes cleartext: 127.0.0.1 for this host only, your LAN IP, or 0.0.0.0 for every interface. A TLS proxy in front must run in a container on kypost-net (docs/RUNNING.md, Replicas on one host)}:5866:5866"
+    networks:
+      # The single container's address and name, so a TLS proxy pointed at either
+      # (http://KyPost-Server:5866 is the documented target) reaches HAProxy unchanged.
+      kypost-net:
+        ipv4_address: ${KYPOST_IP:-10.89.0.5}
+        aliases: [KyPost-Server]
+      replicas:
+        ipv4_address: ${KYPOST_PROXY_IP:?Set KYPOST_PROXY_IP to the proxy address inside KYPOST_REPLICA_SUBNET}
+
+volumes:
+  kypost_pgdata:
+
+networks:
+  replicas:
+    ipam:
+      config:
+        - subnet: ${KYPOST_REPLICA_SUBNET:?Set KYPOST_REPLICA_SUBNET, e.g. 10.89.1.0/24, outside Docker's default address pools}
+  # No route out: only the replicas reach the database.
+  database:
+    internal: true
