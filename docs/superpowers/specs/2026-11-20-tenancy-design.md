@@ -261,7 +261,8 @@ fixed order, so a retry always converges:
    whose user does not exist.
 
 A user whose two records disagree is refused at sign-in, as a mismatch is. The purge snapshot
-(Lifecycle) is taken after the sweep has run for the org, so it never starts from an orphan.
+(Lifecycle) runs the sweep for the org itself, then unions all three sources, so a half-provisioned
+account is never missed.
 
 Hosted members are provisioned the native-mail way. There is no JIT account at sign-in
 (`api/sso_handlers.go:629-631`). An account appears when the signed `user.created` event has
@@ -447,9 +448,12 @@ The elected poller (K8) reads `/api/suite/orgs?since=<revision>` through ky-prim
 Run by the elected `api-sweepers` worker (R `app/replica.go:96-102`). One `org_purges` row per org
 records that a purge started and its last finished step. The purge is **idempotent and
 resumable**:
-- **Snapshot first.** The purge starts by recording the org's user IDs (from `user_orgs`), mailbox
-  IDs and `(issuer, subject)` pairs in `org_purge_members`, in the same transaction that creates
-  the `org_purges` row. Every step and the final check are driven by that snapshot, never by
+- **Snapshot first.** The purge starts by running the `user_orgs` reconciliation for the org
+  itself. It then records the org's user IDs in `org_purge_members`, taking the **union** of three
+  sources: `user_orgs`, the `users.json` accounts whose `OrgID` is the org, and the accounts of the
+  org's `subject_orgs` subjects. A crash between provisioning's steps can leave one source
+  incomplete, but not all three. It records the mailbox IDs and `(issuer, subject)` pairs
+  alongside, in the same transaction that creates the `org_purges` row. Every step and the final check are driven by that snapshot, never by
   `user_orgs`. A purge that dies after step 5 deletes `user_orgs` can therefore still find
   everything.
 - A resumed purge re-runs every step from the start. Each step deletes whatever still exists,
