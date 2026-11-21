@@ -611,6 +611,10 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    must agree, as "What R's replicas allow today" shows. Either document that Cloudflare on
    replicas needs per-replica Rspamd and add it, or state that replicas have no native receiving.
    Docs and Compose only.
+   *Built in #686:* replicas have no native receiving (this PR gave no recommendation).
+   `docs/RUNNING.md` ("Replicas on one host") and both overlays now say so;
+   `scripts/check-replicas-compose.py` fails if the old claim returns. The per-replica sidecar
+   (R6) arrives with the hosted profile.
 2. **TLS transport.** `receiving serve --tls`, protocol 3 (`budget_ms`), `receiving_gateways`, the
    `receiving gateway keygen|add|revoke|retire|server-pin` CLI, `KYPOST_RECEIVING_REMOTE` with no local
    fallback, the pinned gateway ID, and the `config` fetch. All refused outside multi mode. Tests:
