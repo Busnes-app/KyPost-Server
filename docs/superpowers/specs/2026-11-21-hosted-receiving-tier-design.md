@@ -368,8 +368,11 @@ That residual risk is listed below.
 - **Multi-mailbox deliveries.** The worker needs leases on every bound mailbox, taken in sorted
   ID order (`quotaFence`'s order, `app/receiving.go:54-66`). If one is busy it releases them all
   and retries later, so it never waits holding a lease.
-- **Gateways.** The import list covers every enrolled gateway, not the two fixed IDs of
-  `app/receiving.go:230`.
+- **Gateways.** The import list is every gateway ID that has pending deliveries
+  (`SELECT DISTINCT gateway FROM deliveries WHERE state='pending'`), not the two fixed IDs of
+  `app/receiving.go:230`, and never the live rows of `receiving_gateways`. A revoked or expired
+  pin stops new commands only. Mail its host already committed has had its `250` and still
+  imports. `receiving_gateways` rows are never deleted, so a revoked ID is never enrolled again.
 - **Org status.** K's rule holds. A delivery whose org is not `active` stays pending
   (K "Background workers").
 - **Single-tenant.** The daemon importer of `app/receiving.go:214-262` stays exactly as it is.
@@ -523,7 +526,10 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
 3. **Sender blocks and evidence in PostgreSQL** (R7), behind one interface. Tests: the
    `blocks.json` fixture, today's sender-block tests and `TestEvidenceWorstCaseSize`, all run
    against both implementations. Multi mode never touches the files.
-4. **Per-mailbox import leases** (R8) and the enrolled-gateway import list. Tests:
+4. **Per-mailbox import leases** (R8) and the pending-gateway import list. Tests:
+   - commit through a gateway, revoke its pin (and separately, let it expire), and the mail still
+     imports;
+   - re-enrolling a revoked gateway ID is refused;
    - two replicas importing one mailbox keep arrival order and import nothing twice;
    - a multi-mailbox delivery with one lease busy;
    - a lease holder killed mid-import;
