@@ -33,6 +33,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/suitepair"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
 	"github.com/Busnes-app/kypost-server/backend/internal/worker"
@@ -195,6 +196,17 @@ func Run(args []string) error {
 	configDir := config.ConfigDir()
 	usersStore, store, err := openStores(logger, configDir, paths.StateDir, legacyPrefs, legacyPrefsOK)
 	if err != nil {
+		return err
+	}
+	// CheckEnv refused multi, so this only refuses a multi install started single (K1).
+	tenancyMode, staffOrg, _ := config.Tenancy()
+	if err := tenancy.Check(context.Background(), store, paths.StateDir, tenancyMode, staffOrg, func() (bool, error) {
+		all, err := usersStore.List()
+		if err != nil {
+			return false, err
+		}
+		return tenancy.Empty(len(all), configDir, paths.StateDir)
+	}); err != nil {
 		return err
 	}
 	if !dbbackend.Postgres() {

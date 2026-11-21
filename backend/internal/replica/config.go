@@ -69,6 +69,9 @@ var PerHost = []string{
 	"SMTP_HOST", "SMTP_PORT", "KYPOST_REPLICAS", "KYPOST_POSTGRES_PASSWORD", "KYPOST_POSTGRES_MAX_CONNECTIONS",
 	"KYPOST_REPLICA_SUBNET", "KYPOST_PROXY_IP", "KYPOST_EDGE_TRUSTED_PROXY", // the replica overlay's Compose inputs
 	"TRUST_PROXY_HEADERS", // retired; only warned about
+	// Guarded by the tenancy record in meta instead (tenancy design K1): adding them to the
+	// fingerprint would rewrite every upgraded install's record.
+	"KYPOST_TENANCY", "KYPOST_STAFF_ORG_ID",
 	// Receiving through Maddy is single-container; the replica profile refuses it (O2).
 	"KYPOST_NATIVE_RECEIVER", "KYPOST_MADDY_BINARY", "KYPOST_RECEIVER_BINARY", "KYPOST_RECEIVING_CERT",
 	"KYPOST_RECEIVING_KEY", "KYPOST_RECEIVING_LISTEN", "KYPOST_RECEIVING_HOSTNAME", "KYPOST_RECEIVING_TLS_DIR",

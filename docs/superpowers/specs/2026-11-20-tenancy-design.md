@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design, nothing built. Docs only. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PR 1 is built ("PR 1 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3.
 
@@ -68,12 +68,12 @@ drive the design:
 |---|---|---|
 | K1 | `KYPOST_TENANCY=single` (default) or `multi`. A multi install records `tenancy_mode=multi` and `staff_org_id` (K7) in the root `state.db` `meta` at first start. A start whose mode or `KYPOST_STAFF_ORG_ID` differs from the record refuses to start. Single-tenant writes nothing: no record means single. It stays out of R's replica fingerprint, and the record is what refuses a mismatched replica (Replicas). | Install-time, as T D1. Writing nothing keeps upgrades byte-for-byte unchanged. A replica started in the wrong mode must not serve. |
 | K2 | **Multi-tenant requires** PostgreSQL (`KYPOST_DATABASE_URL`, `docs/CONFIGURATION.md:124`), native mail (`KYPOST_NATIVE_MAIL=true`), the v3 authority database, a configured KyIdentity issuer, and an **empty install** at first start. Converting a single-tenant install is out of scope, as in T. | T requires Postgres too (T D2). The external-IMAP profile and local accounts have no place in a hosted mail service (K6). Starting empty avoids a migration with no org to assign. |
-| K3 | **No existing table changes shape.** The org mapping lives in new, multi-only side tables that a multi install's first start creates: `user_orgs(user_id PK, org_id)` in the root `state.db`, and `subject_orgs(issuer, subject, org_id, PRIMARY KEY(issuer, subject))` in `native-authority.db`. Both are write-once, refusing an update. Shared tables keep one schema in both modes, so no shared query or migration branches on mode. Only multi-mode code reads the side tables. `users.User.OrgID` is a JSON field with `omitempty`, so it is absent from single-tenant `users.json`. A single-tenant install never gets any of this, and its databases, `users.json` and every file stay byte-for-byte as they are. | This is the zero-change argument. Columns added only in one mode would give one table two schemas, and every query on it would need a branch. A side table is a join that only multi mode makes. |
+| K3 | **No existing table changes shape.** The org mapping lives in new, multi-only side tables that a multi install's first start creates: `user_orgs(user_id PK, org_id)` and `subject_orgs(issuer, subject, org_id, PRIMARY KEY(issuer, subject))`, in a multi-only store of their own, `STATE_DIR/tenancy.db` (PostgreSQL schema `kypost_tenancy`; see "PR 1 as built"). Both are write-once, refusing an update. Shared tables keep one schema in both modes, so no shared query or migration branches on mode. Only multi-mode code reads the side tables. `users.User.OrgID` is a JSON field with `omitempty`, so it is absent from single-tenant `users.json`. A single-tenant install never gets any of this, and its databases, `users.json` and every file stay byte-for-byte as they are. | This is the zero-change argument. Columns added only in one mode would give one table two schemas, and every query on it would need a branch. A side table is a join that only multi mode makes. |
 | K4 | The org is recorded on two roots only: the user (`users.User.OrgID`, mirrored in `user_orgs`) and the KyIdentity subject (`subject_orgs`), both write-once. Every other store is **derived**: it inherits the org of the user, mailbox or subject that owns it. That includes the root-store aggregates (`send_ledger`, `agent_tokens`, `scheduled_sends`), which join `user_orgs` on `user_id` for per-org counts. The purge uses its own snapshot instead (Lifecycle). | Per-user data is already separated by user ID (above). Adding `org_id` to hundreds of per-user schemas would add a column nobody could set wrongly. The risk sits on the hops *between* users, so that is where the checks go (K5). |
 | K5 | `AuthContext.OrgID` is set by `currentUser` from the re-read user record, never from the request. Every **cross-user hop** goes through one function, `orgAdmit(ac, target)`: from the caller to another user, mailbox, address, device, delivery or peer subject. On a mismatch it gives the same answer as a missing target. The hops form a named list (Isolation). | One choke point, as KyIdentity's `OrgStore`. KyPost has no single SQL layer to bind, but it does have a single per-request identity. |
 | K6 | Off in multi-tenant v1, answering `404`: local password sign-in, local user creation, password reset, SSO link and unlink, `AutoProvision`, the external-IMAP mail source, administrator-assigned IMAP and CardDAV accounts, and HR mailbox reservation (`/api/sync/hr-mailbox`). The first-run bootstrap administrator (`app/bootstrap.go:41-42`) is not created. | Accounts come only from KyIdentity (T decision 5). Staff must never hold a customer's credentials. T switches HR off in multi mode (T "Per-org features"). |
 | K7 | **Staff = `kypost.admin` role *and* a token whose `org_id` equals `KYPOST_STAFF_ORG_ID`.** A customer account is never an administrator, whatever roles a token or sync event carries. | `HasAdminRole` (`sso/directory.go:24-31`) trusts the role alone. T's D8 refuses KyIdentity's *own* admin role outside the staff org, but app-role assignment is "per org, run by staff" (T "Per-org features"). So a staff mistake could give a customer `kypost.admin`. KyPost pins the org independently. |
-| K8 | Entitlements are pulled from `GET /api/suite/orgs` (T D6) by one elected worker about every 60 s. They are cached in a platform table, `orgs(id, status, revision, enabled, quotas_json, polled_at)`, in the root `state.db`, so every replica reads the same answer. An org missing from the cache is not served. **The staff org (`KYPOST_STAFF_ORG_ID`) is exempt**: it is never gated by the cache, so staff keep the console during a poller or KyIdentity outage. | T's contract point 6. A shared table keeps replicas consistent (R `worker.Run` elects one runner per role). The staff exemption is safe: KyIdentity still decides whether a staff account signs in at all (T `active_principals`). It is unverified whether `/api/suite/orgs` lists the staff org. |
+| K8 | Entitlements are pulled from `GET /api/suite/orgs` (T D6) by one elected worker about every 60 s. They are cached in a platform table, `orgs(id, status, revision, enabled, quotas_json, polled_at)`, in the multi-only `tenancy.db`, so every replica reads the same answer. An org missing from the cache is not served. **The staff org (`KYPOST_STAFF_ORG_ID`) is exempt**: it is never gated by the cache, so staff keep the console during a poller or KyIdentity outage. | T's contract point 6. A shared table keeps replicas consistent (R `worker.Run` elects one runner per role). The staff exemption is safe: KyIdentity still decides whether a staff account signs in at all (T `active_principals`). It is unverified whether `/api/suite/orgs` lists the staff org. |
 | K9 | Hosted mail domains, the platform primary domain(s) and the relay domain (M D2) are **platform assets**: staff configure, prove, sign and retire them through today's admin routes. No customer configures a domain in v1. | No customer administrators (decision 4). Per-customer custom domains come later (M "Per-customer custom domains"). |
 | K10 | Org deletion **scrubs** rather than deletes in the authority database. Account and mailbox rows stay as tombstones with storage removed and no personal fields. Addresses become keyed hashes, as M open question 4 recommends. Everything else the org owns is deleted. | `authority_v3.go:89-99` forbids deletes, so that "never reuse" holds. M D5 needs the tombstone and the privacy rule needs the content gone. One named purge path with its own migration is the only exception to those triggers (open question 9, confirmed by the owner). |
 
@@ -91,19 +91,19 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | Root `state.db` `agent_tokens` | `state/schema.go:269` | D (`user_id`, via `user_orgs`) | Suspension refuses them through the org check. The purge deletes them for the snapshot's users. |
 | Root `state.db` `scheduled_sends` | `state/scheduled_sends.go`, `state/schema.go` | D (`user_id`, via `user_orgs`) | Keyed by `user_id` and `mailbox`. A suspended org's due sends are held (open question 6). |
 | Root `state.db` `send_ledger` | `state/send_ledger.go:27-38` | D (`user_id`, via `user_orgs`) | Counts the per-user quota today (`api/send_quota.go:25`). Per-org quotas sum it through `user_orgs`. |
-| New `user_orgs` | (multi-only) | O | K3. The user root: one row per account, written once with `users.User.OrgID`. |
+| New `tenancy.db` `user_orgs` | (multi-only) `tenancy/tenancy.go` | O | K3. The user root: one row per account, written once with `users.User.OrgID`. |
 | Root `state.db` `backup_audit` | `state/schema.go` | P | Whole-install backups. |
-| New `orgs` cache | (multi-only) | P | K8. The registry every org check reads. |
-| New `org_purges`, `org_purge_members` | (multi-only) | P | Purge progress, one row per deleted org, plus the snapshot of its user, mailbox and subject IDs taken at purge start, so a purge that died halfway resumes (Lifecycle). The snapshot is deleted when the purge is marked done. |
+| New `tenancy.db` `orgs` cache | (multi-only) `tenancy/tenancy.go` | P | K8. The registry every org check reads. |
+| New `org_purges`, `org_purge_members` | (multi-only, PR 6; in `tenancy.db`, as the other side tables) | P | Purge progress, one row per deleted org, plus the snapshot of its user, mailbox and subject IDs taken at purge start, so a purge that died halfway resumes (Lifecycle). The snapshot is deleted when the purge is marked done. |
 | Per-user / per-mailbox `state.db` (`processed`, `decisions`, `notifications`, `native_devices`, `pull_notifications`, `deferrals`, `sorter_*`, `snoozes`, `ooo_*`) | `api/server_userscope.go:86-92`; same schema as root | D (user or mailbox directory) | The directory, or on Postgres the `kypost_f_*` schema, is the owner. |
 | `mailbox.db` (messages, folders, labels, receipts, usage, `outbox*`, …) | `mailbox/store.go:118-132`, `mailbox/pg_schema.go:17-32` | D (mailbox) | The `identity` row names `(issuer, subject, mailbox)` (`mailbox/store.go:118`). It gains no `org_id`: the mailbox's account carries it. |
 | `native-authority.db` `directory`, `directory_primary_emails` | `sso/authority_v3.go:39-48` | D (`(issuer, subject)`, via `subject_orgs`) | The KyIdentity directory mirror. |
 | `native-authority.db` `accounts` | `sso/authority_v3.go:49-55` | D (`(issuer, subject)`, via `subject_orgs`) | The ledger root of a person's mailboxes. |
-| New `subject_orgs` | (multi-only, `native-authority.db`) | O | K3. The subject root, written once from the signed webhook (Identity binding). |
+| New `tenancy.db` `subject_orgs` | (multi-only) `tenancy/tenancy.go` | O | K3. The subject root, written once from the signed webhook (Identity binding). |
 | `native-authority.db` `mailboxes` | `sso/authority_v3.go:56-63` | D (`(issuer, subject)` FK to `accounts`) | |
 | `native-authority.db` `addresses`, `address_history`, `routes_pending` | `sso/authority_v3.go:65-76` | D (via `mailbox`) | Address keys are global (M D4). The purge deletes an org's rows after writing their hashes to `address_tombstones` (K10). |
-| New `address_tombstones` | (multi-only, `native-authority.db`, PR 6) | P | K10. HMACs of every address a deleted org held, under the tombstone key. No org or owner, never deleted, consulted first by the conflict check. |
-| `native-authority.db` `directory_events`, `logouts`, `sign_ons`, floors, barriers, `lifecycle_records` | `sso/authority_v3.go:77-88` | P | Replay and recovery ledgers keyed by event or JTI. Restore authority is whole-install. |
+| New `address_tombstones` | (multi-only, PR 6; not in `native-authority.db`, whose exact-schema check refuses an extra table: in `tenancy.db` or a store of its own) | P | K10. HMACs of every address a deleted org held, under the tombstone key. No org or owner, never deleted, consulted first by the conflict check. |
+| `native-authority.db` `meta`, `directory_events`, `logouts`, `sign_ons`, floors, barriers, `lifecycle_records` | `sso/authority_v3.go:77-88` | P | Replay and recovery ledgers keyed by event or JTI. Restore authority is whole-install. |
 | `ingress.db` `routes`, `bindings` | `ingress/store.go:108,110` | D (`mailbox`) | Recipient bindings name the mailbox. |
 | `ingress.db` `deliveries`, `archived`, `limits` | `ingress/store.go:107,109,117` | P, with org found through `bindings` | The receiving buffer and quarantine. A delivery can bind several recipients in several orgs, so it has no single org. Staff-only (Admin surface). |
 | `cloudflare.db` | `cfreceiving/state.go:30`, `cfreceiving/pg_schema.go:11-15` | P | One Worker and one credential set per install (`app/receiving_cfcontinuous.go:73`). |
@@ -132,6 +132,8 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | `$STATE/imports/upload-*` | `api/mail_import.go:37,315` | D (user, through the grant) | Temporary. Grants and jobs are in memory (`api/server.go:164-172`) or in R's `auth_challenges` and `import_jobs`. |
 | Native restore hold, qualification and release files, `mfa-clear-all.*` | `sso/native_restore.go:21`, `sso/native_restore_qualification.go:24`, `sso/native_release.go:95`, `app/app.go:574,586` | P | Whole-install recovery. |
 | Backups, `mail-bulk.json` | `backup/backup.go:92`, `backup/bulk.go:38-43` | P | Whole-install capsules, as T. |
+| `replica-volume.id`, `server-instance.lock`, `backup-operation.lock`, `sender-evidence.damaged.json` | `replica/topology.go:19`, `state/coordination.go:319`, `backup/backup.go:524`, `ingress/autoblocks.go:29` | P | Process coordination and a quarantined copy of damaged evidence. Added by PR 1's inventory test. |
+| `tenancy.db` | `tenancy/tenancy.go` | P (tables O and P, above) | Multi-only (PR 1). |
 
 ### Keys (`SECRET_DIR`, `config/config.go:44,52`)
 
@@ -675,7 +677,7 @@ Tenancy fits on top:
   - PR 1's upgrade test starts an R-format replica install under the new binary, once with
     `KYPOST_TENANCY` unset and once with `single`. Both start with no refusal and leave every
     database row, the fingerprint record included, and every file byte-for-byte unchanged.
-- **Shared org state.** The `orgs` cache and `org_purges` live in the root `state.db` on
+- **Shared org state.** The `orgs` cache and `org_purges` live in the multi-only `tenancy.db` on
   PostgreSQL, so every replica answers from the same status. One elected runner polls and purges
   (R `worker/worker.go:49`).
 - **Session revocation.** R keeps sessions in PostgreSQL keyed by `user_id`, with a per-user
@@ -780,6 +782,50 @@ PostgreSQL, a measured capacity target (open question 8), and these KyIdentity c
   of erased subjects (Delete everything);
 - the `export_only` claim during `deletion_scheduled` (open question 4 (a)), which the household
   path needs.
+
+## PR 1 as built (2026-11-21)
+
+PR 1 follows the plan with these readings. Each is the safer one where K was ambiguous or, for
+the first, unworkable as written. References are to the PR's own head.
+
+- **The side tables are one multi-only store, `STATE_DIR/tenancy.db`** (kind `tenancy`, schema
+  `kypost_tenancy`, `tenancy/tenancy.go`), not tables in the root `state.db` and
+  `native-authority.db`. Read in code, not run:
+  - the authority on PostgreSQL opens only when its catalog fingerprint equals its DDL exactly
+    (`sso/authority_postgres.go:162`, finding S3, as SQLite at `sso/authority_v3.go:34`), and its
+    rebuild drops the schema (`:233`), so an extra `subject_orgs` would make every open fail and
+    a rebuild lose it;
+  - a PostgreSQL export to a SQLite capsule refuses a source table the binary's SQLite schema
+    lacks (`dbbackend/copy.go:189,451`), so an extra table in `state.db` would break backups of a
+    multi install.
+  `tenancy.db` is not in the backup set yet (`backup/collect.go:36`); PR 6 adds it with the purge
+  tables, which belong in the same store. Moving the tables loses no atomicity K relied on: the
+  three provisioning writes were already separate, ordered steps (Identity binding).
+- **Write-once** is a `BEFORE UPDATE` trigger on `user_orgs` and `subject_orgs` on both backends.
+  Deletes stay possible for the reconciliation sweep and the purge. SQLite's `INSERT OR REPLACE`
+  deletes and inserts, so it would bypass the trigger: writers use plain `INSERT`.
+- **The record.** `tenancy_mode` and `staff_org_id` are inserted in one transaction and never
+  replaced (`state/tenancy.go`). A record with only one key, an unknown mode or a malformed staff
+  org is refused as damaged, in either mode. A single start reads the record without the lock and
+  writes nothing.
+- **`KYPOST_STAFF_ORG_ID`** must be T's `org_id` in canonical lowercase UUID form; `single` (or
+  unset) refuses a set value, so a half-configured hosted install cannot start self-hosted.
+  Neither variable is in `.env.example` or the Compose file while `multi` is refused.
+- **Empty install** (K2, Replicas) means no account in `users.json`, no entry under
+  `CONFIG_DIR/users`, `STATE_DIR/users` or `STATE_DIR/mailboxes`, and no `native-authority.db` or
+  `receiving/ingress.db` (`tenancy.Empty`). An error deciding it refuses.
+- **K2's other prerequisites** (PostgreSQL, native mail, v3, an issuer) and the SQLite refusal
+  are not checked in PR 1: `config.CheckEnv` and `bootstrap-admin` refuse `multi` outright, so
+  `tenancy.Check` with `multi` runs only in tests, on both backends. PR 7 adds them where it
+  accepts `multi`.
+- **The upgrade test** (`TestSingleTenantUpgradeIsByteForByte`) builds the fixture with the same
+  binary (bootstrap, first start, one sign-in), then restarts it with `KYPOST_TENANCY` unset and
+  `single`. It compares every file's bytes except SQLite's `-shm` index, every SQLite schema and
+  row, and on the PostgreSQL job every catalogued schema's columns, indexes, triggers and rows,
+  the fingerprint record included. The children's HTTPS proxy is a closed port: the release
+  check would otherwise record the newest GitHub release in `meta` on whichever start first
+  reaches GitHub, which is a restart effect, not tenancy. A fixture from an older binary is not
+  built (unverified against a released image).
 
 ## Residual risks
 
