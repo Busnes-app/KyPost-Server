@@ -210,7 +210,7 @@ Decision R1 below keeps Cloudflare for self-hosted installs and leaves it out of
 | R4 | The **gateway ID comes from the MX host's pinned key**, never from the request. Each MX host is its own gateway in `deliveries(gateway, id)`. | `ingress/AGENTS.md` already requires gateway IDs from authenticated transport. Maddy `msg_id` values from different hosts can never collide, and one host cannot touch another's deliveries. |
 | R5 | `250` only after the PostgreSQL commit, and PostgreSQL commits must survive a failover (synchronous replication when PostgreSQL becomes its own service). | An accepted message is owed. A `250` backed only by an asynchronous primary can be lost in a failover. |
 | R6 | Rspamd runs **beside each replica**, as a sidecar sharing its network namespace, so the fixed `127.0.0.1:11333` stays. Not on the MX hosts. | The verdict and the evidence are computed where the commit happens. An MX host can feed in only the peer IP and HELO (Threat model). |
-| R7 | In multi mode, sender blocks and evidence live in PostgreSQL tables in `kypost_ingress`, with the same semantics. Single-tenant keeps the JSON files. | A whole-file rewrite per message does not scale. Hosts past one need shared state. Multi installs start empty (K2), so nothing is migrated. |
+| R7 | In multi mode, sender blocks and evidence live in PostgreSQL tables in the multi-only `tenancy.db` store (Where the new tables live), with the same semantics. Single-tenant keeps the JSON files. | A whole-file rewrite per message does not scale. Hosts past one need shared state. Multi installs start empty (K2), so nothing is migrated. |
 | R8 | Import is **one obligation per bound mailbox**, leased per mailbox in PostgreSQL, so every replica imports. No mailbox waits on another. | Spreads import across replicas and keeps each mailbox's arrival order. One recipient's suspended org, or a busy mailbox, cannot hold back another recipient's mail. |
 | R9 | The masked relay domain is one more `destination` on the same tier (M open question 5). | No third party lists masked addresses. Routing is by address, so nothing else changes. |
 | R10 | Everything above is refused unless `KYPOST_TENANCY=multi`. Single-tenant profiles, files and code paths are untouched. | Owner decision 1. |
@@ -233,9 +233,10 @@ Decision R1 below keeps Cloudflare for self-hosted installs and leaves it out of
  │ leases                        │
  └───────────────┬───────────────┘
                  ▼
-         PostgreSQL: kypost_ingress (deliveries, bindings, archived,
-         sender_blocks, sender_evidence, import_leases, binding_imports,
-         receiving_gateways)
+         PostgreSQL: kypost_ingress (deliveries, bindings, archived; unchanged)
+                     kypost_tenancy (multi-only: receiving_gateways,
+                     sender_blocks, sender_evidence, import_leases,
+                     retired_bindings)
 ```
 
 ### MX host
@@ -347,9 +348,25 @@ the MX host. Automatic blocks also need aligned DKIM (`app/receiving_spam.go:118
 MX host cannot forge, so a compromised MX host can only replay real signed mail with a false IP.
 That residual risk is listed below.
 
+### Where the new tables live
+
+Every new table goes in the multi-only `STATE_DIR/tenancy.db` (PostgreSQL schema `kypost_tenancy`,
+`tenancy/tenancy.go`). These are `receiving_gateways`, `sender_blocks`, `sender_evidence`,
+`import_leases` and `retired_bindings`. None goes into `kypost_ingress`, and no index is added
+there. K's "PR 1 as built" records why: existing stores' exact-schema checks and the PostgreSQL to
+SQLite capsule copy refuse an extra table. A single-tenant install never creates `tenancy.db`.
+
+Completion reads a binding's done-state from other stores (the mailbox's `receipts` and
+`tenancy.db`) inside a `kypost_ingress` transaction. These are plain reads of committed rows, so no
+transaction spans two stores.
+
+**Backups.** `tenancy.db` is not in the backup set yet (K "PR 1 as built"). Sender blocks and
+gateway pins must survive a restore, so this spec's PR 3 depends on K PR 6 adding it, or adds it
+first itself.
+
 ### Sender blocks and evidence in PostgreSQL (R7)
 
-- **Tables** (multi-only, in `kypost_ingress`, class P in K's inventory):
+- **Tables** (multi-only, in `tenancy.db`, class P in K's inventory):
   `sender_blocks(id PK, kind, value, until, source, level, created_at, actor, reason)` holds the
   fields of `ingress.SenderBlock` (`ingress/blocks.go:47-57`). `sender_evidence` holds one row per
   address, domain, good-domain and unblock record, with the caps of `ingress/autoblocks.go:44-46`.
@@ -365,59 +382,59 @@ That residual risk is listed below.
 ### Import leased per mailbox (R8)
 
 - **Obligations per mailbox.** In multi mode a delivery is one import **obligation per bound
-  mailbox**, not one all-or-nothing import. A multi-only table,
-  `binding_imports(gateway, id, mailbox, outcome, at, PRIMARY KEY(gateway, id, mailbox))`, with `outcome` either `imported` or `retired`, in
-  `kypost_ingress`, records each obligation that is done. Mailboxes are therefore independent. A
-  delivery bound to A (active org) and B (suspended org) imports into A at once, and only B's
-  obligation waits. No mailbox's import waits on another mailbox's import, and no worker holds
-  more than one lease (Completion has the one short row lock).
-- **Leases.** `import_leases(mailbox PK, holder, lease_until)` is multi-only, in `kypost_ingress`.
-  Every replica runs import workers, not only the `daemon` replica. A worker takes a 60-second
-  lease on one mailbox with outstanding obligations (`UPDATE … WHERE lease_until < now() … SKIP
-  LOCKED`). It renews the lease while it works and gives it up after one batch: at most 100
-  obligations or 60 seconds, even when more are pending. No mailbox stays leased continuously.
+  mailbox**, not one all-or-nothing import. An obligation is done when the mailbox holds the
+  receipt (its `receipts` table is keyed by `(gateway, delivery)`, `mailbox/store.go:127`), or
+  when the binding is recorded in the multi-only `retired_bindings(gateway, id, mailbox, at)`.
+  Mailboxes are therefore independent. A delivery bound to A (active org) and B (suspended org)
+  imports into A at once, and only B's obligation waits. No mailbox's import waits on another
+  mailbox's import, and no worker holds more than one lease (Completion has one short row lock).
+- **Leases.** `import_leases(mailbox PK, holder, lease_until)`, multi-only. Every replica runs
+  import workers, not only the `daemon` replica. A worker takes a 60-second lease on one mailbox
+  with outstanding obligations (`UPDATE … WHERE lease_until < now() … SKIP LOCKED`). It renews the
+  lease while it works and gives it up after one batch: at most 100 obligations or 60 seconds,
+  even when more are pending. No mailbox stays leased continuously.
+- **Listing a mailbox's obligations** scans `bindings` by `mailbox`. No index is added, so
+  `kypost_ingress` keeps its schema. Bindings exist only for deliveries that are not yet
+  archived, and the 10,000-record ingress limit (`ingress/store.go:42`) bounds them, so the scan
+  stays small. The capacity measurement checks it.
 - **One obligation.** In arrival order, for each pending delivery bound to the leased mailbox
-  that has no `binding_imports` row for it, the worker:
+  whose obligation is not done, the worker:
   1. checks that mailbox's org status, and stops that mailbox's queue if it is not `active`
      (K "Background workers");
-  2. writes the message into that mailbox under its quota lock;
-  3. inserts the `binding_imports` row.
+  2. if the binding was durably retired (today's `retiredBinding` test,
+     `app/receiving_cfcontinuous.go:788`), inserts its `retired_bindings` row; otherwise writes
+     the message into that mailbox under its quota lock, which commits the receipt;
+  3. runs Completion.
 
-  Step 2 is idempotent: the mailbox's `receipts` table is keyed by `(gateway, delivery)`
-  (`mailbox/store.go:127`), so a crash between steps 2 and 3 repeats nothing. The mailbox's order
-  is its own arrival order, and nothing in another mailbox can block it.
-- **Completion.** Step 3 runs in one short transaction:
+  Step 2 is idempotent. A repeated write finds the receipt, and a repeated retired row hits its
+  primary key. The mailbox's order is its own arrival order, and nothing in another mailbox can
+  block it.
+- **Completion.** After its own step 2 has committed, the worker runs one short
+  `kypost_ingress` transaction:
   1. lock the delivery's row (`SELECT … FROM deliveries … FOR UPDATE`);
-  2. insert the `binding_imports` row;
-  3. count the bindings that still have no row;
-  4. if none remain: archive the delivery (`Acknowledge`'s tombstone write) when every row is
-     `imported`, or quarantine it, keeping only its `retired` bindings, when any row is `retired`.
+  2. check every binding: done if its mailbox holds the receipt or `retired_bindings` has it;
+  3. if all are done, archive the delivery (`Acknowledge`'s tombstone write) when none is
+     retired, or quarantine it, keeping only its retired bindings, when any is.
 
-  The row lock serialises "last obligation done". Of two workers finishing A and B at once, the
-  second one to get the lock sees the first one's row and archives. The lock covers only those few
-  statements, never the mailbox write in step 2. So a worker still holds one mailbox lease, and
-  it waits on another mailbox's import only for that commit (milliseconds), never for the
-  import itself. Quarantine and purge change a delivery's state under the same row lock, so they
-  serialise with completion. A backstop sweep on the elected `api-sweepers` worker runs step 4 for
-  any pending delivery whose bindings all have rows, for example after a crash between the commit
-  and a retry. The whole-delivery claim lease of today's importer (`ingress/store.go:830-884`) is
-  not used for multi-mode obligations.
-- **Retired bindings.** When the worker for a mailbox finds that its binding was durably retired
-  (today's `retiredBinding` test, `app/receiving_cfcontinuous.go:788`), step 3 records it with
-  outcome `retired` instead of importing. That binding's mailbox queue then moves on. When the
-  last row lands, step 4 quarantines the delivery with only its `retired` bindings, and it appears
-  in staff quarantine as today. Release and discard act on those bindings. Release already resumes through the receipts
-  (`ingress/import.go:30-33`), so a mailbox that already has the message is a no-op.
-- **Purge.** K's purge step 2 deletes the org's bindings and their `binding_imports` rows under
-  the delivery's row lock, then runs step 4 on what remains: archived if every remaining row is
-  `imported`, quarantined if any is `retired`, still pending if some have no row yet.
+  Every done-record is committed **before** its writer takes the lock. So of two workers
+  finishing A and B at once, the second to get the lock sees both and completes. The lock never
+  covers a mailbox write: a worker waits on another mailbox only for that short transaction
+  (milliseconds), never for its import. Quarantine and purge change a delivery's state under the
+  same row lock. A backstop sweep on the elected `api-sweepers` worker runs Completion for any
+  pending delivery, for example after a crash between step 2 and Completion. The whole-delivery
+  claim lease of today's importer (`ingress/store.go:830-884`) is not used for multi-mode
+  obligations.
+- **Retired bindings in quarantine.** The quarantined delivery holds only its retired bindings
+  and appears in staff quarantine as today. Release and discard act on those bindings. Release
+  already resumes through the receipts (`ingress/import.go:30-33`), so a mailbox that already has
+  the message is a no-op.
+- **Purge.** K's purge step 2 deletes the org's bindings and their `retired_bindings` rows, and
+  then runs Completion: archived if the rest are imported, quarantined if any is retired, still
+  pending if some are not done yet.
 - **Held bytes.** A delivery's bytes stay in the ingress store until every obligation is done or
   purged. A suspended org's mail therefore holds ingress capacity. That mail is bounded, because
   `bind` refuses new mail to a suspended org (exit 12). The capacity alerts track it (open
   question 6).
-- **Index.** A multi-only index on `bindings(mailbox)` lists one mailbox's obligations. K3 forbids
-  columns added in one mode only. An index adds no column, but it does change the schema dump, so
-  it is open question 4.
 - **Gateways.** The import list is every gateway ID that has pending deliveries
   (`SELECT DISTINCT gateway FROM deliveries WHERE state='pending'`), not the two fixed IDs of
   `app/receiving.go:230`, and never the live rows of `receiving_gateways`. A revoked or expired
@@ -491,8 +508,9 @@ Receiving does not change outbound, but the tier is sized with it in mind:
   in-process fallback), `sender-blocks.json`, `sender-evidence.json`, the `daemon` importer, the
   fixed gateway list and the Rspamd overlay's single-container rule all stay exactly as they are.
 - `receiving serve --tls`, `receiving gateway`, `KYPOST_RECEIVING_REMOTE`, the
-  `receiving_gateways`, `import_leases`, `binding_imports`, `sender_blocks` and `sender_evidence` tables, the
-  `bindings(mailbox)` index and exit codes 12 and 13 are each refused or never created unless
+  `receiving_gateways`, `import_leases`, `retired_bindings`, `sender_blocks` and `sender_evidence`
+  tables (all in the multi-only `tenancy.db`) and exit codes 12 and 13 are each refused or never
+  created unless
   `KYPOST_TENANCY=multi` is recorded (K1).
 - **Proof.** K PR 1's single-tenant upgrade test, extended: a single-container Maddy fixture and
   an R replica fixture started under the new binary keep every `kypost_ingress` row and schema
@@ -599,8 +617,8 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      active org's mailbox, that mailbox's later mail imports too, and the suspended org's
      obligation stays pending until the org is resumed (then imports) or purged (then the
      delivery is archived);
-   - a worker killed between the mailbox write and the `binding_imports` row: the retry adds no
-     second copy;
+   - a worker killed between the mailbox write and Completion: the retry adds no second copy, and
+     the sweep completes the delivery;
    - two workers finishing the last two obligations of one delivery at the same moment: it is
      archived exactly once, and the backstop sweep archives one whose last commit was followed by
      a crash;
@@ -646,9 +664,10 @@ Past one host (R's follow-up, PostgreSQL as its own service) is outside this pla
    replica, with an audit line. It is rare operator work, and every new admin route adds attack
    surface.
 3. **Pin lifetime.** *Recommend* 90 days, with a warning on the staff console at 14 days left.
-4. **The multi-only `bindings(mailbox)` index.** K3 forbids mode-only columns; an index is not a
-   column, but it changes a multi schema dump. *Recommend* allowing it as a named K3 exception:
-   no query branches on it, and single-tenant never has it.
+4. **An index on `bindings(mailbox)`.** None is proposed, so `kypost_ingress` keeps one schema
+   in both modes (K3). *Recommend* adding one only if the capacity measurement shows the
+   per-mailbox scan is slow. It would need the same exact-schema and capsule-copy review that K's
+   "PR 1 as built" applied to `tenancy.db`.
 5. **The per-source refused-recipient budget.** *Recommend* counting relay-domain refusals only, per
    source IP (IPv4 /32, IPv6 /64): 50 refusals in 10 minutes, then `450 4.7.1` for 10 minutes. The
    ceiling is a shared provider IP being slowed for everyone (Masked relay domain). Tune it after
