@@ -79,6 +79,7 @@ func (s *Server) suitePeopleFor(ctx context.Context, userID, q string) []suitePe
 	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	found, err := dir.People(tctx, u.SSOSub, q, suitePeopleLimit)
 	cancel()
+	found = s.sameOrgPeople(ctx, u, dir.Issuer, found)
 	if err != nil {
 		// suitedir errors carry neither the query nor the credentials.
 		s.logger.Warn("suite people unavailable", "user_id", userID, "error", err.Error())

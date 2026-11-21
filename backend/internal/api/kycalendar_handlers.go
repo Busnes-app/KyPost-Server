@@ -132,7 +132,7 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 	case err != nil:
 		return errUnavailable
 	// Dedicated administrator identities have no mailbox in native mode.
-	case !u.Active || u.SSOLinkRevokedAt != 0 || s.nativeMail && u.Role == users.RoleAdmin:
+	case !u.Active || u.SSOLinkRevokedAt != 0 || s.nativeMail && u.Role == users.RoleAdmin || !s.peerOrgAdmit(body, u):
 		return refuse(http.StatusNotFound, "no_user", "no active KyPost account for this subject")
 	}
 	settings, err := config.LoadUserSettings(s.userSettingsPath(u.ID))
@@ -470,7 +470,7 @@ func (s *Server) handleCalendarRSVP(w http.ResponseWriter, r *http.Request) {
 		writeITIP(w, http.StatusUnprocessableEntity, "not_invitation", "that attachment is not a calendar invitation")
 		return
 	}
-	body := map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "uid": it.UID, "partstat": req.PartStat, "ics": string(ics)}
+	body := withOrg(map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "uid": it.UID, "partstat": req.PartStat, "ics": string(ics)}, u)
 	if req.RecurrenceID != "" {
 		body["recurrence_id"] = req.RecurrenceID
 	}

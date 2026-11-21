@@ -77,6 +77,17 @@ func (s *Server) handleNativeMailAddressReassign(w http.ResponseWriter, r *http.
 	if !s.nativeDomainGate(w, r, &body) {
 		return
 	}
+	// Multi mode: a target in another org than the address's holders answers like an
+	// unknown mailbox. ponytail: checked before the ledger lock; every reassign makes the
+	// same check, so history cannot gain another org in between.
+	ok, err := s.addressOneOrg(r.PathValue("address"), body.Mailbox)
+	if err == nil && !ok {
+		err = sso.ErrNativeAddressUnknown
+	}
+	if err != nil {
+		s.answerNativeAddress(w, r, "reassign_alias", body.Mailbox, sso.NativeAddress{}, err)
+		return
+	}
 	x, err := s.ssoLifecycle.ReassignNativeAddress(r.Context(), s.stateDir, r.PathValue("address"), body.Mailbox)
 	s.answerNativeAddress(w, r, "reassign_alias", body.Mailbox, x, err)
 }

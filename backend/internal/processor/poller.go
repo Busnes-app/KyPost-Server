@@ -174,6 +174,8 @@ type userCtx struct {
 	// kycalSub and kycalIssuer name the user to KyCalendar; empty when
 	// invitations are not forwarded for them (kyCalendarIdentity).
 	kycalSub, kycalIssuer string
+	// kycalOrg is the account's org_id, sent on KyCalendar bodies; empty in single mode.
+	kycalOrg string
 	// ooo is the user's out-of-office reply; zero for an extra mailbox.
 	ooo config.OutOfOffice
 }
@@ -961,6 +963,7 @@ func (p *Poller) mailboxTickContext(u users.User, mailboxID string, imapConfigMo
 		guesses:          map[string]sortGuess{},
 	}
 	uc.kycalSub, uc.kycalIssuer = p.kyCalendarIdentity(u, settings)
+	uc.kycalOrg = u.OrgID
 	if !uc.extraMailbox() {
 		uc.ooo = settings.OutOfOffice
 	}

@@ -178,7 +178,7 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 		// A revoked, idle or inactive token fails like a wrong secret: the answer
 		// never says which.
 		now := time.Now()
-		ok := secretOK && userErr == nil && state.IsAgentScope(tok.Scope) && s.davAccountActive(user)
+		ok := secretOK && userErr == nil && state.IsAgentScope(tok.Scope) && s.davAccountActive(user) && (!s.multiTenant() || user.OrgID != "")
 		if ok && now.Sub(time.Unix(tok.LastActive(), 0)) > agentTokenIdleLimit {
 			ok = false
 			if gone, _ := s.globalStore.ExpireIdleAgentTokens(ctx, now.Add(-agentTokenIdleLimit).Unix(), tok.ID); len(gone) == 1 {
@@ -242,7 +242,7 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		ctx = context.WithValue(ctx, authContextKey{}, AuthContext{UserID: user.ID, Username: user.Username, Role: user.Role})
+		ctx = context.WithValue(ctx, authContextKey{}, AuthContext{UserID: user.ID, OrgID: user.OrgID, Username: user.Username, Role: user.Role})
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, mcpCallerKey{}, mcpCaller{user: user, token: tok})))
 	})
 }

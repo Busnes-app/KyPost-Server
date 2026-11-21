@@ -12,6 +12,11 @@ import (
 
 func (s *Server) handleHRMailbox(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	// Off in multi mode (tenancy K6): its body names a subject with no org_id.
+	if s.multiTenant() {
+		http.NotFound(w, r)
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4097))
 	if err != nil || len(body) > 4096 {
 		http.Error(w, "invalid reservation", http.StatusBadRequest)

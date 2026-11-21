@@ -365,3 +365,15 @@ the Flag dialog says "Also adds a task in KyCalendar." only then.
 KyPost's half: `api/flag_tasks.go`, `kycalendar/flags.go`. Tests: `TestFlagMakesKyCalendarTask`,
 `TestTaskStateOffWhenUnpaired`, mailbox `TestNativeClientFlagAction`, web
 `ReadPage.flag.test.tsx` and `App.mailboxes.test.tsx` ("flagged mail task link").
+
+## Multi-tenant mode
+
+Only when `KYPOST_TENANCY=multi`, which startup still refuses (tenancy design, build plan PR 3).
+Every body KyPost signs to KyCalendar (`kypost.itip.inbound`, `kypost.itip.respond`,
+`kypost.ooo.set`, `kypost.task.flag`) adds the account's top-level `org_id`, as KyCalendar's
+tenancy design D10 asks. `kycalendar.itip.send` and `kycalendar.task.state` must carry the
+`org_id` of the account their `(sub, issuer)` names; a missing, malformed or other org answers
+`404 no_user`, like an unknown subject. KyCalendar does not send it yet, so a multi install
+refuses both until it does. A single-tenant body is unchanged and its `org_id` is never read.
+`api/tenancy_gate.go`; tests `TestTenancyInboundPeersNeedTheAccountOrg`,
+`TestTenancyOutboundPeersCarryTheOrg`, processor `TestForwardInvitationCarriesTheOrg`.

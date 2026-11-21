@@ -176,6 +176,7 @@ func (s *Server) drivePost(ctx context.Context, u users.User, path, eventType st
 func driveEvent(u users.User, fields map[string]any) (string, error) {
 	rid, err := fsutil.NewUUIDv4()
 	fields["sub"], fields["issuer"] = u.SSOSub, u.SSOIssuer
+	withOrg(fields, u)
 	return "kypost-drive-" + rid, err
 }
 
@@ -506,6 +507,7 @@ func (s *Server) handleKyDriveRecipients(w http.ResponseWriter, r *http.Request)
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		people, err := dir.Resolve(ctx, u.SSOSub, chunk)
 		cancel()
+		people = s.sameOrgPeople(r.Context(), u, dir.Issuer, people)
 		if err != nil {
 			// suitedir errors carry neither the query (addresses, sub) nor the credentials.
 			s.logger.Warn("kydrive recipient check failed", "actor", u.ID, "error", err.Error())

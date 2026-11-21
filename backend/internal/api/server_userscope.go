@@ -626,10 +626,14 @@ func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 		}
 		return AuthContext{}, errMailUnauthorized
 	}
-	if _, _, err := s.nativeMailAssignment(r.Context(), userID); err != nil {
-		return AuthContext{UserID: userID}, mailAdmissionError(err)
+	org, ok := s.deviceOrg(userID)
+	if !ok {
+		return AuthContext{}, errMailUnauthorized
 	}
-	return AuthContext{UserID: userID, DeviceID: device.DeviceID, NativeSendEpoch: epoch, DeviceWitness: state.NativeDeviceWitness(device)}, nil
+	if _, _, err := s.nativeMailAssignment(r.Context(), userID); err != nil {
+		return AuthContext{UserID: userID, OrgID: org}, mailAdmissionError(err)
+	}
+	return AuthContext{UserID: userID, OrgID: org, DeviceID: device.DeviceID, NativeSendEpoch: epoch, DeviceWitness: state.NativeDeviceWitness(device)}, nil
 }
 
 func (s *Server) invalidateUserMail(userID string) {

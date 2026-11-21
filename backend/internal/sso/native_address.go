@@ -81,6 +81,22 @@ func (s *LifecycleStore) NativeAddress(address string) (a NativeAddress, err err
 	return a, nil
 }
 
+// NativeAddressMailboxes lists every mailbox that has held address, oldest first;
+// none when the ledger has no such address.
+func (s *LifecycleStore) NativeAddressMailboxes(address string) (held []string, err error) {
+	if address, err = nativeAddress(address, AddressDomain(address)); err != nil || !strings.Contains(address, "@") || !nativeDomain(AddressDomain(address)) {
+		return nil, ErrNativeAddressInvalid
+	}
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		x, _, err := r.Address(address)
+		for _, h := range x.History {
+			held = append(held, h.Mailbox)
+		}
+		return err
+	})
+	return held, err
+}
+
 // NativeAddressFor resolves a recipient or From under plus addressing: the
 // full address whenever the ledger holds it, in any state (one issued before
 // new addresses refused "+" keeps its owner, and an inactive one refuses

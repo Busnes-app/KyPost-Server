@@ -107,10 +107,14 @@ func (p *Poller) forwardInvitation(ctx context.Context, uc userCtx, msg imapadap
 		}
 	}
 	sum := sha256.Sum256([]byte(uc.id + "\x00" + uc.mailbox + "\x00" + msg.ID))
+	body := map[string]any{"sub": uc.kycalSub, "issuer": uc.kycalIssuer, "from": from, "dkim_aligned": true, "ics": string(ics)}
+	if uc.kycalOrg != "" {
+		body["org_id"] = uc.kycalOrg // KyCalendar's tenancy design D10
+	}
 	p.postForward(ctx, pendingForward{
 		userID:  uc.id,
 		eventID: "kypost-inbound-" + hex.EncodeToString(sum[:16]),
-		body:    map[string]any{"sub": uc.kycalSub, "issuer": uc.kycalIssuer, "from": from, "dkim_aligned": true, "ics": string(ics)},
+		body:    body,
 	})
 }
 

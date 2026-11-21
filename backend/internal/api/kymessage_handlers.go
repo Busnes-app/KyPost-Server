@@ -78,7 +78,8 @@ func (s *Server) chatUser(w http.ResponseWriter, r *http.Request) (users.User, s
 	}
 	dir, ok := s.ssoStore.Load().SuiteDirectory()
 	element := ""
-	if ok && s.kymessage.Available() && u.Active && linkedTo(u, dir.Issuer) {
+	// No KyMessages spec defines org_id on its bodies yet, so a multi install has no chat.
+	if ok && s.kymessage.Available() && u.Active && linkedTo(u, dir.Issuer) && !s.multiTenant() {
 		element = s.elementOrigin(r.Context(), u.ID)
 	}
 	if element == "" {
