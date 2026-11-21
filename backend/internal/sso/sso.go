@@ -328,13 +328,17 @@ type SSOTokenClaims struct {
 }
 
 // TenantClaims returns the token's org_id and whether it is an export-only token. Only
-// multi-tenant code calls it. A claim of the wrong type reads as absent (org "") or as
-// export-only, so it is refused.
+// multi-tenant code calls it. A null export_only is absent; any other claim of the wrong
+// type reads as absent (org "") or as export-only, so it is refused.
 func (c *SSOTokenClaims) TenantClaims() (org string, exportOnly bool) {
 	if json.Unmarshal(c.OrgID, &org) != nil {
 		org = ""
 	}
-	return org, c.ExportOnly != nil && string(c.ExportOnly) != "false"
+	switch string(c.ExportOnly) {
+	case "", "null", "false":
+		return org, false
+	}
+	return org, true
 }
 
 // KySignOn reports whether the token speaks the KySignOn contract: it

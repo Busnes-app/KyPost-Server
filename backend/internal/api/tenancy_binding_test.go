@@ -316,6 +316,7 @@ func TestTenancySignInBindsTheTokenOrg(t *testing.T) {
 		"non-canonical org_id": {claims("alice", strings.ToUpper(orgA)), http.StatusBadGateway},
 		"numeric org_id":       {claims("alice", 1), http.StatusBadGateway},
 		"export-only token":    {claims("alice", orgA, "export_only", true), http.StatusBadGateway},
+		"string export_only":   {claims("alice", orgA, "export_only", "false"), http.StatusBadGateway},
 		"another org":          {claims("alice", orgB), http.StatusForbidden},
 		"the staff org":        {claims("alice", staffOrg, "roles", []string{"kypost.admin"}), http.StatusForbidden},
 		"unprovisioned":        {claims("nobody", orgA), http.StatusForbidden},
@@ -327,6 +328,12 @@ func TestTenancySignInBindsTheTokenOrg(t *testing.T) {
 	}
 	if _, err := srv.users.GetBySSOSub("nobody"); !errors.Is(err, users.ErrNotFound) {
 		t.Fatal("multi mode provisioned an account from a token")
+	}
+	// An IdP that writes an absent boolean as null, or as false, is not export-only.
+	for _, v := range []any{nil, false} {
+		if effectiveRole(t, srv, signInWith(t, srv, idp, claims("alice", orgA, "export_only", v))) != users.RoleUser {
+			t.Fatalf("export_only %v: member is not a user", v)
+		}
 	}
 
 	// A customer token naming kypost.admin is still a member's session.
@@ -529,5 +536,31 @@ func TestTenancyNativeMemberProvisioning(t *testing.T) {
 	}
 	if again, _ := srv.users.GetBySSOSub("one"); again.ID != one.ID {
 		t.Fatal("re-provisioning minted a second ID")
+	}
+}
+
+// A subject whose account another issuer owns can never apply, so both modes refuse
+// it with a non-retryable 422 and bind nothing.
+func TestDirectoryRefusesASubjectOfAnotherIssuer(t *testing.T) {
+	for _, multi := range []bool{false, true} {
+		srv := newDirectoryTestServer(t)
+		var db *sql.DB
+		if multi {
+			db = makeMultiTenant(t, srv)
+		}
+		u, err := srv.users.Create(context.Background(), "elsewhere", linkTestPassword, users.RoleUser)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.users.LinkSSOIssuer("https://other-idp.example", u.ID, "other-sub", "elsewhere", ""); err != nil {
+			t.Fatal(err)
+		}
+		rec := postDirectory(t, srv, testSyncKey, "user.updated", "ev-other", 1, orgUser("other-sub", orgA, true))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("multi=%v: status %d, want 422: %s", multi, rec.Code, rec.Body.String())
+		}
+		if multi && subjectOrgRow(t, srv, db, "other-sub") != "" {
+			t.Fatal("a refused event bound the subject")
+		}
 	}
 }

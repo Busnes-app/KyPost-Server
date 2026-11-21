@@ -107,6 +107,8 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 	switch {
 	case found && existing.OrgID != ev.OrgID:
 		return refused(existing.ID)
+	case errors.Is(err, users.ErrNativeAccountConflict):
+		return http.StatusUnprocessableEntity, errIssuerConflict
 	case !found && !errors.Is(err, users.ErrNotFound):
 		return http.StatusInternalServerError, errors.New("failed to look up user")
 	}
@@ -126,7 +128,7 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 	case admin && ev.OrgID != s.staffOrg:
 		u.Roles = json.RawMessage(`[]`)
 		s.logger.Warn("security: customer directory event named the administrator role; applied as a member", "event_id", eventID)
-	case !admin && ev.OrgID == s.staffOrg && *u.Active:
+	case !admin && ev.OrgID == s.staffOrg && u.Active != nil && *u.Active:
 		inactive := false
 		u.Active = &inactive
 	}

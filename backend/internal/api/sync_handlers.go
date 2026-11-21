@@ -126,6 +126,10 @@ type syncRefusal struct {
 
 func (e *syncRefusal) Error() string { return e.err.Error() }
 
+// errIssuerConflict refuses an event for a subject whose account another issuer owns.
+// It is a 422, not a 500: retrying cannot make it apply.
+var errIssuerConflict = errors.New("directory event refused: the subject's account belongs to another issuer")
+
 // applyDirectoryUser makes the local account match u, and reports whether
 // the change invalidates ID tokens issued before it. Nothing here erases
 // data: a disabled or deleted user keeps their mailbox and keys and loses
@@ -146,6 +150,9 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 			return false, nil // retain desired state; allocate after the directory unlock
 		}
 		return false, s.provisionDirectoryUser(issuer, u, role)
+	}
+	if errors.Is(err, users.ErrNativeAccountConflict) {
+		return false, &syncRefusal{http.StatusUnprocessableEntity, errIssuerConflict}
 	}
 	if err != nil {
 		return false, errors.New("failed to look up user")
