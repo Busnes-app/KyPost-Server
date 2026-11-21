@@ -282,9 +282,9 @@ Decision R1 below keeps Cloudflare for self-hosted installs and leaves it out of
 | Step | How |
 |---|---|
 | Issue | `kypost-server receiving gateway keygen` on the MX host writes an Ed25519 key (owner-only, `0600`) and a self-signed certificate, and prints the SPKI SHA-256. The private key never leaves the host. |
-| Enrol | On a replica, `kypost-server receiving gateway add <id> <spki-sha256>` (operator CLI, like `receiving blocks`) writes a `receiving_gateways(id, spki_sha256, created_at, expires_at, revoked_at)` row. `expires_at` defaults to 90 days. The command writes an audit line with the ID and the hash prefix. A staff admin route can come later (open question 2). |
-| Rotate | Generate a new key on the host, enrol it under the **same** ID (at most two live pins per ID), switch the helper, then revoke the old pin. The overlap keeps mail flowing. A pin past `expires_at` is refused like a revoked one. |
-| Revoke | `receiving gateway revoke <id> [<spki>]` sets `revoked_at`. Every replica re-reads the table for each new connection (or caches it for at most 5 seconds), and connections last one command (at most 35 seconds), so a revocation takes effect within about 40 seconds. Revoking an ID does not touch its deliveries. Its staged rows wait for the fenced cleanup, and its committed mail still imports. |
+| Enrol | On a replica, `kypost-server receiving gateway add <id> <spki-sha256>` (operator CLI, like `receiving blocks`) writes a pin row, `receiving_gateways(id, spki_sha256, created_at, expires_at, revoked_at)`, keyed by `(id, spki_sha256)`. `expires_at` defaults to 90 days. A key whose pin was ever revoked or expired is never enrolled again, under any ID. A retired ID (below) takes no new pins. The command writes an audit line with the ID and the hash prefix. A staff admin route can come later (open question 2). |
+| Rotate | Generate a new key on the host, enrol it under the **same** ID (at most two live pins per ID), switch the helper, then revoke the old pin. The overlap keeps mail flowing. A pin past `expires_at` is refused like a revoked one. Revocation and expiry act on that one pin, never on the ID. A host whose pins have all expired recovers the same way: it generates a new key and that key is enrolled under its own ID. The host's mail flows through the other MX hosts meanwhile. |
+| Revoke | `receiving gateway revoke <id> <spki>` sets `revoked_at` on that pin. `receiving gateway retire <id>` revokes every pin of the ID and marks the ID retired, so it can never be enrolled again (for a decommissioned or compromised host). Every replica re-reads the table for each new connection (or caches it for at most 5 seconds), and connections last one command (at most 35 seconds), so a revocation takes effect within about 40 seconds. Neither command touches deliveries. Its staged rows wait for the fenced cleanup, and its committed mail still imports. |
 | Server keys | Each replica's listener key is created exclusively in `SECRET_DIR` (as R's keys are) and printed by `receiving gateway server-pin`. MX helpers pin the current and the next one. |
 
 ### Replay, ordering, timeouts
@@ -365,14 +365,24 @@ That residual risk is listed below.
   through today's `importDelivery`. The per-delivery claim lease (`ingress/store.go:830-884`) and
   the quota lock still fence everything, so a lease bug can cost throughput but not
   correctness.
-- **Multi-mailbox deliveries.** The worker needs leases on every bound mailbox, taken in sorted
-  ID order (`quotaFence`'s order, `app/receiving.go:54-66`). If one is busy it releases them all
-  and retries later, so it never waits holding a lease.
+- **Bounded holds.** A worker gives a mailbox lease up after one batch: at most 100 deliveries or
+  60 seconds, whichever comes first, even when more mail is pending. It may take the lease again
+  only after another waiting worker has had a chance (it skips the mailbox for one loop). No
+  mailbox stays leased continuously.
+- **Multi-mailbox deliveries.** Arrival order is kept, never skipped: a multi-mailbox delivery
+  blocks the later deliveries of each of its mailboxes until it imports. To import it, the worker
+  holds leases only as a set taken in sorted mailbox ID order (`quotaFence`'s order,
+  `app/receiving.go:54-66`). If it needs a mailbox below one it already holds, it releases and
+  takes the set again in order. It **waits** on a busy mailbox instead of giving up. Because
+  every worker takes leases in the same order there is no deadlock, and because holds are
+  bounded the wait ends within one batch (at most 60 seconds). So a busy mailbox B delays
+  mailbox A by at most about one minute, not indefinitely. The ingress limits still apply, and
+  import lag shows in the capacity alerts (open question 6).
 - **Gateways.** The import list is every gateway ID that has pending deliveries
   (`SELECT DISTINCT gateway FROM deliveries WHERE state='pending'`), not the two fixed IDs of
   `app/receiving.go:230`, and never the live rows of `receiving_gateways`. A revoked or expired
   pin stops new commands only. Mail its host already committed has had its `250` and still
-  imports. `receiving_gateways` rows are never deleted, so a revoked ID is never enrolled again.
+  imports. Pin rows are never deleted, so a revoked key and a retired ID stay refused.
 - **Org status.** K's rule holds. A delivery whose org is not `active` stays pending
   (K "Background workers").
 - **Single-tenant.** The daemon importer of `app/receiving.go:214-262` stays exactly as it is.
@@ -451,7 +461,7 @@ Receiving does not change outbound, but the tier is sized with it in mind:
 | Internet sender | Exhaust receiving | Maddy limits per MX host. The ingress record and byte limits refuse with a temporary failure, never by evicting mail (`ingress/AGENTS.md`). Per-mailbox quota (exit 9). |
 | Host on the private network without a pinned key | Inject or read mail | `RequireAnyClientCert` plus the pin check before any frame is read. The listener binds only to the private address. |
 | Compromised MX host | Read mail in transit | It sees the mail it receives. That is inherent to running an MX and the reason it holds nothing else. It cannot read stored mail: it has no mailbox access, and the protocol has only `bind`, `accept` and `config`. |
-| Compromised MX host | Forge or replay deliveries, or touch another host's | It can submit mail as a sender could, under its own gateway ID only (R4). It cannot acknowledge, release or import. Revoking its pin cuts it off within about 40 seconds. |
+| Compromised MX host | Forge or replay deliveries, or touch another host's | It can submit mail as a sender could, under its own gateway ID only (R4). It cannot acknowledge, release or import. Retiring its ID cuts it off within about 40 seconds. |
 | Compromised MX host | Poison automatic blocks | It controls `{source_ip}` and HELO, so it controls the SPF input. Automatic blocks also need aligned DKIM, which it cannot forge, so it can only replay real signed mail. Residual risk. |
 | Compromised MX host | Learn the address list | `config` returns domains only, never addresses. `bind` answers one recipient at a time, and its probes count against the source budget. |
 | Stolen replica server key | Impersonate KyPost to MX hosts | MX hosts pin the server SPKI. Rotate by pinning the next key, then removing the old one. It is a `SECRET_DIR` key like the others (K "Keys"). |
@@ -511,9 +521,9 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    replicas needs per-replica Rspamd and add it, or state that replicas have no native receiving.
    Docs and Compose only.
 2. **TLS transport.** `receiving serve --tls`, protocol 3 (`budget_ms`), `receiving_gateways`, the
-   `receiving gateway keygen|add|revoke|server-pin` CLI, `KYPOST_RECEIVING_REMOTE` with no local
+   `receiving gateway keygen|add|revoke|retire|server-pin` CLI, `KYPOST_RECEIVING_REMOTE` with no local
    fallback, the pinned gateway ID, and the `config` fetch. All refused outside multi mode. Tests:
-   - wrong client key, revoked pin, expired pin and a reserved gateway ID, each refused before any
+   - wrong client key, revoked pin, expired pin, a retired ID and a reserved gateway ID, each refused before any
      frame is read;
    - wrong server key, refused by the helper;
    - replay of an archived `accept`, which succeeds and writes nothing;
@@ -529,9 +539,15 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
 4. **Per-mailbox import leases** (R8) and the pending-gateway import list. Tests:
    - commit through a gateway, revoke its pin (and separately, let it expire), and the mail still
      imports;
-   - re-enrolling a revoked gateway ID is refused;
+   - revoking one pin leaves the ID's other pin working, and a second rotation under the same ID
+     is accepted;
+   - a host whose pins have all expired is re-enrolled under its own ID with a new key, and its
+     old key is refused;
+   - enrolling a retired ID, or any key that was revoked, is refused;
    - two replicas importing one mailbox keep arrival order and import nothing twice;
-   - a multi-mailbox delivery with one lease busy;
+   - a multi-mailbox delivery bound to A and B while B's mailbox is under constant load: it
+     imports within one batch window of B's holder, A's later deliveries import after it in
+     arrival order, and no delivery imports twice;
    - a lease holder killed mid-import;
    - a non-`active` org's delivery stays pending.
 5. **Hosted profile.** Compose for MX hosts and per-replica Rspamd, the relay domain as a
