@@ -177,4 +177,6 @@ for overlay in ["docker-compose.receiving.yml", "docker-compose.rspamd.yml", "do
     assert result.returncode != 0 and overlay in result.stderr, f"{overlay} rendered with replicas, or its refusal does not name it: {result.stderr}"
     alone = compose(["docker-compose.yml", overlay], base_env | {"KYPOST_BIND": "127.0.0.1"} | extra)
     assert alone.returncode == 0, f"{overlay} alone no longer renders: {alone.stderr}"
-print("PASS replicas: receiving, rspamd and lan-dns overlays refuse to render with replicas")
+assert "Replicas have no native receiving" in running and "Cloudflare and external-IMAP profiles work" not in running, \
+    "RUNNING.md must say replicas have no native receiving: Cloudflare pickup needs the Rspamd overlay, which refuses replicas"
+print("PASS replicas: receiving, rspamd and lan-dns overlays refuse to render with replicas, as RUNNING.md says")

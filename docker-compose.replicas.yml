@@ -7,9 +7,9 @@
 # authority and domain records and the DKIM keys: replicas on another host, on separate
 # volumes or on NFS/RWX volumes are refused at startup. This is not PostgreSQL high
 # availability and not host failover: every replica depends on the one database and the one
-# host. Receiving through Maddy (docker-compose.receiving.yml, docker-compose.rspamd.yml)
-# and docker-compose.lan-dns.yml run only in the single-container profile and refuse to
-# render with this file.
+# host. docker-compose.receiving.yml (Maddy), docker-compose.rspamd.yml (which Cloudflare
+# pickup requires) and docker-compose.lan-dns.yml run only in the single-container profile
+# and refuse to render with this file: replicas have no native receiving.
 #
 # Upgrade (a short full outage; mixed versions are not supported): docker compose pull &&
 # docker compose stop kypost-server && docker compose up -d --wait.
