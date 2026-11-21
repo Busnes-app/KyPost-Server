@@ -29,7 +29,7 @@ var orgAccessors = map[string]int{
 }
 
 // orgGates are the functions that make the org check for a hop.
-var orgGates = []string{"orgAdmit", "peerOrgAdmit", "sameOrgPeople", "addressOneOrg", "quarantineOneOrg", "checkAccountOrg", "bindDirectoryOrg"}
+var orgGates = []string{"orgAdmit", "peerOrgAdmit", "sameOrgPeople", "addressOneOrg", "quarantineOneOrg", "checkAccountOrg", "bindDirectoryOrg", "staffOrgAdmit", "staffTarget", "staffMailboxAdmit", "staffAddressAdmit"}
 
 // authSources return the caller's own AuthContext; ownIDSources return, first, the ID of
 // the account whose credential the request presented.
@@ -83,25 +83,22 @@ var orgAdmitExempt = map[string]string{
 	"deactivateAndRevoke":           "revokes the account a signed, org-checked directory event (bindDirectoryOrg) deactivates",
 	// Peers.
 	"handleHRMailbox": "answers 404 in multi mode before any lookup (K6)",
-	// Administrator routes over any account: staff org selection and its orgAdmit are build
-	// plan PR 4 (route classes, X-Ky-Org). K7 already limits administrators to staff.
-	"handleAdminUserCardDAVClient": orgExemptAdmin,
-	"handleAdminUserIMAPConfig":    orgExemptAdmin,
-	"handleUserKeySetup":           orgExemptAdmin,
-	"handleUsersResetPassword":     orgExemptAdmin,
-	"handleUsersClearMFA":          orgExemptAdmin,
-	"handleUsersDeactivate":        orgExemptAdmin,
-	"handleNativeMailAddresses":    orgExemptAdmin,
-	"handleNativeMailboxes":        orgExemptAdmin,
-	"handleNativeRecoveryRepair":   orgExemptAdmin,
-	"setNativeMailboxState":        orgExemptAdmin,
+	// Administrator routes (tenancy design "PR 4 as built"). Org-bound routes gate their
+	// path or body ID with staffTarget or staffMailboxAdmit; these are the rest.
+	"handleAdminUserCardDAVClient": orgExemptRefused,
+	"handleAdminUserIMAPConfig":    orgExemptRefused,
+	"handleUsersResetPassword":     orgExemptRefused,
+	"handleNativeRecoveryRepair":   "platform route: whole-install native recovery, staff only (K7); it repairs the accounts the restored ledger names",
+	"handleUsersClearMFA":          "u is the record DisableTOTP returns for id, which staffTarget admitted",
+	"handleUsersDeactivate":        "u is the record Deactivate returns for id, which staffTarget admitted",
+	"setNativeMailboxState":        "owner is the account of mailbox id, which staffMailboxAdmit admitted",
 }
 
 const (
-	orgExemptAuthN  = "authenticates a credential; the account it names becomes the caller, so there is no second user"
-	orgExemptSigned = "a link or token KyPost signed for one account names it"
-	orgExemptWorker = "background worker, not a request hop; workers check org status in PR 5 (K Background workers)"
-	orgExemptAdmin  = "administrator route; staff org selection and its orgAdmit are build plan PR 4"
+	orgExemptAuthN   = "authenticates a credential; the account it names becomes the caller, so there is no second user"
+	orgExemptSigned  = "a link or token KyPost signed for one account names it"
+	orgExemptWorker  = "background worker, not a request hop; workers check org status in PR 5 (K Background workers)"
+	orgExemptRefused = "withRefusedAdmin answers 404 in multi mode (K6) before the handler runs"
 )
 
 type orgScanFunc struct {

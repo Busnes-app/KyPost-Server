@@ -18,11 +18,16 @@ import (
 // attached — it is not a way to green a failing test.
 var authMarkers = map[string]bool{
 	// Real middleware: rejects the request when the check fails.
-	"withAuth":         true,
-	"withMailAuth":     true,
-	"withAdmin":        true,
-	"withDAVBasicAuth": true,
-	"withMCPAuth":      true,
+	"withAuth":     true,
+	"withMailAuth": true,
+	// The admin route classes (tenancy_staff.go); a bare withAdmin route fails
+	// TestEveryAdminRouteHasAClass.
+	"withAdmin":         true,
+	"withPlatformAdmin": true,
+	"withOrgAdmin":      true,
+	"withRefusedAdmin":  true,
+	"withDAVBasicAuth":  true,
+	"withMCPAuth":       true,
 	// Declarations that the handler is reached another way. See
 	// route_auth_markers.go.
 	"withPublicRoute": true,

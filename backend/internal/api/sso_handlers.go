@@ -88,6 +88,11 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	// K6: multi mode has no AutoProvision; accounts come only from signed directory events.
+	if s.multiTenant() && req.AutoProvision {
+		http.NotFound(w, r)
+		return
+	}
 
 	if req.Enabled {
 		if err := sso.ValidateIssuerURL(req.IssuerURL, req.AllowInsecureIssuer); err != nil {

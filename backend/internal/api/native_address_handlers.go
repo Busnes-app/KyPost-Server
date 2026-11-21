@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"errors"
 	"net/http"
 	"strings"
@@ -25,13 +26,17 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 		}
 		user := r.URL.Query().Get("user")
 		if user != "" {
-			if _, err := s.users.Get(user); errors.Is(err, users.ErrNotFound) {
+			if u, err := s.users.Get(user); errors.Is(err, users.ErrNotFound) || err == nil && !s.staffOrgAdmit(r, u) {
 				http.Error(w, "user not found", http.StatusNotFound)
 				return
 			} else if err != nil {
 				writeUserStoreError(w, err)
 				return
 			}
+		}
+		if mailboxes, err = s.staffOrgMailboxes(r, mailboxes); err != nil {
+			writeUserStoreError(w, err)
+			return
 		}
 		writeJSON(w, http.StatusOK, s.mailboxStorage(mailboxes, user))
 		return
@@ -43,6 +48,10 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 	if !s.nativeDomainGate(w, r, &body) {
 		return
 	}
+	if ok, err := s.staffMailboxAdmit(r, body.Mailbox); !ok {
+		s.answerNativeAddress(w, r, "add_alias", "", sso.NativeAddress{}, cmp.Or(err, sso.ErrNativeAddressUnknown))
+		return
+	}
 	x, err := s.ssoLifecycle.AddNativeAlias(r.Context(), s.stateDir, body.Mailbox, body.Address)
 	s.answerNativeAddress(w, r, "add_alias", body.Mailbox, x, err)
 }
@@ -50,6 +59,10 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 // handleNativeMailAddressRelease reserves an alias; the record is never deleted.
 func (s *Server) handleNativeMailAddressRelease(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if ok, err := s.staffAddressAdmit(r, r.PathValue("address")); !ok {
+		s.answerNativeAddress(w, r, "release_alias", "", sso.NativeAddress{}, cmp.Or(err, sso.ErrNativeAddressUnknown))
+		return
+	}
 	if s.refuseMasked(w, r.PathValue("address")) {
 		return
 	}
@@ -68,6 +81,10 @@ func (s *Server) handleNativeMailAddressRelease(w http.ResponseWriter, r *http.R
 
 func (s *Server) handleNativeMailAddressReassign(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if ok, err := s.staffAddressAdmit(r, r.PathValue("address")); !ok {
+		s.answerNativeAddress(w, r, "reassign_alias", "", sso.NativeAddress{}, cmp.Or(err, sso.ErrNativeAddressUnknown))
+		return
+	}
 	if s.refuseMasked(w, r.PathValue("address")) {
 		return
 	}
@@ -81,6 +98,9 @@ func (s *Server) handleNativeMailAddressReassign(w http.ResponseWriter, r *http.
 	// unknown mailbox. ponytail: checked before the ledger lock; every reassign makes the
 	// same check, so history cannot gain another org in between.
 	ok, err := s.addressOneOrg(r.PathValue("address"), body.Mailbox)
+	if err == nil && ok {
+		ok, err = s.staffMailboxAdmit(r, body.Mailbox)
+	}
 	if err == nil && !ok {
 		err = sso.ErrNativeAddressUnknown
 	}

@@ -4,6 +4,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -52,6 +53,7 @@ type crossOrgRoute struct {
 	method, pattern string
 	mailbox         bool // wrapped in withMailbox
 	admin           bool
+	class           string // the admin route class, adminRouteClasses
 }
 
 // crossOrgRoutes parses server.go's route table.
@@ -84,7 +86,8 @@ func crossOrgRoutes(t *testing.T) []crossOrgRoute {
 		ast.Inspect(call.Args[1], func(n ast.Node) bool {
 			if s, ok := n.(*ast.SelectorExpr); ok {
 				r.mailbox = r.mailbox || s.Sel.Name == "withMailbox"
-				r.admin = r.admin || s.Sel.Name == "withAdmin"
+				r.admin = r.admin || adminRouteClasses[s.Sel.Name] != "" || s.Sel.Name == "withAdmin"
+				r.class = cmp.Or(r.class, adminRouteClasses[s.Sel.Name])
 			}
 			return true
 		})

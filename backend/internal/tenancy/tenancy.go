@@ -238,6 +238,13 @@ func SubjectOrg(ctx context.Context, db *sql.DB, issuer, subject string) (string
 	return lookup(ctx, db, `SELECT org_id FROM subject_orgs WHERE issuer = ? AND subject = ?`, issuer, subject)
 }
 
+// KnownOrg reports whether the entitlement cache (orgs, K8) has a row for org, in any
+// status. Staff select an org only from the cache; the staff org is exempt (K8).
+func KnownOrg(ctx context.Context, db *sql.DB, org string) (bool, error) {
+	id, err := lookup(ctx, db, `SELECT id FROM orgs WHERE id = ?`, org)
+	return id != "", err
+}
+
 func lookup(ctx context.Context, db *sql.DB, query string, key ...any) (string, error) {
 	if db == nil {
 		return "", ErrOrgMismatch

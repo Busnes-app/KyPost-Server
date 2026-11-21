@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -187,6 +188,9 @@ func (s *Server) handleNativeMailboxes(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only a published native account gets an extra mailbox.
 	u, err := s.users.Get(body.User)
+	if err == nil && !s.staffOrgAdmit(r, u) {
+		err = users.ErrNotFound
+	}
 	switch {
 	case err == nil && u.NativeMailboxSource == "" && u.Role == users.RoleAdmin:
 		err = sso.ErrNativeAddressAdministrator
@@ -219,6 +223,11 @@ func (s *Server) setNativeMailboxState(w http.ResponseWriter, r *http.Request, a
 	}
 	id := r.PathValue("id")
 	m, err := sso.NativeMailbox{ID: id}, sso.ErrNativeAddressUnknown
+	ok, orgErr := s.staffMailboxAdmit(r, id)
+	if !ok {
+		s.answerNativeMailbox(w, r, action, sso.NativeMailbox{}, cmp.Or(orgErr, err))
+		return
+	}
 	if extraMailboxID.MatchString(id) {
 		set := func() (err error) {
 			m, err = s.ssoLifecycle.SetNativeMailboxState(r.Context(), s.stateDir, id, active)
