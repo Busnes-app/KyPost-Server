@@ -604,7 +604,8 @@ a user's data: a disabled or deleted user only loses access (`api/sync_handlers.
   - **A holder of a household with other members:** the holder's own access ends at once, and the
     org enters `deletion_scheduled` with a 7-day grace that `resume` refuses (T allows `resume`
     today). Each other member is mailed a notice and can export their own mail in that window
-    (open question 4's export-only claim). The org is then `deleted`. Their mail is refused with
+    through open question 4's recommended `export_only` claim (option (a), a T change, which this
+    path makes required). The org is then `deleted`. Their mail is refused with
     `550` from the click, as for any scheduled deletion (open question 11).
   - T's own grace and `resume` stay for billing-driven deletion only.
 - **In KyPost.** The org's next poll shows `deleted`, and the purge runs (Purge). `user.erased`
@@ -727,9 +728,11 @@ Tenancy fits on top:
 Each PR ships on its own, with single-tenant behaviour unchanged. `KYPOST_TENANCY=multi` is
 refused at startup until PR 7. Until then multi-mode code runs only in tests. PR 2 onward needed
 KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and webhooks, and `/api/suite/orgs`),
-which has merged as KyIdentity #276. So PRs 1–5 and PR 6's org purge can start now. Three parts
+which has merged as KyIdentity #276. So PRs 1–5 and PR 6's org purge can start now. Four parts
 wait for the KyIdentity changes listed under the plan:
 - PR 6's one-user purge needs `user.erased`.
+- PR 6's household path needs the `export_only` claim, and KyPost admitting only the export
+  routes under it (open question 4 (a)).
 - PR 6's restore release needs the erased-subject list.
 - PR 7 needs the mailbox address field.
 
@@ -772,7 +775,9 @@ PostgreSQL, a measured capacity target (open question 8), and these KyIdentity c
 - the mailbox address field, sent as its own `emails` entry (Mail);
 - the Delete everything button, the holder's paths (straight to `deleted`, or a 7-day member
   export window that `resume` refuses, with a notice to each member), `user.erased`, and the list
-  of erased subjects (Delete everything).
+  of erased subjects (Delete everything);
+- the `export_only` claim during `deletion_scheduled` (open question 4 (a)), which the household
+  path needs.
 
 ## Residual risks
 
@@ -812,7 +817,8 @@ PostgreSQL, a measured capacity target (open question 8), and these KyIdentity c
      only the export routes.
    - (b) No export in the window: billing resumes the org first.
    - *Recommend (a)*, because no lock-in is a product promise. It needs a T change. Until it lands,
-     (b).
+     (b). Delete everything's household path needs (a): without it, the other members have no
+     export window.
 5. **When a stale entitlement cache fails closed.** *Recommend* 15 minutes for sign-in and sending
    (the token lifetime). Receiving keeps answering from the last known status, which is the
    Lifecycle table's rule, so a poller outage changes no SMTP answer. That is safe:
