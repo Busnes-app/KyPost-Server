@@ -367,6 +367,11 @@ account to its `org_id`. No receiving path takes an org from the message.
   the last phase. The 5000 is KyPost's own constant (`cfreceiving/wire.go:32-33`); no code or doc
   says Cloudflare imposes it (unverified against Cloudflare's limits). Raising it would not fix
   the disclosure.
+- **Size and quota.** The 25 MiB cap is unchanged (`mailmsg/limits.go:38`). The per-mailbox quota
+  is reserved at bind (`app/receiving.go:458-479`). Hosted mode takes each mailbox's limit from
+  the org's `mailboxBytes` quota, not from the install-wide `KYPOST_MAILBOX_QUOTA_BYTES`
+  (`config/native_mail.go:33-52`). A lower quota refuses only new mail, never locks a mailbox
+  (today's rule, root `AGENTS.md` "Mailbox limits").
 
 ### Recommended hosted receiving tier (open question 3)
 
@@ -409,11 +414,6 @@ own spec:
 7. **Outbound** stays one relay profile per install (Outbound relay and DKIM). At hosted volume
    that is a sending provider or a pool of warmed direct-delivery IPs, decided with the
    reputation limits in Abuse limits per org.
-- **Size and quota.** The 25 MiB cap is unchanged (`mailmsg/limits.go:38`). The per-mailbox quota
-  is reserved at bind (`app/receiving.go:458-479`). Hosted mode takes each mailbox's limit from
-  the org's `mailboxBytes` quota, not from the install-wide `KYPOST_MAILBOX_QUOTA_BYTES`
-  (`config/native_mail.go:33-52`). A lower quota refuses only new mail, never locks a mailbox
-  (today's rule, root `AGENTS.md` "Mailbox limits").
 
 ### Outbound relay and DKIM
 
