@@ -46,6 +46,7 @@ github.com/Busnes-app/kypost-server/backend/internal/dbbackend.OnPostgresTest
 github.com/Busnes-app/kypost-server/backend/internal/dbbackend.SkipOnPostgres
 github.com/Busnes-app/kypost-server/backend/internal/dbbackend.RequirePostgres
 github.com/Busnes-app/kypost-server/backend/internal/dbbackend.IsolateForTest
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.KindsForTest
 
 # Fails migrate-to-postgres before its commit or changes its recount for app's
 # refusal tests; panics outside a test binary.

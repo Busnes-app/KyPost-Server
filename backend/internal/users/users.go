@@ -85,6 +85,10 @@ type User struct {
 	// Milestone 1 sets or reads it.
 	PushMFAEnabled bool `json:"pushMfaEnabled,omitempty"`
 
+	// OrgID is the account's KyIdentity org in a multi-tenant install, mirrored in
+	// tenancy.db user_orgs. Absent from single-tenant users.json.
+	OrgID string `json:"orgId,omitempty"`
+
 	// Single Sign-On (SSO) fields.
 	// NativeMailboxSource records prepared storage before native account publication.
 	// Internal evidence only; no runtime selector or public response uses it yet.

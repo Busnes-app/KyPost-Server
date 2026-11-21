@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -205,4 +207,11 @@ func IsolateForTest(t testing.TB) {
 	if OnPostgresTest() {
 		FreshDatabaseForTest(t)
 	}
+}
+
+// KindsForTest lists every registered kind, sorted by name (TestEveryStoreIsClassified).
+func KindsForTest() []Kind {
+	kindsMu.Lock()
+	defer kindsMu.Unlock()
+	return slices.SortedFunc(maps.Values(kinds), func(a, b Kind) int { return strings.Compare(a.Name, b.Name) })
 }
