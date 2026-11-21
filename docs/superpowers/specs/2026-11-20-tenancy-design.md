@@ -1,6 +1,8 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design, nothing built. Docs only.
+Date: 2026-11-20. Status: proposed design, nothing built. Docs only. Revised the same day with the
+owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
+receiving tier for open question 3.
 
 KyIdentity's tenancy spec (`KyIdentity-server` `docs/superpowers/specs/2026-11-19-tenancy-design.md`,
 cited as **T**) makes every hosted customer, a person or a household, an *organisation* (org) under
@@ -27,7 +29,9 @@ Owner decisions (fixed, not reopened):
 Line references are to KyPost `origin/main` at `2c7ecc09`, to KyIdentity `origin/master` at
 `2e304a4` for T, and to PR #677 at `746cdfd` where marked **R**. Unless a path says otherwise,
 KyPost paths are relative to `backend/internal/`. "Unverified" marks a claim this note did not
-check in code or by running it.
+check in code or by running it. The revision's new references are to KyPost `origin/main` at
+`be66da6d` (which includes R) and KyIdentity `origin/master` at `49e8aa6`, marked **KI**. T's
+PR 3 has merged as KyIdentity #276.
 
 ## What KyPost has today
 
@@ -71,7 +75,7 @@ drive the design:
 | K7 | **Staff = `kypost.admin` role *and* a token whose `org_id` equals `KYPOST_STAFF_ORG_ID`.** A customer account is never an administrator, whatever roles a token or sync event carries. | `HasAdminRole` (`sso/directory.go:24-31`) trusts the role alone. T's D8 refuses KyIdentity's *own* admin role outside the staff org, but app-role assignment is "per org, run by staff" (T "Per-org features"). So a staff mistake could give a customer `kypost.admin`. KyPost pins the org independently. |
 | K8 | Entitlements are pulled from `GET /api/suite/orgs` (T D6) by one elected worker about every 60 s. They are cached in a platform table, `orgs(id, status, revision, enabled, quotas_json, polled_at)`, in the root `state.db`, so every replica reads the same answer. An org missing from the cache is not served. **The staff org (`KYPOST_STAFF_ORG_ID`) is exempt**: it is never gated by the cache, so staff keep the console during a poller or KyIdentity outage. | T's contract point 6. A shared table keeps replicas consistent (R `worker.Run` elects one runner per role). The staff exemption is safe: KyIdentity still decides whether a staff account signs in at all (T `active_principals`). It is unverified whether `/api/suite/orgs` lists the staff org. |
 | K9 | Hosted mail domains, the platform primary domain(s) and the relay domain (M D2) are **platform assets**: staff configure, prove, sign and retire them through today's admin routes. No customer configures a domain in v1. | No customer administrators (decision 4). Per-customer custom domains come later (M "Per-customer custom domains"). |
-| K10 | Org deletion **scrubs** rather than deletes in the authority database. Account and mailbox rows stay as tombstones with storage removed and no personal fields. Addresses become keyed hashes, as M open question 4 recommends. Everything else the org owns is deleted. | `authority_v3.go:89-99` forbids deletes, so that "never reuse" holds. M D5 needs the tombstone and the privacy rule needs the content gone. One named purge path with its own migration is the only exception to those triggers (open question 9). |
+| K10 | Org deletion **scrubs** rather than deletes in the authority database. Account and mailbox rows stay as tombstones with storage removed and no personal fields. Addresses become keyed hashes, as M open question 4 recommends. Everything else the org owns is deleted. | `authority_v3.go:89-99` forbids deletes, so that "never reuse" holds. M D5 needs the tombstone and the privacy rule needs the content gone. One named purge path with its own migration is the only exception to those triggers (open question 9, confirmed by the owner). |
 
 ## Store inventory
 
@@ -299,9 +303,32 @@ applies, so the last staff administrator cannot be demoted this way.
 - **Primary address.** Today it is the KyIdentity resource's single primary email, which must sit
   on a proven domain (`sso/native_provision.go:721-728,798-811`). In hosted mode a member's
   KyIdentity email is their sign-in address (T D5: username = email). It is usually on someone
-  else's domain, so it cannot be the mailbox. The hosted mailbox address needs its own source.
-  That is open question 1. The recommendation is a reservation sent by KyIdentity at member add,
-  modelled on today's `ReserveHRAddress` (`sso/hr_mailbox.go:13-104`), carrying `org_id`.
+  else's domain, so it cannot be the mailbox.
+  **Owner answer (open question 1): KyIdentity is given the address, and KyPost provisions the
+  matching mailbox.** Today KyIdentity has one `Email` per user (KI `internal/store/models.go:13`)
+  and sends only that, as the primary SCIM email (KI `internal/sync/sync.go:147-155`). Inbound
+  SCIM keeps only one (KI `internal/api/scim_inbound_handlers.go:572-590`). So KyIdentity gains a
+  separate **mailbox address** per user:
+  - Set when the member is added (billing's `POST /orgs` for the account holder, the member
+    endpoints for the rest; T "Platform API"), and by staff. It must be on one of the suite email
+    domains (below) and unique in KyIdentity.
+  - Sent in the directory resource as a second `emails` entry of its own type, beside the sign-in
+    email, under the org's signed events.
+  - In multi mode, KyPost allocates the mailbox from that entry instead of the primary email,
+    through today's `AllocateNativeAccount` (`sso/native_allocate.go:43-60`). KyPost's ledger is
+    the final word on uniqueness: a taken address is the durable allocation failure it records
+    today (`:107-110`), shown to staff. Single-tenant keeps the primary email, unchanged.
+  This replaces the HR-style reservation this note first recommended (HR stays off in multi mode,
+  K6).
+- **Suite email domains.** KyIdentity #277 already holds the domain list: the
+  `suite_email_domains` setting (KI `internal/store/suite_settings.go:18`), set by staff through
+  `PUT /api/admin/suite-settings/email-domains` (KI `internal/api/server.go:359`) and read by apps
+  at `GET /api/suite/email-domains` (`:248`). It is informational today, and KyPost does not read
+  it: KyPost keeps its own `native-domains.json` (`sso/native_domain.go:68-74`). In multi mode the
+  mailbox address field is limited to that list, and KyPost serves a domain only when it is both
+  on the list and proved by its own `_kypost-mail` TXT (`sso/native_domain.go:52-63`). A domain on
+  the list but not proved is refused, so a KyIdentity setting alone never makes KyPost accept mail
+  for a domain. Single-tenant adopting the list is a separate change.
 - **Uniqueness.** One ledger for the shared install, with global address keys
   (`authority_v3.go:65`) and the never-delete rule (`:89-99`). That covers primaries and masked
   addresses across every customer (M D4).
@@ -325,7 +352,7 @@ account to its `org_id`. No receiving path takes an org from the message.
     **Mail sent during `deletion_scheduled` is lost if billing later resumes the org.** A `451`
     would not save it. Sending servers typically give up after about 5 days (unverified per
     sender), and the grace period is 7–90 days (T `schedule-deletion`), so most of it would bounce
-    anyway, only later and less clearly. Open question 11 asks the owner to accept this.
+    anyway, only later and less clearly. **The owner accepted this** (open question 11).
   - Not in the cache: temporary refusal.
 - **Cloudflare continuous.** `buildRoutes` (`app/receiving_cfcontinuous.go:342-441`) omits the
   addresses of orgs that are not `active`. The Worker's table holds at most **5000 routes**
@@ -337,7 +364,51 @@ account to its `org_id`. No receiving path takes an org from the message.
   PostgreSQL (K2), which rules out Maddy after R, and Cloudflare stops at 5000 addresses. M also
   recommends Maddy for the relay domain, because Cloudflare's table discloses every customer's
   masked addresses to one third party (M open question 5). This is open question 3, and it blocks
-  the last phase.
+  the last phase. The 5000 is KyPost's own constant (`cfreceiving/wire.go:32-33`); no code or doc
+  says Cloudflare imposes it (unverified against Cloudflare's limits). Raising it would not fix
+  the disclosure.
+
+### Recommended hosted receiving tier (open question 3)
+
+What self-hosted uses today (`AGENTS.md:157`; `docs/guides/NATIVE_MAIL.md:22-37`): one of three
+profiles per install.
+- **Cloudflare Email Routing and a Worker** (recommended). The Worker stores each raw message in
+  R2, and KyPost fetches it over outbound HTTPS, so no inbound port is open
+  (`receiving-worker/continuous.mjs:304-312`, `docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md:16,109-110`).
+  Continuous mode has been tested offline only (`docs/guides/NATIVE_MAIL.md:37`).
+- **Maddy inside the KyPost container** on port 25, off by default (`Dockerfile:175`). It calls
+  `kypost-server receiving bind` per recipient and `receiving accept` per message
+  (`app/receiving_config.go:188-207`), which hand off to `receiving serve` over a same-user Unix
+  socket (`app/receiving_serve.go:24-30,143-145`). The socket and the one port-25 container are
+  why R refuses it on PostgreSQL (`replica/topology.go:33-34,62-64`, `docs/RUNNING.md:252-254`),
+  not the ingress store, which is already a shared PostgreSQL schema (`ingress/pg_schema.go:12-28`).
+- **An external IMAP account**, polled (`docs/RUNNING.md:271`). Off in multi mode (K6).
+
+All three land in the one ingress store, and one replica holding the `daemon` role imports from it
+(`docs/RUNNING.md:271`).
+
+For thousands of mailboxes on more than one server, *recommend* a receiving tier we run, as its
+own spec:
+1. **Stateless MX hosts.** Two or more small hosts, each an MX record, run today's pinned Maddy and
+   Rspamd. They hold no mailbox data.
+2. **The socket becomes an authenticated internal call.** `bind` and `accept` reach `receiving
+   serve` on the KyPost replicas over mutually authenticated TLS on a private network instead of
+   `receiver.sock`. The checks, their order and the answers stay as they are (Inbound routing).
+3. **`250` only after commit.** The MX host answers `250` only once `accept` has committed the
+   message to the PostgreSQL ingress store, so losing an MX host loses no accepted mail. A replica
+   that cannot be reached gives `451`, and the sender retries another MX.
+4. **Import scales out.** Import moves from the single `daemon` replica to leases per mailbox, so
+   several replicas import at once. Whether one importer keeps up at hosted volume is unverified;
+   open question 8 measures it.
+5. **More than one host.** R pins replicas to one Docker host (`replica/topology.go:31-32,80`). Going
+   past one host needs R's follow-up (accounts and per-user files into PostgreSQL, Replicas), the
+   JSON files beside `ingress.db` (sender blocks and evidence) moved into PostgreSQL, and
+   PostgreSQL run as its own replicated service.
+6. **The relay domain** for masked addresses uses the same tier, which answers M open question 5
+   without a third party.
+7. **Outbound** stays one relay profile per install (Outbound relay and DKIM). At hosted volume
+   that is a sending provider or a pool of warmed direct-delivery IPs, decided with the
+   reputation limits in Abuse limits per org.
 - **Size and quota.** The 25 MiB cap is unchanged (`mailmsg/limits.go:38`). The per-mailbox quota
   is reserved at bind (`app/receiving.go:458-479`). Hosted mode takes each mailbox's limit from
   the org's `mailboxBytes` quota, not from the install-wide `KYPOST_MAILBOX_QUOTA_BYTES`
@@ -505,10 +576,42 @@ Steps:
    `org_purges` row done and delete its `org_purge_members` snapshot.
 
 - **One-way.** Step 4 is the only write that touches rows the authority triggers protect. It needs
-  a named trigger exception keyed on a live `org_purges` row (open question 9). It cannot be
-  undone, which is the point.
+  a named trigger exception keyed on a live `org_purges` row. It cannot be undone, which is the
+  point. **The owner confirmed this** (open question 9).
 - **Backups.** Whole-install capsules taken before the purge still hold the org's data until they
   age out of retention (Residual risks, open question 7).
+
+### Delete everything (owner requirement)
+
+The owner wants a **Delete all your stuff** button that someone can click and that sticks.
+Today nothing does this. KyIdentity has no self-service deletion: its user `DELETE` routes cover
+devices, launcher preferences, access requests, sessions and passkeys only (KI
+`internal/api/server.go:181-203`). Org deletion is billing's `schedule-deletion` then `DELETE`,
+with a 7–90-day grace and `resume` allowed until it ends (T "Platform API"). KyPost never deletes
+a user's data: a disabled or deleted user only loses access (`api/sync_handlers.go:121-125`).
+
+- **Where.** On KyIdentity's account page, because one click must reach every suite app. This is
+  a T change.
+- **What it deletes.** For the account holder, the whole org. A person org is just them. For any
+  other member of a household, only their own account.
+- **Confirming.** Step-up (password and second factor) and typing the mailbox
+  address. The dialog offers the export first (Export), because nothing can be got back.
+- **No undo.** A holder's deletion moves the org straight to `deleted`. T's grace and `resume` are
+  for billing-driven deletion only and do not apply. A member's deletion sends a new signed
+  `user.erased` event. Today's `user.deleted` keeps meaning "disable", as now.
+- **In KyPost.** The org's next poll shows `deleted`, and the purge runs (Purge). `user.erased`
+  runs the same steps for one user: its `org_purges` row is scoped to that user, and the snapshot
+  holds only that user, their mailboxes and their subject.
+- **A restore does not bring it back.** After an older capsule is restored, the `orgs` cache holds
+  an older revision, so the next poll reads the org as `deleted` again. `deleted` is terminal in
+  T, so the purge runs again. For erased members, KyIdentity keeps a list of erased subjects (a T
+  change), and KyPost re-reads it after a restore and purges again.
+- **Nothing is reused.** The address tombstones (K10) refuse the address for ever. The kept
+  `subject_orgs` row and `accounts` tombstone refuse provisioning that subject again.
+- **Backups.** Older capsules still hold the data until they age out (open question 7). The hosted
+  terms state that retention.
+- **Test.** Click, purge, restore a capsule taken before the click, start, poll: the purge runs
+  again and the final check finds nothing. Do the same for one erased household member.
 
 ### Export
 
@@ -597,9 +700,9 @@ Tenancy fits on top:
 ## Phased build plan
 
 Each PR ships on its own, with single-tenant behaviour unchanged. `KYPOST_TENANCY=multi` is
-refused at startup until PR 7. Until then multi-mode code runs only in tests. PR 1 can start now.
-PR 2 onward needs KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and webhooks, and
-`/api/suite/orgs`).
+refused at startup until PR 7. Until then multi-mode code runs only in tests. PR 2 onward needed
+KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and webhooks, and `/api/suite/orgs`),
+which has merged as KyIdentity #276, so every PR up to 6 can start.
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
    the multi-only side tables (`orgs`, `user_orgs`, `subject_orgs`; PR 6 adds the purge tables), `users.User.OrgID`
@@ -626,22 +729,29 @@ PR 2 onward needs KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and web
    (R's PostgreSQL job), and staff still reaching the console with the poller failing and the
    staff org absent from the cache.
 6. **Purge.** Creates `org_purges` and the `org_purge_members` snapshot table (Lifecycle), the purge steps, the tombstone key, the `address_tombstones` table, and
-   the named trigger exception (after the owner's answer to open question 9). Tests: a purge killed
-   at every step resumes and finishes; nothing of the org remains, checked against the
-   classification; tombstones refuse reuse, including after a restore with the same key.
-7. **Hosted mail.** The primary-address source (open question 1), M's masked changes 1–7, per-org
-   abuse limits, and the hosted receiving profile (open question 3). Startup then accepts
-   `multi`. Tests: M's hosted verification list, and a native-mail harness run
+   the named trigger exception (confirmed, open question 9), and the one-user purge for
+   `user.erased` (Delete everything). Tests: a purge killed at every step resumes and finishes;
+   nothing of the org remains, checked against the classification; tombstones refuse reuse,
+   including after a restore with the same key; the Delete everything restore test.
+7. **Hosted mail.** Allocation from KyIdentity's mailbox address field, limited to the suite email
+   domains (Mail), M's masked changes 1–7, per-org abuse limits, and the hosted receiving tier
+   (open question 3). Startup then accepts `multi`. Tests: M's hosted verification list, and a native-mail harness run
    (`docs/DEVELOPMENT.md`) against KyIdentity in multi mode.
 
 Launch prerequisites outside this plan: R's follow-up that moves accounts and per-user files into
-PostgreSQL, and a measured capacity target (open question 8).
+PostgreSQL, a measured capacity target (open question 8), and these KyIdentity changes:
+- the mailbox address field, sent as its own `emails` entry (Mail);
+- the Delete everything button, the holder's straight-to-`deleted` path, `user.erased`, and the
+  list of erased subjects (Delete everything).
 
 ## Residual risks
 
 - **One install, one database, one host.** Every org shares R's single host and single
   PostgreSQL, and a restore rolls every org back (R, T).
 - **Backups outlive a purge.** A deleted org's mail stays in older capsules until they expire.
+- **Delete everything cannot be undone.** Someone who holds the password and the second factor can
+  delete the whole org. Step-up and the typed address stop a stray click, not a thief.
+- **Mail during scheduled deletion is lost.** The owner accepted this (open question 11).
 - **The operator and staff are trusted.** The operator holds every key and the database. Staff see
   every org's directory data and quarantine envelopes.
 - **Timing.** `TestCrossOrgMatrix` proves equal answers, not equal timing. A foreign ID may take a
@@ -656,23 +766,17 @@ PostgreSQL, and a measured capacity target (open question 8).
 
 ## Open questions, with recommendations
 
-1. **Where a hosted member's mailbox address comes from.** The KyIdentity email is the sign-in
-   address, often on another domain (T D5), and native provisioning needs an address on a proven
-   domain (`sso/native_provision.go:798-811`).
-   - (a) KyIdentity reserves one at member add and sends it with `org_id`, as `hr.mailbox.reserve`
-     does today (`api/hr_mailbox.go:21-31`, `sso/hr_mailbox.go:13-104`).
-   - (b) The member picks a local part at first sign-in.
-   - (c) KyPost generates one.
-   - *Recommend (a)*: the person and their primary address stay owned by KyIdentity, as in
-     self-hosted (root `AGENTS.md` "Native mail"). It needs a T change, because T turns HR off in
-     multi mode.
+1. **Where a hosted member's mailbox address comes from.** *Answered:* KyIdentity is given the
+   address, and KyPost provisions the matching mailbox. KyIdentity gains a mailbox address field
+   on a suite email domain (#277), separate from the sign-in email (Mail).
 2. **How KyPost knows the staff org.** *Recommend* `KYPOST_STAFF_ORG_ID` (K7). Also ask KyIdentity
    to refuse app roles named `*.admin` for accounts outside the staff org, so the rule holds on
    both sides.
 3. **Hosted receiving profile.** Maddy is refused on PostgreSQL after R, and Cloudflare stops at
-   5000 routes and sees every address. *Recommend* a receiver we run (Maddy) as its own container in
-   R's replica overlay, handing deliveries to PostgreSQL rather than a local socket. This is a
-   receiving design of its own; it must be decided before PR 7.
+   5000 routes and sees every message and address. *Recommend* the receiving tier in Mail:
+   stateless MX hosts running today's Maddy, calling `receiving serve` over mutually
+   authenticated TLS instead of the local socket, answering `250` only after the PostgreSQL commit,
+   with import leased per mailbox. It needs its own spec before PR 7.
 4. **Mail export while deletion is scheduled.** T's export-only session issues no app tokens.
    - (a) KyIdentity issues an `export_only` claim during `deletion_scheduled`, and KyPost admits
      only the export routes.
@@ -694,14 +798,12 @@ PostgreSQL, and a measured capacity target (open question 8).
    privacy terms, and no per-org backup surgery.
 8. **Capacity target.** *Recommend* measuring orgs, mailboxes, schemas and messages per minute on
    R's single host before launch, as T owner answer 8 does for KyIdentity.
-9. **The purge versus the never-delete triggers.** *Recommend* K10: scrub to tombstones, with one
-   named trigger exception keyed on a live `org_purges` row, plus HMAC address tombstones. This
-   relaxes an invariant that `docs/NATIVE_ADDRESSING_V2.md` relies on, so the owner should confirm
-   it.
+9. **The purge versus the never-delete triggers.** *Answered:* yes. K10 as written: scrub to
+   tombstones, with one named trigger exception keyed on a live `org_purges` row, plus HMAC address
+   tombstones. The owner also asked for a Delete everything button that sticks (Lifecycle).
 10. **Per-customer custom domains (later).** As M "Per-customer custom domains", the domain proof
     must bind the org as well as the issuer. `native-domains.json` holds one issuer
     (`sso/native_domain.go:68-74`) and would need a per-domain `org_id`. Out of scope for v1.
-11. **Receiving while deletion is scheduled.** A `550` from `deletion_scheduled` on, as M open
-    question 2 recommends, loses mail sent during the grace period if the org is resumed. A `451`
-    would only delay most of those bounces, given the 7–90-day grace. *Recommend* keeping the
-    `550`, and having billing's deletion notice tell the account holder that mail stops at once.
+11. **Receiving while deletion is scheduled.** *Answered:* keep the `550`. Mail sent during the
+    grace period is lost if the org is resumed, and the owner accepts that. Billing's deletion
+    notice tells the account holder that mail stops at once.
