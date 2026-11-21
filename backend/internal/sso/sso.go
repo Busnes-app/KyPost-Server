@@ -320,6 +320,21 @@ type SSOTokenClaims struct {
 	Cnf struct {
 		SPKIS256 string `json:"spki#S256"`
 	} `json:"cnf"`
+
+	// OrgID and ExportOnly are KyIdentity's multi-tenant claims (tenancy design,
+	// "Identity binding"), kept raw so single mode never parses them: see TenantClaims.
+	OrgID      json.RawMessage `json:"org_id"`
+	ExportOnly json.RawMessage `json:"export_only"`
+}
+
+// TenantClaims returns the token's org_id and whether it is an export-only token. Only
+// multi-tenant code calls it. A claim of the wrong type reads as absent (org "") or as
+// export-only, so it is refused.
+func (c *SSOTokenClaims) TenantClaims() (org string, exportOnly bool) {
+	if json.Unmarshal(c.OrgID, &org) != nil {
+		org = ""
+	}
+	return org, c.ExportOnly != nil && string(c.ExportOnly) != "false"
 }
 
 // KySignOn reports whether the token speaks the KySignOn contract: it
@@ -423,6 +438,23 @@ func (p *Provider) VerifyLogout(ctx context.Context, token string) (oidcverify.L
 		return oidcverify.LogoutClaims{}, errors.New("back-channel logout needs an https issuer and JWKS")
 	}
 	return p.logout.VerifyLogout(ctx, token)
+}
+
+// LogoutOrg reads org_id from a logout token VerifyLogout has already accepted: the
+// claim is signed with the rest, and oidcverify does not return it. "" when absent.
+func LogoutOrg(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	var c struct {
+		OrgID string `json:"org_id"`
+	}
+	if err != nil || json.Unmarshal(payload, &c) != nil {
+		return ""
+	}
+	return c.OrgID
 }
 
 // Discovery is cached, keyed on the settings that produced it.

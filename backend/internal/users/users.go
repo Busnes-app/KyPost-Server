@@ -421,6 +421,11 @@ var (
 	ErrUsernameTaken         = errors.New("username already in use")
 	ErrSSOSubTaken           = errors.New("SSO subject already belongs to another account")
 	ErrNativeAccountConflict = errors.New("native account publication conflicts with existing state; preserve storage and reconcile ownership")
+	// ErrOrgIDWriteOnce refuses a write that would change an account's OrgID, or the
+	// issuer or subject of an account that has one.
+	ErrOrgIDWriteOnce = errors.New("an account's org binding is write-once")
+	// ErrCustomerAdmin refuses an administrator outside the staff org.
+	ErrCustomerAdmin = errors.New("only a staff-org account may be an administrator")
 	// ErrLastActiveAdmin is returned when a write would leave the instance
 	// with no active administrator. Enforced inside the store's write lock
 	// rather than by the caller — see guardNotLastActiveAdmin.
@@ -549,6 +554,41 @@ type Store struct {
 	// identical bytes decode identically, so no stamp is trusted. Guarded by mu.
 	currentRaw []byte
 	current    []User
+
+	// StaffOrg is a multi-tenant install's staff org (tenancy design K7), set once
+	// before the store is used; "" in single mode. With it set, only a staff-org
+	// account may be an administrator.
+	StaffOrg string
+}
+
+// orgInvariants are the multi-tenant account rules every write keeps (tenancy design K7
+// and "Identity binding"), checked against the file on disk: OrgID never changes, an
+// org-bound account keeps its issuer and subject, and no write makes an administrator
+// outside the staff org. Single mode (no StaffOrg) checks nothing and reads nothing.
+// ponytail: one extra read of users.json per write in multi mode; it goes with R's
+// follow-up that moves accounts into PostgreSQL.
+func (s *Store) orgInvariants(f usersFile) error {
+	if s.StaffOrg == "" {
+		return nil
+	}
+	old, err := s.readFileUnlocked()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	before := make(map[string]User, len(old.Users))
+	for _, u := range old.Users {
+		before[u.ID] = u
+	}
+	for _, u := range f.Users {
+		b, ok := before[u.ID]
+		if ok && (u.OrgID != b.OrgID || b.OrgID != "" && (u.SSOSub != b.SSOSub || u.SSOIssuer != b.SSOIssuer)) {
+			return ErrOrgIDWriteOnce
+		}
+		if u.Role == RoleAdmin && u.OrgID != s.StaffOrg && (!ok || b.Role != RoleAdmin) {
+			return ErrCustomerAdmin
+		}
+	}
+	return nil
 }
 
 // userIndex resolves a lookup key to a position in usersFile.Users, replacing
@@ -953,6 +993,9 @@ func (s *Store) readFileUnlocked() (usersFile, error) {
 // writeFileUnlocked persists f. Callers hold both mu and the file lock, and
 // must invalidate the read cache — which this does, since every caller has to.
 func (s *Store) writeFileUnlocked(f usersFile) error {
+	if err := s.orgInvariants(f); err != nil {
+		return err
+	}
 	if err := s.advanceNativeSendEpochs(&f); err != nil {
 		return err
 	}
@@ -1319,29 +1362,30 @@ func (s *Store) UnlinkSSO(userID string) error {
 
 // CreateSSOUser adds a new user provisioned via SSO.
 func (s *Store) CreateSSOUser(username string, role Role, ssoSub, ssoUsername, ssoEmail string) (User, error) {
-	return s.createSSOUser(context.Background(), "", username, role, ssoSub, ssoUsername, ssoEmail, "", nil)
+	return s.createSSOUser(context.Background(), "", username, role, ssoSub, ssoUsername, ssoEmail, "", "", nil)
 }
 
 // CreateSSOUserIssuer binds a newly provisioned identity to verified issuer evidence.
-func (s *Store) CreateSSOUserIssuer(issuer, username string, role Role, sub, ssoUsername, email string) (User, error) {
+// org is the account's write-once OrgID, "" in a single-tenant install.
+func (s *Store) CreateSSOUserIssuer(issuer, username string, role Role, sub, ssoUsername, email, org string) (User, error) {
 	if issuer == "" {
 		return User{}, ErrNativeAccountConflict
 	}
-	return s.createSSOUser(context.Background(), "", username, role, sub, ssoUsername, email, issuer, nil)
+	return s.createSSOUser(context.Background(), "", username, role, sub, ssoUsername, email, issuer, org, nil)
 }
 
 // PublishPreparedSSOUser is internal allocation: prepare runs while users.json
 // is locked, before an ordinary consumer can discover the account. The caller
 // holds the verified directory/domain fence and supplies a durable reserved ID.
 // It must never call a users.Store method from prepare (locks are not reentrant).
-func (s *Store) PublishPreparedSSOUser(ctx context.Context, id, username string, role Role, issuer, sub, ssoUsername, email string, prepare func() (string, error)) (User, error) {
+func (s *Store) PublishPreparedSSOUser(ctx context.Context, id, username string, role Role, issuer, sub, ssoUsername, email, org string, prepare func() (string, error)) (User, error) {
 	if strings.TrimSpace(issuer) == "" || !fsutil.SafePathComponent(id) || sub == "" || prepare == nil {
 		return User{}, ErrNativeAccountConflict
 	}
-	return s.createSSOUser(ctx, id, username, role, sub, ssoUsername, email, issuer, prepare)
+	return s.createSSOUser(ctx, id, username, role, sub, ssoUsername, email, issuer, org, prepare)
 }
 
-func (s *Store) createSSOUser(ctx context.Context, id, username string, role Role, ssoSub, ssoUsername, ssoEmail, nativeIssuer string, prepare func() (string, error)) (User, error) {
+func (s *Store) createSSOUser(ctx context.Context, id, username string, role Role, ssoSub, ssoUsername, ssoEmail, nativeIssuer, org string, prepare func() (string, error)) (User, error) {
 	if err := ValidateUsername(username); err != nil {
 		return User{}, err
 	}
@@ -1362,7 +1406,7 @@ func (s *Store) createSSOUser(ctx context.Context, id, username string, role Rol
 	ssoSub = strings.TrimSpace(ssoSub)
 	for _, u := range f.Users {
 		if id != "" && u.ID == id {
-			if prepare == nil || u.SSOSub != ssoSub || u.NativeMailboxIssuer != nativeIssuer || u.NativeMailboxSource == "" {
+			if prepare == nil || u.SSOSub != ssoSub || u.NativeMailboxIssuer != nativeIssuer || u.NativeMailboxSource == "" || u.OrgID != org {
 				return User{}, ErrNativeAccountConflict
 			}
 			source, e := prepare()
@@ -1405,7 +1449,7 @@ func (s *Store) createSSOUser(ctx context.Context, id, username string, role Rol
 		return User{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	created := User{ID: id, Username: username, Role: role, Active: true, SSOSub: ssoSub, SSOUsername: strings.TrimSpace(ssoUsername), SSOEmail: strings.TrimSpace(ssoEmail), SSOLinkedAt: time.Now().UTC().Unix(), CreatedAt: now, UpdatedAt: now, NativeMailboxSource: source, SSOIssuer: nativeIssuer}
+	created := User{ID: id, Username: username, Role: role, Active: true, SSOSub: ssoSub, SSOUsername: strings.TrimSpace(ssoUsername), SSOEmail: strings.TrimSpace(ssoEmail), SSOLinkedAt: time.Now().UTC().Unix(), CreatedAt: now, UpdatedAt: now, NativeMailboxSource: source, SSOIssuer: nativeIssuer, OrgID: org}
 	if source != "" {
 		created.NativeMailboxIssuer = nativeIssuer
 	}

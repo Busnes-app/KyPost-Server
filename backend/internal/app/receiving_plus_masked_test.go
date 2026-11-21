@@ -153,7 +153,7 @@ func TestNativeReceivingKeepsExistingPlusAddresses(t *testing.T) {
 	if _, err := r.life.ApplyDirectoryUser(issuer, ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return false, nil }); err != nil {
 		t.Fatal("directory event with a + primary", err)
 	}
-	john, err := r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "john", r.domains, r.accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000})
+	john, err := r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "john", r.domains, r.accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}, "")
 	if err != nil {
 		t.Fatal("provisioning a + primary", err)
 	}

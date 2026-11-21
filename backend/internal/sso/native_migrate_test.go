@@ -41,7 +41,7 @@ func v1Fixture(t *testing.T) (config, keyPath string, ids map[string]string) {
 	// v1 gave administrators mailboxes; reproduce one by promoting after allocation.
 	nativeDesired(t, life, "boss", "boss@example.test", 1, true)
 	for _, subject := range []string{"one", "boss"} {
-		u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, subject, domains, accounts, nativeLimits)
+		u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, subject, domains, accounts, nativeLimits, "")
 		if err != nil {
 			t.Fatal(err)
 		}

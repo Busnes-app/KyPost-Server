@@ -15,7 +15,8 @@ import (
 // DNS happens before locks. Lock order: domain -> directory -> users -> account.
 // The prepared mailbox and acknowledged assignment exist before users.json can
 // expose this ID to lazy state creators. Existing IMAP accounts are never adopted.
-func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, issuer, subject string, domains *NativeDomainStore, accounts *users.Store, limits mailbox.Limits) (users.User, error) {
+// org is the account's write-once OrgID, "" in a single-tenant install.
+func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, issuer, subject string, domains *NativeDomainStore, accounts *users.Store, limits mailbox.Limits, org string) (users.User, error) {
 	if stateRoot == "" || domains == nil || accounts == nil {
 		return users.User{}, ErrNativeProvisioning
 	}
@@ -114,9 +115,9 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 		})
 		return a.Source, e
 	}
-	user, err := accounts.PublishPreparedSSOUser(ctx, id, username, role, issuer, subject, d.Resource.UserName, d.Resource.Email(), prepare)
+	user, err := accounts.PublishPreparedSSOUser(ctx, id, username, role, issuer, subject, d.Resource.UserName, d.Resource.Email(), org, prepare)
 	if errors.Is(err, users.ErrUsernameTaken) {
-		return accounts.PublishPreparedSSOUser(ctx, id, "native-"+id, role, issuer, subject, d.Resource.UserName, d.Resource.Email(), prepare)
+		return accounts.PublishPreparedSSOUser(ctx, id, "native-"+id, role, issuer, subject, d.Resource.UserName, d.Resource.Email(), org, prepare)
 	}
 	return user, err
 }

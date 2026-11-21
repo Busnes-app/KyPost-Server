@@ -269,3 +269,85 @@ func TestConcurrentMultiFirstStart(t *testing.T) {
 		t.Fatalf("record %q %q", mode, staff)
 	}
 }
+
+// BindSubject and BindUser write once with plain INSERT: a repeat with the same org is a
+// no-op, another org or a malformed one is refused, and the row never changes.
+func TestBindIsWriteOnce(t *testing.T) {
+	st, dir := newStore(t)
+	if err := Check(context.Background(), st, dir, config.TenancyMulti, staffA, empty); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	const issuer = "https://id.example"
+	if org, err := SubjectOrg(ctx, db, issuer, "s1"); err != nil || org != "" {
+		t.Fatalf("unbound subject: %q %v", org, err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := BindSubject(ctx, db, issuer, "s1", staffA); err != nil {
+			t.Fatal(err)
+		}
+		if err := BindUser(ctx, db, "u1", staffA); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, org := range []string{staffB, "", strings.ToUpper(staffA), "not-an-org"} {
+		if err := BindSubject(ctx, db, issuer, "s1", org); !errors.Is(err, ErrOrgMismatch) {
+			t.Errorf("subject rebound to %q: %v", org, err)
+		}
+		if err := BindUser(ctx, db, "u1", org); !errors.Is(err, ErrOrgMismatch) {
+			t.Errorf("user rebound to %q: %v", org, err)
+		}
+		if err := BindUser(ctx, db, "fresh", org); org != staffB && !errors.Is(err, ErrOrgMismatch) {
+			t.Errorf("malformed org %q bound: %v", org, err)
+		}
+	}
+	if err := BindSubject(ctx, db, "https://other.example", "s1", staffB); err != nil {
+		t.Fatalf("the same subject at another issuer is another subject: %v", err)
+	}
+	if org, err := SubjectOrg(ctx, db, issuer, "s1"); err != nil || org != staffA {
+		t.Fatalf("subject binding changed: %q %v", org, err)
+	}
+	var org string
+	if err := db.QueryRow(`SELECT org_id FROM user_orgs WHERE user_id = 'u1'`).Scan(&org); err != nil || org != staffA {
+		t.Fatalf("user binding changed: %q %v", org, err)
+	}
+	if err := BindUser(ctx, nil, "u2", staffA); !errors.Is(err, ErrOrgMismatch) {
+		t.Fatalf("a nil store (single mode) bound: %v", err)
+	}
+}
+
+// Two first events racing with different orgs: exactly one binding wins, the other is
+// ErrOrgMismatch, and the row names the winner.
+func TestConcurrentBindsAgreeOnOneOrg(t *testing.T) {
+	st, dir := newStore(t)
+	if err := Check(context.Background(), st, dir, config.TenancyMulti, staffA, empty); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for round := 0; round < 20; round++ {
+		sub := "race-" + strings.Repeat("x", round)
+		errs := make(chan error, 2)
+		for _, org := range []string{staffA, staffB} {
+			go func() { errs <- BindSubject(context.Background(), db, "https://id.example", sub, org) }()
+		}
+		e1, e2 := <-errs, <-errs
+		won, err := SubjectOrg(context.Background(), db, "https://id.example", sub)
+		if err != nil || (e1 == nil) == (e2 == nil) || won == "" {
+			t.Fatalf("round %d: %v / %v, bound %q (%v)", round, e1, e2, won, err)
+		}
+		for _, e := range []error{e1, e2} {
+			if e != nil && !errors.Is(e, ErrOrgMismatch) {
+				t.Fatalf("round %d: %v", round, e)
+			}
+		}
+	}
+}

@@ -15,7 +15,7 @@ import (
 func recoveryNativeOwner(t *testing.T, s *Store, id, sub string) User {
 	t.Helper()
 	source := "native:" + strings.Repeat("ab", 32)
-	u, err := s.PublishPreparedSSOUser(context.Background(), id, id, RoleAdmin, "https://identity.test", sub, id, id+"@example.test", func() (string, error) { return source, nil })
+	u, err := s.PublishPreparedSSOUser(context.Background(), id, id, RoleAdmin, "https://identity.test", sub, id, id+"@example.test", "", func() (string, error) { return source, nil })
 	if err != nil {
 		t.Fatal(err)
 	}

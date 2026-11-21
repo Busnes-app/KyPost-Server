@@ -987,7 +987,7 @@ func TestCloudflareContinuousRevisionsResignAndDomains(t *testing.T) {
 	if _, err := e.r.life.ApplyDirectoryUser(issuer, ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.r.life.AllocateNativeAccount(ctx, e.r.stateDir, issuer, "three", e.r.domains, e.r.accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}); err != nil {
+	if _, err := e.r.life.AllocateNativeAccount(ctx, e.r.stateDir, issuer, "three", e.r.domains, e.r.accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}, ""); err != nil {
 		t.Fatal(err)
 	}
 	e.cycle(t)
@@ -1211,7 +1211,7 @@ func TestCloudflareContinuousStuckItemsDoNotStarve(t *testing.T) {
 	if _, err := e.r.life.ApplyDirectoryUser(issuer, ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
-	small, err := e.r.life.AllocateNativeAccount(ctx, e.r.stateDir, issuer, "small", e.r.domains, e.r.accounts, mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 32 << 20, Records: 10000})
+	small, err := e.r.life.AllocateNativeAccount(ctx, e.r.stateDir, issuer, "small", e.r.domains, e.r.accounts, mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 32 << 20, Records: 10000}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,7 +46,7 @@ func TestNativeReceivingSeveralDomains(t *testing.T) {
 	if _, err := r.life.ApplyDirectoryUser(issuer, ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
-	three, err := r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "three", r.domains, r.accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000})
+	three, err := r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "three", r.domains, r.accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestNativeReceivingResumesAfterDomainReadd(t *testing.T) {
 	}
 	limits := mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}
 	directory(1, true)
-	three, err := r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "three", r.domains, r.accounts, limits)
+	three, err := r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "three", r.domains, r.accounts, limits, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestNativeReceivingResumesAfterDomainReadd(t *testing.T) {
 		t.Fatal("unproven re-added domain routed", err)
 	}
 	lapsed["second.test"] = false
-	if _, err = r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "three", r.domains, r.accounts, limits); err != nil {
+	if _, err = r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "three", r.domains, r.accounts, limits, ""); err != nil {
 		t.Fatal(err)
 	}
 	message := []byte("From: sender@outside.test\r\nSubject: resumed\r\n\r\nbody\r\n")

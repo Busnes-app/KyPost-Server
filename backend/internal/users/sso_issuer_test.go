@@ -53,11 +53,11 @@ func TestBindUnboundSSOLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bound, err := s.CreateSSOUserIssuer(newIssuer, "bound", RoleUser, "2", "bound", "")
+	bound, err := s.CreateSSOUserIssuer(newIssuer, "bound", RoleUser, "2", "bound", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err := s.PublishPreparedSSOUser(context.Background(), "native-id", "native", RoleUser, oldIssuer, "3", "native", "",
+	native, err := s.PublishPreparedSSOUser(context.Background(), "native-id", "native", RoleUser, oldIssuer, "3", "native", "", "",
 		func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
 	if err != nil {
 		t.Fatal(err)
@@ -94,11 +94,11 @@ func TestRevokeSSOLinksNotFrom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := s.CreateSSOUserIssuer(newIssuer, "current", RoleUser, "3", "current", "")
+	current, err := s.CreateSSOUserIssuer(newIssuer, "current", RoleUser, "3", "current", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err := s.PublishPreparedSSOUser(context.Background(), "native-id", "native", RoleUser, oldIssuer, "4", "native", "",
+	native, err := s.PublishPreparedSSOUser(context.Background(), "native-id", "native", RoleUser, oldIssuer, "4", "native", "", "",
 		func() (string, error) { return "native:" + strings.Repeat("cd", 32), nil })
 	if err != nil {
 		t.Fatal(err)

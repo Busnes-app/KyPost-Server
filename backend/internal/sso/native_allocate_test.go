@@ -23,7 +23,7 @@ func TestNativeAllocationPreparedBeforePublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	nativeDesired(t, life, "one", "one@example.test", 1, true)
-	u, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits)
+	u, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits, "")
 	if err != nil || u.NativeMailboxSource == "" {
 		t.Fatal(u, err)
 	}
@@ -44,7 +44,7 @@ func TestNativeAllocationPreparedBeforePublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.Close()
-	retry, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits)
+	retry, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits, "")
 	if err != nil || retry.ID != u.ID || retry.NativeMailboxSource != u.NativeMailboxSource {
 		t.Fatal("retry changed owner", retry, err)
 	}
@@ -58,7 +58,7 @@ func TestNativeAllocationPreparedBeforePublication(t *testing.T) {
 		t.Fatal("mail changed", err)
 	}
 	nativeDesired(t, life, "one", "one@example.test", 2, false)
-	if _, err = life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits); !errors.Is(err, ErrNativeProvisioning) {
+	if _, err = life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits, ""); !errors.Is(err, ErrNativeProvisioning) {
 		t.Fatal("inactive allocated", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestNativeAllocationRefusesLegacyAndCancelledLocks(t *testing.T) {
 	if _, err = accounts.CreateSSOUser("legacy", users.RoleUser, "legacy", "legacy", "legacy@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "legacy", domains, accounts, nativeLimits); !errors.Is(err, users.ErrSSOSubTaken) {
+	if _, err = life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "legacy", domains, accounts, nativeLimits, ""); !errors.Is(err, users.ErrSSOSubTaken) {
 		t.Fatal("legacy adopted", err)
 	}
 	if _, found, err := life.NativeAssignment(nativeIssuer, "legacy"); err != nil || found {
@@ -87,13 +87,13 @@ func TestNativeAllocationRefusesLegacyAndCancelledLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
-	_, err = life.AllocateNativeAccount(ctx, root, nativeIssuer, "new", domains, accounts, nativeLimits)
+	_, err = life.AllocateNativeAccount(ctx, root, nativeIssuer, "new", domains, accounts, nativeLimits, "")
 	cancel()
 	release()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("lock wait not cancelled", err)
 	}
-	if _, err = life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "new", domains, accounts, nativeLimits); err != nil {
+	if _, err = life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "new", domains, accounts, nativeLimits, ""); err != nil {
 		t.Fatal("cancel abandoned lock", err)
 	}
 }
@@ -114,11 +114,11 @@ func TestNativeAllocationRepairsAcknowledgedUnpublishedReservation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "collision", domains, accounts, nativeLimits)
+	u, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "collision", domains, accounts, nativeLimits, "")
 	if err != nil || u.ID != a.Owner.Mailbox || u.NativeMailboxSource != a.Source || u.Username != "native-reserved-local-id" {
 		t.Fatal("lost users publication changed reservation", u, err)
 	}
-	if _, err = life.AllocateNativeAccount(context.Background(), root, "https://other.test", "collision", domains, accounts, nativeLimits); !errors.Is(err, ErrNativeDomain) {
+	if _, err = life.AllocateNativeAccount(context.Background(), root, "https://other.test", "collision", domains, accounts, nativeLimits, ""); !errors.Is(err, ErrNativeDomain) {
 		t.Fatal("wrong issuer allocated", err)
 	}
 }
@@ -148,11 +148,41 @@ func TestNativeAllocationCannotOutliveProofDuringContention(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	start := time.Now()
-	_, err = life.AllocateNativeAccount(ctx, root, nativeIssuer, "expiry", domains, accounts, nativeLimits)
+	_, err = life.AllocateNativeAccount(ctx, root, nativeIssuer, "expiry", domains, accounts, nativeLimits, "")
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 3*time.Second {
 		t.Fatal("allocation outlived proof", err, time.Since(start))
 	}
 	if _, err = accounts.GetBySSOSub("expiry"); !errors.Is(err, users.ErrNotFound) {
 		t.Fatal("expired proof published", err)
+	}
+}
+
+// Multi mode (tenancy design "Identity binding", step 2): a crash after the mailbox is
+// reserved but before users.json is written leaves the reserved ID, so the retry
+// publishes that ID with the org, never a second one; a retry naming another org is
+// refused and changes nothing.
+func TestNativeAllocationKeepsItsIDAndOrgAcrossACrash(t *testing.T) {
+	const org, other = "1a2b3c4d-0000-4000-8000-00000000000a", "1a2b3c4d-0000-4000-8000-00000000000b"
+	config, root := t.TempDir(), t.TempDir()
+	life := NewLifecycleStore(config)
+	domains := provenNativeDomain(t, config)
+	accounts, err := users.LoadOrMigrate(context.Background(), config, filepath.Join(config, "admin.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nativeDesired(t, life, "member", "member@example.test", 1, true)
+	reserved, err := life.ReconcileNativeMailbox(root, nativeIssuer, "member", "reserved-id", "example.test", nativeLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "member", domains, accounts, nativeLimits, org)
+	if err != nil || u.ID != reserved.Owner.Mailbox || u.OrgID != org {
+		t.Fatal("crash retry", u, err)
+	}
+	if _, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "member", domains, accounts, nativeLimits, other); !errors.Is(err, users.ErrNativeAccountConflict) {
+		t.Fatal("another org was accepted", err)
+	}
+	if again, err := accounts.GetBySSOSub("member"); err != nil || again.ID != u.ID || again.OrgID != org {
+		t.Fatal("account changed", again, err)
 	}
 }

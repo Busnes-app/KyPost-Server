@@ -114,7 +114,7 @@ func TestReleaseFloorRefusesDirectAllocation(t *testing.T) {
 	s := newNativeRuntimeServer(t)
 	retainDirectory(t, s, runtimeDirectoryUser(true), 1)
 	floorSubject(t, s, 1, false)
-	if _, err := s.ssoLifecycle.AllocateNativeAccount(context.Background(), s.stateDir, separationIssuer, "native-runtime-one", s.nativeDomains, s.users, nativeMailboxLimits); !errors.Is(err, sso.ErrNativeReleaseFloor) {
+	if _, err := s.ssoLifecycle.AllocateNativeAccount(context.Background(), s.stateDir, separationIssuer, "native-runtime-one", s.nativeDomains, s.users, nativeMailboxLimits, ""); !errors.Is(err, sso.ErrNativeReleaseFloor) {
 		t.Fatal("direct allocation below floor:", err)
 	}
 	if _, err := s.users.GetBySSOSubIssuer(separationIssuer, "native-runtime-one"); !errors.Is(err, users.ErrNotFound) {

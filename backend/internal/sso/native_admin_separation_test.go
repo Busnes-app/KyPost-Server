@@ -69,7 +69,7 @@ func TestNativeAdministratorGetsNoMailbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	nativeRole(t, life, nil, "boss", "boss@example.test", 1, true, true)
-	if _, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "boss", domains, accounts, nativeLimits); !errors.Is(err, ErrNativeProvisioning) {
+	if _, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "boss", domains, accounts, nativeLimits, ""); !errors.Is(err, ErrNativeProvisioning) {
 		t.Fatal("administrator allocated a mailbox", err)
 	}
 	if _, reserved, err := life.NativeAssignment(nativeIssuer, "boss"); err != nil || reserved {
@@ -93,7 +93,7 @@ func TestNativeAdmissionRefusesPromotedSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	nativeDesired(t, life, "one", "one@example.test", 1, true)
-	u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "one", domains, accounts, nativeLimits)
+	u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "one", domains, accounts, nativeLimits, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestNativeAdmissionRefusesPromotedSubject(t *testing.T) {
 		t.Fatal("promoted subject admitted", err)
 	}
 	// A re-reconcile of the existing mailbox neither grants access nor sets the flag.
-	if _, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "one", domains, accounts, nativeLimits); err != nil || legacyFlag(t, life, "one") {
+	if _, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "one", domains, accounts, nativeLimits, ""); err != nil || legacyFlag(t, life, "one") {
 		t.Fatal("promotion reconcile", err)
 	}
 	if err := admit(); !errors.Is(err, ErrNativeProvisioning) {

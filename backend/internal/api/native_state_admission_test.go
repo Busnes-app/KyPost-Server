@@ -38,7 +38,7 @@ func allocateNativeStateTestUser(t *testing.T, srv *Server, issuer, subject stri
 	if _, err := srv.ssoLifecycle.ApplyDirectoryUser(issuer, ev, desired, sso.EventDigest(ev.Type, raw), func() (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
-	u, err := srv.ssoLifecycle.AllocateNativeAccount(ctx, srv.stateDir, issuer, subject, domains, srv.users, mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100})
+	u, err := srv.ssoLifecycle.AllocateNativeAccount(ctx, srv.stateDir, issuer, subject, domains, srv.users, mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
