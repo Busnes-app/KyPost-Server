@@ -138,7 +138,7 @@ func TestSSOGenericAdminGroupIsOperatorConfigured(t *testing.T) {
 	}
 
 	// An existing administrator keeps admin with no group configured.
-	if _, err := srv.users.CreateSSOUserIssuer(idp.URL(), "g", users.RoleAdmin, "g", "g", ""); err != nil {
+	if _, err := srv.users.CreateSSOUserIssuer(idp.URL(), "g", users.RoleAdmin, "g", "g", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	existing := signInWith(t, srv, idp, map[string]any{"sub": "g", "preferred_username": "g", "groups": []string{"admins"}})

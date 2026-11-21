@@ -134,7 +134,7 @@ func TestNativeRestoreSnapshotOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			nativeDesired(t, s, "one", "one@example.test", 1, true)
-			u, err := s.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", provenNativeDomain(t, config), accounts, nativeLimits)
+			u, err := s.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", provenNativeDomain(t, config), accounts, nativeLimits, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -200,7 +200,7 @@ func TestNativeRestoreHoldRefusesAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits)
+	_, err = s.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits, "")
 	if !errors.Is(err, ErrNativeRestoreHold) {
 		t.Fatal("held native allocation proceeded", err)
 	}

@@ -55,7 +55,7 @@ func nativeMailboxFixture(t *testing.T) (*Poller, *sso.LifecycleStore, users.Use
 		d, err := domains.Read()
 		return []string{d.RecordValue()}, err
 	})
-	u, err := life.AllocateNativeAccount(ctx, p.stateDir, issuer, "runtime", domains, p.users, mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100})
+	u, err := life.AllocateNativeAccount(ctx, p.stateDir, issuer, "runtime", domains, p.users, mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

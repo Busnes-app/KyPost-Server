@@ -26,13 +26,13 @@ func TestNativePublicationFailureRetryAndOwnership(t *testing.T) {
 		return source, nil
 	}
 	failed := errors.New("disk unavailable")
-	if _, err := s.PublishPreparedSSOUser(ctx, "reserved-one", "alice", RoleUser, issuer, "one", "alice", "", func() (string, error) { return "", failed }); !errors.Is(err, failed) {
+	if _, err := s.PublishPreparedSSOUser(ctx, "reserved-one", "alice", RoleUser, issuer, "one", "alice", "", "", func() (string, error) { return "", failed }); !errors.Is(err, failed) {
 		t.Fatal(err)
 	}
 	if _, err := s.GetBySSOSub("one"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("failed preparation exposed user", err)
 	}
-	u, err := s.PublishPreparedSSOUser(ctx, "reserved-one", "alice", RoleUser, issuer, "one", "alice", "", prepare)
+	u, err := s.PublishPreparedSSOUser(ctx, "reserved-one", "alice", RoleUser, issuer, "one", "alice", "", "", prepare)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestNativePublicationFailureRetryAndOwnership(t *testing.T) {
 	if err != nil || !revoked.SSOLinkRevoked() || revoked.NativeMailboxIssuer != issuer {
 		t.Fatal("owner erased", revoked, err)
 	}
-	retry, err := s.PublishPreparedSSOUser(ctx, u.ID, "alice", RoleAdmin, issuer, "one", "alice", "", func() (string, error) { return source, nil })
+	retry, err := s.PublishPreparedSSOUser(ctx, u.ID, "alice", RoleAdmin, issuer, "one", "alice", "", "", func() (string, error) { return source, nil })
 	if err != nil || retry.Role != RoleUser || !retry.SSOLinkRevoked() {
 		t.Fatal("retry reauthorized", retry, err)
 	}
@@ -80,7 +80,7 @@ func TestNativePublicationFailureRetryAndOwnership(t *testing.T) {
 func TestNativePublicationCancelledAfterPreparationAndLock(t *testing.T) {
 	s := newTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	_, err := s.PublishPreparedSSOUser(ctx, "reserved-one", "alice", RoleUser, "https://id.test", "one", "", "", func() (string, error) { cancel(); return "native:" + strings.Repeat("ab", 32), nil })
+	_, err := s.PublishPreparedSSOUser(ctx, "reserved-one", "alice", RoleUser, "https://id.test", "one", "", "", "", func() (string, error) { cancel(); return "native:" + strings.Repeat("ab", 32), nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal("published cancelled preparation", err)
 	}
@@ -93,7 +93,7 @@ func TestNativePublicationCancelledAfterPreparationAndLock(t *testing.T) {
 	}
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel2()
-	_, err = s.PublishPreparedSSOUser(ctx2, "reserved-one", "alice", RoleUser, "https://id.test", "one", "", "", func() (string, error) { t.Fatal("prepared while lock blocked"); return "", nil })
+	_, err = s.PublishPreparedSSOUser(ctx2, "reserved-one", "alice", RoleUser, "https://id.test", "one", "", "", "", func() (string, error) { t.Fatal("prepared while lock blocked"); return "", nil })
 	release()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestNativePublicationRacesLegacyAcrossStores(t *testing.T) {
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		_, err := s.PublishPreparedSSOUser(context.Background(), "reserved-one", "native-name", RoleUser, "https://id.test", "one", "", "", func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
+		_, err := s.PublishPreparedSSOUser(context.Background(), "reserved-one", "native-name", RoleUser, "https://id.test", "one", "", "", "", func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
 		results <- err
 	}()
 	go func() { <-start; _, err := other.CreateSSOUser("legacy-name", RoleUser, "one", "", ""); results <- err }()

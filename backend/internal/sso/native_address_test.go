@@ -41,7 +41,7 @@ func newAddressFixture(t testing.TB, subjects ...string) addressFixture {
 	}
 	for _, sub := range subjects {
 		nativeDesired(t, f.life, sub, sub+"@example.test", 1, true)
-		u, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, sub, f.domains, f.accounts, nativeLimits)
+		u, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, sub, f.domains, f.accounts, nativeLimits, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +99,7 @@ func TestNativeAliasLedgerOperations(t *testing.T) {
 	}
 	// A KyIdentity primary can never claim an alias of another mailbox.
 	nativeDesired(t, f.life, "three", "sales@example.test", 1, true)
-	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "three", f.domains, f.accounts, nativeLimits); !errors.Is(err, ErrNativeProvisioning) {
+	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "three", f.domains, f.accounts, nativeLimits, ""); !errors.Is(err, ErrNativeProvisioning) {
 		t.Fatal("primary took an alias", err)
 	}
 	// While "three" names sales@ as its KyIdentity primary, no mailbox may take
@@ -423,7 +423,7 @@ func TestNativeAliasRefusesAnotherSubjectsDirectoryPrimary(t *testing.T) {
 		t.Fatal(err)
 	}
 	nativeDesired(t, f.life, "two", "two@example.test", 1, true)
-	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "two", f.domains, f.accounts, nativeLimits); err != nil {
+	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "two", f.domains, f.accounts, nativeLimits, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Reassignment checks the same rule: "spare" becomes someone's primary.
@@ -431,7 +431,7 @@ func TestNativeAliasRefusesAnotherSubjectsDirectoryPrimary(t *testing.T) {
 	if _, err := f.life.ReassignNativeAddress(ctx, f.root, "spare@example.test", f.ids["one"]); !errors.Is(err, ErrNativeAddressDirectory) {
 		t.Fatal("reassigned onto a directory primary", err)
 	}
-	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "bee", f.domains, f.accounts, nativeLimits); err != nil {
+	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "bee", f.domains, f.accounts, nativeLimits, ""); err != nil {
 		t.Fatal("subject with a protected primary could not provision", err)
 	}
 	if x := f.address(t, "bee@example.test"); x.Kind != "primary" || x.State != "active" {

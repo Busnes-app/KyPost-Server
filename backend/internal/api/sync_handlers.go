@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -51,6 +52,12 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "invalid directory event: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	if s.multiTenant() {
+		if status, err := s.bindDirectoryOrg(r.Context(), settings.IssuerURL, event.ID, body, &u); err != nil {
+			http.Error(w, err.Error(), status)
+			return
+		}
 	}
 
 	status, err := s.ssoLifecycle.ApplyDirectoryUser(settings.IssuerURL, event, u, sso.EventDigest(event.Type, body), func() (bool, error) {
@@ -176,16 +183,25 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 
 // provisionDirectoryUser creates a non-native account, the only kind an
 // administrator subject gets even in native mode, under a distinct name when
-// a local account already owns the directory's userName.
+// a local account already owns the directory's userName. In multi mode it
+// carries the subject's org, and user_orgs is written after it.
 func (s *Server) provisionDirectoryUser(issuer string, u sso.DirectoryUser, role users.Role) error {
+	ctx := context.Background()
+	org, err := s.subjectOrg(ctx, issuer, u.ID)
+	if err != nil {
+		return errors.New("the subject's org is not bound")
+	}
 	username := ssoUsername(u.UserName, u.ID)
-	_, err := s.users.CreateSSOUserIssuer(issuer, username, role, u.ID, u.UserName, u.Email())
+	created, err := s.users.CreateSSOUserIssuer(issuer, username, role, u.ID, u.UserName, u.Email(), org)
 	if errors.Is(err, users.ErrUsernameTaken) {
-		_, err = s.users.CreateSSOUserIssuer(issuer, ssoUsernameWithSuffix(username, u.ID), role, u.ID, u.UserName, u.Email())
+		created, err = s.users.CreateSSOUserIssuer(issuer, ssoUsernameWithSuffix(username, u.ID), role, u.ID, u.UserName, u.Email(), org)
 	}
 	if err != nil {
 		status, err := syncErrStatus(err, "failed to create user")
 		return &syncRefusal{status, err}
+	}
+	if err := s.bindNewAccount(ctx, created); err != nil {
+		return errors.New("failed to bind the account's org")
 	}
 	return nil
 }

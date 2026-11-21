@@ -70,7 +70,7 @@ func outboundFixture(t *testing.T) (NativeOutbound, users.User, mailbox.Outbound
 	life := NewLifecycleStore(config)
 	domains := provenNativeDomain(t, config)
 	nativeDesired(t, life, "one", "one@example.test", 1, true)
-	u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "one", domains, accounts, nativeLimits)
+	u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "one", domains, accounts, nativeLimits, "")
 	if err != nil {
 		t.Fatal(err)
 	}

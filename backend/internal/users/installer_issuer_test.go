@@ -7,7 +7,7 @@ import (
 
 func TestInstallerIssuerBindingWithoutNativeMailbox(t *testing.T) {
 	s := newTestStore(t)
-	owner, err := s.CreateSSOUserIssuer("https://identity.test", "owner-admin", RoleAdmin, "owner-sub", "owner-admin", "")
+	owner, err := s.CreateSSOUserIssuer("https://identity.test", "owner-admin", RoleAdmin, "owner-sub", "owner-admin", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

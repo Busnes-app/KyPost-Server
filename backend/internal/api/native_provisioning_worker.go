@@ -101,8 +101,15 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 	if reserved {
 		limits = a.Limits
 	}
-	_, err = s.ssoLifecycle.AllocateNativeAccount(ctx, s.stateDir, issuer, subject, s.nativeDomains, s.users, limits)
-	return err
+	org, err := s.subjectOrg(ctx, issuer, subject)
+	if err != nil {
+		return err
+	}
+	u, err = s.ssoLifecycle.AllocateNativeAccount(ctx, s.stateDir, issuer, subject, s.nativeDomains, s.users, limits, org)
+	if err != nil || u.ID == "" {
+		return err
+	}
+	return s.bindNewAccount(ctx, u)
 }
 
 // StartNativeProvisioning retries durable desired work, including a restart

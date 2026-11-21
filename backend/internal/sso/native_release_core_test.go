@@ -55,7 +55,7 @@ func releaseCoreFixture(t *testing.T, completeRepair bool) releaseFix {
 	fx := releaseFix{life: life, root: root, settings: SSOSettings{Enabled: true, IssuerURL: nativeIssuer, ClientID: "kypost"}, key: []byte(strings.Repeat("k", 32)), accounts: accounts}
 	for _, sub := range []string{"one", "two"} {
 		nativeDesired(t, life, sub, sub+"@example.test", 1, true)
-		u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, sub, domains, accounts, nativeLimits)
+		u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, sub, domains, accounts, nativeLimits, "")
 		if err != nil {
 			t.Fatal(err)
 		}
