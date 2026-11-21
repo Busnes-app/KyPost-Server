@@ -238,40 +238,40 @@ export function Backup() {
         <p>
           <strong>Destination</strong>
           <br />
-          {status?.paired
+          {status.paired
             ? status.kyrecoveryUrl
-            : status?.localDir || "Not configured"}
+            : status.localDir || "Not configured"}
         </p>
         <p>
           <strong>Last deposit</strong>
           <br />
-          {status?.lastReceipt?.deposited_at || "None yet"}
+          {status.lastReceipt?.deposited_at || "None yet"}
         </p>
         <p>
           <strong>Schedule</strong>
           <br />
-          {status?.intervalSec
+          {status.intervalSec
             ? `Every ${status.intervalSec / 60} minutes`
             : "Off"}
         </p>
         <p>
           <strong>Mail databases</strong>
           <br />
-          {!status?.bulkRepository
+          {!status.bulkRepository
             ? "Inside the capsule (64 MiB per file, 256 MiB total)"
             : status.lastBulk
               ? `Restic snapshot ${status.lastBulk.snapshot.slice(0, 12)}, ${status.lastBulk.at}, ${status.lastBulk.sizeBytes} bytes`
               : `Restic at ${status.bulkRepository}; no snapshot yet`}
         </p>
       </div>
-      {status?.keyProblem && <p role="alert">{status.keyProblem}</p>}
-      {!status?.keyId && (
+      {status.keyProblem && <p role="alert">{status.keyProblem}</p>}
+      {!status.keyId && (
         <p>
           Pair with KyRecovery or paste your suite recovery public key before
           backing up.
         </p>
       )}
-      {status?.keyId && !status.paired && !status.localDir && (
+      {status.keyId && !status.paired && !status.localDir && (
         <p>
           No destination: pair with KyRecovery or configure KYPOST_BACKUP_DIR.
         </p>
@@ -305,7 +305,7 @@ export function Backup() {
             className="button secondary"
             disabled={
               !unlocked ||
-              !status?.keyId ||
+              !status.keyId ||
               (!status.paired && !status.localDir)
             }
             onClick={() => void act("run")}
@@ -314,7 +314,7 @@ export function Backup() {
           </button>
           <button
             className="button secondary"
-            disabled={!unlocked || !status?.keyId}
+            disabled={!unlocked || !status.keyId}
             onClick={() => void act("export-capsule")}
           >
             Download capsule
@@ -343,7 +343,7 @@ export function Backup() {
         <details className="backup-details">
           <summary>Schedule</summary>
           <div className="config-grid">
-            {status?.intervalSec ? (
+            {status.intervalSec ? (
               <p>
                 {!status.keyId
                   ? "Waiting for recovery key"
@@ -380,22 +380,22 @@ export function Backup() {
         </details>
         <details
           className="backup-details"
-          key={String(status?.paired)}
-          open={status !== null && !status.paired && !status.keyId}
+          key={String(status.paired)}
+          open={!status.paired && !status.keyId}
         >
           <summary>Recovery setup and key</summary>
           <div className="config-grid">
             <p style={{ overflowWrap: "anywhere" }}>
-              Recovery key: {status?.keyId || "No key pinned"}
+              Recovery key: {status.keyId || "No key pinned"}
             </p>
-            {status?.keyId && (
+            {status.keyId && (
               <p>
                 {status.threshold} of {status.totalShares} custodians
               </p>
             )}
             <p>
-              Local copies: {status?.localCopies?.length ?? 0} ·{" "}
-              {status?.localDir || "Not configured"}
+              Local copies: {status.localCopies?.length ?? 0} ·{" "}
+              {status.localDir || "Not configured"}
             </p>
             <h4>Pair with KyRecovery</h4>
             <p>
@@ -403,7 +403,7 @@ export function Backup() {
               the key below before pairing. HTTPS protects the pairing key,
               token and receipts.
             </p>
-            {status?.allowPrivateRecovery && (
+            {status.allowPrivateRecovery && (
               <p>Private network destinations are enabled by the operator.</p>
             )}
             <label>
@@ -491,7 +491,7 @@ export function Backup() {
       <details className="backup-details">
         <summary>Recent backup activity</summary>
         <ul>
-          {status?.recent.map((row) => (
+          {status.recent.map((row) => (
             <li key={row.id}>
               {row.at} — {row.action}: {row.outcome} {row.target}
               {activityError(row.details) && (
