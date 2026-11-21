@@ -77,6 +77,14 @@ One profile per deployment, chosen in setup (root `AGENTS.md` "Mail sources";
 
   What Maddy answers for an exit code the table does not list (for example 6 from `accept`) is
   unverified. No code path above raises one.
+
+  The hosted MX configuration adds two `bind` codes. Single-tenant configurations never contain
+  them, and codes 0–11 do not change:
+
+  | Exit | `bind` (RCPT) | Raised by |
+  |---|---|---|
+  | 12 | `451 4.2.1` mailbox temporarily unavailable | K's org check: the owner's org is `suspended`, or missing from the `orgs` cache (K "Inbound routing to the right org"). `deletion_scheduled` and `deleted` use exit 3, the unknown-address `550 5.1.1`. |
+  | 13 | `450 4.7.1` try again later | The relay domain's per-source probe budget (below) |
 - **`bind`** (`app/receiving.go:404-483`), in order: sender shape (exit 7), sender blocks (8,
   6), then `bindExpected`: fresh DNS proof of the recipient domain (`verifyDomains`), the plus base
   (`NativeAddressFor`), the assignment, the active address, the owner's refusals (plus tag,
@@ -419,11 +427,19 @@ follow-up.
   Its MX records point at the MX hosts. Nothing is published to a third party.
 - **RCPT probing.** M asks for a refused-recipient budget per source. `bind` gets no peer IP
   today (`app/receiving_config.go:192`). In the hosted configuration only, `bind` also receives
-  `{source_ip}`, and the replica counts refused recipients per source (/24 for IPv4, /64 for
-  IPv6) in R's PostgreSQL windows. Past N in a window, every further `RCPT` from that source,
-  live or not, gets a new exit code 12, `450 4.7.1`, so the answer reveals nothing. Codes 0–11 do
-  not change, and single-tenant configurations never contain code 12. N and the window are open
-  question 5.
+  `{source_ip}`.
+  - The replica counts refused recipients **on the relay domain only**, per single source IP
+    (IPv4 /32, IPv6 /64), in R's PostgreSQL windows.
+  - Past N in a window, every further relay-domain `RCPT` from that IP, live or not, gets exit 13
+    (`450 4.7.1`), so the answer reveals nothing.
+  - Primary domains are not budgeted. Their addresses are not secret the way masked ones are.
+  - **Ceiling.** A large provider can send from one IP for many senders, and deleted masked
+    addresses keep receiving list mail. Such an IP can trip the budget, and then its relay-domain
+    mail is temp-failed for the block period. Senders retry, so nothing is lost, but delivery is
+    delayed for every customer behind that IP. SPF and DKIM cannot exempt it, because neither is
+    known at `RCPT`.
+  - N, the window and the block period are open question 5, and the capacity measurement counts
+    how often real provider IPs would trip it.
 - **Apex.** If the relay domain is ever moved to Cloudflare, it must be an apex domain, because
   the catch-all is apex-only.
 
@@ -449,7 +465,7 @@ Receiving does not change outbound, but the tier is sized with it in mind:
   fixed gateway list and the Rspamd overlay's single-container rule all stay exactly as they are.
 - `receiving serve --tls`, `receiving gateway`, `KYPOST_RECEIVING_REMOTE`, the
   `receiving_gateways`, `import_leases`, `sender_blocks` and `sender_evidence` tables, the
-  `bindings(mailbox)` index and exit code 12 are each refused or never created unless
+  `bindings(mailbox)` index and exit codes 12 and 13 are each refused or never created unless
   `KYPOST_TENANCY=multi` is recorded (K1).
 - **Proof.** K PR 1's single-tenant upgrade test, extended: a single-container Maddy fixture and
   an R replica fixture started under the new binary keep every `kypost_ingress` row and schema
@@ -537,7 +553,8 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - an oversize body, and a `length` that does not match;
    - a hung replica, which gives exit 1 within the budget;
    - `bind` and `accept` landing on different replicas;
-   - every exit code 0–11 mapping to the same SMTP answer as on the socket;
+   - every exit code 0–11 mapping to the same SMTP answer as on the socket, and 12 and 13 present
+     only in the hosted configuration;
    - single-tenant: `--tls` refused, protocol 2 unchanged.
 3. **Sender blocks and evidence in PostgreSQL** (R7), behind one interface. Tests: the
    `blocks.json` fixture, today's sender-block tests and `TestEvidenceWorstCaseSize`, all run
@@ -559,9 +576,12 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - a lease holder killed mid-import;
    - a non-`active` org's delivery stays pending.
 5. **Hosted profile.** Compose for MX hosts and per-replica Rspamd, the relay domain as a
-   `destination`, `{source_ip}` on `bind` and exit code 12 with the per-source budget. Tests:
-   `TestCrossOrgMatrix`'s SMTP `RCPT` row against this profile (K), probing beyond the budget
-   answering `450` for live and unknown addresses alike, and M's hosted verification list.
+   `destination`, `{source_ip}` on `bind`, exit 12 for K's org check, and exit 13 with the
+   per-source budget. Tests:
+   `TestCrossOrgMatrix`'s SMTP `RCPT` row against this profile (K), a suspended org's address
+   answering `451 4.2.1` and a deleted one answering `550 5.1.1`, probing beyond the budget
+   answering `450` for live and unknown relay addresses alike, primary domains never budgeted, and
+   M's hosted verification list.
 6. **Capacity measurement**, recorded in this spec.
 
 Past one host (R's follow-up, PostgreSQL as its own service) is outside this plan, as in K.
@@ -573,6 +593,8 @@ Past one host (R's follow-up, PostgreSQL as its own service) is outside this pla
 - **SPF input from the MX host.** A compromised MX host can lie about the peer IP. DKIM alignment
   limits the damage.
 - **Duplicates.** A lost answer after commit gives `451`, and the retry is stored twice.
+- **Probe budget slows shared IPs.** A provider IP that trips the relay-domain budget is
+  temp-failed for every customer until the block ends.
 - **Staged orphans.** Each MX crash mid-transaction leaves a staged row until fenced cleanup runs.
 - **One host for replicas** until R's follow-up. MX hosts are redundant, but the replicas and
   PostgreSQL are not.
@@ -590,8 +612,10 @@ Past one host (R's follow-up, PostgreSQL as its own service) is outside this pla
 4. **The multi-only `bindings(mailbox)` index.** K3 forbids mode-only columns; an index is not a
    column, but it changes a multi schema dump. *Recommend* allowing it as a named K3 exception:
    no query branches on it, and single-tenant never has it.
-5. **The per-source refused-recipient budget.** *Recommend* 20 refusals in 10 minutes per /24 or
-   /64, then `450 4.7.1` for 10 minutes. Tune after measurement.
+5. **The per-source refused-recipient budget.** *Recommend* counting relay-domain refusals only, per
+   source IP (IPv4 /32, IPv6 /64): 50 refusals in 10 minutes, then `450 4.7.1` for 10 minutes. The
+   ceiling is a shared provider IP being slowed for everyone (Masked relay domain). Tune it after
+   the capacity measurement has counted real provider IPs.
 6. **Hosted ingress limits.** *Recommend* setting them from the capacity measurement before
    launch (they can only ever be raised). Track import lag against an alert at half of each limit.
 7. **Message-ID de-duplication on import.** Duplicates are possible after a lost answer.
