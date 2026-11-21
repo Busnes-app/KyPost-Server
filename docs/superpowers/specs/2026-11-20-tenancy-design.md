@@ -729,12 +729,14 @@ Each PR ships on its own, with single-tenant behaviour unchanged. `KYPOST_TENANC
 refused at startup until PR 7. Until then multi-mode code runs only in tests. PR 2 onward needed
 KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and webhooks, and `/api/suite/orgs`),
 which has merged as KyIdentity #276. So PRs 1–5 and PR 6's org purge can start now. Four parts
-wait for the KyIdentity changes listed under the plan:
+wait, three of them on the KyIdentity changes listed under the plan:
 - PR 6's one-user purge needs `user.erased`.
 - PR 6's household path needs the `export_only` claim, and KyPost admitting only the export
   routes under it (open question 4 (a)).
 - PR 6's restore release needs the erased-subject list.
-- PR 7 needs the mailbox address field.
+- PR 7 needs the mailbox address field, and the receiving tier's own spec (open question 3). Its
+  per-mailbox import leases are part of that tier. Running past one host also needs R's
+  follow-up, which is a launch prerequisite (below).
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
    the multi-only side tables (`orgs`, `user_orgs`, `subject_orgs`; PR 6 adds the purge tables), `users.User.OrgID`
