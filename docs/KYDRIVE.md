@@ -275,3 +275,10 @@ another origin still severs; every link in a message (`<a>`, SVG `<a>`, image-ma
   picker or a fetch is open drops its result.
 - Reading: each attachment has **Save to KyDrive**; success shows the folder
   and name it got and an **Open KyDrive** link to the app's suite URL.
+
+## Multi-tenant mode
+
+Only when `KYPOST_TENANCY=multi`, which startup still refuses (tenancy design, build plan PR 3).
+Every body KyPost signs to KyDrive adds the account's top-level `org_id`, as KyDrive's tenancy
+design asks (`driveEvent`). The recipient check keeps only addresses whose subject this install
+has bound to the caller's org (`subject_orgs`). A single-tenant body is unchanged.

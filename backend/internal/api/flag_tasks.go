@@ -93,8 +93,8 @@ func (s *Server) flagTask(ctx context.Context, userID string, u *users.User, c i
 	if flagged {
 		subject = flagSubject(ctx, c, folder, uid)
 	}
-	body := map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "ref": ref, "subject": subject,
-		"url": strings.TrimRight(s.serverBaseURL, "/") + "/read?flag=" + ref, "flagged": flagged}
+	body := withOrg(map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "ref": ref, "subject": subject,
+		"url": strings.TrimRight(s.serverBaseURL, "/") + "/read?flag=" + ref, "flagged": flagged}, *u)
 	if due != "" && flagged {
 		body["due"] = due
 	}
@@ -244,7 +244,7 @@ func (s *Server) taskState(ctx context.Context, body []byte) (string, *itipRefus
 		return "", refuse(http.StatusNotFound, "no_user", "no active KyPost account for this subject")
 	case err != nil:
 		return "", errUnavailable
-	case !u.Active || u.SSOLinkRevokedAt != 0 || s.nativeMail && u.Role == users.RoleAdmin:
+	case !u.Active || u.SSOLinkRevokedAt != 0 || s.nativeMail && u.Role == users.RoleAdmin || !s.peerOrgAdmit(body, u):
 		return "", refuse(http.StatusNotFound, "no_user", "no active KyPost account for this subject")
 	}
 	settings, err := config.LoadUserSettings(s.userSettingsPath(u.ID))

@@ -50,7 +50,15 @@ func (s *Server) admitMailbox(w http.ResponseWriter, r *http.Request, id string)
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "mailbox not found"})
 		return r, false
 	}
-	if _, _, err := s.nativeMailboxAssignment(r.Context(), ac.UserID, id); err != nil {
+	a, _, err := s.nativeMailboxAssignment(r.Context(), ac.UserID, id)
+	if err == nil && s.multiTenant() {
+		// The ledger already admits only the caller's own mailbox; the org gate is the
+		// second, independent check K5 asks for.
+		if owner, gerr := s.users.Get(a.UserID()); gerr != nil || !s.orgAdmit(ac, owner) {
+			err = sso.ErrNativeMailboxUnknown
+		}
+	}
+	if err != nil {
 		if s.refuseNativeAdministrator(w, r, ac.UserID, err) {
 			return r, false
 		}

@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PRs 1 and 2 are built ("PR 1 as built", "PR 2 as built"), the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1, 2 and 3 are built ("PR 1 as built", "PR 2 as built", "PR 3 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -942,10 +942,133 @@ the server's tenancy store and staff org, and the users store's `StaffOrg`, dire
 - **Not covered, by phase.**
   - The restore release reads KyIdentity profiles' roles (`sso/native_release.go:204`). The
     multi-mode restore release is PR 6's.
-  - Peer bodies are PR 3's.
+  - Peer bodies are PR 3's ("PR 3 as built").
   - HR and the remaining K6 refusals are PR 4's.
   - KyIdentity's `group.*` bodies carry no `org_id` (KI `internal/sync/sync.go:455`). KyPost's
     webhook refuses every type except `user.*` (`sso/directory.go:104`).
+
+## PR 3 as built (2026-11-21)
+
+PR 3 follows the plan with these readings, each the safer one where K was ambiguous. Paths are
+under `backend/internal/` at the PR's head. Peer specs were read at KyCalendar `origin/main`
+`08bd045` and KyDrive `origin/master` `7fa91dc`. Startup still refuses `multi`, so the tests
+build the multi paths as PR 2's do (`makeMultiTenant`).
+
+- **`AuthContext.OrgID`** (`api/server_auth_session.go:125`) is copied from the re-read user
+  record by the four builders: the session (`currentUser`, `:1325`), the paired-device arm of
+  `resolveMailAuthContext` (`deviceOrg`, `api/tenancy_gate.go:119`), CardDAV Basic
+  (`api/dav_auth.go:258`) and MCP agent tokens (`api/mcp.go:181`). In multi mode an account
+  without an org is refused as each path refuses a dead credential.
+  - The refusal is also made in `deviceAuthSnapshot` (`api/device_auth.go:161`). The
+    `withDeviceAuth` handlers never build an `AuthContext`, so a check only in the builders
+    would have missed them.
+  - The org status check K puts in the same builders is PR 5's.
+- **`orgAdmit(ac, target users.User)`** (`api/tenancy_gate.go:26`) compares the caller's org
+  with the target account's `users.json` `OrgID`. It reads no `tenancy.db` row, because PR 2
+  keeps the three records in step. In single mode it admits everything and compares nothing.
+  Every hop's refusal is the answer the route gives a missing target.
+- **The hops, as built:**
+  - **Extra mailbox:** `admitMailbox` (`api/native_mailbox_handlers.go:57`) adds `orgAdmit`
+    after the ledger's owner check. The ledger already refuses another user's mailbox, so this
+    is the second, independent check K5 asks for. `TestTenancyMailboxHopNeedsTheOrg` reaches it
+    with a forged `AuthContext`.
+  - **People search and the KyDrive recipient check:** `suitedir.Person` has no `org_id`
+    (ky-primitives at the `backend/go.mod` pin, `suitedir/client.go:85-89`), so KyPost cannot
+    "drop any answer whose `org_id` is not the caller's" from the answer itself.
+    `sameOrgPeople` (`api/tenancy_gate.go:47`) keeps only people whose subject this install
+    has bound to the caller's org in `subject_orgs`. An unknown subject is dropped, so a
+    member KyPost has not been told about yet is not suggested.
+  - **KyMessages address resolution** is not filtered. It is unreachable: see the peer list.
+  - **Address reassign and quarantine release to the current owner:** `addressOneOrg`
+    (`api/tenancy_gate.go:60`) requires every mailbox in the address's history, and the target,
+    to belong to accounts of one org. The history comes from `NativeAddressMailboxes`
+    (`sso/native_address.go:86`).
+    - A reassign refused this way answers like an unknown mailbox (`404`,
+      `api/native_address_handlers.go:83`).
+    - A release answers `409`, as K says (`quarantineOneOrg`,
+      `api/native_quarantine_handlers.go:136`).
+    - The check runs before the ledger lock. That is safe because every reassign makes the
+      same check, so the history cannot gain another org in between.
+    - Both routes are administrator-only. Their tests are function-level
+      (`TestTenancyAddressMovesStayInOneOrg`, which also proves that an unreadable users store is
+    an error, not an org refusal); the handler path in multi mode is unproven until
+      PR 4 can make a staff administrator with a step-up.
+  - **Staff on an org-bound admin route** is PR 4's.
+- **Peer bodies, in step with each peer's own spec:**
+  - **KyCalendar** (its D10, and its contract table at spec lines 468-470). KyPost adds
+    `org_id` to `kypost.itip.inbound` (`processor/kycalendar_forward.go:111`),
+    `kypost.itip.respond`, `kypost.ooo.set` and `kypost.task.flag` (`withOrg`,
+    `api/tenancy_gate.go:100`). `kycalendar.itip.send` and `kycalendar.task.state` must carry
+    the account's `org_id` (`peerOrgAdmit`, `api/kycalendar_handlers.go:135`,
+    `api/flag_tasks.go:247`). KyCalendar at `08bd045` sends none, so a multi install refuses
+    both with `404 no_user` until it does.
+  - **KyDrive** (its spec lines 489-490): every body adds `org_id` (`driveEvent`,
+    `api/kydrive_handlers.go:179`).
+  - **KyMessages** has no tenancy spec, and KyMessage-Server sends and reads no `org_id`.
+    Multi mode answers every `/api/kymessage/*` route `409 kymessage_off`
+    (`api/kymessage_handlers.go:82`) and sends no presence body (`api/kymessage_ooo.go:27`).
+    It sends nothing rather than guess a field.
+  - **KyPulse** has no tenancy spec. Multi mode requires the account's `org_id` as for
+    KyCalendar (`api/kypulse_handlers.go:135`), so every alert is refused today. Its decoder
+    rejects unknown fields, so single mode still answers `org_id` with `400 bad_body`
+    (`strictPeerOrg`, `:114`). Multi mode reads the field.
+  - The `org_id` field is added only for an account with an `OrgID`, which exists only in
+    multi mode, so a single-tenant body is byte-for-byte unchanged.
+- **HR mailbox reservation answers `404` in multi mode now** (`api/hr_mailbox.go:16`), not in
+  PR 4 with the other K6 refusals. Its signed body names a subject with no `org_id`, so it is a
+  peer hop this PR could not check.
+- **The call-site scan** is `TestOrgAdmitCallSites` (`api/org_admit_scan_test.go`), a go/ast scan
+  of every non-test file in `api/`.
+  - **What it looks for:** the users store lookups (`Get`, `GetBySSOSubIssuer`, `GetBySSOSub`,
+    `GetByUsername`) and the per-user store openers (`userStore`, `userContactsStore`,
+    `userMailClient`, `nativeMailboxAssignment` and the rest). K's `mailFor` and `contactsFor`
+    take the request and read its `AuthContext` themselves (`api/server_userscope.go:325,590`),
+    so they need no check; there is no `storeFor`.
+  - **What admits an ID:** an `AuthContext`'s `UserID`, a user read by such an ID, a device
+    credential's owner, or a parameter. A function that passes its parameter on becomes an
+    accessor itself, so the check moves to its callers.
+  - **What fails:** any other ID, unless that ID, the variable it is a field of, or the
+    call's result is passed to an org gate in the same function, or the function is in
+    `orgAdmitExempt`. A gate covers only the hop it checks, so a second, ungated lookup in a
+    gated function still fails.
+  - **The exemption list** gives a reason per function in four classes. Authentication is a
+    credential naming its own account. Signed links name one account. Workers are PR 5. Admin
+    routes are PR 4. Each entry must name a live function.
+  - `TestOrgAdmitScanFailsAnUngatedHandler` runs the scan on a fixture. It fails a handler that
+    reads a path ID without `orgAdmit`, follows a helper's parameter to its caller, and fails
+    a second, ungated lookup in a function that gates its first.
+- **`TestCrossOrgMatrix`** (`api/tenancy_matrix_test.go`) runs in every `internal/api` job. That
+  is SQLite in the race legs and PostgreSQL in `ci-backend-postgres`, whose stores
+  `KYPOST_TEST_DATABASE_URL` selects.
+  - **Org-bound means:** every route wrapped in `withMailbox` (the `X-KyPost-Mailbox` hop), the
+    three routes that admit a mailbox from their body (export, import, IMAP import), and every
+    non-administrator route with a path parameter. Administrator routes are PR 4's staff
+    variant.
+  - A route needs a case or a written reason in `crossOrgNotBound`. The reasoned routes are
+    the PGP envelope `{slot}` (a fixed slot name) and the public `/pickup/{id}` links (a
+    bearer link by design).
+  - **Each case makes three calls as org A's member:** with A's own object, with org B's, and
+    with an ID that never existed.
+    - B's answer must equal the missing one byte for byte, after removing `Date` and putting a
+      placeholder for the ID used.
+    - No log line may name B's account ID, subject, mailbox or username.
+  - **B's digest:** B's own reads of every per-user store, every file under B's user and
+    mailbox directories, and B's `users.json` record without `updatedAt`. The test's own
+    session helper moves `updatedAt`. On PostgreSQL the per-user SQLite stores are schemas;
+    B's reads cover them, but no schema dump is taken (narrower than K's "digest of every B
+    store").
+  - **Where the own-object control cannot succeed without a live step-up or peer,** it must
+    still answer unlike a missing object. Two routes confirm the caller's credential before
+    reading the object (device MFA, contact PGP key confirm), so only B and missing are
+    compared there.
+  - **The non-HTTP inputs:**
+    - The sync event is PR 2's tests.
+    - The inbound peer bodies are `TestTenancyInboundPeersNeedTheAccountOrg`.
+    - SMTP `RCPT` waits for PR 7's receiving tier (unbuilt).
+  - **Proof that the gates bite:** replacing `orgAdmit` with `return true` fails
+    `TestOrgAdmit` and the mailbox, inbound-peer, people-search and address-move tests. It
+    does not fail the matrix, because the per-user stores and the ledger already separate
+    users.
 
 ## Residual risks
 

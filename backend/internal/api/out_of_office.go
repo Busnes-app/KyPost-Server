@@ -74,7 +74,7 @@ func (s *Server) syncOOOCalendar(ctx context.Context, userID string, o config.Ou
 		return ""
 	}
 	rev := time.Now().UnixMilli()
-	body := map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "revision": rev, "away": false}
+	body := withOrg(map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "revision": rev, "away": false}, u)
 	if start, end := o.Window(); o.Enabled && o.CalendarAway && !start.IsZero() && !end.IsZero() {
 		body["away"], body["start"], body["end"] = true, o.Start, o.End
 		if zone, err := time.LoadLocation(o.TimeZone); o.TimeZone != "" && err == nil && midnight(start.In(zone)) && midnight(end.In(zone)) {

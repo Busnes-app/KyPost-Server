@@ -106,11 +106,12 @@ func (s *Server) sendKyPulseAlert(ctx context.Context, eventID string, body []by
 		Recipients []string `json:"recipients"`
 		Subject    string   `json:"subject"`
 		Text       string   `json:"text"`
+		strictPeerOrg
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	badBody := refuse(http.StatusBadRequest, "bad_body", "malformed request, an unknown or missing field, or a field outside its rule")
-	if dec.Decode(&req) != nil || dec.Decode(&struct{}{}) != io.EOF || req.Sub == "" || req.Issuer == "" ||
+	if dec.Decode(&req) != nil || dec.Decode(&struct{}{}) != io.EOF || !s.strictPeerOrgOK(req.strictPeerOrg) || req.Sub == "" || req.Issuer == "" ||
 		!kypulseText(req.Subject, maxKyPulseSubject, false) || !kypulseText(req.Text, maxKyPulseText, true) ||
 		len(req.Recipients) == 0 || len(req.Recipients) > maxKyPulseRecipients {
 		return badBody
@@ -131,7 +132,7 @@ func (s *Server) sendKyPulseAlert(ctx context.Context, eventID string, body []by
 	case err != nil:
 		return errUnavailable
 	// Dedicated administrator identities have no mailbox in native mode.
-	case !u.Active || u.SSOLinkRevokedAt != 0 || s.nativeMail && u.Role == users.RoleAdmin:
+	case !u.Active || u.SSOLinkRevokedAt != 0 || s.nativeMail && u.Role == users.RoleAdmin || !s.peerOrgAdmit(body, u):
 		return errNoUser
 	}
 	out, f := s.kypulseOutbox(ctx, u)

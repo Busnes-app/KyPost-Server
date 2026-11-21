@@ -137,6 +137,20 @@ func TestForwardInvitation(t *testing.T) {
 	}
 }
 
+// A multi-tenant account's org_id rides on the forward (KyCalendar tenancy D10); a
+// single-tenant account has none, so its body is unchanged.
+func TestForwardInvitationCarriesTheOrg(t *testing.T) {
+	stubAlignment(t, map[string]string{"From: alice@example.com": "alice@example.com"})
+	for org, want := range map[string]any{"": nil, "1a2b3c4d-0000-4000-8000-00000000000a": "1a2b3c4d-0000-4000-8000-00000000000a"} {
+		p, fake := newForwardPoller(t)
+		uc := userCtx{id: "u1", kycalSub: "sub-1", kycalIssuer: "iss", kycalOrg: org, mail: inviteMailClient{&noopMailClient{}, map[int][]byte{7: inviteMail("alice@example.com", forwardICS)}}}
+		p.forwardInvitation(t.Context(), uc, imapadapter.Message{ID: "7", HasAttachments: true})
+		if len(fake.bodies) != 1 || fake.bodies[0]["org_id"] != want {
+			t.Fatalf("org %q: forwarded %v", org, fake.bodies)
+		}
+	}
+}
+
 // KyCalendar failing is retried on later ticks under the same event ID, a
 // bounded number of times, and never touches the message.
 func TestForwardInvitationRetriesBounded(t *testing.T) {

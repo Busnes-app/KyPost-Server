@@ -129,3 +129,11 @@ path; this channel is a second one.
 
 Both sides audit success and refusal with IDs and codes only. Neither logs or audits an
 address, a subject, a message body, a name, a token or the secret.
+
+## Multi-tenant mode
+
+Only when `KYPOST_TENANCY=multi`, which startup still refuses (tenancy design, build plan PR 3).
+The alert body must carry the top-level `org_id` of the account its `(sub, issuer)` names; a
+missing, malformed or other org answers `404 no_user`. KyPulse has no tenancy spec and sends
+none yet, so a multi install refuses every alert. A single-tenant install still refuses
+`org_id` as an unknown field (`400 bad_body`). Test `TestTenancyInboundPeersNeedTheAccountOrg`.

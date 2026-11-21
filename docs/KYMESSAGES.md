@@ -143,3 +143,9 @@ only) and the next save sends it again; it never blocks the save.
   calls `chat`, checks the URL is `https` on the Element origin again, and
   points the tab at it. A refusal closes the tab and shows the message beside
   the button (contacts: in the page status).
+
+## Multi-tenant mode
+
+KyMessages has no tenancy spec defining `org_id` on these bodies yet, so a multi install
+(`KYPOST_TENANCY=multi`, still refused at startup) answers every `/api/kymessage/*` route
+`409 kymessage_off` and sends no presence body. Test `TestTenancyKyMessagesIsOffInMultiMode`.

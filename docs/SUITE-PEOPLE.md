@@ -32,3 +32,7 @@ Recipient autocomplete (`hooks/useContactAutocomplete.ts`) lists the user's own
 contacts first, then organisation people under one "Organisation" heading,
 deduplicated by address (case-insensitive; a contact wins). Organisation search runs
 from two characters; its failure leaves the contacts. Free text still works.
+
+In a multi-tenant install (`KYPOST_TENANCY=multi`, still refused at startup) KyPost also drops
+every person whose subject it has not bound to the caller's org in `subject_orgs`, because
+`suitedir.Person` carries no `org_id`. Test `TestTenancyPeopleSearchKeepsTheCallersOrg`.

@@ -132,7 +132,12 @@ func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action
 			if settings := s.ssoStore.Load(); settings.Enabled {
 				issuer = settings.IssuerURL
 			}
-			err = s.ssoLifecycle.ReleaseQuarantined(r.Context(), s.stateDir, issuer, s.users, holding, gateway, id, body.CurrentMailbox)
+			if body.CurrentMailbox != "" {
+				err = s.quarantineOneOrg(r.Context(), holding, gateway, id, body.CurrentMailbox)
+			}
+			if err == nil {
+				err = s.ssoLifecycle.ReleaseQuarantined(r.Context(), s.stateDir, issuer, s.users, holding, gateway, id, body.CurrentMailbox)
+			}
 		} else if err = sso.RequireNativeRestoreReleased(s.stateDir); err == nil {
 			// partially_released: an interrupted release may have reached
 			// some frozen mailboxes before this discard.

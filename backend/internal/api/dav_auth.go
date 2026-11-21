@@ -255,7 +255,11 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		}
 
 		s.davLockout.cancelAttempt(strike)
-		ac = AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role}
+		if s.multiTenant() && u.OrgID == "" {
+			s.requireDAVAuth(w)
+			return
+		}
+		ac = AuthContext{UserID: u.ID, OrgID: u.OrgID, Username: u.Username, Role: u.Role}
 		// Cache BEFORE the rehash. A native client opens several connections
 		// and re-authenticates per PROPFIND/REPORT — the whole reason this
 		// cache exists — so on the first sync after an upgrade every one of

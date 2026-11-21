@@ -117,9 +117,12 @@ const (
 // AuthContext identifies the caller of an authenticated request.
 type AuthContext struct {
 	// Private witnesses for durable native sends, never client-supplied.
-	NativeSendEpoch    uint64
-	DeviceWitness      string
-	UserID             string
+	NativeSendEpoch uint64
+	DeviceWitness   string
+	UserID          string
+	// OrgID is the account's org, read from the user record on every request and
+	// never from the request. Empty in single mode; multi mode refuses an empty one.
+	OrgID              string
 	Username           string
 	Role               users.Role
 	MustChangePassword bool
@@ -1319,7 +1322,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool, error) {
 	}
 	u, err := s.users.Get(sess.UserID)
 	ssoStale := sess.SSO.Subject != "" && (u.SSOLinkRevoked() || u.SSOSub != sess.SSO.Subject || sess.SSOEpoch != epoch)
-	if err != nil || !u.Active || ssoStale || s.requireAccountRestoreReleased(u) != nil {
+	if err != nil || !u.Active || ssoStale || s.requireAccountRestoreReleased(u) != nil || s.multiTenant() && u.OrgID == "" {
 		if derr := s.dropSession(r.Context(), cookie.Value); derr != nil {
 			return AuthContext{}, false, derr
 		}
@@ -1332,6 +1335,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool, error) {
 	return AuthContext{
 		NativeSendEpoch:    u.NativeSendEpoch,
 		UserID:             u.ID,
+		OrgID:              u.OrgID,
 		Username:           u.Username,
 		Role:               role,
 		MustChangePassword: u.MustChangePassword,

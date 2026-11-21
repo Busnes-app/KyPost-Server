@@ -23,7 +23,8 @@ const (
 // the user's "Show my status to colleagues" switch and drops it when that is
 // off. Best effort: a failure is logged and the next save sends it again.
 func (s *Server) syncOOOMessages(ctx context.Context, userID string, o config.OutOfOffice) {
-	if !s.kymessage.Available() {
+	// No KyMessages spec defines org_id on its bodies yet: a multi install sends none.
+	if !s.kymessage.Available() || s.multiTenant() {
 		return
 	}
 	u, err := s.users.Get(userID)
