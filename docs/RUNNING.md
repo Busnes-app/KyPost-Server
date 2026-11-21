@@ -250,13 +250,17 @@ volumes it is unproven. So KyPost refuses, at startup and before listening:
 - a replica on another host: a live replica with another `/proc/sys/kernel/random/boot_id`
   refuses the start ("KyPost replicas must run on one Docker host");
 - `KYPOST_NATIVE_RECEIVER`: receiving through Maddy needs one container on port 25 and
-  stays in the single-container profile (the Cloudflare and external-IMAP profiles work
-  with replicas);
+  stays in the single-container profile;
 - a proof-of-work key that cannot be kept in `SECRET_DIR` (each replica would refuse the
   others' challenges).
 
 Compose itself refuses `TLS_CERT_FILE` with the overlay: HAProxy publishes cleartext and
 speaks plain HTTP to the replicas, so TLS ends in a proxy in front of HAProxy.
+
+**Replicas have no native receiving.** Cloudflare pickup requires `KYPOST_RECEIVING_RSPAMD=true`
+and the Rspamd sidecar, and `docker-compose.rspamd.yml` shares one container's network, so
+Compose refuses it with the replicas overlay. With replicas, receive through an external IMAP
+account; for Maddy or Cloudflare, stay on the single container.
 
 Separate hosts, separate volumes, NFS/RWX volumes and multi-node Kubernetes are refused or
 unsupported. KyPost has no IMAP, submission or LMTP server and no search index, so nothing
@@ -268,7 +272,7 @@ else is per container.
 |---|---|
 | HTTP listener (5866) | Per replica, behind HAProxy, which routes on `/readyz` |
 | Maddy SMTP receiving, `receiver.sock` | Refused: single-container profile only |
-| Cloudflare pickup, external IMAP polling, receiving import, poller, push, WKD recheck, retention, backup schedule | Run by the one replica holding the `daemon` role; the others stand by |
+| External IMAP polling, receiving import, poller, push, WKD recheck, retention, backup schedule | Run by the one replica holding the `daemon` role; the others stand by |
 | Native outbox recovery, DKIM rotation | The `mail-runtime` role; the outbox claim token fences request-path sends |
 | Scheduled sends, Send delay, provisioning, pickup and contact sweeps, agent-token expiry, version check, shared-row cleanup | The `api-sweepers` role; a `sending` row records its replica, and only a dead replica's rows become uncertain; a mail a dead replica was returning to Drafts is returned again, so it can appear there twice, never lost |
 | Sessions (token hash only), CSRF, revocations, SSO epoch | PostgreSQL: a sign-out or revocation on one replica holds on every other at the next request |
