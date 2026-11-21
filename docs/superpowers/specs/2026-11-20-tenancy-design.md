@@ -182,8 +182,9 @@ created exclusively, like R's keys, and backed up, because a restore needs it (M
   Cloudflare pickup import) work from the ledger, where every mailbox resolves to an account and
   so to an org. Each one checks the org's status in the `orgs` cache before it writes:
   - A worker skips a mailbox whose org is not `active`.
-  - An import leaves the delivery pending, so it is never lost and never written into storage the
-    purge is removing.
+  - An import leaves that mailbox's part of the delivery pending, so it is never lost and never
+    written into storage the purge is removing. Other recipients' mailboxes still import (the
+    receiving tier spec's per-mailbox import obligations).
   - Outbox and scheduled sends are held (Lifecycle).
 
   The purge and the entitlement poller are the only workers that act on an org as a whole.

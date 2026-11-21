@@ -423,8 +423,9 @@ That residual risk is listed below.
   `app/receiving.go:230`, and never the live rows of `receiving_gateways`. A revoked or expired
   pin stops new commands only. Mail its host already committed has had its `250` and still
   imports. Pin rows are never deleted, so a revoked key and a retired ID stay refused.
-- **Org status.** K's rule holds. A delivery whose org is not `active` stays pending
-  (K "Background workers").
+- **Org status.** K's rule, applied per mailbox. Only the obligation of a mailbox whose org is not
+  `active` stays pending (One obligation, step 1). The same delivery's other mailboxes import, and
+  a delivery is never gated as a whole on any one recipient's org.
 - **Single-tenant.** The daemon importer of `app/receiving.go:214-262` stays exactly as it is.
 
 ### Past one host
