@@ -381,7 +381,7 @@ export function Backup() {
         <details
           className="backup-details"
           key={String(status?.paired)}
-          open={status !== null && !status.paired && !status.keyId}
+          open={!status.paired && !status.keyId}
         >
           <summary>Recovery setup and key</summary>
           <div className="config-grid">
