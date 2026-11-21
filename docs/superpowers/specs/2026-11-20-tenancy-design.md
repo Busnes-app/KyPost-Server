@@ -592,26 +592,51 @@ a user's data: a disabled or deleted user only loses access (`api/sync_handlers.
 
 - **Where.** On KyIdentity's account page, because one click must reach every suite app. This is
   a T change.
-- **What it deletes.** For the account holder, the whole org. A person org is just them. For any
-  other member of a household, only their own account.
+- **What it deletes.** The clicker's own stuff, never anyone else's without warning. For the
+  account holder, that is the whole org; a person org is just them. For any other member of a
+  household, it is only their own account.
 - **Confirming.** Step-up (password and second factor) and typing the mailbox
   address. The dialog offers the export first (Export), because nothing can be got back.
-- **No undo.** A holder's deletion moves the org straight to `deleted`. T's grace and `resume` are
-  for billing-driven deletion only and do not apply. A member's deletion sends a new signed
-  `user.erased` event. Today's `user.deleted` keeps meaning "disable", as now.
+- **No undo.** Once confirmed, nobody can reverse it: billing, staff and the clicker cannot. A
+  member's deletion sends a new signed `user.erased` event; today's `user.deleted` keeps meaning
+  "disable", as now.
+  - **A holder with no other live members:** the org goes straight to `deleted`.
+  - **A holder of a household with other members:** the holder's own access ends at once, and the
+    org enters `deletion_scheduled` with a 7-day grace that `resume` refuses (T allows `resume`
+    today). Each other member is mailed a notice and can export their own mail in that window
+    (open question 4's export-only claim). The org is then `deleted`. Their mail is refused with
+    `550` from the click, as for any scheduled deletion (open question 11).
+  - T's own grace and `resume` stay for billing-driven deletion only.
 - **In KyPost.** The org's next poll shows `deleted`, and the purge runs (Purge). `user.erased`
   runs the same steps for one user: its `org_purges` row is scoped to that user, and the snapshot
   holds only that user, their mailboxes and their subject.
-- **A restore does not bring it back.** After an older capsule is restored, the `orgs` cache holds
-  an older revision, so the next poll reads the org as `deleted` again. `deleted` is terminal in
-  T, so the purge runs again. For erased members, KyIdentity keeps a list of erased subjects (a T
-  change), and KyPost re-reads it after a restore and purges again.
+- **A restore does not bring it back.**
+  - **Deleted orgs stay listed.** KyIdentity keeps a deleted org's row and lists it to every app
+    with status `deleted`, "so the app learns to drop its data" (KI
+    `internal/store/suite_orgs.go:15-20,49-53`). A trigger forbids leaving `deleted` (KI
+    `internal/store/tenancy.go:83,96`). So a poll after a restore reads the org as `deleted`
+    and the purge runs again.
+  - **Nothing is served until KyIdentity confirms.** A restored `orgs` cache predates the
+    deletion and may still say `active`, so the restore empties it. Restore already leaves the
+    server held until a release step checked against KyIdentity (`docs/RESTORE.md:290`,
+    `:400-415`). In multi mode the release also needs a full poll from revision 0 and a read of
+    the erased-subject list (a T change), both succeeding after the restore. Until then every
+    customer org is missing from the cache, so sign-in is refused and receiving answers with a
+    temporary refusal. A KyIdentity outage after a restore keeps the server unserved, which
+    loses no mail.
+  - That release step needs a local administrator today, which K6 refuses in multi mode. A
+    staff-run release on a platform route is part of PR 6.
 - **Nothing is reused.** The address tombstones (K10) refuse the address for ever. The kept
   `subject_orgs` row and `accounts` tombstone refuse provisioning that subject again.
 - **Backups.** Older capsules still hold the data until they age out (open question 7). The hosted
   terms state that retention.
-- **Test.** Click, purge, restore a capsule taken before the click, start, poll: the purge runs
-  again and the final check finds nothing. Do the same for one erased household member.
+- **Tests.**
+  - Click, purge, restore a capsule taken before the click, release, and poll: the purge runs
+    again and the final check finds nothing. Do the same for one erased household member.
+  - Restore with KyIdentity unreachable: sign-in is refused, receiving answers `451`, and the
+    hold cannot be released.
+  - A household holder's click: the members are notified, can export for 7 days, and `resume` is
+    refused.
 
 ### Export
 
@@ -730,9 +755,9 @@ which has merged as KyIdentity #276, so every PR up to 6 can start.
    staff org absent from the cache.
 6. **Purge.** Creates `org_purges` and the `org_purge_members` snapshot table (Lifecycle), the purge steps, the tombstone key, the `address_tombstones` table, and
    the named trigger exception (confirmed, open question 9), and the one-user purge for
-   `user.erased` (Delete everything). Tests: a purge killed at every step resumes and finishes;
+   `user.erased`, and the multi-mode restore release (Delete everything). Tests: a purge killed at every step resumes and finishes;
    nothing of the org remains, checked against the classification; tombstones refuse reuse,
-   including after a restore with the same key; the Delete everything restore test.
+   including after a restore with the same key; the Delete everything tests.
 7. **Hosted mail.** Allocation from KyIdentity's mailbox address field, limited to the suite email
    domains (Mail), M's masked changes 1–7, per-org abuse limits, and the hosted receiving tier
    (open question 3). Startup then accepts `multi`. Tests: M's hosted verification list, and a native-mail harness run
@@ -741,8 +766,9 @@ which has merged as KyIdentity #276, so every PR up to 6 can start.
 Launch prerequisites outside this plan: R's follow-up that moves accounts and per-user files into
 PostgreSQL, a measured capacity target (open question 8), and these KyIdentity changes:
 - the mailbox address field, sent as its own `emails` entry (Mail);
-- the Delete everything button, the holder's straight-to-`deleted` path, `user.erased`, and the
-  list of erased subjects (Delete everything).
+- the Delete everything button, the holder's paths (straight to `deleted`, or a 7-day member
+  export window that `resume` refuses, with a notice to each member), `user.erased`, and the list
+  of erased subjects (Delete everything).
 
 ## Residual risks
 
