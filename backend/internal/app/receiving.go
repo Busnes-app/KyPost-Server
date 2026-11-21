@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -113,6 +114,14 @@ func runReceivingCommand(args []string, input io.Reader) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// An MX host (RX) forwards over TLS, with no socket and no local fallback.
+	remote, err := loadReceivingRemote()
+	if err != nil {
+		return &receivingCommandError{err: err, code: 1}
+	}
+	if remote != nil {
+		return remote.forward(ctx, args, input)
+	}
 	if args[0] != "init" {
 		if err, served := forwardReceiving(ctx, args, &input); served {
 			return err
@@ -120,7 +129,7 @@ func runReceivingCommand(args []string, input io.Reader) error {
 	}
 	r, err := openReceivingRuntime(ctx, args[0] == "init")
 	if err != nil {
-		logReceiving(args, false, err)
+		logReceiving(receivingGateway, args, false, err)
 		return &receivingCommandError{err: err, code: receivingExit(err)}
 	}
 	defer r.holding.Close()
@@ -173,14 +182,18 @@ func (r *receivingRuntime) run(ctx context.Context, args []string, input io.Read
 	case "accept":
 		err = r.accept(ctx, args[1], args[2], input, args[3:]...)
 	}
-	logReceiving(args, replayed, err)
+	actor := receivingGateway // single-tenant log lines stay as they were
+	if tenancy.ValidGatewayID(r.gateway) {
+		actor = r.gateway
+	}
+	logReceiving(actor, args, replayed, err)
 	if err != nil {
 		return &receivingCommandError{err: err, code: receivingExit(err)}
 	}
 	return nil
 }
 
-func logReceiving(args []string, replayed bool, err error) {
+func logReceiving(gateway string, args []string, replayed bool, err error) {
 	result := "committed"
 	if err != nil {
 		result = "refused"
@@ -191,7 +204,7 @@ func logReceiving(args []string, replayed bool, err error) {
 	if len(args) > 1 {
 		correlation = args[1]
 	}
-	slog.Info("receiving operation", "actor", receivingGateway, "task_id", "native-receiving", "action", args[0], "target", "holding-store", "result", result, "correlation_id", correlation)
+	slog.Info("receiving operation", "actor", gateway, "task_id", "native-receiving", "action", args[0], "target", "holding-store", "result", result, "correlation_id", correlation)
 }
 
 // receivingExit is the helper's exit code for a refusal; receiving_config.go

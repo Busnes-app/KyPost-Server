@@ -1,6 +1,6 @@
 # KyPost hosted receiving tier, design
 
-Date: 2026-11-21. Status: proposed design, nothing built. Docs only.
+Date: 2026-11-21. Status: proposed design; PR 1 (#686) and PR 2 (TLS transport) built.
 
 This is the receiving tier's own spec, which the owner asked for on 2026-11-21 (answer to open
 question 3 of KyPost's tenancy design, `docs/superpowers/specs/2026-11-20-tenancy-design.md`,
@@ -629,6 +629,56 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - every exit code 0–11 mapping to the same SMTP answer as on the socket, and 12 and 13 present
      only in the hosted configuration;
    - single-tenant: `--tls` refused, protocol 2 unchanged.
+   *PR 2 as built:* paths under `backend/internal/` at the PR's head. Startup still refuses
+   `multi` (K PR 7), so the tests record multi mode directly, as K's do.
+   - **Gates.** On a replica, `receiving serve --tls`, `gateway add|revoke|retire|server-pin`
+     need `KYPOST_TENANCY=multi` **and** the install's multi record with the same staff org, then
+     open `tenancy.db` (`receivingMultiStore`, `app/receiving_tls.go:75`). An MX host has no
+     state, so `keygen` and `KYPOST_RECEIVING_REMOTE` need only `KYPOST_TENANCY=multi`
+     (`receivingMultiEnv`, `:62`). Set outside multi mode, `KYPOST_RECEIVING_REMOTE` is exit 1,
+     never the old path.
+   - **`receiving_gateways`** (`tenancy/tenancy.go:45`, functions in `tenancy/gateways.go`).
+     Readings: `spki_sha256` is `UNIQUE`, so a key ever enrolled (live, revoked or expired) is
+     never enrolled again under any ID; a retired ID is a `retired_at` column on its pins, not a
+     sixth table, so retiring an ID with no pins is refused. Triggers refuse a delete and any
+     update except setting `revoked_at`/`retired_at` once. Enrolment is a serializable
+     transaction, so concurrent `add`s keep at most two live pins. Gateway IDs are 1–63
+     lowercase letters, digits and hyphens; `cloudflare-continuous` is reserved too.
+   - **Keys.** `keygen <path>` writes only the Ed25519 key (PKCS #8 PEM, created exclusively,
+     `0600`) and prints its pin. No certificate file: each side wraps its key in a self-signed
+     certificate in memory (`receivingCertificate`, `:144`), because peers check only the SPKI
+     pin. The replicas' key is `SECRET_DIR/receiving-tls.key`, created exclusively on first use
+     (`receivingServerKey`, `:162`). Rotation of it is an operator file swap after pinning the
+     next key on every MX host (`keygen` writes a key in the same format).
+   - **Server** (`serveTLS`, `:314`). TLS 1.3, `RequireAnyClientCert`, and a
+     `VerifyConnection` that reads the pin row per connection, so an unknown, revoked,
+     expired or retired key and a reserved ID fail the handshake (2-second limit) and no
+     frame is read. The runtime is copied per connection with the pin's gateway ID. A pin with
+     less than 14 days left logs a warning on each connection; the staff console warning
+     (open question 3) waits for K's PR 4/5 console. The listener takes only a literal
+     private or loopback IP.
+   - **Protocol 3** (`parseReceivingRequest`, `app/receiving_serve.go:241`): `budget_ms` 1–30000,
+     unknown fields and trailing data refused, `config` only with no arguments and no body.
+     Protocol 2 is parsed as before and is the only one on the socket.
+   - **Helper** (`receivingRemote`, `app/receiving_tls.go:374`). `KYPOST_RECEIVING_REMOTE` names
+     an owner-only JSON file: `key`, 1–16 private `servers`, 1–4 `server_pins`. It sends
+     `budget_ms` = its deadline minus 5 s, so the replica stops first and a hung replica gives
+     exit 1 inside the helper's own 30 s. Reading: a replica with no free slot leaves the
+     handshake unanswered, so the helper moves to the next replica within 1 s instead of
+     waiting out its budget; that is still before sending.
+   - **`config`.** The replica answers the destination domains only, after `receiving config`'s
+     own proof, fence and restore checks (`destinations`, `app/receiving_config.go:219`). The
+     MX host's `receiving config <IP:port> <host> <cert> <key>` renders the profile locally
+     around them, with its own paths, limits and certificate, always passing
+     `{source_ip} {source_host}` to `accept`, and adding exit codes 12 and 13 to `bind`
+     (`hostedBindCodes`, `:78`). The 5-minute refresh and Maddy restart belong to the MX host's
+     start script, which is the hosted profile's (PR 5).
+   - **Not in PR 2.** Nothing raises 12 or 13 yet (PR 5). The daemon importer still lists only
+     the two fixed gateways, so mail an MX host commits waits for PR 4's pending-gateway list.
+     `tenancy.db` is not yet in the backup set (above), so pins do not survive a restore yet.
+     The upgrade test was extended to run the new commands on the single-tenant fixture
+     (refused, nothing written), and a golden file pins the single-tenant `receiving.conf`;
+     a single-container Maddy fixture and an R replica fixture were not added.
 3. **Sender blocks and evidence in PostgreSQL** (R7), behind one interface. Tests: the
    `blocks.json` fixture, today's sender-block tests and `TestEvidenceWorstCaseSize`, all run
    against both implementations. Multi mode never touches the files.

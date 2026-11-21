@@ -61,7 +61,7 @@ var tableClass = map[string]map[string]string{
 		"recovery_floors": platform, "recovery_barriers": platform, "lifecycle_records": platform,
 	},
 	"tenancy": {
-		"orgs": platform, "user_orgs": org, "subject_orgs": org,
+		"orgs": platform, "user_orgs": org, "subject_orgs": org, "receiving_gateways": platform,
 	},
 	"catalog": {"stores": platform},
 }
@@ -96,7 +96,7 @@ var fileClass = map[string]string{
 	"relay-identity.key": platform, "scheduled-send.key": platform, "push_relay_key": platform,
 	"apns_relay_key": platform, "notifications-vapid-private.pem": platform, "cloudflare-receiving.json": platform,
 	"cloudflare-receiving.host.json": platform, "bulk-backup.key": platform, "bulk-backup.repo": platform,
-	"imap-import.key": platform,
+	"imap-import.key": platform, "receiving-tls.key": platform,
 	// The databases, classified table by table above.
 	"state.db": platform, "mailbox.db": derived, "ingress.db": platform, "cloudflare.db": platform,
 	"native-authority.db": platform, File: platform,
