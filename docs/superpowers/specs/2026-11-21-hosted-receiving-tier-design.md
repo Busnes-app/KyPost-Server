@@ -285,7 +285,7 @@ Decision R1 below keeps Cloudflare for self-hosted installs and leaves it out of
 | Enrol | On a replica, `kypost-server receiving gateway add <id> <spki-sha256>` (operator CLI, like `receiving blocks`) writes a pin row, `receiving_gateways(id, spki_sha256, created_at, expires_at, revoked_at)`, keyed by `(id, spki_sha256)`. `expires_at` defaults to 90 days. A key whose pin was ever revoked or expired is never enrolled again, under any ID. A retired ID (below) takes no new pins. The command writes an audit line with the ID and the hash prefix. A staff admin route can come later (open question 2). |
 | Rotate | Generate a new key on the host, enrol it under the **same** ID (at most two live pins per ID), switch the helper, then revoke the old pin. The overlap keeps mail flowing. A pin past `expires_at` is refused like a revoked one. Revocation and expiry act on that one pin, never on the ID. A host whose pins have all expired recovers the same way: it generates a new key and that key is enrolled under its own ID. The host's mail flows through the other MX hosts meanwhile. |
 | Revoke | `receiving gateway revoke <id> <spki>` sets `revoked_at` on that pin. `receiving gateway retire <id>` revokes every pin of the ID and marks the ID retired, so it can never be enrolled again (for a decommissioned or compromised host). Every replica re-reads the table for each new connection (or caches it for at most 5 seconds), and connections last one command (at most 35 seconds), so a revocation takes effect within about 40 seconds. Neither command touches deliveries. Its staged rows wait for the fenced cleanup, and its committed mail still imports. |
-| Server keys | Each replica's listener key is created exclusively in `SECRET_DIR` (as R's keys are) and printed by `receiving gateway server-pin`. MX helpers pin the current and the next one. |
+| Server keys | All replicas share **one** listener key, created exclusively in the shared `SECRET_DIR` like R's other keys, so replicas starting together agree (`docs/RUNNING.md:282`). `receiving gateway server-pin` prints its SPKI, and MX helpers pin that current key and the next one. Rotation: create the next key and pin it on every MX host, switch the replicas to it, then remove the old pin. Past one host, the key is shared the way the other `SECRET_DIR` keys are (R's follow-up). |
 
 ### Replay, ordering, timeouts
 
@@ -355,7 +355,7 @@ That residual risk is listed below.
 
 ### Import leased per mailbox (R8)
 
-- **Table.** `import_leases(mailbox PK, holder, lease_until)` is multi-only, in `kypost_ingress`. A
+- **Table.** `import_leases(mailbox PK, holder, lease_until, waiter, waiter_until)` is multi-only, in `kypost_ingress`. A
   multi-only index on `bindings(mailbox)` lists one mailbox's pending deliveries. K3 forbids
   columns added in one mode only. An index adds no column, but it does change the schema dump, so
   it is open question 4.
@@ -366,18 +366,24 @@ That residual risk is listed below.
   the quota lock still fence everything, so a lease bug can cost throughput but not
   correctness.
 - **Bounded holds.** A worker gives a mailbox lease up after one batch: at most 100 deliveries or
-  60 seconds, whichever comes first, even when more mail is pending. It may take the lease again
-  only after another waiting worker has had a chance (it skips the mailbox for one loop). No
-  mailbox stays leased continuously.
+  60 seconds, whichever comes first, even when more mail is pending. No mailbox stays leased
+  continuously.
+- **Hand-off to a waiter.** `import_leases` also has `waiter` and `waiter_until`. A worker that
+  needs a busy mailbox writes itself as its waiter if the slot is empty or expired. The slot lasts
+  2 minutes and the worker renews it while it waits, so a dead waiter blocks nobody for long.
+  Every other worker's acquire query skips that mailbox
+  (`… AND (waiter = '' OR waiter = $me OR waiter_until < now())`), including its own previous
+  holder. So when the holder gives the lease up at the end of its batch, only the waiter can take
+  it. A second worker that needs the same mailbox waits for the waiter slot itself.
 - **Multi-mailbox deliveries.** Arrival order is kept, never skipped: a multi-mailbox delivery
   blocks the later deliveries of each of its mailboxes until it imports. To import it, the worker
-  holds leases only as a set taken in sorted mailbox ID order (`quotaFence`'s order,
+  takes leases and waiter slots as one set in sorted mailbox ID order (`quotaFence`'s order,
   `app/receiving.go:54-66`). If it needs a mailbox below one it already holds, it releases and
-  takes the set again in order. It **waits** on a busy mailbox instead of giving up. Because
-  every worker takes leases in the same order there is no deadlock, and because holds are
-  bounded the wait ends within one batch (at most 60 seconds). So a busy mailbox B delays
-  mailbox A by at most about one minute, not indefinitely. The ingress limits still apply, and
-  import lag shows in the capacity alerts (open question 6).
+  takes the set again in order. It **waits** on a busy mailbox instead of giving up.
+  - Every worker takes leases and slots in the same order, so there is no deadlock.
+  - A busy mailbox is handed to the waiter within one batch, so the wait is at most about one
+    minute for each busy mailbox the delivery is bound to. That bound is never indefinite.
+  - The ingress limits still apply, and import lag shows in the capacity alerts (open question 6).
 - **Gateways.** The import list is every gateway ID that has pending deliveries
   (`SELECT DISTINCT gateway FROM deliveries WHERE state='pending'`), not the two fixed IDs of
   `app/receiving.go:230`, and never the live rows of `receiving_gateways`. A revoked or expired
@@ -547,7 +553,9 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - two replicas importing one mailbox keep arrival order and import nothing twice;
    - a multi-mailbox delivery bound to A and B while B's mailbox is under constant load: it
      imports within one batch window of B's holder, A's later deliveries import after it in
-     arrival order, and no delivery imports twice;
+     arrival order, and no delivery imports twice. This holds even with a third worker polling
+     for B the whole time, because the waiter slot hands B to the waiting worker;
+   - a waiter killed while waiting frees its slot when the slot expires;
    - a lease holder killed mid-import;
    - a non-`active` org's delivery stays pending.
 5. **Hosted profile.** Compose for MX hosts and per-replica Rspamd, the relay domain as a
