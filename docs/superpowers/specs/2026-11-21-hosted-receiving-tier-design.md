@@ -369,8 +369,8 @@ That residual risk is listed below.
   `binding_imports(gateway, id, mailbox, imported_at, PRIMARY KEY(gateway, id, mailbox))` in
   `kypost_ingress`, records each obligation that is done. Mailboxes are therefore independent. A
   delivery bound to A (active org) and B (suspended org) imports into A at once, and only B's
-  obligation waits. No mailbox ever waits on another mailbox, and no worker holds more than one
-  lease.
+  obligation waits. No mailbox's import waits on another mailbox's import, and no worker holds
+  more than one lease (Completion has the one short row lock).
 - **Leases.** `import_leases(mailbox PK, holder, lease_until)` is multi-only, in `kypost_ingress`.
   Every replica runs import workers, not only the `daemon` replica. A worker takes a 60-second
   lease on one mailbox with outstanding obligations (`UPDATE … WHERE lease_until < now() … SKIP
@@ -386,9 +386,21 @@ That residual risk is listed below.
   Step 2 is idempotent: the mailbox's `receipts` table is keyed by `(gateway, delivery)`
   (`mailbox/store.go:127`), so a crash between steps 2 and 3 repeats nothing. The mailbox's order
   is its own arrival order, and nothing in another mailbox can block it.
-- **Completion.** The worker that inserts the last missing row archives the delivery
-  (`Acknowledge`) in the same transaction, under the delivery's claim lease
-  (`ingress/store.go:830-884`), which still fences two workers on one delivery.
+- **Completion.** Step 3 runs in one short transaction:
+  1. lock the delivery's row (`SELECT … FROM deliveries … FOR UPDATE`);
+  2. insert the `binding_imports` row;
+  3. count the bindings that still have no row;
+  4. if none remain, archive the delivery (`Acknowledge`'s tombstone write).
+
+  The row lock serialises "last obligation done". Of two workers finishing A and B at once, the
+  second one to get the lock sees the first one's row and archives. The lock covers only those few
+  statements, never the mailbox write in step 2. So a worker still holds one mailbox lease, and
+  it waits on another mailbox's import only for that commit (milliseconds), never for the
+  import itself. Quarantine and purge change a delivery's state under the same row lock, so they
+  serialise with completion. A backstop sweep on the elected `api-sweepers` worker archives any
+  pending delivery whose bindings all have rows, for example after a crash between the commit
+  and a retry. The whole-delivery claim lease of today's importer (`ingress/store.go:830-884`) is
+  not used for multi-mode obligations.
 - **Retired bindings.** A binding the ledger durably retired is not an obligation. Once every other
   obligation is done, the delivery is quarantined, holding only the bindings with no row.
   Release and discard act on those bindings. Release already resumes through the receipts
@@ -584,6 +596,9 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      delivery is archived);
    - a worker killed between the mailbox write and the `binding_imports` row: the retry adds no
      second copy;
+   - two workers finishing the last two obligations of one delivery at the same moment: it is
+     archived exactly once, and the backstop sweep archives one whose last commit was followed by
+     a crash;
    - a delivery with one retired binding is quarantined with only that binding, after the others
      have imported;
    - a lease holder killed mid-batch, and a mailbox under constant load giving its lease up after
