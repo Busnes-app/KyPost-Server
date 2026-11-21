@@ -2,7 +2,8 @@
 
 Date: 2026-11-20. Status: proposed design; build plan PR 1 is built ("PR 1 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
-receiving tier for open question 3.
+receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
+(the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
 
 KyIdentity's tenancy spec (`KyIdentity-server` `docs/superpowers/specs/2026-11-19-tenancy-design.md`,
 cited as **T**) makes every hosted customer, a person or a household, an *organisation* (org) under
@@ -366,9 +367,10 @@ account to its `org_id`. No receiving path takes an org from the message.
   PostgreSQL (K2), which rules out Maddy after R, and Cloudflare stops at 5000 addresses. M also
   recommends Maddy for the relay domain, because Cloudflare's table discloses every customer's
   masked addresses to one third party (M open question 5). This is open question 3, and it blocks
-  the last phase. The 5000 is KyPost's own constant (`cfreceiving/wire.go:32-33`); no code or doc
-  says Cloudflare imposes it (unverified against Cloudflare's limits). Raising it would not fix
-  the disclosure.
+  the last phase. The 5000 is KyPost's own constant (`cfreceiving/wire.go:32-33`). Cloudflare's
+  own documentation names no such limit; it documents 200 routing rules per domain and an
+  apex-only catch-all (checked in the receiving tier spec, "Cloudflare Email Routing's real
+  limits"). Raising it would not fix the disclosure.
 - **Size and quota.** The 25 MiB cap is unchanged (`mailmsg/limits.go:38`). The per-mailbox quota
   is reserved at bind (`app/receiving.go:458-479`). Hosted mode takes each mailbox's limit from
   the org's `mailboxBytes` quota, not from the install-wide `KYPOST_MAILBOX_QUOTA_BYTES`
@@ -376,6 +378,10 @@ account to its `org_id`. No receiving path takes an org from the message.
   (today's rule, root `AGENTS.md` "Mailbox limits").
 
 ### Recommended hosted receiving tier (open question 3)
+
+**Answered (2026-11-21): the receiving tier has its own spec,
+`docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`.** That spec is authoritative; the summary below is the
+recommendation it expands.
 
 What self-hosted uses today (`AGENTS.md:157`; `docs/guides/NATIVE_MAIL.md:22-37`): one of three
 profiles per install.
@@ -606,8 +612,8 @@ a user's data: a disabled or deleted user only loses access (`api/sync_handlers.
   - **A holder of a household with other members:** the holder's own access ends at once, and the
     org enters `deletion_scheduled` with a 7-day grace that `resume` refuses (T allows `resume`
     today). Each other member is mailed a notice and can export their own mail in that window
-    through open question 4's recommended `export_only` claim (option (a), a T change, which this
-    path makes required). The org is then `deleted`. Their mail is refused with
+    through the `export_only` claim (open question 4 option (a), approved by the owner; a T change
+    that this path needs). The org is then `deleted`. Their mail is refused with
     `550` from the click, as for any scheduled deletion (open question 11).
   - T's own grace and `resume` stay for billing-driven deletion only.
 - **In KyPost.** The org's next poll shows `deleted`, and the purge runs (Purge). `user.erased`
@@ -645,8 +651,9 @@ a user's data: a disabled or deleted user only loses access (`api/sync_handlers.
 
 Users export their own mailboxes and folders as mbox or EML zip, self-service, as today (root
 `AGENTS.md`). There is no org-wide or staff export (Admin surface). During `deletion_scheduled`,
-KyIdentity's export-only session issues no tokens (T "Views"), so a member cannot reach KyPost to
-export. Open question 4 asks how mail export works in that window.
+KyIdentity's export-only session issues no tokens today (T "Views"). **The owner approved open
+question 4 option (a):** KyIdentity issues an `export_only` claim in that window, and KyPost admits
+only the export routes under it. Every other route answers as for a non-`active` org.
 
 ### Quotas
 
@@ -696,7 +703,8 @@ Tenancy fits on top:
   whole under one lock. Per-user `config.yaml` files are read by the masked sweep every minute (M
   D8). R names moving these files into PostgreSQL as its follow-up job. Hosted launch depends on
   that follow-up. The isolation phases do not.
-- **Receiving.** R refuses Maddy on PostgreSQL (Mail, open question 3).
+- **Receiving.** R refuses Maddy on PostgreSQL (Mail, open question 3). The receiving tier spec
+  (`docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) replaces it in multi mode.
 
 ## Downstream contract, point by point (T "Tokens and suite contracts")
 
@@ -734,10 +742,10 @@ which has merged as KyIdentity #276. So PRs 1–5 and PR 6's org purge can start
 wait, each on a KyIdentity change listed under the plan:
 - PR 6's one-user purge needs `user.erased`.
 - PR 6's household path needs the `export_only` claim, and KyPost admitting only the export
-  routes under it (open question 4 (a)).
+  routes under it (open question 4 (a), approved).
 - PR 6's restore release needs the erased-subject list.
-- PR 7 needs the mailbox address field, and also the receiving tier's own spec (open question 3). Its
-  per-mailbox import leases are part of that tier. Running past one host also needs R's
+- PR 7 needs the mailbox address field, and also the receiving tier (open question 3, specified in
+  `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Its per-mailbox import leases are part of that tier. Running past one host also needs R's
   follow-up, which is a launch prerequisite (below).
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
@@ -771,7 +779,7 @@ wait, each on a KyIdentity change listed under the plan:
    including after a restore with the same key; the Delete everything tests.
 7. **Hosted mail.** Allocation from KyIdentity's mailbox address field, limited to the suite email
    domains (Mail), M's masked changes 1–7, per-org abuse limits, and the hosted receiving tier
-   (open question 3). Startup then accepts `multi`. Tests: M's hosted verification list, and a native-mail harness run
+   (open question 3; built as that spec's PRs 1–5, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Startup then accepts `multi`. Tests: M's hosted verification list, and a native-mail harness run
    (`docs/DEVELOPMENT.md`) against KyIdentity in multi mode.
 
 Launch prerequisites outside this plan: R's follow-up that moves accounts and per-user files into
@@ -780,8 +788,8 @@ PostgreSQL, a measured capacity target (open question 8), and these KyIdentity c
 - the Delete everything button, the holder's paths (straight to `deleted`, or a 7-day member
   export window that `resume` refuses, with a notice to each member), `user.erased`, and the list
   of erased subjects (Delete everything);
-- the `export_only` claim during `deletion_scheduled` (open question 4 (a)), which the household
-  path needs.
+- the `export_only` claim during `deletion_scheduled` (open question 4 (a), approved), which the
+  household path needs.
 
 ## PR 1 as built (2026-11-21)
 
@@ -855,18 +863,15 @@ the first, unworkable as written. References are to the PR's own head.
 2. **How KyPost knows the staff org.** *Recommend* `KYPOST_STAFF_ORG_ID` (K7). Also ask KyIdentity
    to refuse app roles named `*.admin` for accounts outside the staff org, so the rule holds on
    both sides.
-3. **Hosted receiving profile.** Maddy is refused on PostgreSQL after R, and Cloudflare stops at
-   5000 routes and sees every message and address. *Recommend* the receiving tier in Mail:
-   stateless MX hosts running today's Maddy, calling `receiving serve` over mutually
-   authenticated TLS instead of the local socket, answering `250` only after the PostgreSQL commit,
-   with import leased per mailbox. It needs its own spec before PR 7.
-4. **Mail export while deletion is scheduled.** T's export-only session issues no app tokens.
-   - (a) KyIdentity issues an `export_only` claim during `deletion_scheduled`, and KyPost admits
-     only the export routes.
-   - (b) No export in the window: billing resumes the org first.
-   - *Recommend (a)*, because no lock-in is a product promise. It needs a T change. Until it lands,
-     (b). Delete everything's household path needs (a): without it, the other members have no
-     export window.
+3. **Hosted receiving profile.** *Answered (2026-11-21):* the receiving tier gets its own spec,
+   `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`. It covers stateless MX hosts running
+   today's Maddy, `receiving serve` over mutually authenticated TLS instead of the local socket,
+   `250` only after the PostgreSQL commit, and import leased per mailbox.
+4. **Mail export while deletion is scheduled.** *Answered (2026-11-21): option (a) is approved.*
+   KyIdentity issues an `export_only` claim during `deletion_scheduled`, and KyPost admits only the
+   export routes under it. It needs a T change. Until that lands, there is no export in the window
+   (the former option (b)). Delete everything's household path depends on it (Delete
+   everything).
 5. **When a stale entitlement cache fails closed.** *Recommend* 15 minutes for sign-in and sending
    (the token lifetime). Receiving keeps answering from the last known status, which is the
    Lifecycle table's rule, so a poller outage changes no SMTP answer. That is safe:
