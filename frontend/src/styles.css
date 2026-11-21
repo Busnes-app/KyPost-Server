@@ -5572,8 +5572,11 @@ button.conversation-card { cursor: pointer; }
 .inbox-unit-head .inbox-time { text-align: right; color: inherit; }
 
 .inbox-refresh { color: var(--ink); }
-.inbox-table th.inbox-bulk-head { padding-block: 0; background: var(--accent-soft); }
-thead:has(.inbox-bulk-head) th { background: var(--accent-soft); }
+.inbox-table th.inbox-bulk-head { padding-block: 0; }
+/* Layer --accent-soft over opaque --bg so sticky header cells stay opaque when
+   a theme (e.g. Nord Dark) defines --accent-soft with alpha; otherwise scrolled
+   rows bleed through the bulk bar. */
+thead:has(.inbox-bulk-head) th { background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg); }
 .inbox-bulk-bar {
   display: flex;
   align-items: center;
