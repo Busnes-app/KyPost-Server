@@ -366,7 +366,7 @@ That residual risk is listed below.
 
 - **Obligations per mailbox.** In multi mode a delivery is one import **obligation per bound
   mailbox**, not one all-or-nothing import. A multi-only table,
-  `binding_imports(gateway, id, mailbox, imported_at, PRIMARY KEY(gateway, id, mailbox))` in
+  `binding_imports(gateway, id, mailbox, outcome, at, PRIMARY KEY(gateway, id, mailbox))`, with `outcome` either `imported` or `retired`, in
   `kypost_ingress`, records each obligation that is done. Mailboxes are therefore independent. A
   delivery bound to A (active org) and B (suspended org) imports into A at once, and only B's
   obligation waits. No mailbox's import waits on another mailbox's import, and no worker holds
@@ -390,23 +390,27 @@ That residual risk is listed below.
   1. lock the delivery's row (`SELECT … FROM deliveries … FOR UPDATE`);
   2. insert the `binding_imports` row;
   3. count the bindings that still have no row;
-  4. if none remain, archive the delivery (`Acknowledge`'s tombstone write).
+  4. if none remain: archive the delivery (`Acknowledge`'s tombstone write) when every row is
+     `imported`, or quarantine it, keeping only its `retired` bindings, when any row is `retired`.
 
   The row lock serialises "last obligation done". Of two workers finishing A and B at once, the
   second one to get the lock sees the first one's row and archives. The lock covers only those few
   statements, never the mailbox write in step 2. So a worker still holds one mailbox lease, and
   it waits on another mailbox's import only for that commit (milliseconds), never for the
   import itself. Quarantine and purge change a delivery's state under the same row lock, so they
-  serialise with completion. A backstop sweep on the elected `api-sweepers` worker archives any
-  pending delivery whose bindings all have rows, for example after a crash between the commit
+  serialise with completion. A backstop sweep on the elected `api-sweepers` worker runs step 4 for
+  any pending delivery whose bindings all have rows, for example after a crash between the commit
   and a retry. The whole-delivery claim lease of today's importer (`ingress/store.go:830-884`) is
   not used for multi-mode obligations.
-- **Retired bindings.** A binding the ledger durably retired is not an obligation. Once every other
-  obligation is done, the delivery is quarantined, holding only the bindings with no row.
-  Release and discard act on those bindings. Release already resumes through the receipts
+- **Retired bindings.** When the worker for a mailbox finds that its binding was durably retired
+  (today's `retiredBinding` test, `app/receiving_cfcontinuous.go:788`), step 3 records it with
+  outcome `retired` instead of importing. That binding's mailbox queue then moves on. When the
+  last row lands, step 4 quarantines the delivery with only its `retired` bindings, and it appears
+  in staff quarantine as today. Release and discard act on those bindings. Release already resumes through the receipts
   (`ingress/import.go:30-33`), so a mailbox that already has the message is a no-op.
-- **Purge.** K's purge step 2 deletes the org's bindings and their `binding_imports` rows. A
-  delivery whose remaining bindings are all done is archived.
+- **Purge.** K's purge step 2 deletes the org's bindings and their `binding_imports` rows under
+  the delivery's row lock, then runs step 4 on what remains: archived if every remaining row is
+  `imported`, quarantined if any is `retired`, still pending if some have no row yet.
 - **Held bytes.** A delivery's bytes stay in the ingress store until every obligation is done or
   purged. A suspended org's mail therefore holds ingress capacity. That mail is bounded, because
   `bind` refuses new mail to a suspended org (exit 12). The capacity alerts track it (open
@@ -599,8 +603,11 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - two workers finishing the last two obligations of one delivery at the same moment: it is
      archived exactly once, and the backstop sweep archives one whose last commit was followed by
      a crash;
-   - a delivery with one retired binding is quarantined with only that binding, after the others
-     have imported;
+   - a delivery bound to an active and a retired mailbox: the active one imports, the retired
+     binding is recorded `retired`, and the delivery is quarantined with only that binding and
+     listed in staff quarantine (not left pending);
+   - a purge that leaves only `retired` rows quarantines, and one that leaves only `imported`
+     rows archives;
    - a lease holder killed mid-batch, and a mailbox under constant load giving its lease up after
      each batch;
    - single-tenant: the daemon importer and all-or-nothing import are unchanged.
