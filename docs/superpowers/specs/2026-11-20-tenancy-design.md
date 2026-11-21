@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PR 1 is built ("PR 1 as built"), the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1 and 2 are built ("PR 1 as built", "PR 2 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -843,6 +843,109 @@ the first, unworkable as written. References are to the PR's own head.
   check would otherwise record the newest GitHub release in `meta` on whichever start first
   reaches GitHub, which is a restart effect, not tenancy. A fixture from an older binary is not
   built (unverified against a released image).
+
+## PR 2 as built (2026-11-21)
+
+PR 2 follows the plan with these readings, each the safer one where K was ambiguous. Paths are
+under `backend/internal/` at the PR's head; "KI" here is KyIdentity `origin/master` at `39d7d30`.
+Every multi-mode path is reached from tests, because startup still refuses `multi`: the tests set
+the server's tenancy store and staff org, and the users store's `StaffOrg`, directly
+(`api/tenancy_binding_test.go`).
+
+- **Where `org_id` is read.**
+  - **ID tokens.** `SSOTokenClaims` gains `OrgID` and `ExportOnly` as raw JSON, decoded only by
+    multi-mode code (`TenantClaims`, `sso/sso.go:325-338`). A typed string field would make a
+    single-tenant install refuse every token whose provider sends a non-string `org_id`, and
+    single mode must not change.
+  - **Sync events.** The `org_id` is read from the signed body in multi mode only
+    (`bindDirectoryOrg`, `api/tenancy_binding.go:91`). KyIdentity sends it at the top level of
+    the SCIM body (KI `internal/sync/sync.go:130,475`). `sso.DirectoryUser` does **not** gain
+    the field, as K said it would. The directory state stores the parsed struct
+    (`sso/directory.go:227`), so a field there would change what a single install stores when
+    an event carries `org_id`. The org lives in `subject_orgs` instead.
+  - **Logout tokens.** The `org_id` is read from the verified token's payload (`sso.LogoutOrg`),
+    because ky-primitives `oidcverify.LogoutClaims` does not return it.
+- **Valid means canonical.** A token, event or logout `org_id` must match PR 1's lowercase UUID
+  form (`config.ValidOrgID`), so a case or format variant is refused like a missing claim.
+- **Sign-in.** After the code exchange, a missing, malformed or export-only token gets the answer
+  a failed exchange gets today (`api/sso_handlers.go:525`), so the refusal covers step-up too.
+  `resolveSSOUser`, shared by the browser and device sign-on, then reads the token's org before
+  it looks the account up (`:656`). It refuses a bad org, or an account bound to another org,
+  with the wrong-issuer answer (`ErrNativeAccountConflict`), whether or not the account exists.
+  The refusal also writes a security log line that names no org, subject or address. For device
+  sign-on the `jti` is spent first, as it is for every refusal after the token is verified.
+- **No account from a token.** In multi mode `resolveSSOUser` never auto-provisions, even with
+  `AutoProvision` set (`:704`), because `OrgID` is written only from a signed event. K6's `404`
+  for the setting itself is PR 4's.
+- **SSO link and unlink answer `404` in multi mode now** (`api/sso_handlers.go:307,621,775`), not
+  in PR 4 with the other K6 refusals. An org-bound account's subject is write-once, and relinking
+  a staff account to another org's subject would strand that subject's events.
+- **`export_only` is refused** at sign-in and device sign-on. K assigns the export-only route gate
+  to PR 6's household path (Phased build plan). Admitting the claim before that gate exists would
+  give an export-only token a full session.
+- **Logout** (`logoutOrgStatus`, `api/sso_logout.go:181`). Before any session is touched, a multi
+  logout token needs a valid `org_id` **and** a `sub`. A `sid`-only token cannot be checked
+  against an account's org, so it is refused. KyIdentity always sends `sub` (KI
+  `internal/oauth/backchannel.go:33`). The `sub`'s account must be bound to the token's org. A
+  `sub` with no account under this issuer is admitted, as today, because no session can be live
+  for it.
+- **Three records, one check.** `checkAccountOrg` (`api/tenancy_binding.go:45`) requires
+  `users.json` `OrgID`, `subject_orgs` and `user_orgs` to name the same org. It writes a missing
+  `user_orgs` row only after the first two agree. It runs at sign-in, device sign-on, logout and
+  every directory event for an existing account. Any disagreement is refused and changes nothing,
+  as K says, even for a deactivating event. A disagreement means the records are damaged, and
+  KyIdentity alone cannot repair them.
+- **Write order and repair.**
+  1. A verified event for an existing account is compared with the account's `OrgID` first, so an
+     event for another org never writes a binding.
+  2. The event then binds `subject_orgs` (`tenancy.BindSubject`) before the revision fence. So an
+     event the fence then refuses as stale still binds its subject. That is harmless, because
+     KyIdentity's `org_id` is immutable.
+  3. Provisioning writes the account with `OrgID` taken from `subject_orgs` (in
+     `provisionDirectoryUser`, and through `AllocateNativeAccount`'s new `org` argument).
+  4. `user_orgs` is written last. A row a crash left unwritten is written by `checkAccountOrg` on
+     the next event or sign-in. That is K's "repaired on the retry".
+
+  **The reconciliation sweep is not built.** It has no reader before PR 5's per-org aggregates
+  and PR 6's purge snapshot, which runs it itself. A sweep that deletes rows must list `user_orgs`
+  before it lists accounts, or it races a new account's step 4.
+- **Plain `INSERT`.** The binds use `INSERT … ON CONFLICT DO NOTHING`, then compare the stored org.
+  That statement never replaces a row, unlike `INSERT OR REPLACE`, so PR 1's `BEFORE UPDATE`
+  triggers still guard every row. Another org is `tenancy.ErrOrgMismatch`. A directory event gets
+  `422`, not `409`, which the sender counts as success on `user.created`.
+- **The users store holds the account rules itself** (`orgInvariants`, `users/users.go:570`),
+  because many writers bypass the generic mutation path. Every `users.json` write in multi mode
+  compares the new file with the one on disk (`writeFileUnlocked`, `:995`):
+  - `OrgID` never changes (`ErrOrgIDWriteOnce`).
+  - An org-bound account keeps its issuer and subject.
+  - No write makes an administrator outside the staff org (`ErrCustomerAdmin`). That covers
+    `SetRole` from the admin routes, a local `Create`, and the restore repair that copies
+    KyIdentity roles (`sso/native_recovery_repair.go:55`), which now fails closed.
+
+  A retried native publication naming another org is `ErrNativeAccountConflict`. Single mode
+  sets no `StaffOrg`, so it reads and checks nothing more.
+- **K's crash test.** Allocation reserves the mailbox ID in the ledger before `users.json` is
+  written. A retry after a crash between the two publishes that ID, never a second one
+  (`TestNativeAllocationRepairsAcknowledgedUnpublishedReservation`, and with an org,
+  `TestNativeAllocationKeepsItsIDAndOrgAcrossACrash`).
+- **K7 on directory events is applied by rewriting the event before the fence**
+  (`api/tenancy_binding.go:125-132`):
+  - A customer event naming `kypost.admin` is stored and applied with `roles: []`. Native
+    allocation, HR and address code read the stored roles, so they all see a member and allocate
+    a member's mailbox.
+  - A staff-org event without the role is applied as `active: false`. An unknown subject then gets
+    no account. An existing staff account goes through `deactivateAndRevoke`, so the
+    last-administrator refusal answers `422`. Regaining the role reactivates the account.
+- **K7 at sign-in.** In multi mode an SSO session's administrator ceiling (`ssoAppAdmin`,
+  `api/tenancy_binding.go:35`) needs the token's own `kypost.admin` role and the staff org. There
+  is no group fallback.
+- **Not covered, by phase.**
+  - The restore release reads KyIdentity profiles' roles (`sso/native_release.go:204`). The
+    multi-mode restore release is PR 6's.
+  - Peer bodies are PR 3's.
+  - HR and the remaining K6 refusals are PR 4's.
+  - KyIdentity's `group.*` bodies carry no `org_id` (KI `internal/sync/sync.go:455`). KyPost's
+    webhook refuses every type except `user.*` (`sso/directory.go:104`).
 
 ## Residual risks
 

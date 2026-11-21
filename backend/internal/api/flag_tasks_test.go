@@ -324,7 +324,7 @@ func TestBulkFlagTaskSyncSharesDeadline(t *testing.T) {
 
 func TestTaskStateUnavailableMailboxRemainsRetryable(t *testing.T) {
 	f := newKyCalFixture(t)
-	u, err := f.srv.users.PublishPreparedSSOUser(t.Context(), "native-task-user", "native-task-user", users.RoleUser, kycalIssuer, "native-task-sub", "native-task-user", "native@example.test", func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
+	u, err := f.srv.users.PublishPreparedSSOUser(t.Context(), "native-task-user", "native-task-user", users.RoleUser, kycalIssuer, "native-task-sub", "native-task-user", "native@example.test", "", func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
 	if err != nil {
 		t.Fatal(err)
 	}

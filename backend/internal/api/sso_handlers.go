@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -300,6 +302,12 @@ func (s *Server) handleSSOLogin(w http.ResponseWriter, r *http.Request) {
 // cookie jar and could write any self-consistent value into it, so a fact the
 // caller cannot write at all is the only thing worth checking.
 func (s *Server) handleSSOLinkStart(w http.ResponseWriter, r *http.Request) {
+	// K6 turns SSO link and unlink off in multi mode; refused here because an org-bound
+	// account's subject is write-once (tenancy design "PR 2 as built").
+	if s.multiTenant() {
+		http.NotFound(w, r)
+		return
+	}
 	ac, ok := authFromContext(r)
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
@@ -513,6 +521,13 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		s.ssoFailure(w, "exchange", err)
 		return
 	}
+	org := ""
+	if s.multiTenant() {
+		if org, err = tokenOrg(claims); err != nil {
+			s.ssoFailure(w, "exchange", err)
+			return
+		}
+	}
 
 	// The directory's last word on this subject outranks the token: a
 	// subject it disabled cannot sign in, be linked, nor be provisioned
@@ -584,7 +599,7 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: claims.AppAdmin(settings.AdminGroup), SSOKySignOn: claims.KySignOn(), SSOEpoch: epoch}); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: s.ssoAppAdmin(claims, settings, org), SSOKySignOn: claims.KySignOn(), SSOEpoch: epoch}); err != nil {
 		http.Error(w, "failed to initialize session", http.StatusInternalServerError)
 		return
 	}
@@ -601,6 +616,12 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 // change ends a link that should never have been made; LinkSSO clears that
 // revocation, because this step-up is exactly the proof it was waiting for.
 func (s *Server) linkSSOIdentity(w http.ResponseWriter, r *http.Request, userID string, claims *sso.SSOTokenClaims) {
+	// K6 turns SSO link and unlink off in multi mode; refused here because an org-bound
+	// account's subject is write-once (tenancy design "PR 2 as built").
+	if s.multiTenant() {
+		http.NotFound(w, r)
+		return
+	}
 	// One subject, one account. Without this an identity already linked
 	// elsewhere could be attached a second time, and GetBySSOSub would then
 	// resolve a login to whichever of the two happened to be indexed.
@@ -629,7 +650,24 @@ func (s *Server) linkSSOIdentity(w http.ResponseWriter, r *http.Request, userID 
 // sign the name the attacker chose. Linking an existing account now requires
 // an authenticated session on that account — see linkSSOIdentity.
 func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings, claims *sso.SSOTokenClaims) (users.User, error) {
+	// K "Identity binding": the token's org must be the account's, as a wrong issuer
+	// must be its issuer, and the answer is the same.
+	org, orgErr := "", error(nil)
+	if s.multiTenant() {
+		org, orgErr = tokenOrg(claims)
+	}
 	user, err := s.users.GetBySSOSubIssuer(claims.Issuer, claims.Sub)
+	if orgErr == nil && err == nil && s.multiTenant() {
+		orgErr = s.checkAccountOrg(context.Background(), user, org)
+	}
+	if orgErr != nil && !errors.Is(orgErr, tenancy.ErrOrgMismatch) && !errors.Is(orgErr, errTokenOrg) {
+		http.Error(w, "failed to look up SSO identity", http.StatusInternalServerError)
+		return users.User{}, orgErr
+	}
+	if orgErr != nil {
+		s.orgRefused("sign_in", user.ID)
+		err = users.ErrNativeAccountConflict
+	}
 	if err == nil {
 		if err := s.requireAccountRestoreReleased(user); err != nil {
 			http.Error(w, "Native account recovery is held; contact your administrator. Preserve the restore hold and storage.", http.StatusForbidden)
@@ -662,7 +700,8 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 		http.Error(w, "Mailbox provisioning is pending; KyIdentity must assign a verified domain address before sign-in.", http.StatusForbidden)
 		return users.User{}, sso.ErrNativeProvisioning
 	}
-	if !settings.AutoProvision {
+	// Multi mode writes an account only from a signed directory event, never from a token.
+	if !settings.AutoProvision || s.multiTenant() {
 		http.Error(w, "Access denied: your SSO identity is not linked to an existing KyPost account. "+
 			"Sign in locally and link it from Settings.", http.StatusForbidden)
 		return users.User{}, errors.New("not provisioned")
@@ -674,12 +713,12 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 	}
 
 	username := ssoUsername(claims.PreferredUsername, claims.Sub)
-	created, errCreate := s.users.CreateSSOUserIssuer(claims.Issuer, username, role, claims.Sub, claims.PreferredUsername, claims.Email)
+	created, errCreate := s.users.CreateSSOUserIssuer(claims.Issuer, username, role, claims.Sub, claims.PreferredUsername, claims.Email, "")
 	if errors.Is(errCreate, users.ErrUsernameTaken) {
 		// A local account already owns that name and this identity is not it.
 		// Provision under a distinct name rather than touching theirs.
 		created, errCreate = s.users.CreateSSOUserIssuer(claims.Issuer,
-			ssoUsernameWithSuffix(username, claims.Sub), role, claims.Sub, claims.PreferredUsername, claims.Email)
+			ssoUsernameWithSuffix(username, claims.Sub), role, claims.Sub, claims.PreferredUsername, claims.Email, "")
 	}
 	if errCreate != nil {
 		http.Error(w, "failed to auto-provision user: "+errCreate.Error(), http.StatusInternalServerError)
@@ -731,6 +770,12 @@ func (s *Server) ssoFailure(w http.ResponseWriter, stage string, err error) {
 
 // handleSSOUnlink removes the linked SSO identity from the current user's profile.
 func (s *Server) handleSSOUnlink(w http.ResponseWriter, r *http.Request) {
+	// K6 turns SSO link and unlink off in multi mode; refused here because an org-bound
+	// account's subject is write-once (tenancy design "PR 2 as built").
+	if s.multiTenant() {
+		http.NotFound(w, r)
+		return
+	}
 	auth, ok, err := s.currentUser(r)
 	if err != nil {
 		writeUnavailable(w)

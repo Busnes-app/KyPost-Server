@@ -68,7 +68,7 @@ func TestNativeOutboundAliasFromIsFencedByGeneration(t *testing.T) {
 			switch mode {
 			case "reassigned":
 				nativeDesired(t, life, "two", "two@example.test", 1, true)
-				two, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits)
+				two, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits, "")
 				if err != nil {
 					t.Fatal(err)
 				}

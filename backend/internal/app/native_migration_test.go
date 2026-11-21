@@ -16,7 +16,7 @@ import (
 func TestNativeAdminDoesNotReceiveLegacyMigration(t *testing.T) {
 	logger, accounts, configDir, stateDir, oldAdmin := legacyMigrationEnv(t)
 	owner := mailbox.Owner{Issuer: "https://identity.example.test", Subject: "native-admin", Mailbox: "native-admin-id"}
-	u, err := accounts.PublishPreparedSSOUser(context.Background(), owner.Mailbox, "native-admin", users.RoleAdmin, owner.Issuer, owner.Subject, "native-admin", "admin@example.test", func() (string, error) {
+	u, err := accounts.PublishPreparedSSOUser(context.Background(), owner.Mailbox, "native-admin", users.RoleAdmin, owner.Issuer, owner.Subject, "native-admin", "admin@example.test", "", func() (string, error) {
 		return mailbox.PrepareAccount(stateDir, owner, "admin@example.test", mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100})
 	})
 	if err != nil {

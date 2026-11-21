@@ -38,7 +38,7 @@ func TestNativePollerStateAdmissionBeforeCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}
-	u, err := accounts.PublishPreparedSSOUser(context.Background(), "native-one", "native-one", users.RoleUser, issuer, "one", "", "", func() (string, error) {
+	u, err := accounts.PublishPreparedSSOUser(context.Background(), "native-one", "native-one", users.RoleUser, issuer, "one", "", "", "", func() (string, error) {
 		a, err := life.ReconcileNativeMailbox(root, issuer, "one", "native-one", "example.test", limits)
 		return a.Source, err
 	})

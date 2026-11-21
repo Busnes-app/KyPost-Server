@@ -69,7 +69,7 @@ func TestHRAddressReservationBeforeIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	nativeDesired(t, life, "hr-one", first, 1, true)
-	u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "hr-one", domains, accounts, nativeLimits)
+	u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "hr-one", domains, accounts, nativeLimits, "")
 	if err != nil || u.ID != a.Owner.Mailbox || u.NativeMailboxSource == "" {
 		t.Fatal("activation did not consume reservation", u, err)
 	}

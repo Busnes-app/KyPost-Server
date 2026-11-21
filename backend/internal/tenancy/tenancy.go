@@ -200,3 +200,52 @@ func Empty(accounts int, configDir, stateDir string) (bool, error) {
 	}
 	return true, nil
 }
+
+// ErrOrgMismatch refuses a binding that already names another org. It names no value.
+var ErrOrgMismatch = errors.New("the account is bound to another org")
+
+// BindSubject records a KyIdentity subject's org once (K "Identity binding", step 1).
+// A repeat with the same org is a no-op; another org is ErrOrgMismatch and changes nothing.
+func BindSubject(ctx context.Context, db *sql.DB, issuer, subject, org string) error {
+	return bind(ctx, db, org, `INSERT INTO subject_orgs(issuer, subject, org_id) VALUES(?, ?, ?) ON CONFLICT DO NOTHING`,
+		`SELECT org_id FROM subject_orgs WHERE issuer = ? AND subject = ?`, issuer, subject)
+}
+
+// BindUser records an account's org once (step 3), as BindSubject does.
+func BindUser(ctx context.Context, db *sql.DB, userID, org string) error {
+	return bind(ctx, db, org, `INSERT INTO user_orgs(user_id, org_id) VALUES(?, ?) ON CONFLICT DO NOTHING`,
+		`SELECT org_id FROM user_orgs WHERE user_id = ?`, userID)
+}
+
+// ON CONFLICT DO NOTHING never replaces a row, unlike SQLite's INSERT OR REPLACE, so an
+// existing binding stays and the comparison below decides.
+func bind(ctx context.Context, db *sql.DB, org, insert, query string, key ...any) error {
+	if db == nil || !config.ValidOrgID(org) {
+		return ErrOrgMismatch
+	}
+	if _, err := db.ExecContext(ctx, insert, append(key, org)...); err != nil {
+		return err
+	}
+	got, err := lookup(ctx, db, query, key...)
+	if err == nil && got != org {
+		err = ErrOrgMismatch
+	}
+	return err
+}
+
+// SubjectOrg returns the subject's recorded org, "" when it has none.
+func SubjectOrg(ctx context.Context, db *sql.DB, issuer, subject string) (string, error) {
+	return lookup(ctx, db, `SELECT org_id FROM subject_orgs WHERE issuer = ? AND subject = ?`, issuer, subject)
+}
+
+func lookup(ctx context.Context, db *sql.DB, query string, key ...any) (string, error) {
+	if db == nil {
+		return "", ErrOrgMismatch
+	}
+	var org string
+	err := db.QueryRowContext(ctx, query, key...).Scan(&org)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return org, err
+}

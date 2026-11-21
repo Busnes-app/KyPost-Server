@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // ssoLoginLifetime is the longest a login can take between leaving for the
@@ -64,6 +69,16 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		http.Error(w, "invalid logout token", http.StatusBadRequest)
 		return
+	}
+	if s.multiTenant() {
+		switch s.logoutOrgStatus(r.Context(), token, settings.IssuerURL, claims.Subject) {
+		case http.StatusBadRequest:
+			http.Error(w, "invalid logout token", http.StatusBadRequest)
+			return
+		case http.StatusServiceUnavailable:
+			writeUnavailable(w)
+			return
+		}
 	}
 
 	retain := time.Now().Add(ssoLoginLifetime)
@@ -158,4 +173,29 @@ func (s *Server) revokeSessionsCoveredBy(event sso.LogoutEvent) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// logoutOrgStatus is the multi-mode org check on a verified logout token, before any
+// session is touched: it needs a valid org_id and a sub, so a sid alone never reaches
+// another org's session, and the sub's account must be bound to that org. 0 admits.
+func (s *Server) logoutOrgStatus(ctx context.Context, token, issuer, subject string) int {
+	org := sso.LogoutOrg(token)
+	if !config.ValidOrgID(org) || subject == "" {
+		return http.StatusBadRequest
+	}
+	u, err := s.users.GetBySSOSubIssuer(issuer, subject)
+	if errors.Is(err, users.ErrNotFound) || errors.Is(err, users.ErrNativeAccountConflict) {
+		return 0 // no account under this issuer: no session to end, as today
+	}
+	if err == nil {
+		err = s.checkAccountOrg(ctx, u, org)
+	}
+	switch {
+	case errors.Is(err, tenancy.ErrOrgMismatch):
+		s.orgRefused("backchannel_logout", u.ID)
+		return http.StatusBadRequest
+	case err != nil:
+		return http.StatusServiceUnavailable
+	}
+	return 0
 }

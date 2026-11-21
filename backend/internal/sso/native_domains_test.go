@@ -99,7 +99,7 @@ func TestNativeTwoDomainsAllocateLapseAndRetire(t *testing.T) {
 	}
 	allocate := func(sub, address string) (users.User, error) {
 		nativeDesired(t, life, sub, address, 1, true)
-		return life.AllocateNativeAccount(ctx, root, nativeIssuer, sub, domains, accounts, nativeLimits)
+		return life.AllocateNativeAccount(ctx, root, nativeIssuer, sub, domains, accounts, nativeLimits, "")
 	}
 	if _, err = allocate("one", "one@example.test"); err != nil {
 		t.Fatal(err)
@@ -311,7 +311,7 @@ func TestNativeDisableOnlyRefusesReactivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	nativeDesired(t, life, "one", "one@example.test", 1, true)
-	u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "one", domains, accounts, nativeLimits)
+	u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, "one", domains, accounts, nativeLimits, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestNativeOutboundFromMustBeARelayDomain(t *testing.T) {
 	answerEveryDomain(sender.Domains, nil)
 	life := NewLifecycleStore(sender.ConfigDir)
 	nativeDesired(t, life, "two", "two@second.test", 1, true)
-	two, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits)
+	two, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func TestNativeRetiredDomainResumesForItsOwnerAfterReadd(t *testing.T) {
 	answerEveryDomain(sender.Domains, lapsed)
 	life := NewLifecycleStore(sender.ConfigDir)
 	nativeDesired(t, life, "two", "two@second.test", 1, true)
-	two, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits)
+	two, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,14 +465,14 @@ func TestNativeRetiredDomainResumesForItsOwnerAfterReadd(t *testing.T) {
 	}
 	// Until the new challenge proves, nothing allocates or sends on it.
 	lapsed["second.test"] = true
-	if _, err = life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits); !errors.Is(err, ErrNativeDomain) {
+	if _, err = life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits, ""); !errors.Is(err, ErrNativeDomain) {
 		t.Fatal("unproven re-added domain allocated", err)
 	}
 	if err = queue(); err == nil {
 		t.Fatal("unproven re-added domain sent")
 	}
 	lapsed["second.test"] = false
-	again, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits)
+	again, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits, "")
 	if err != nil || again.ID != two.ID {
 		t.Fatal("original owner not resumed", again.ID, two.ID, err)
 	}

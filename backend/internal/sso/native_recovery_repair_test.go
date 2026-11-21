@@ -32,7 +32,7 @@ func publishedRecoveryFixture(t *testing.T, active bool) (*LifecycleStore, strin
 		t.Fatal(err)
 	}
 	nativeDesired(t, life, "one", "one@example.test", 1, true)
-	u, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits)
+	u, err := life.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits, "")
 	if err != nil {
 		t.Fatal(err)
 	}
