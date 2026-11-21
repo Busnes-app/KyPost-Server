@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -55,7 +56,7 @@ func (s *Server) sameOrgPeople(ctx context.Context, u users.User, issuer string,
 
 // addressOneOrg admits moving address to mailboxID (a reassign, or a quarantine release to
 // the current owner) only when every mailbox that has held it, and the target, belong to
-// accounts of one org. A ledger read failure refuses.
+// accounts of one org. A ledger or users-store read failure is an error.
 func (s *Server) addressOneOrg(address, mailboxID string) (bool, error) {
 	if !s.multiTenant() {
 		return true, nil
@@ -72,14 +73,22 @@ func (s *Server) addressOneOrg(address, mailboxID string) (bool, error) {
 	for _, m := range mailboxes {
 		owner[m.ID] = m.User
 	}
-	target, err := s.users.Get(owner[mailboxID])
-	if err != nil {
-		return false, nil
+	// An unknown account refuses; any other read failure is an error, not a refusal.
+	account := func(mailbox string) (users.User, bool, error) {
+		u, err := s.users.Get(owner[mailbox])
+		if errors.Is(err, users.ErrNotFound) {
+			return u, false, nil
+		}
+		return u, err == nil, err
+	}
+	target, ok, err := account(mailboxID)
+	if !ok {
+		return false, err
 	}
 	for _, id := range held {
-		u, err := s.users.Get(owner[id])
-		if err != nil || !s.orgAdmit(AuthContext{OrgID: target.OrgID}, u) {
-			return false, nil
+		u, ok, err := account(id)
+		if !ok || !s.orgAdmit(AuthContext{OrgID: target.OrgID}, u) {
+			return false, err
 		}
 	}
 	return len(held) > 0, nil

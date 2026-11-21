@@ -956,14 +956,14 @@ build the multi paths as PR 2's do (`makeMultiTenant`).
 
 - **`AuthContext.OrgID`** (`api/server_auth_session.go:125`) is copied from the re-read user
   record by the four builders: the session (`currentUser`, `:1325`), the paired-device arm of
-  `resolveMailAuthContext` (`deviceOrg`, `api/tenancy_gate.go:110`), CardDAV Basic
+  `resolveMailAuthContext` (`deviceOrg`, `api/tenancy_gate.go:119`), CardDAV Basic
   (`api/dav_auth.go:258`) and MCP agent tokens (`api/mcp.go:181`). In multi mode an account
   without an org is refused as each path refuses a dead credential.
   - The refusal is also made in `deviceAuthSnapshot` (`api/device_auth.go:161`). The
     `withDeviceAuth` handlers never build an `AuthContext`, so a check only in the builders
     would have missed them.
   - The org status check K puts in the same builders is PR 5's.
-- **`orgAdmit(ac, target users.User)`** (`api/tenancy_gate.go:25`) compares the caller's org
+- **`orgAdmit(ac, target users.User)`** (`api/tenancy_gate.go:26`) compares the caller's org
   with the target account's `users.json` `OrgID`. It reads no `tenancy.db` row, because PR 2
   keeps the three records in step. In single mode it admits everything and compares nothing.
   Every hop's refusal is the answer the route gives a missing target.
@@ -975,12 +975,12 @@ build the multi paths as PR 2's do (`makeMultiTenant`).
   - **People search and the KyDrive recipient check:** `suitedir.Person` has no `org_id`
     (ky-primitives at the `backend/go.mod` pin, `suitedir/client.go:85-89`), so KyPost cannot
     "drop any answer whose `org_id` is not the caller's" from the answer itself.
-    `sameOrgPeople` (`api/tenancy_gate.go:46`) keeps only people whose subject this install
+    `sameOrgPeople` (`api/tenancy_gate.go:47`) keeps only people whose subject this install
     has bound to the caller's org in `subject_orgs`. An unknown subject is dropped, so a
     member KyPost has not been told about yet is not suggested.
   - **KyMessages address resolution** is not filtered. It is unreachable: see the peer list.
   - **Address reassign and quarantine release to the current owner:** `addressOneOrg`
-    (`api/tenancy_gate.go:59`) requires every mailbox in the address's history, and the target,
+    (`api/tenancy_gate.go:60`) requires every mailbox in the address's history, and the target,
     to belong to accounts of one org. The history comes from `NativeAddressMailboxes`
     (`sso/native_address.go:86`).
     - A reassign refused this way answers like an unknown mailbox (`404`,
@@ -990,14 +990,15 @@ build the multi paths as PR 2's do (`makeMultiTenant`).
     - The check runs before the ledger lock. That is safe because every reassign makes the
       same check, so the history cannot gain another org in between.
     - Both routes are administrator-only. Their tests are function-level
-      (`TestTenancyAddressMovesStayInOneOrg`); the handler path in multi mode is unproven until
+      (`TestTenancyAddressMovesStayInOneOrg`, which also proves that an unreadable users store is
+    an error, not an org refusal); the handler path in multi mode is unproven until
       PR 4 can make a staff administrator with a step-up.
   - **Staff on an org-bound admin route** is PR 4's.
 - **Peer bodies, in step with each peer's own spec:**
   - **KyCalendar** (its D10, and its contract table at spec lines 468-470). KyPost adds
     `org_id` to `kypost.itip.inbound` (`processor/kycalendar_forward.go:111`),
     `kypost.itip.respond`, `kypost.ooo.set` and `kypost.task.flag` (`withOrg`,
-    `api/tenancy_gate.go:91`). `kycalendar.itip.send` and `kycalendar.task.state` must carry
+    `api/tenancy_gate.go:100`). `kycalendar.itip.send` and `kycalendar.task.state` must carry
     the account's `org_id` (`peerOrgAdmit`, `api/kycalendar_handlers.go:135`,
     `api/flag_tasks.go:247`). KyCalendar at `08bd045` sends none, so a multi install refuses
     both with `404 no_user` until it does.
@@ -1026,13 +1027,16 @@ build the multi paths as PR 2's do (`makeMultiTenant`).
   - **What admits an ID:** an `AuthContext`'s `UserID`, a user read by such an ID, a device
     credential's owner, or a parameter. A function that passes its parameter on becomes an
     accessor itself, so the check moves to its callers.
-  - **What fails:** any other ID in a function that calls no org gate and is not in
-    `orgAdmitExempt`.
+  - **What fails:** any other ID, unless that ID, the variable it is a field of, or the
+    call's result is passed to an org gate in the same function, or the function is in
+    `orgAdmitExempt`. A gate covers only the hop it checks, so a second, ungated lookup in a
+    gated function still fails.
   - **The exemption list** gives a reason per function in four classes. Authentication is a
     credential naming its own account. Signed links name one account. Workers are PR 5. Admin
     routes are PR 4. Each entry must name a live function.
   - `TestOrgAdmitScanFailsAnUngatedHandler` runs the scan on a fixture. It fails a handler that
-    reads a path ID without `orgAdmit`, and follows a helper's parameter to its caller.
+    reads a path ID without `orgAdmit`, follows a helper's parameter to its caller, and fails
+    a second, ungated lookup in a function that gates its first.
 - **`TestCrossOrgMatrix`** (`api/tenancy_matrix_test.go`) runs in every `internal/api` job. That
   is SQLite in the race legs and PostgreSQL in `ci-backend-postgres`, whose stores
   `KYPOST_TEST_DATABASE_URL` selects.

@@ -109,7 +109,10 @@ type orgScanFunc struct {
 	params     []string
 	authParams []string // parameters typed AuthContext
 	body       *ast.BlockStmt
-	gated      bool
+	// gateArgs are the texts of every argument passed to an org gate in the function; an
+	// accessor call is admitted only when its ID or its result is one of them.
+	gateArgs map[string]bool
+	lhsOf    map[*ast.CallExpr]string // the variable an accessor call's result is assigned to
 }
 
 // orgScan returns "function: accessor(arg)" for every unadmitted call in files.
@@ -130,9 +133,21 @@ func orgScan(files []*ast.File, exempt map[string]string) []string {
 					}
 				}
 			}
+			sf.gateArgs, sf.lhsOf = map[string]bool{}, map[*ast.CallExpr]string{}
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
-				if c, ok := n.(*ast.CallExpr); ok && slices.Contains(orgGates, callName(c)) {
-					sf.gated = true
+				switch x := n.(type) {
+				case *ast.CallExpr:
+					if slices.Contains(orgGates, callName(x)) {
+						for _, a := range x.Args {
+							sf.gateArgs[exprText(a)] = true
+						}
+					}
+				case *ast.AssignStmt:
+					if c, ok := x.Rhs[0].(*ast.CallExpr); ok && len(x.Rhs) == 1 {
+						if id, ok := x.Lhs[0].(*ast.Ident); ok {
+							sf.lhsOf[c] = id.Name
+						}
+					}
 				}
 				return true
 			})
@@ -157,11 +172,12 @@ func orgScan(files []*ast.File, exempt map[string]string) []string {
 	}
 	var out []string
 	for _, f := range funcs {
-		if f.gated || exempt[f.name] != "" {
+		if exempt[f.name] != "" {
 			continue
 		}
 		for _, c := range orgCalls(f, accessors) {
-			if c.kind == argOther {
+			base, _, _ := strings.Cut(c.arg, ".")
+			if c.kind == argOther && !f.gateArgs[c.arg] && !f.gateArgs[base] && !f.gateArgs[c.lhs] {
 				out = append(out, f.name+": "+c.accessor+"("+c.arg+")")
 			}
 		}
@@ -177,12 +193,14 @@ const (
 )
 
 type orgCall struct {
-	accessor, arg string
-	kind          int
+	accessor, arg, lhs string
+	kind               int
 }
 
 // orgCalls classifies each accessor call's ID argument in f. Own: X.UserID of an
 // AuthContext, or X.ID of a user record read by an own ID. Param: a parameter of f.
+// orgScan then admits an "other" ID when it, its base variable or the call's result is
+// passed to an org gate in f; a gate elsewhere in f admits nothing else.
 func orgCalls(f *orgScanFunc, accessors map[string]int) []orgCall {
 	authVars, ownUsers, ownIDs := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	paramUsers := map[string]string{} // a user record read by a parameter, to that parameter
@@ -255,7 +273,7 @@ func orgCalls(f *orgScanFunc, accessors map[string]int) []orgCall {
 			name := callName(x)
 			if i, ok := accessors[name]; ok && i < len(x.Args) && name != f.name {
 				arg, kind := classify(x.Args[i])
-				out = append(out, orgCall{accessor: name, arg: arg, kind: kind})
+				out = append(out, orgCall{accessor: name, arg: arg, lhs: f.lhsOf[x], kind: kind})
 			}
 		}
 		return true
@@ -289,6 +307,10 @@ func exprText(e ast.Expr) string {
 		return exprText(x.X) + "[…]"
 	case *ast.BasicLit:
 		return x.Value
+	case *ast.UnaryExpr:
+		return exprText(x.X)
+	case *ast.StarExpr:
+		return exprText(x.X)
 	}
 	return "…"
 }
@@ -338,7 +360,8 @@ func TestOrgAdmitCallSites(t *testing.T) {
 }
 
 // The scan refuses a handler that reads another user's record by a path ID without
-// orgAdmit, follows a helper's parameter to its caller, and admits the gated version.
+// orgAdmit, follows a helper's parameter to its caller, admits the gated version, and
+// still refuses a second, ungated hop in a function that gates the first.
 func TestOrgAdmitScanFailsAnUngatedHandler(t *testing.T) {
 	const src = `package api
 func (s *Server) handleFixture(w http.ResponseWriter, r *http.Request) {
@@ -360,6 +383,16 @@ func (s *Server) handleFixtureGated(w http.ResponseWriter, r *http.Request) {
 	if !s.orgAdmit(ac, u) {
 		return
 	}
+	_, _ = s.userStore(u.ID)
+}
+func (s *Server) handleFixtureGatedPlusHop(w http.ResponseWriter, r *http.Request) {
+	ac, _ := authFromContext(r)
+	u, _ := s.users.Get(r.PathValue("id"))
+	if !s.orgAdmit(ac, u) {
+		return
+	}
+	other, _ := s.users.Get(r.PathValue("other"))
+	_ = other
 }
 `
 	f, err := parser.ParseFile(token.NewFileSet(), "fixture.go", src, 0)
@@ -367,11 +400,11 @@ func (s *Server) handleFixtureGated(w http.ResponseWriter, r *http.Request) {
 		t.Fatal(err)
 	}
 	got := orgScan([]*ast.File{f}, nil)
-	want := []string{`handleFixture: users.Get(r.PathValue(…))`, `handleFixtureViaHelper: fixtureHelper(r.PathValue(…))`}
+	want := []string{`handleFixture: users.Get(r.PathValue(…))`, `handleFixtureGatedPlusHop: users.Get(r.PathValue(…))`, `handleFixtureViaHelper: fixtureHelper(r.PathValue(…))`}
 	if !slices.Equal(got, want) {
 		t.Fatalf("scan found %q, want %q", got, want)
 	}
-	if got := orgScan([]*ast.File{f}, map[string]string{"handleFixture": "x", "handleFixtureViaHelper": "x"}); len(got) != 0 {
+	if got := orgScan([]*ast.File{f}, map[string]string{"handleFixture": "x", "handleFixtureGatedPlusHop": "x", "handleFixtureViaHelper": "x"}); len(got) != 0 {
 		t.Fatalf("exempted functions still reported: %q", got)
 	}
 }

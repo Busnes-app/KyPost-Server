@@ -316,6 +316,14 @@ func TestTenancyAddressMovesStayInOneOrg(t *testing.T) {
 	if ok, err := (&Server{}).addressOneOrg("x", "y"); !ok || err != nil {
 		t.Fatal("single mode compared orgs")
 	}
+	// A users store that cannot be read is an error the operator can retry, not an org
+	// refusal.
+	if err := os.WriteFile(filepath.Join(fx.srv.configDir, "users.json"), []byte("{damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := fx.srv.addressOneOrg(address, fx.a.extra); ok || err == nil {
+		t.Fatalf("an unreadable users store: %v %v, want an error", ok, err)
+	}
 }
 
 // HR mailbox reservation is off in multi mode (K6): 404 before the signature is read.
