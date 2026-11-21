@@ -211,7 +211,7 @@ Decision R1 below keeps Cloudflare for self-hosted installs and leaves it out of
 | R5 | `250` only after the PostgreSQL commit, and PostgreSQL commits must survive a failover (synchronous replication when PostgreSQL becomes its own service). | An accepted message is owed. A `250` backed only by an asynchronous primary can be lost in a failover. |
 | R6 | Rspamd runs **beside each replica**, as a sidecar sharing its network namespace, so the fixed `127.0.0.1:11333` stays. Not on the MX hosts. | The verdict and the evidence are computed where the commit happens. An MX host can feed in only the peer IP and HELO (Threat model). |
 | R7 | In multi mode, sender blocks and evidence live in PostgreSQL tables in the multi-only `tenancy.db` store (Where the new tables live), with the same semantics. Single-tenant keeps the JSON files. | A whole-file rewrite per message does not scale. Hosts past one need shared state. Multi installs start empty (K2), so nothing is migrated. |
-| R8 | Import is **one obligation per bound mailbox**, leased per mailbox in PostgreSQL, so every replica imports. No mailbox waits on another. | Spreads import across replicas and keeps each mailbox's arrival order. One recipient's suspended org, or a busy mailbox, cannot hold back another recipient's mail. |
+| R8 | Import is **one obligation per bound mailbox**, leased per mailbox in PostgreSQL, so every replica imports. No mailbox waits on another. | Spreads import across replicas and keeps each mailbox's arrival order. One recipient's org status, or a busy mailbox, cannot hold back another recipient's mail. |
 | R9 | The masked relay domain is one more `destination` on the same tier (M open question 5). | No third party lists masked addresses. Routing is by address, so nothing else changes. |
 | R10 | Everything above is refused unless `KYPOST_TENANCY=multi`. Single-tenant profiles, files and code paths are untouched. | Owner decision 1. |
 
@@ -385,8 +385,8 @@ first itself.
   mailbox**, not one all-or-nothing import. An obligation is done when the mailbox holds the
   receipt (its `receipts` table is keyed by `(gateway, delivery)`, `mailbox/store.go:127`), or
   when the binding is recorded in the multi-only `retired_bindings(gateway, id, mailbox, at)`.
-  Mailboxes are therefore independent. A delivery bound to A (active org) and B (suspended org)
-  imports into A at once, and only B's obligation waits. No mailbox's import waits on another
+  Mailboxes are therefore independent. A delivery bound to A (active org) and B (an org deleted
+  but not yet purged) imports into A at once, and only B's obligation waits for the purge. No mailbox's import waits on another
   mailbox's import, and no worker holds more than one lease (Completion has one short row lock).
 - **Leases.** `import_leases(mailbox PK, holder, lease_until)`, multi-only. Every replica runs
   import workers, not only the `daemon` replica. A worker takes a 60-second lease on one mailbox
@@ -399,8 +399,9 @@ first itself.
   stays small. The capacity measurement checks it.
 - **One obligation.** In arrival order, for each pending delivery bound to the leased mailbox
   whose obligation is not done, the worker:
-  1. checks that mailbox's org status, and stops that mailbox's queue if it is not `active`
-     (K "Background workers");
+  1. checks that mailbox's org status (Org status, below). For a `deleted` org it stops, and the
+     purge removes the obligation. For an org missing from the cache it stops that mailbox's queue
+     until the next good poll. Otherwise it continues;
   2. if the binding was durably retired (today's `retiredBinding` test,
      `app/receiving_cfcontinuous.go:788`), inserts its `retired_bindings` row; otherwise writes
      the message into that mailbox under its quota lock, which commits the receipt;
@@ -431,18 +432,32 @@ first itself.
 - **Purge.** K's purge step 2 deletes the org's bindings and their `retired_bindings` rows, and
   then runs Completion: archived if the rest are imported, quarantined if any is retired, still
   pending if some are not done yet.
-- **Held bytes.** A delivery's bytes stay in the ingress store until every obligation is done or
-  purged. A suspended org's mail therefore holds ingress capacity. That mail is bounded, because
-  `bind` refuses new mail to a suspended org (exit 12). The capacity alerts track it (open
-  question 6).
+- **Held bytes.** A delivery's bytes stay in the shared ingress store until every obligation is
+  done or purged, and every org shares the ingress limits. Import therefore never holds mail for
+  an org's status alone:
+  - a `suspended` or `deletion_scheduled` org's accepted mail imports, because K keeps that data;
+  - a `deleted` org's mail is removed by the purge, in minutes;
+  - only a mailbox whose org is missing from the cache waits.
+
+  So held mail is bounded in time by the poller and purge, not by billing. A cache outage holds at
+  most what arrived for unknown orgs, and `bind` already refuses those (exit 12). Hosted ingress
+  limits must exceed the backlog of one poller outage at peak rate. The capacity measurement sizes
+  this (open question 6).
 - **Gateways.** The import list is every gateway ID that has pending deliveries
   (`SELECT DISTINCT gateway FROM deliveries WHERE state='pending'`), not the two fixed IDs of
   `app/receiving.go:230`, and never the live rows of `receiving_gateways`. A revoked or expired
   pin stops new commands only. Mail its host already committed has had its `250` and still
   imports. Pin rows are never deleted, so a revoked key and a retired ID stay refused.
-- **Org status.** K's rule, applied per mailbox. Only the obligation of a mailbox whose org is not
-  `active` stays pending (One obligation, step 1). The same delivery's other mailboxes import, and
-  a delivery is never gated as a whole on any one recipient's org.
+- **Org status.** Applied per mailbox, never to a delivery as a whole.
+  - `active`, `suspended`, `deletion_scheduled`: import. K keeps those orgs' data, and storing
+    mail that was accepted before the status changed serves it to nobody, because sign-in is
+    refused.
+  - `deleted`: no import. The purge drops the obligation.
+  - Missing from the cache: wait for a good poll.
+
+  This narrows K's "a worker skips a mailbox whose org is not `active`" for receiving import
+  only (K "Background workers" is updated to match). It stops one org's suspension from holding
+  shared ingress capacity for every other org.
 - **Single-tenant.** The daemon importer of `app/receiving.go:214-262` stays exactly as it is.
 
 ### Past one host
@@ -524,7 +539,7 @@ Receiving does not change outbound, but the tier is sized with it in mind:
 | Attacker | Goal | Defence |
 |---|---|---|
 | Internet sender | Deliver into the wrong mailbox or org | Unchanged routing by address on the replica (`bind`), with K's org check. The MX host decides nothing. |
-| Internet sender | Probe for live addresses (primary or masked) | Identical `550 5.1.1` for unknown, paused, expired and deleted addresses (`app/receiving.go:448-457`). The per-source budget answers `450` to every `RCPT` after N refusals, whatever the address. M's address entropy. |
+| Internet sender | Probe for live addresses (primary or masked) | Identical `550 5.1.1` for unknown, paused, expired and deleted addresses (`app/receiving.go:448-457`). On the relay domain only, the per-source budget answers `450` to every `RCPT` after N refusals, whatever the address. Primary domains are not budgeted: their addresses are not secret (Masked relay domain). M's address entropy. |
 | Internet sender | Exhaust receiving | Maddy limits per MX host. The ingress record and byte limits refuse with a temporary failure, never by evicting mail (`ingress/AGENTS.md`). Per-mailbox quota (exit 9). |
 | Host on the private network without a pinned key | Inject or read mail | `RequireAnyClientCert` plus the pin check before any frame is read. The listener binds only to the private address. |
 | Compromised MX host | Read mail in transit | It sees the mail it receives. That is inherent to running an MX and the reason it holds nothing else. It cannot read stored mail: it has no mailbox access, and the protocol has only `bind`, `accept` and `config`. |
@@ -613,10 +628,11 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      old key is refused;
    - enrolling a retired ID, or any key that was revoked, is refused;
    - two replicas importing one mailbox keep arrival order and import nothing twice;
-   - a delivery bound to mailboxes in two orgs, one suspended before import: it imports into the
-     active org's mailbox, that mailbox's later mail imports too, and the suspended org's
-     obligation stays pending until the org is resumed (then imports) or purged (then the
-     delivery is archived);
+   - a delivery bound to mailboxes in two orgs, one deleted before import: it imports into the
+     active org's mailbox, and that mailbox's later mail imports too. The deleted org's obligation
+     stays pending only until its purge, and then the delivery is archived;
+   - a suspended org's accepted mail imports and is archived, so the ingress limits are freed;
+   - an org missing from the cache: its mailbox waits, and the other mailboxes import;
    - a worker killed between the mailbox write and Completion: the retry adds no second copy, and
      the sweep completes the delivery;
    - two workers finishing the last two obligations of one delivery at the same moment: it is
