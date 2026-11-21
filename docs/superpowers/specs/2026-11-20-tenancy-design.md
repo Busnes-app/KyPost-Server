@@ -727,7 +727,11 @@ Tenancy fits on top:
 Each PR ships on its own, with single-tenant behaviour unchanged. `KYPOST_TENANCY=multi` is
 refused at startup until PR 7. Until then multi-mode code runs only in tests. PR 2 onward needed
 KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and webhooks, and `/api/suite/orgs`),
-which has merged as KyIdentity #276, so every PR up to 6 can start.
+which has merged as KyIdentity #276. So PRs 1–5 and PR 6's org purge can start now. Three parts
+wait for the KyIdentity changes listed under the plan:
+- PR 6's one-user purge needs `user.erased`.
+- PR 6's restore release needs the erased-subject list.
+- PR 7 needs the mailbox address field.
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
    the multi-only side tables (`orgs`, `user_orgs`, `subject_orgs`; PR 6 adds the purge tables), `users.User.OrgID`
