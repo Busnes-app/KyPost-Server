@@ -71,11 +71,13 @@ func init() {
 // other open of a missing store is os.ErrNotExist.
 func Open(stateDir string, create bool) (*sql.DB, error) {
 	path := filepath.Join(stateDir, File)
-	pg, err := dbbackend.Postgres(), error(nil)
+	pg := dbbackend.Postgres()
 	if !create {
-		if pg, err = dbbackend.Held(path); err != nil {
+		held, err := dbbackend.Held(path)
+		if err != nil {
 			return nil, err
 		}
+		pg = held
 	}
 	if !pg {
 		return openSQLite(path, create)

@@ -390,7 +390,8 @@ func SeedUserLabels(s *UserSettings, house Config) bool {
 // name an entry of. Valid IDs are opaque UUIDs, but path construction must not
 // rely on that surviving hand-edited or migrated users.json files.
 func SafeUserPathComponent(id string) string {
-	if fsutil.SafePathComponent(id) {
+	// IsLocal is implied by SafePathComponent; inline, it is the guard CodeQL sees.
+	if filepath.IsLocal(id) && fsutil.SafePathComponent(id) {
 		return id
 	}
 	return "__invalid-user-id__"
