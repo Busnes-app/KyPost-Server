@@ -410,6 +410,15 @@ first itself.
   Step 2 is idempotent. A repeated write finds the receipt, and a repeated retired row hits its
   primary key. The mailbox's order is its own arrival order, and nothing in another mailbox can
   block it.
+
+  **Fence against the purge.** The mailbox write in step 2 re-reads the org's status from the
+  `orgs` cache **after** taking that mailbox's quota lock (`quota-<id>`, `app/receiving.go:54-66`),
+  and writes only if the org is not `deleted`. The purge (K "Purge", step 3) marks the org
+  `deleted` in the cache before it starts. It then takes the same quota lock for each mailbox
+  before removing its storage, and holds the lock until the removal commits. So either the write
+  finishes before the removal starts, and the removal deletes it, or the write sees `deleted` and
+  writes nothing. A write can never land in or recreate storage the purge has removed. The purge's
+  final check (K step 6) also lists receipts for the snapshot's mailboxes.
 - **Completion.** After its own step 2 has committed, the worker runs one short
   `kypost_ingress` transaction:
   1. lock the delivery's row (`SELECT … FROM deliveries … FOR UPDATE`);
@@ -632,6 +641,9 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      active org's mailbox, and that mailbox's later mail imports too. The deleted org's obligation
      stays pending only until its purge, and then the delivery is archived;
    - a suspended org's accepted mail imports and is archived, so the ingress limits are freed;
+   - an org deleted between a worker's first status check and its write: the write under the
+     quota lock sees `deleted` and writes nothing, or it finishes first and the purge removes it.
+     Either way the purge's final check finds no mailbox, receipt or schema;
    - an org missing from the cache: its mailbox waits, and the other mailboxes import;
    - a worker killed between the mailbox write and Completion: the retry adds no second copy, and
      the sweep completes the delivery;

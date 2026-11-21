@@ -186,8 +186,11 @@ created exclusively, like R's keys, and backed up, because a restore needs it (M
     "Org status"). Mail already accepted imports for `suspended` and `deletion_scheduled` orgs,
     whose data K keeps. It waits only for an org missing from the cache, and a `deleted` org's
     mail is dropped by the purge. So one org's status never holds the shared ingress limits.
-  - A waiting import leaves that mailbox's part of the delivery pending, so it is never lost and
-    never written into storage the purge is removing. Other recipients' mailboxes still import.
+  - A waiting import leaves that mailbox's part of the delivery pending, so it is never lost.
+    Other recipients' mailboxes still import. An import write is fenced against the purge by the
+    mailbox's quota lock: the writer re-checks for `deleted` under that lock, and the purge holds
+    it while removing the mailbox (Purge, step 3). So nothing is written into storage the purge is
+    removing.
   - Outbox and scheduled sends are held (Lifecycle).
 
   The purge and the entitlement poller are the only workers that act on an org as a whole.
@@ -556,7 +559,9 @@ Steps:
    mailboxes. A delivery whose every binding was in the org is deleted. For a delivery shared with
    another org, only this org's bindings go.
    This comes before storage, so no pending delivery is left that an import could write back.
-3. **Remove storage.** For each of the org's users and mailboxes, drop the per-user and per-mailbox
+3. **Remove storage.** Each mailbox's removal runs under its receiving quota lock
+   (`quota-<id>`), which fences a concurrent import write (Isolation, "Background workers"). For
+   each of the org's users and mailboxes, drop the per-user and per-mailbox
    PostgreSQL schemas through the catalog (`dbbackend/dbbackend.go:205-247`). Then remove their
    directories under `CONFIG_DIR` and `STATE_DIR` (`users/<id>`, `mailboxes/<id>`), and delete
    their pickup records and import uploads. This step deletes the remaining credentials:
