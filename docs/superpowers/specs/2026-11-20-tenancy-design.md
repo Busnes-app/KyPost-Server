@@ -1197,7 +1197,10 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
     share it are listed again. An equal revision applies as the same state. No cursor row is
     stored.
   - **The poll stamp.** After every listed org applied, `MarkPolled` (`:182`) sets every row's
-    `polled_at` to the poll's time. A failed poll stamps nothing. `polled_at` therefore means
+    `polled_at` to the poll's time. A `suitedir.Orgs` call cut short at its 100-page bound
+    returns a cursor below its last revision; `pollOrgs` keeps calling until one is not cut
+    short, so no row is stamped fresh while its change is unread
+    (`TestOrgPollerReadsPastThePageBound`). A failed poll stamps nothing. `polled_at` therefore means
     "the last good poll", which is what the stale bound reads.
   - `LookupOrg` (`:81`) reads a row; a missing row is not known.
 - **What "served" means** (`Org.Served`, `:54`): known, `active`, `enabled` for KyPost, and a
@@ -1224,12 +1227,14 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - The paired device (`deviceAuthSnapshot`, `api/device_auth.go:164`, and `deviceOrg`,
     `api/tenancy_gate.go:119`).
   - CardDAV, on a cache hit and a miss, and MCP agent tokens, through `davAccountActive`
-    (`api/dav_auth.go:300`). A refused CardDAV password still pays the KDF timing.
+    (`api/dav_auth.go`), which reads the org once and returns `(active, err)`, so the answer
+    never comes from two reads that disagree. A refused CardDAV password still pays the KDF
+    timing.
   - **An unreadable or stale cache is "try again later", never a dead credential.** A
     stale cache whose last known state is served is `tenancy.ErrStale`, which is still
     `ErrNotServed` for sign-in and sending. An org whose last known state is not served
     answers as before. Device auth
-    answers busy. CardDAV, after the password is verified (`davOrgUnavailable`, `:307`), and
+    answers busy. CardDAV, after the password is verified, and
     MCP answer `503`. A `401` would make a client drop a working password or re-pair.
   - Browser sign-in and device sign-on (`resolveSSOUser`, `api/sso_handlers.go:668`): `403`
     "this account is not available right now". It is reached only after the token's org and

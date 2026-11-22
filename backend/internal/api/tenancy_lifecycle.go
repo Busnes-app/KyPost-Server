@@ -82,10 +82,24 @@ func (s *Server) pollOrgs(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	orgs, _, err := dir.Orgs(ctx, since)
-	if err != nil {
-		return err
+	// A call cut short at its page bound returns a cursor below its last revision; keep
+	// listing, so MarkPolled never stamps fresh an org whose change is still unread.
+	for {
+		orgs, next, err := dir.Orgs(ctx, since)
+		if err != nil {
+			return err
+		}
+		if err := s.applyOrgs(ctx, orgs, now); err != nil {
+			return err
+		}
+		if len(orgs) == 0 || next >= orgs[len(orgs)-1].Revision {
+			return tenancy.MarkPolled(ctx, s.tenancy, now)
+		}
+		since = next
 	}
+}
+
+func (s *Server) applyOrgs(ctx context.Context, orgs []suitedir.Org, now time.Time) error {
 	// A malformed entry fails the poll before any session is revoked.
 	for _, o := range orgs {
 		if err := tenancy.ValidOrg(o); err != nil {
@@ -104,7 +118,7 @@ func (s *Server) pollOrgs(ctx context.Context, now time.Time) error {
 			return err
 		}
 	}
-	return tenancy.MarkPolled(ctx, s.tenancy, now)
+	return nil
 }
 
 // revokeIfStopping revokes every session of next's members when next stops an org that

@@ -214,6 +214,7 @@ type orgsIdP struct {
 	orgs   []suitedir.Org
 	status int
 	sinces []string
+	page   int // orgs per page; 0 lists everything on one page
 }
 
 func newOrgsIdP(t *testing.T) *orgsIdP {
@@ -231,6 +232,9 @@ func newOrgsIdP(t *testing.T) *orgsIdP {
 			return
 		}
 		since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+		if c := r.URL.Query().Get("cursor"); c != "" {
+			since, _ = strconv.ParseInt(c, 10, 64)
+		}
 		list := []suitedir.Org{}
 		for _, o := range idp.orgs {
 			if o.Revision > since {
@@ -238,7 +242,12 @@ func newOrgsIdP(t *testing.T) *orgsIdP {
 			}
 		}
 		slices.SortStableFunc(list, func(a, b suitedir.Org) int { return cmp.Compare(a.Revision, b.Revision) })
-		_ = json.NewEncoder(w).Encode(map[string]any{"orgs": list, "next": ""})
+		next := ""
+		if idp.page > 0 && len(list) > idp.page {
+			list = list[:idp.page]
+			next = strconv.FormatInt(list[len(list)-1].Revision, 10)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"orgs": list, "next": next})
 	}))
 	t.Cleanup(idp.Close)
 	return idp
@@ -616,5 +625,36 @@ func TestOrgCacheOutageIsRetryable(t *testing.T) {
 	}
 	if w := rawMCP(t, fx.srv, listToolsRPC, bearerHeader(agentToken)); w.Code != http.StatusServiceUnavailable {
 		t.Errorf("mcp: %d, want 503", w.Code)
+	}
+}
+
+// A backlog past one Orgs call's page bound (100 pages) is read to the end before
+// MarkPolled, so a suspension on page 101 is not hidden behind a fresh stamp.
+func TestOrgPollerReadsPastThePageBound(t *testing.T) {
+	fx, _ := newOrgFixture(t)
+	srv, db, ctx := fx.srv, fx.srv.tenancy, context.Background()
+	idp := newOrgsIdP(t)
+	pointAtOrgs(t, srv, idp, "suite-secret")
+	if _, err := db.Exec(`DELETE FROM orgs`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	idp.set(0, listed(orgA, "active", 1))
+	if err := srv.pollOrgs(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	backlog := []suitedir.Org{}
+	for i := range 100 {
+		backlog = append(backlog, listed(fmt.Sprintf("00000000-0000-4000-8000-%012d", i), "active", int64(i+2)))
+	}
+	idp.set(0, append(backlog, listed(orgA, "suspended", 102))...)
+	idp.mu.Lock()
+	idp.page = 1
+	idp.mu.Unlock()
+	if err := srv.pollOrgs(ctx, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if orgRow(t, db, orgA).Served(now.Add(time.Minute)) {
+		t.Fatal("a suspension past the page bound was stamped fresh and left served")
 	}
 }
