@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"maps"
@@ -158,8 +159,12 @@ func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action
 	}
 }
 
-func (s *Server) senderBlocks() ingress.Blocks {
-	return ingress.NewBlocks(filepath.Join(s.stateDir, "receiving"))
+// senderBlocks is tenancy.db's tables in multi mode, the files in single mode.
+func (s *Server) senderBlocks() ingress.SenderStore {
+	if s.tenancy != nil {
+		return ingress.TableSenders(s.tenancy)
+	}
+	return ingress.FileSenders(filepath.Join(s.stateDir, "receiving"))
 }
 
 // handleSenderBlocksList lists manual and automatic sender blocks in force.
@@ -169,13 +174,13 @@ func (s *Server) handleSenderBlocksList(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "native mail is disabled", http.StatusNotFound)
 		return
 	}
-	list, err := s.senderBlocks().List(time.Now())
+	list, err := s.senderBlocks().List(r.Context(), time.Now())
 	if err != nil {
 		http.Error(w, "sender block list unreadable; preserve it and repair", http.StatusServiceUnavailable)
 		return
 	}
 	// Automatic-block health; a damaged file is reported, never fatal here.
-	evidence := ingress.NewEvidence(filepath.Join(s.stateDir, "receiving")).Status(time.Now())
+	evidence := s.senderBlocks().Status(r.Context(), time.Now())
 	writeJSON(w, http.StatusOK, map[string]any{"blocks": append([]ingress.SenderBlock{}, list...), "evidence": evidence})
 }
 
@@ -279,8 +284,8 @@ func senderBlockError(w http.ResponseWriter, err error) {
 
 // refuseBlockedDomain answers 409 when a sender block matches domain or an
 // address on it: adding it as a mail domain would refuse its own mail.
-func (s *Server) refuseBlockedDomain(w http.ResponseWriter, domain string) bool {
-	list, err := s.senderBlocks().List(time.Now())
+func (s *Server) refuseBlockedDomain(ctx context.Context, w http.ResponseWriter, domain string) bool {
+	list, err := s.senderBlocks().List(ctx, time.Now())
 	if err != nil {
 		http.Error(w, "sender block list unreadable; preserve it and repair", http.StatusServiceUnavailable)
 		return true

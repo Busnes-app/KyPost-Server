@@ -108,7 +108,7 @@ func TestNativeReceivingAutomaticBlocks(t *testing.T) {
 	if err := r.bind(context.Background(), "abuse-blocked", "spammer@shared.test", "one@example.test"); !refusedBlocked(err) {
 		t.Fatal("authenticated abuser not blocked", err)
 	}
-	list, err := ingress.NewBlocks(filepath.Join(r.stateDir, "receiving")).List(time.Now())
+	list, err := ingress.NewBlocks(filepath.Join(r.stateDir, "receiving")).List(context.Background(), time.Now())
 	if err != nil || len(list) != 1 || list[0].Source != "automatic" || list[0].Level != 1 || list[0].Value != "spammer@shared.test" {
 		t.Fatal("automatic block", list, err)
 	}

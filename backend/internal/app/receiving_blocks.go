@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"syscall"
@@ -92,15 +91,15 @@ func runReceivingBlocks(args []string, output io.Writer) (result error) {
 	if err != nil {
 		return err
 	}
-	defer r.holding.Close()
-	store := ingress.NewBlocks(filepath.Join(r.stateDir, "receiving"))
+	defer r.close()
+	store := r.senders
 	switch action {
 	case "list":
-		list, err := store.List(time.Now())
+		list, err := store.List(ctx, time.Now())
 		if err != nil {
 			return err
 		}
-		evidence := ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")).Status(time.Now())
+		evidence := store.Status(ctx, time.Now())
 		return json.NewEncoder(output).Encode(map[string]any{"blocks": list, "evidence": evidence})
 	case "add":
 		set, err := r.domains.ReadSet()
@@ -145,7 +144,7 @@ func runReceivingBlocks(args []string, output io.Writer) (result error) {
 func (r *receivingRuntime) senderEvidence(ctx context.Context, deliveryID string, auth ingress.Authentication, reject bool) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), evidenceTimeout)
 	defer cancel()
-	evidence, action := ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")), "accepted-domain"
+	evidence, action := r.senders, "accepted-domain"
 	var err error
 	if reject {
 		action = "reject"

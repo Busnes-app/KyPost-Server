@@ -241,5 +241,5 @@ func separateReceiver(t *testing.T, r *receivingRuntime) *receivingRuntime {
 		d, err := domains.Read()
 		return []string{d.RecordValue()}, err
 	})
-	return &receivingRuntime{gateway: r.gateway, configDir: r.configDir, stateDir: r.stateDir, accounts: accounts, life: sso.NewLifecycleStore(r.configDir), domains: domains, holding: holding}
+	return &receivingRuntime{gateway: r.gateway, configDir: r.configDir, stateDir: r.stateDir, accounts: accounts, life: sso.NewLifecycleStore(r.configDir), domains: domains, holding: holding, senders: ingress.FileSenders(filepath.Join(r.stateDir, "receiving"))}
 }

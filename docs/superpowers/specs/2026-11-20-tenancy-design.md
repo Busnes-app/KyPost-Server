@@ -96,6 +96,7 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | Root `state.db` `backup_audit` | `state/schema.go` | P | Whole-install backups. |
 | New `tenancy.db` `orgs` cache | (multi-only) `tenancy/tenancy.go` | P | K8. The registry every org check reads. |
 | New `tenancy.db` `receiving_gateways` | (multi-only) `tenancy/tenancy.go`, `tenancy/gateways.go` | P | The hosted receiving tier's MX key pins (receiving tier spec, PR 2). Rows are never deleted. |
+| New `tenancy.db` `sender_blocks`, `sender_evidence` | (multi-only) `tenancy/tenancy.go`, `ingress/senders_table.go` | P | The sender block list and its automatic-block evidence in multi mode (receiving tier spec R7, PR 3), with the file rules. Multi mode never has the two files. |
 | New `org_purges`, `org_purge_members` | (multi-only, PR 6; in `tenancy.db`, as the other side tables) | P | Purge progress, one row per deleted org, plus the snapshot of its user, mailbox and subject IDs taken at purge start, so a purge that died halfway resumes (Lifecycle). The snapshot is deleted when the purge is marked done. |
 | Per-user / per-mailbox `state.db` (`processed`, `decisions`, `notifications`, `native_devices`, `pull_notifications`, `deferrals`, `sorter_*`, `snoozes`, `ooo_*`) | `api/server_userscope.go:86-92`; same schema as root | D (user or mailbox directory) | The directory, or on Postgres the `kypost_f_*` schema, is the owner. |
 | `mailbox.db` (messages, folders, labels, receipts, usage, `outbox*`, …) | `mailbox/store.go:118-132`, `mailbox/pg_schema.go:17-32` | D (mailbox) | The `identity` row names `(issuer, subject, mailbox)` (`mailbox/store.go:118`). It gains no `org_id`: the mailbox's account carries it. |
@@ -124,7 +125,7 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | `native-domains.json` | `sso/native_domain.go:25-27,68-74` | P | Platform domains only (K9). |
 | `native-relay.json` (relay credentials and every domain's DKIM private key) | `api/native_relay_handlers.go:47`, `mailmsg/domain_relay.go:28-42` | P | One relay profile for the platform domains. |
 | `wkd-domains.json` | `wkdpublish/store.go:74` | P | WKD on platform domains, staff-run. |
-| `receiving.conf`, `sender-blocks.json`, `sender-evidence.json`, `quota-<id>` locks | `api/native_recovery_handlers.go:364`, `ingress/blocks.go:23`, `ingress/autoblocks.go:26-31`, `app/receiving.go:37-82` | P (quota locks D, per mailbox) | Sender blocks stay platform-wide (Mail). |
+| `receiving.conf`, `sender-blocks.json`, `sender-evidence.json`, `quota-<id>` locks | `api/native_recovery_handlers.go:364`, `ingress/blocks.go:23`, `ingress/autoblocks.go:26-31`, `app/receiving.go:37-82` | P (quota locks D, per mailbox; the two sender files `-` in multi mode, receiving tier PR 3) | Sender blocks stay platform-wide (Mail). Multi mode keeps them in `tenancy.db` instead. |
 | Per-user `config.yaml` (settings, signatures, masked records) | `config/config.go:199-245,410` | D (user) | M D8 moves masked records out in hosted mode. |
 | Per-user `imap-config.json`, `tuning.md` | `config/config.go:402,406` | – / D | No external-IMAP source in multi mode (K6). `tuning.md` is derived. |
 | Per-user `carddav-auth.json`, `carddav-client.json` | `api/server_userscope.go:247,254` | D (user) | The user's own CardDAV password and outside contacts server. Administrator assignment is off (K6). |
@@ -134,7 +135,7 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | `$STATE/imports/upload-*` | `api/mail_import.go:37,315` | D (user, through the grant) | Temporary. Grants and jobs are in memory (`api/server.go:164-172`) or in R's `auth_challenges` and `import_jobs`. |
 | Native restore hold, qualification and release files, `mfa-clear-all.*` | `sso/native_restore.go:21`, `sso/native_restore_qualification.go:24`, `sso/native_release.go:95`, `app/app.go:574,586` | P | Whole-install recovery. |
 | Backups, `mail-bulk.json` | `backup/backup.go:92`, `backup/bulk.go:38-43` | P | Whole-install capsules, as T. |
-| `replica-volume.id`, `server-instance.lock`, `backup-operation.lock`, `sender-evidence.damaged.json` | `replica/topology.go:19`, `state/coordination.go:319`, `backup/backup.go:524`, `ingress/autoblocks.go:29` | P | Process coordination and a quarantined copy of damaged evidence. Added by PR 1's inventory test. |
+| `replica-volume.id`, `server-instance.lock`, `backup-operation.lock`, `sender-evidence.damaged.json` | `replica/topology.go:19`, `state/coordination.go:319`, `backup/backup.go:524`, `ingress/autoblocks.go:29` | P (`sender-evidence.damaged.json` `-` in multi mode, receiving tier PR 3) | Process coordination and a quarantined copy of damaged evidence. Added by PR 1's inventory test. |
 | `tenancy.db` | `tenancy/tenancy.go` | P (tables O and P, above) | Multi-only (PR 1). |
 
 ### Keys (`SECRET_DIR`, `config/config.go:44,52`)

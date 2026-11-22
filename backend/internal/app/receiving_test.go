@@ -42,7 +42,7 @@ func receivingFixture(t *testing.T) (*receivingRuntime, []users.User) {
 	if err := sso.NewStore(configDir).Save(sso.SSOSettings{Enabled: true, IssuerURL: issuer, ClientID: "kypost"}); err != nil {
 		t.Fatal(err)
 	}
-	r := &receivingRuntime{configDir: configDir, stateDir: stateDir, accounts: accounts, life: sso.NewLifecycleStore(configDir), domains: sso.NewNativeDomainStore(configDir)}
+	r := &receivingRuntime{configDir: configDir, stateDir: stateDir, accounts: accounts, life: sso.NewLifecycleStore(configDir), domains: sso.NewNativeDomainStore(configDir), senders: ingress.FileSenders(filepath.Join(stateDir, "receiving"))}
 	if _, err := r.domains.Configure(ctx, "example.test", issuer); err != nil {
 		t.Fatal(err)
 	}

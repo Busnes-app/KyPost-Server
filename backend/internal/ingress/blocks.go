@@ -58,6 +58,29 @@ type SenderBlock struct {
 
 func (b SenderBlock) active(now int64) bool { return b.Until == nil || *b.Until > now }
 
+// SenderStore is the sender block list and its automatic-block evidence, one interface
+// for both homes so callers never branch on the tenancy mode: the files beside ingress.db
+// (FileSenders, single mode) or tenancy.db's tables (TableSenders, multi mode).
+type SenderStore interface {
+	List(ctx context.Context, now time.Time) ([]SenderBlock, error)
+	Blocked(ctx context.Context, sender string, now time.Time) (bool, error)
+	Put(ctx context.Context, b SenderBlock, own []string, now time.Time) (SenderBlock, error)
+	Remove(ctx context.Context, id string, now time.Time) (bool, error)
+	Reject(ctx context.Context, auth Authentication, own []string, now time.Time) ([]SenderBlock, error)
+	Accepted(ctx context.Context, auth Authentication, now time.Time) error
+	Status(ctx context.Context, now time.Time) EvidenceStatus
+}
+
+// FileSenders is sender-blocks.json and sender-evidence.json in receivingDir.
+func FileSenders(receivingDir string) SenderStore {
+	return fileSenders{NewBlocks(receivingDir), NewEvidence(receivingDir)}
+}
+
+type fileSenders struct {
+	Blocks
+	Evidence
+}
+
 // Blocks is the sender block list in an existing receiving directory. Writers
 // serialize on its lock file; readers see whole files (rename publish).
 type Blocks struct{ dir string }
@@ -124,26 +147,41 @@ func ParseBlocks(raw []byte) ([]SenderBlock, error) {
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if d.Decode(&doc) != nil || d.Decode(new(any)) != io.EOF || doc.Version != 1 || len(doc.Blocks) > MaxBlocks {
-		return nil, errors.New("sender block list is malformed; restore it from backup or remove it")
+	if d.Decode(&doc) != nil || d.Decode(new(any)) != io.EOF || doc.Version != 1 {
+		return nil, errBlocksMalformed
+	}
+	return doc.Blocks, checkBlocks(doc.Blocks)
+}
+
+var errBlocksMalformed = errors.New("sender block list is malformed; restore it from backup or remove it")
+
+// checkBlocks is the whole-list rule of both homes: valid entries, unique IDs, within
+// the count and wire budget.
+func checkBlocks(blocks []SenderBlock) error {
+	if len(blocks) > MaxBlocks {
+		return errBlocksMalformed
 	}
 	seen, wire := map[string]bool{}, 0
-	for _, b := range doc.Blocks {
+	for _, b := range blocks {
 		wire += cfreceiving.BlockWireBytes(b.Wire())
 		if !b.valid() || seen[b.ID] || wire > maxBlockWire {
-			return nil, errors.New("sender block list is malformed; restore it from backup or remove it")
+			return errBlocksMalformed
 		}
 		seen[b.ID] = true
 	}
-	return doc.Blocks, nil
+	return nil
 }
 
 // List returns blocks still in force, by kind then value.
-func (s Blocks) List(now time.Time) ([]SenderBlock, error) {
+func (s Blocks) List(_ context.Context, now time.Time) ([]SenderBlock, error) {
 	all, err := s.load()
+	return inForce(all, now), err
+}
+
+func inForce(all []SenderBlock, now time.Time) []SenderBlock {
 	out := slices.DeleteFunc(all, func(b SenderBlock) bool { return !b.active(now.UnixMilli()) })
 	slices.SortFunc(out, func(a, b SenderBlock) int { return strings.Compare(a.Kind+":"+a.Value, b.Kind+":"+b.Value) })
-	return out, err
+	return out
 }
 
 // Blocked reports whether an envelope sender is blocked now: its whole
@@ -153,16 +191,28 @@ func (s Blocks) List(now time.Time) ([]SenderBlock, error) {
 // ponytail: re-reads and parses the list on every RCPT; fine up to the
 // 512 KiB cap at household volume. Past that, cache it by file inode and
 // mtime (the publish-by-rename already changes both).
-func (s Blocks) Blocked(sender string, now time.Time) (bool, error) {
+func (s Blocks) Blocked(ctx context.Context, sender string, now time.Time) (bool, error) {
+	blocks, err := s.List(ctx, now)
+	return matches(blocks, sender), err
+}
+
+// matches is Blocked's rule over the blocks in force.
+func matches(blocks []SenderBlock, sender string) bool {
+	address, domain, ok := blockTargets(sender)
+	return ok && slices.ContainsFunc(blocks, func(b SenderBlock) bool {
+		return b.Kind == "address" && b.Value == address || b.Kind == "domain" && b.Value == domain
+	})
+}
+
+// blockTargets is the sender's address and domain as blocks store them; false for the
+// null sender and a sender without a domain.
+func blockTargets(sender string) (address, domain string, ok bool) {
 	at := strings.LastIndexByte(sender, '@')
 	if sender == "" || at < 0 {
-		return false, nil
+		return "", "", false
 	}
-	address := cfreceiving.LowerASCII(sender)
-	blocks, err := s.List(now)
-	return slices.ContainsFunc(blocks, func(b SenderBlock) bool {
-		return b.Kind == "address" && b.Value == address || b.Kind == "domain" && b.Value == address[at+1:]
-	}), err
+	address = cfreceiving.LowerASCII(sender)
+	return address, address[at+1:], true
 }
 
 // Put adds or replaces the block for b.Kind/b.Value. own is the deployment's
@@ -177,6 +227,14 @@ func (s Blocks) Blocked(sender string, now time.Time) (bool, error) {
 // never evicts anything: past its share it is refused (ErrAutomaticFull), or
 // an attacker could earn blocks on throwaway identities to free an abuser.
 func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.Time) (SenderBlock, error) {
+	return put(ctx, s.change, b, own, now)
+}
+
+// changeBlocks is one home's locked read-modify-write of the blocks in force.
+type changeBlocks func(ctx context.Context, now time.Time, edit func([]SenderBlock) ([]SenderBlock, error)) error
+
+// put is Put's rule for both homes.
+func put(ctx context.Context, change changeBlocks, b SenderBlock, own []string, now time.Time) (SenderBlock, error) {
 	value, err := NormalizeBlock(b.Kind, b.Value)
 	if err != nil {
 		return SenderBlock{}, err
@@ -191,7 +249,7 @@ func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.T
 	if slices.Contains(own, value[strings.LastIndexByte(value, '@')+1:]) {
 		return SenderBlock{}, ErrBlockOwn
 	}
-	return b, s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
+	return b, change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
 		at := strings.LastIndexByte(b.Value, '@')
 		if b.Source == "automatic" && slices.ContainsFunc(blocks, func(x SenderBlock) bool {
 			return x.Source == "manual" && (x.ID == b.ID || at >= 0 && x.Kind == "domain" && x.Value == b.Value[at+1:])
@@ -257,8 +315,8 @@ func (s Blocks) Remove(ctx context.Context, id string, now time.Time) (bool, err
 		return false, ErrBlockInvalid
 	}
 	var suppressed error
-	if list, err := s.List(now); err == nil && slices.ContainsFunc(list, func(x SenderBlock) bool { return x.ID == id }) {
-		suppressed = NewEvidence(s.dir).unblocked(ctx, id, now)
+	if list, err := s.List(ctx, now); err == nil && slices.ContainsFunc(list, func(x SenderBlock) bool { return x.ID == id }) {
+		suppressed = unblocked(ctx, NewEvidence(s.dir), id, now)
 	}
 	found := false
 	err := s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
@@ -284,7 +342,7 @@ func (s Blocks) change(ctx context.Context, now time.Time, edit func([]SenderBlo
 		return err
 	}
 	defer release()
-	blocks, err := s.List(now)
+	blocks, err := s.List(ctx, now)
 	if err != nil {
 		return err
 	}

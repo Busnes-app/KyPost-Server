@@ -76,7 +76,7 @@ func runReceivingQuarantine(args []string, output io.Writer) (result error) {
 	if err != nil {
 		return err
 	}
-	defer r.holding.Close()
+	defer r.close()
 	switch action {
 	case "list":
 		rows, err := r.life.QuarantinedDeliveries(ctx, r.holding, after)

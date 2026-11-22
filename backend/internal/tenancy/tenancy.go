@@ -29,7 +29,8 @@ const (
 // The entitlement cache (orgs, K8) and the two org roots (K3/K4). user_orgs and
 // subject_orgs are write-once: an UPDATE is refused, and writers use plain INSERT.
 // receiving_gateways holds the MX hosts' pinned keys (gateways.go); its rows are never
-// deleted and only gain revoked_at and retired_at.
+// deleted and only gain revoked_at and retired_at. sender_blocks and sender_evidence are
+// the multi-mode sender block list and its evidence (ingress.TableSenders).
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS orgs (
  id TEXT PRIMARY KEY,
@@ -52,6 +53,15 @@ CREATE TRIGGER IF NOT EXISTS receiving_gateways_final BEFORE UPDATE ON receiving
   OR NEW.expires_at IS NOT OLD.expires_at OR (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NOT OLD.revoked_at)
   OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
  BEGIN SELECT RAISE(ABORT, 'a gateway pin only ever gains revoked_at and retired_at'); END;
+CREATE TABLE IF NOT EXISTS sender_blocks (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('address','domain')), value TEXT NOT NULL, until INTEGER,
+ source TEXT NOT NULL CHECK(source IN ('manual','automatic')), level INTEGER NOT NULL, created_at INTEGER NOT NULL,
+ actor TEXT NOT NULL, reason TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sender_evidence (
+ kind TEXT NOT NULL CHECK(kind IN ('address','domain','good','unblocked')), id TEXT NOT NULL, ref TEXT NOT NULL,
+ hits TEXT NOT NULL, level INTEGER NOT NULL, last INTEGER NOT NULL, blocked INTEGER NOT NULL, PRIMARY KEY(kind, id));
+CREATE INDEX IF NOT EXISTS sender_evidence_ref ON sender_evidence(kind, ref, blocked);
+CREATE INDEX IF NOT EXISTS sender_evidence_last ON sender_evidence(kind, last);
 `
 
 const pgSchema = `
@@ -79,6 +89,15 @@ CREATE OR REPLACE FUNCTION receiving_gateway_final() RETURNS trigger LANGUAGE pl
   RAISE EXCEPTION 'a gateway pin only ever gains revoked_at and retired_at'; END IF;
  RETURN NEW; END $$;
 CREATE OR REPLACE TRIGGER receiving_gateways_final BEFORE UPDATE OR DELETE ON receiving_gateways FOR EACH ROW EXECUTE FUNCTION receiving_gateway_final();
+CREATE TABLE IF NOT EXISTS sender_blocks (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('address','domain')), value TEXT NOT NULL, until BIGINT,
+ source TEXT NOT NULL CHECK(source IN ('manual','automatic')), level BIGINT NOT NULL, created_at BIGINT NOT NULL,
+ actor TEXT NOT NULL, reason TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sender_evidence (
+ kind TEXT NOT NULL CHECK(kind IN ('address','domain','good','unblocked')), id TEXT NOT NULL, ref TEXT NOT NULL,
+ hits TEXT NOT NULL, level BIGINT NOT NULL, last BIGINT NOT NULL, blocked BIGINT NOT NULL, PRIMARY KEY(kind, id));
+CREATE INDEX IF NOT EXISTS sender_evidence_ref ON sender_evidence(kind, ref, blocked);
+CREATE INDEX IF NOT EXISTS sender_evidence_last ON sender_evidence(kind, last);
 `
 
 func init() {

@@ -259,7 +259,7 @@ func TestCloudflareContinuousTruncatesBlocks(t *testing.T) {
 	put("auto.test", "automatic", 1, now.Add(time.Minute))
 	put("old-manual.test", "manual", 0, now)
 	put("new-manual.test", "manual", 0, now.Add(time.Second))
-	got, err := e.l.blockedSenders()
+	got, err := e.l.blockedSenders(context.Background())
 	if err != nil || len(got) != 3 || got[0].Domain != "new-manual.test" || got[1].Domain != "old-manual.test" || got[2].Domain != "auto.test" {
 		t.Fatalf("priority order %+v %v", got, err)
 	}
