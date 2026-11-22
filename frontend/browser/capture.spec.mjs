@@ -53,6 +53,24 @@ async function measure(page, keys) {
   }, { targets: TARGETS, keys });
 }
 
+// Which build is on screen: the entry script, and ARIA that only the Base UI
+// build has (combobox/option roles on the recipient field; tab panels named by
+// their tab and roving tabindex on the strips; pagination nav on contacts).
+// A stale frontend/dist shows up here instead of as identical screenshots.
+async function dom(page) {
+  return page.evaluate(() => {
+    const attrs = (sel, names) => [...document.querySelectorAll(sel)].map((el) => Object.fromEntries(names.map((n) => [n, el.getAttribute(n)])));
+    return {
+      entryScript: document.querySelector('script[type="module"][src*="/assets/index-"]')?.getAttribute('src') ?? null,
+      recipientInput: attrs('.compose-token-input', ['role', 'aria-expanded', 'aria-controls', 'aria-activedescendant'])[0] ?? null,
+      options: document.querySelectorAll('[role="option"]').length,
+      tabs: attrs('[role="tab"]', ['tabindex', 'aria-selected', 'aria-controls']),
+      tabpanels: attrs('[role="tabpanel"]', ['aria-labelledby']),
+      contactPages: attrs('nav[aria-label="Contact pages"] button', ['aria-current']),
+    };
+  });
+}
+
 // Viewport clip around the union of the matched elements, padded and kept on screen.
 async function shot(page, name, selectors, { pad = 12, below = 0 } = {}) {
   const box = await page.evaluate(({ selectors, pad, below }) => {
@@ -93,6 +111,7 @@ test('capture recipient field and tab strips', async ({ page, context }, testInf
     await expect(compose.locator('.recipient-autocomplete-row')).toHaveCount(3);
     await expect(compose.getByLabel('Cc recipients', { exact: true })).toHaveValue('');
     out.widgets.recipients = await measure(page, ['tokenField', 'chip', 'chipRemove', 'tokenInput', 'suggestionRow', 'suggestionList', 'organisationHeader']);
+    out.widgets['recipients'].dom = await dom(page);
     await shot(page, `recipients-${project}.png`, ['.compose-topbar', '.compose-token-field', '.recipient-autocomplete']);
   });
 
@@ -123,6 +142,7 @@ test('capture recipient field and tab strips', async ({ page, context }, testInf
     await expect(strip).toBeVisible();
     await strip.evaluate((el) => el.scrollIntoView({ block: 'center' }));
     out.widgets['panel-tabs'] = await measure(page, ['configTab', 'configTabs']);
+    out.widgets['panel-tabs'].dom = await dom(page);
     await shot(page, `panel-tabs-${project}.png`, ['.config-tabs'], { below: 260 });
   });
 
@@ -135,6 +155,7 @@ test('capture recipient field and tab strips', async ({ page, context }, testInf
     await expect(strip).toBeVisible({ timeout: 30000 });
     await strip.evaluate((el) => el.scrollIntoView({ block: 'center' }));
     out.widgets['security-tabs'] = await measure(page, ['secTab', 'secTabs']);
+    out.widgets['security-tabs'].dom = await dom(page);
     await shot(page, `security-tabs-${project}.png`, ['.sec-tabs'], { below: 40 });
   });
 
@@ -144,6 +165,7 @@ test('capture recipient field and tab strips', async ({ page, context }, testInf
     await expect(tabs.locator('.contacts-page-tab')).toHaveCount(2);
     await tabs.evaluate((el) => el.scrollIntoView({ block: 'center' }));
     out.widgets['page-tabs'] = await measure(page, ['contactsPageTab']);
+    out.widgets['page-tabs'].dom = await dom(page);
     await shot(page, `page-tabs-${project}.png`, ['.contacts-page-tabs', '.contacts-count'], { below: 120 });
   });
 
