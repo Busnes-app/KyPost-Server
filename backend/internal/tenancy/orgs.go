@@ -139,17 +139,23 @@ func OrgCursor(ctx context.Context, db *sql.DB) (int64, error) {
 	return max(top.Int64-1, 0), nil
 }
 
+// ValidOrg refuses a listed org that ApplyOrg would not write: an ID that is not
+// canonical, a negative revision, an unknown status or quotas over 4 KiB.
+func ValidOrg(o suitedir.Org) error {
+	switch {
+	case !config.ValidOrgID(o.ID) || o.Revision < 0 || len(o.Quotas) > 4<<10:
+	case o.Status == suitedir.OrgActive, o.Status == suitedir.OrgSuspended, o.Status == suitedir.OrgDeletionScheduled, o.Status == suitedir.OrgDeleted:
+		return nil
+	}
+	return errors.New("tenancy: malformed org entry")
+}
+
 // ApplyOrg writes one listed org in its own statement (K "one transaction per org"). A
 // lower revision than the cached one is stale and changes nothing, and deleted is
 // terminal (T "Account holder guard"). An entry that is not canonical is refused.
 func ApplyOrg(ctx context.Context, db *sql.DB, o suitedir.Org, now time.Time) error {
-	if !config.ValidOrgID(o.ID) || o.Revision < 0 || len(o.Quotas) > 4<<10 {
-		return errors.New("tenancy: malformed org entry")
-	}
-	switch o.Status {
-	case suitedir.OrgActive, suitedir.OrgSuspended, suitedir.OrgDeletionScheduled, suitedir.OrgDeleted:
-	default:
-		return errors.New("tenancy: malformed org entry")
+	if err := ValidOrg(o); err != nil {
+		return err
 	}
 	enabled := 0
 	if o.Enabled {

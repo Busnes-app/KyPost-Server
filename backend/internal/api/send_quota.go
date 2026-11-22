@@ -53,9 +53,13 @@ func (s *Server) chargeSend(ctx context.Context, id, userID string, recipients i
 	}
 	// Multi mode: the org must be served (K "Org status"), and its caps hold too.
 	var u users.User
+	charged := false
 	if s.multiTenant() {
 		if u, err = s.users.Get(userID); err == nil {
 			err = s.orgServe(ctx, u.OrgID)
+		}
+		if err == nil {
+			charged, err = s.globalStore.SendCharged(ctx, id)
 		}
 		if err != nil {
 			return 0, err
@@ -63,7 +67,7 @@ func (s *Server) chargeSend(ctx context.Context, id, userID string, recipients i
 	}
 	wait, err := s.globalStore.AdmitSend(ctx, id, userID, recipients, q.MessagesPerHour, q.RecipientsPerDay, now.Unix())
 	if err == nil && s.multiTenant() {
-		if err = s.chargeOrgSend(ctx, id, u, now); errors.Is(err, state.ErrSendQuota) {
+		if err = s.chargeOrgSend(ctx, id, u, now, !charged); errors.Is(err, state.ErrSendQuota) {
 			wait = time.Hour // ponytail: the org window's exact wait is not computed
 		}
 	}

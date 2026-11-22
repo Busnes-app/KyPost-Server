@@ -138,3 +138,10 @@ func (s *Store) OrgSendUsage(ctx context.Context, members []string, now int64) (
 		FROM send_ledger WHERE at > ? AND user_id IN (`+in+`)`, args...).Scan(&messages, &recipients)
 	return messages, recipients, err
 }
+
+// SendCharged reports whether id is already in the ledger.
+func (s *Store) SendCharged(ctx context.Context, id string) (bool, error) {
+	var charged bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM send_ledger WHERE id=?)`, id).Scan(&charged)
+	return charged, err
+}

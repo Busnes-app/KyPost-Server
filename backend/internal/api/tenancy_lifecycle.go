@@ -63,7 +63,8 @@ func (s *Server) StartOrgPoller(ctx context.Context) {
 	}
 }
 
-// pollOrgs applies one /api/suite/orgs answer. An org that stops being served has its
+// pollOrgs applies one /api/suite/orgs answer, refusing the whole answer if any entry is
+// malformed. An org that stops being served has its
 // members' sessions revoked before its row changes, so a failed revocation is retried by
 // the next poll. The poll stamp is written only after every org applied.
 func (s *Server) pollOrgs(ctx context.Context, now time.Time) error {
@@ -78,6 +79,12 @@ func (s *Server) pollOrgs(ctx context.Context, now time.Time) error {
 	orgs, _, err := dir.Orgs(ctx, since)
 	if err != nil {
 		return err
+	}
+	// A malformed entry fails the poll before any session is revoked.
+	for _, o := range orgs {
+		if err := tenancy.ValidOrg(o); err != nil {
+			return err
+		}
 	}
 	for _, o := range orgs {
 		old, err := tenancy.LookupOrg(ctx, s.tenancy, o.ID)
@@ -120,10 +127,11 @@ func (s *Server) revokeIfStopping(ctx context.Context, old tenancy.Org, next sui
 }
 
 // chargeOrgSend applies the org caps after the user's own charge id is written: it sums
-// every member's charges, this one included, and drops this charge when that passes
+// every member's charges, this one included, and drops this charge, if this call wrote
+// it, when that passes
 // sendPerHour or recipientsPerDay. Two concurrent sends can both be refused, never both
 // admitted past the cap. Single mode and the staff org have no org cap.
-func (s *Server) chargeOrgSend(ctx context.Context, id string, u users.User, now time.Time) error {
+func (s *Server) chargeOrgSend(ctx context.Context, id string, u users.User, now time.Time, inserted bool) error {
 	if !s.multiTenant() || u.OrgID == s.staffOrg {
 		return nil
 	}
@@ -145,7 +153,8 @@ func (s *Server) chargeOrgSend(ctx context.Context, id string, u users.User, now
 	if err == nil && (q.SendPerHour != nil && int64(messages) > *q.SendPerHour || q.RecipientsPerDay != nil && int64(recipients) > *q.RecipientsPerDay) {
 		err = state.ErrSendQuota
 	}
-	if err != nil {
+	// Only a charge this call wrote is released: a retry's earlier charge stays counted.
+	if err != nil && inserted {
 		if rerr := s.globalStore.ReleaseSend(ctx, id); rerr != nil {
 			return errors.Join(err, rerr)
 		}

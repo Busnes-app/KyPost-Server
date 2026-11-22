@@ -339,7 +339,8 @@ func TestOrgPoller(t *testing.T) {
 		t.Fatal("a revoked session came back on resume")
 	}
 
-	// Failures change nothing and stamp no poll.
+	// Failures change nothing, revoke no session and stamp no poll.
+	authRequestAs(srv, req, fx.a.ID)
 	before := orgRow(t, db, orgA)
 	later := now.Add(10 * time.Minute)
 	for name, prep := range map[string]func(){
@@ -356,6 +357,9 @@ func TestOrgPoller(t *testing.T) {
 		}
 		if o := orgRow(t, db, orgA); o != before {
 			t.Errorf("%s: org changed %+v -> %+v", name, before, o)
+		}
+		if _, ok, _ := srv.lookupSession(ctx, token); !ok {
+			t.Fatalf("%s: a served org's session was revoked", name)
 		}
 		pointAtOrgs(t, srv, idp, "suite-secret")
 	}
@@ -427,6 +431,14 @@ func TestOrgQuotas(t *testing.T) {
 	// A retry of an admitted send is admitted again without a second charge.
 	if err := charge(fx.a, "q1", 1); err != nil {
 		t.Fatalf("retry of an admitted send: %v", err)
+	}
+	// A retry refused by a lowered cap keeps its earlier charge.
+	setOrg(t, db, orgA, "active", true, `{"sendPerHour":1}`)
+	if err := charge(fx.a, "q1", 1); !errors.Is(err, state.ErrSendQuota) {
+		t.Fatalf("retry past a lowered cap: %v", err)
+	}
+	if m, _, err := srv.globalStore.OrgSendUsage(ctx, []string{fx.a.ID, fx.other.ID}, now.Unix()); err != nil || m != 2 {
+		t.Fatalf("a refused retry released its earlier charge: %d %v", m, err)
 	}
 
 	setOrg(t, db, orgA, "active", true, `{"recipientsPerDay":5}`)

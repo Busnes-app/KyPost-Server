@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -383,6 +384,8 @@ func TestIsStaff(t *testing.T) {
 	}
 }
 
+var updatedAt = regexp.MustCompile(`"updatedAt":"[^"]*"`)
+
 // Single mode: X-Ky-Org is ignored and no staff audit row is written.
 func TestSingleTenantIgnoresTheOrgHeader(t *testing.T) {
 	srv, admin, member := adminAndMember(t)
@@ -398,7 +401,8 @@ func TestSingleTenantIgnoresTheOrgHeader(t *testing.T) {
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), member.ID) {
 			t.Fatalf("GET /api/users with %q: %d %s", header, w.Code, w.Body)
 		}
-		return normalized(w, "\x00")
+		// authRequestAs moves updatedAt; a slow run can cross a second between calls.
+		return updatedAt.ReplaceAllString(normalized(w, "\x00"), "")
 	}
 	if want := get(""); get(orgA) != want || get("not-an-org") != want {
 		t.Error("X-Ky-Org changed a single-tenant answer")

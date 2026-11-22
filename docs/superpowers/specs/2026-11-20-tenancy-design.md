@@ -1191,7 +1191,8 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - `ApplyOrg` (`:145`) writes one listed org in one statement. A lower revision than the
     cached one changes nothing, and `deleted` is terminal (T "Account holder guard"). An entry
     whose ID is not PR 1's canonical form, whose status is unknown, or whose quotas are over
-    4 KiB is refused, which fails the whole poll, as `suitedir.Orgs` does for a malformed entry.
+    4 KiB is refused (`ValidOrg`). `pollOrgs` checks every listed entry first, so a malformed
+    one fails the whole poll before any session is revoked, as `suitedir.Orgs` fails on one.
   - **The cursor** (`OrgCursor`, `:134`) is the highest cached revision minus one, so orgs that
     share it are listed again. An equal revision applies as the same state. No cursor row is
     stored.
@@ -1263,7 +1264,8 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
     are summed from `send_ledger` (`state.OrgSendUsage`, `state/send_ledger.go:128`, members
     from `user_orgs` plus the sender). Past a cap, this charge is deleted and the send gets
     the quota answer. Two concurrent sends can both be refused but never both admitted past the
-    cap. The org refusal's `Retry-After` is one hour, not computed.
+    cap. Only a charge this call wrote is deleted: a retry of an admitted send that a lowered cap
+    now refuses keeps its earlier charge. The org refusal's `Retry-After` is one hour, not computed.
   - **`mailboxes`** (`orgMailboxRoom`, `:172`) counts the org's extra mailboxes in any state.
     It refuses a new one on `POST /api/admin/mailboxes` with `409 mailbox_quota`
     (`api/native_mailbox_handlers.go:201`). Two staff creations at once can pass together.
