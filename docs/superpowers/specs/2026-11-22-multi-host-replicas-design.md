@@ -226,7 +226,12 @@ documents(root TEXT, path TEXT, revision BIGINT, body BYTEA, updated_at BIGINT,
 - **CAS.** A write gives the revision it read. `UPDATE … SET body=?, revision=revision+1 WHERE
   root=? AND path=? AND revision=?`, or, for revision 0 (the document was absent),
   `INSERT … ON CONFLICT (root, path) DO NOTHING`, so two replicas creating one document never
-  see a key violation. If either statement touches no row, the write returns `ErrStale`, and the store retries its read-modify-write. The retry is bounded. A store
+  see a key violation. If either statement touches no row, the write returns `ErrStale`.
+  **Remove keeps a tombstone.** It sets `body` to NULL and bumps the revision. It never deletes the
+  row, so a document's revision only grows. A writer that read revision 1 before a remove and
+  re-create can never match the new row: that is the ABA case. A re-create from a tombstone is an
+  `UPDATE` on the tombstone's revision. Only the purge deletes rows, and only under user and
+  mailbox IDs, which are random UUIDs and never reused (`fsutil.NewUUIDv4` at `users/users.go:765,1432`, `sso/native_allocate.go:95`, `sso/native_mailbox.go:69`), and the store retries its read-modify-write. The retry is bounded. A store
   that exhausts the bound fails the request with `503`, never with a partial write.
 - **Size.** Each document has a cap of 16 MiB, refused at the write. That is about twice the
   largest store's own bound. MH2 measures the bounds per store, and the stores keep their own,
@@ -242,17 +247,34 @@ documents(root TEXT, path TEXT, revision BIGINT, body BYTEA, updated_at BIGINT,
 
 ```
 accounts(id TEXT PRIMARY KEY, username TEXT UNIQUE, issuer TEXT, subject TEXT,
-         revision BIGINT, record BYTEA, UNIQUE (issuer, subject))   -- multi-only, tenancy.db
+         revision BIGINT, record BYTEA, UNIQUE (issuer, subject),
+         CHECK ((issuer IS NULL) = (subject IS NULL)))   -- multi-only, tenancy.db
 ```
+
+`issuer` and `subject` are NULL for an account with no SSO binding, never an empty string. A
+`UNIQUE` constraint admits any number of NULLs, so unbound accounts never collide. The writer maps
+Go's empty strings to NULL at the boundary. Multi mode has no local accounts (K6), so every
+customer account is bound. The column rule still keeps a staff break-glass or not-yet-linked
+account from being misreported as `ErrSSOSubTaken`.
 
 - `record` holds the same JSON object one `users.json` entry holds (`users/users.go:49-165`),
   including `OrgID`. The users store's invariants (K "PR 2 as built": `orgInvariants`,
   `writeFileUnlocked` comparing old and new, `users/users.go:570,995`) become
   per-row comparisons in the same transaction. The `UNIQUE` constraints enforce `ErrSSOSubTaken`
   and username uniqueness in the database rather than in a whole-file scan.
-- `WithCurrentUsers` (`users/users.go:830-865`), which reads every account under the shared lock,
-  becomes one `REPEATABLE READ` scan. Its callers are the snapshot readers: recovery, the
-  last-administrator rule and the purge snapshot. The stat-based read cache (`users/users.go:644-682`)
+- `WithCurrentUsers` (`users/users.go:830-865`) reads every account under the shared lock, and
+  today that lock also keeps writers out while a caller checks and then acts. Its replacement is
+  split in two:
+  - **A caller that only reads** gets one `REPEATABLE READ` scan.
+  - **A write that checks a whole-set invariant runs `SERIALIZABLE`.** Examples are the
+    last-administrator rule, and a staff demotion or deactivation checked against it. On
+    serialization failure (`40001`) it retries within the CAS bound, then answers `503`.
+    `REPEATABLE READ` would allow write skew here. Two demotions on two replicas each lock only
+    their own row, each sees the other administrator still active, and both commit, which leaves
+    no administrator.
+  - **The purge snapshot** keeps K PR 2's order: it lists `user_orgs` before it lists accounts. It
+    runs `SERIALIZABLE` against concurrent provisioning for the org, so a new account cannot fall
+    between the two reads. The stat-based read cache (`users/users.go:644-682`)
   becomes a per-account read that is revision-checked, so no replica serves an account it has not
   re-read this request (`currentUser` already re-reads, K "What KyPost has today").
 - `user_orgs` stays as it is (K3). PR 2's three-record check (`checkAccountOrg`) is unchanged,
@@ -389,7 +411,8 @@ in tests, as K's do (`makeMultiTenant`).
    names. Nothing uses them in production yet.
    Tests:
    - CAS: a stale revision is refused, two writers race on an update and on a first create and in
-     each case one wins with the other retrying, and
+     each case one wins with the other retrying, a writer that read before a remove and
+     re-create is refused (ABA), and
      the retry bound gives `503`;
    - boundary: an absolute path, `..`, NUL, an empty segment, oversize paths and bodies, all refused
      before SQL;
@@ -408,6 +431,8 @@ in tests, as K's do (`makeMultiTenant`).
 3. **MH3: accounts.** The `accounts` table, per-row invariants and the `REPEATABLE READ` snapshot.
    Tests:
    - every users-store test on both implementations;
+   - two concurrent demotions of the last two administrators on two replicas: exactly one commits;
+   - two unbound accounts coexisting;
    - PR 2's write-once and K7 tests in multi mode;
    - a uniqueness race between two replicas creating one subject, where one wins and the other
      gets `ErrSSOSubTaken`;
