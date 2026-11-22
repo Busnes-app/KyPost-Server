@@ -676,7 +676,8 @@ nobody is disabled".
 
 ## Replicas (PR #677)
 
-R runs several app replicas on one host, with one PostgreSQL and shared volumes. The `.db` stores
+R runs several app replicas on one host, with one PostgreSQL and shared volumes. Multi mode must
+also run across hosts (below, "Several hosts"). The `.db` stores
 are in PostgreSQL. Accounts (`users.json`), per-user JSON and `config.yaml`, DKIM keys and the
 secret keys stay on the volumes behind host-local file locks (R `docs/RUNNING.md:242-245,283`).
 Tenancy fits on top:
@@ -711,11 +712,17 @@ Tenancy fits on top:
   Hosted usernames are unique across the install, so no change is needed.
 - **Per-replica meters** allow up to N times their limit with N replicas (R `docs/RUNNING.md:278`,
   "O4"). Per-org quotas must not use those in-memory meters. They read PostgreSQL (`send_ledger`)
-  or the ledger, so they hold across replicas.
-- **Scale before launch.** `users.json` is one file holding every customer's account, rewritten
-  whole under one lock. Per-user `config.yaml` files are read by the masked sweep every minute (M
-  D8). R names moving these files into PostgreSQL as its follow-up job. Hosted launch depends on
-  that follow-up. The isolation phases do not.
+  or the ledger, so they hold across replicas. MH "Per-replica meters" lists every meter and moves
+  the ones that reach a third party or unauthenticated callers into R's shared windows (MH6).
+- **Several hosts (owner decision, 2026-11-22).** A multi install must run as several replicas
+  on several hosts, not only on one. R's follow-up, which moves `users.json`, the per-user files
+  and the other volume files into PostgreSQL, is therefore a hard requirement of multi mode, not a
+  launch prerequisite outside the plan. It is specified in
+  `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md` (**MH**): the volume inventory
+  with a target per file, every `flock` and host check and what replaces each, and PRs MH1–MH7.
+  In multi mode only, R's boot-ID check (`replica.ErrHost`) and volume IDs give way to MH's
+  volume-free assertion. Single-tenant installs keep them. The isolation phases (PRs 1–6) do not
+  depend on MH.
 - **Receiving.** R refuses Maddy on PostgreSQL (Mail, open question 3). The receiving tier spec
   (`docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) replaces it in multi mode.
 
@@ -758,8 +765,9 @@ wait, each on a KyIdentity change listed under the plan:
   routes under it (open question 4 (a), approved).
 - PR 6's restore release needs the erased-subject list.
 - PR 7 needs the mailbox address field, and also the receiving tier (open question 3, specified in
-  `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Its per-mailbox import leases are part of that tier. Running past one host also needs R's
-  follow-up, which is a launch prerequisite (below).
+  `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Its per-mailbox import leases are part of that tier. PR 7 also
+  needs multi-host replicas, PRs MH1–MH7 of
+  `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md` (amendment, 2026-11-22, below).
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
    the multi-only side tables (`orgs`, `user_orgs`, `subject_orgs`; PR 6 adds the purge tables), `users.User.OrgID`
@@ -795,8 +803,22 @@ wait, each on a KyIdentity change listed under the plan:
    (open question 3; built as that spec's PRs 1–5, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Startup then accepts `multi`. Tests: M's hosted verification list, and a native-mail harness run
    (`docs/DEVELOPMENT.md`) against KyIdentity in multi mode.
 
-Launch prerequisites outside this plan: R's follow-up that moves accounts and per-user files into
-PostgreSQL, a measured capacity target (open question 8), and these KyIdentity changes:
+**Amendment, 2026-11-22 (owner decision: multi-tenant needs multi-server).** PR 7 must not
+accept `multi` until multi-host works. Startup keeps refusing `multi` until **all** of MH1–MH7
+(`docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`, "Phased build plan") and RX
+PRs 1–5 have merged. Where it accepts `multi`, PR 7 adds MH's prerequisites to the K2 checks:
+`sslmode=verify-full` for a database that is not on loopback, and a provisioned, complete
+`SECRET_DIR` (MH5). It also runs MH7's two-host harness among its tests. MH sits against this plan as follows:
+- MH1 can start now.
+- MH2 needs PR 6's addition of `tenancy.db` to the backup set.
+- MH4's catalog tombstone is the purge's database-level fence, so PR 6's final check asserts it
+  once MH4 has merged.
+- PR 6's purge must also cover `contact-photos/`, which `TestEveryStoreIsClassified` does not list
+  yet (MH inventory).
+
+Launch prerequisites outside this plan: a measured capacity target (open question 8), PostgreSQL
+as its own replicated service with a synchronous standby (RX R5, RX "Past one host" step 3), and
+these KyIdentity changes:
 - the mailbox address field, sent as its own `emails` entry (Mail);
 - the Delete everything button, the holder's paths (straight to `deleted`, or a 7-day member
   export window that `resume` refuses, with a notice to each member), `user.erased`, and the list
