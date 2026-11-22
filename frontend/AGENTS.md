@@ -202,6 +202,7 @@ admin grant; the issuer hint states that changing the issuer revokes links.
 - `npm run lint` (after `npm ci --prefix lint`) must report 0 errors and 0 warnings. An effect that reads a value it must not re-run on uses `useEffectEvent`; a proven false positive gets a reason comment above a next-line disable, never a file or rule disable. `lint/` is its own package and lockfile because typescript-eslint needs the TypeScript 6 compiler API and the app builds with TypeScript 7; config is `lint/eslint.config.js` (rules-of-hooks error, exhaustive-deps warn). Do not move these deps into the app's `package.json`. `lint/package.json` overrides `minimatch` to 11.0.3 for GHSA-g3hv-75wg-m249: eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still ask for `^10`, and use only `Minimatch#match`/`pattern` and `minimatch()`, which 11 keeps. Remove the override once all three accept `^11`
 - Time-sensitive test fixtures use relative expiries or a controlled clock, so real calendar dates cannot silently change their intended state.
 - Every account-credential request goes through `credentialFields`/`deriveCredential` (`api/auth.ts`) and sends only `authSecret` (or `<prefix>AuthSecret`). `api/credential-transmission.test.ts` (source scan, with an allowlist of files that send non-account passwords) and `api/password-wire.test.ts` enforce it.
+- `npm run test:browser` (Playwright, not in CI) needs a prebuilt `dist` and `.browser/server`; see [browser/AGENTS.md](browser/AGENTS.md).
 - `npm test` (vitest) must pass. `pages/read/readability.test.tsx` covers the reading surface across every theme × both body modes and is the check a new theme preset or a sanitizer allowlist change has to clear
 
 ## Shared browser UI
@@ -218,4 +219,4 @@ admin grant; the issuer hint states that changing the issuer revokes links.
 
 ## Child DOX Index
 
-No child AGENTS.md files. All frontend code is flat under `src/`.
+- `browser/` — Playwright harness: disposable real server, real sign-in setup, capture and browser specs (`npm run test:browser`). See [browser/AGENTS.md](browser/AGENTS.md).
