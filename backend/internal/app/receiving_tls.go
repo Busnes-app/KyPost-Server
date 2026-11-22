@@ -425,19 +425,25 @@ func loadReceivingRemote() (*receivingRemote, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.tls = &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{cert},
-		// No CA and no name: VerifyConnection requires the server key's pin instead (RX R3).
-		InsecureSkipVerify: true, //nolint:gosec // replaced by the pin check below
+	c.tls = pinVerifiedClientTLS(cert, c.ServerPins)
+	return &c, nil
+}
+
+// pinVerifiedClientTLS is the helper's TLS: no CA and no name, because the server's key
+// must instead match one of pins (RX R3). Go calls VerifyConnection even when chain
+// verification is skipped, and a handshake whose server key is not pinned fails.
+func pinVerifiedClientTLS(cert tls.Certificate, pins []string) *tls.Config {
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true, //nolint:gosec // replaced by the pin check in VerifyConnection
 		VerifyConnection: func(cs tls.ConnectionState) error {
-			if len(cs.PeerCertificates) == 0 || !slices.Contains(c.ServerPins, spkiPin(cs.PeerCertificates[0].RawSubjectPublicKeyInfo)) {
+			if len(cs.PeerCertificates) == 0 || !slices.Contains(pins, spkiPin(cs.PeerCertificates[0].RawSubjectPublicKeyInfo)) {
 				return errors.New("receiving server key is not pinned")
 			}
 			return nil
 		},
 	}
-	return &c, nil
 }
 
 // call sends one request to a replica. It tries the replicas in random order, each with
