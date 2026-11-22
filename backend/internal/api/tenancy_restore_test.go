@@ -129,6 +129,13 @@ func TestRestoreReleaseWaitsForKyIdentity(t *testing.T) {
 	if read, err := tenancy.RestoreRead(ctx, px.db, epoch); err != nil || !read {
 		t.Fatal("the restore read was not recorded", err)
 	}
+	// Once recorded, the hold's polls are the ordinary incremental ones again.
+	if err := srv.restoreReads(ctx, epoch, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if since := idp.lastSince(); since == "0" {
+		t.Fatal("a recorded restore read still polled every org from revision 0")
+	}
 	if err := srv.runPurges(ctx, time.Now()); err != nil {
 		t.Fatal(err)
 	}

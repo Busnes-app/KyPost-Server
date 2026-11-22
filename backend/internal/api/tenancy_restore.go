@@ -34,7 +34,22 @@ type erasedSubject struct {
 }
 
 // maxErasedPages bounds one read: 100 pages of 500, as suitedir.Orgs bounds its own.
+// ponytail: past 50,000 erased subjects the read fails and the hold cannot be released;
+// page it across polls with a stored cursor before any install nears that.
 const maxErasedPages = 100
+
+// erasedPurgeError is an erased subject whose purge cannot start, so the restore read is not
+// recorded and the hold stays. It names the entry by its revision, never by subject or org.
+type erasedPurgeError struct {
+	revision int64
+	err      error
+}
+
+func (e *erasedPurgeError) Error() string {
+	return fmt.Sprintf("erased subject at revision %d: purge cannot start: %v", e.revision, e.err)
+}
+
+func (e *erasedPurgeError) Unwrap() error { return e.err }
 
 // errErasedMalformed refuses a whole answer with any entry KyPost would not apply. It
 // quotes no entry: a subject or org ID is not logged.
@@ -118,8 +133,14 @@ func loopbackHost(host string) bool {
 
 // restoreReads runs while a restore hold stands: a poll of every org from revision 0, then
 // every erased subject, each starting the purge it calls for (a deleted org's by the purge
-// runner, an erased member's here). Only when both succeed is the hold's epoch recorded.
+// runner, an erased member's here). Only when both succeed is the hold's epoch recorded;
+// after that the ordinary incremental poll resumes, and later erasures arrive as events.
 func (s *Server) restoreReads(ctx context.Context, epoch string, now time.Time) error {
+	if read, err := tenancy.RestoreRead(ctx, s.tenancy, epoch); err != nil {
+		return err
+	} else if read {
+		return s.pollOrgs(ctx, now)
+	}
 	dir, ok := s.ssoStore.Load().SuiteDirectory()
 	if !ok {
 		return errNoSuiteDirectory
@@ -133,7 +154,7 @@ func (s *Server) restoreReads(ctx context.Context, epoch string, now time.Time) 
 	}
 	for _, e := range erased {
 		if err := s.beginPurge(ctx, tenancy.PurgeScope{Org: e.OrgID, Subject: e.Sub}, now); err != nil {
-			return err
+			return &erasedPurgeError{revision: e.Revision, err: err}
 		}
 	}
 	return tenancy.RecordRestoreRead(ctx, s.tenancy, epoch, now)
