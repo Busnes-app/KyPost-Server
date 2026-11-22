@@ -182,6 +182,10 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 			// map lookup and a KDF-free field read; the password KDF verification
 			// the cache exists to skip is still skipped.
 			u, err := s.users.Get(ac.UserID)
+			if err == nil && s.davOrgUnavailable(u) {
+				writeKDFBusy(w)
+				return
+			}
 			if err != nil || !s.davAccountActive(u) {
 				s.davCredentials.invalidateUser(ac.Username)
 				s.requireDAVAuth(w)
@@ -255,6 +259,11 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		}
 
 		s.davLockout.cancelAttempt(strike)
+		// Checked only after the password, so an outage does not reveal which names exist.
+		if s.davOrgUnavailable(u) {
+			writeKDFBusy(w)
+			return
+		}
 		if s.multiTenant() && u.OrgID == "" {
 			s.requireDAVAuth(w)
 			return
@@ -287,8 +296,17 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 
 // Restored account flags cannot authorize CardDAV while native recovery is held.
 // Check even cache hits; offline restore also removes historical app passwords.
+// An unreadable org cache counts as active here; davOrgUnavailable answers it first.
 func (s *Server) davAccountActive(u users.User) bool {
-	return u.Active && s.requireAccountRestoreReleased(u) == nil && s.orgServed(context.Background(), u)
+	served, err := s.orgServed(context.Background(), u)
+	return u.Active && s.requireAccountRestoreReleased(u) == nil && (served || err != nil)
+}
+
+// davOrgUnavailable reports a cache read failure for u's org, which CardDAV and MCP
+// answer 503: a 401 would make a client discard a working credential.
+func (s *Server) davOrgUnavailable(u users.User) bool {
+	_, err := s.orgServed(context.Background(), u)
+	return err != nil
 }
 
 // rehashDAVAppPassword re-derives an app password's hash at the current cost

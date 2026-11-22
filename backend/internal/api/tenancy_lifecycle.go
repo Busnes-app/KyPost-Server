@@ -38,9 +38,14 @@ func (s *Server) orgServe(ctx context.Context, org string) error {
 	return s.orgGate().Serve(ctx, org)
 }
 
-// orgServed is orgServe for a credential check that answers a read failure as a refusal.
-func (s *Server) orgServed(ctx context.Context, u users.User) bool {
-	return s.orgServe(ctx, u.OrgID) == nil
+// orgServed reports whether u's org is served; err is a cache read failure, which a
+// credential check answers as "try again later", never as a dead credential.
+func (s *Server) orgServed(ctx context.Context, u users.User) (served bool, err error) {
+	err = s.orgServe(ctx, u.OrgID)
+	if errors.Is(err, tenancy.ErrNotServed) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // StartOrgPoller refreshes the orgs cache about every minute, on the api-sweepers owner.

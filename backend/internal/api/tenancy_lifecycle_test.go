@@ -122,7 +122,10 @@ func TestOrgStatusOnEverySurface(t *testing.T) {
 			setDeviceHeaders(req, deviceID, deviceSecret)
 			_, _, _, ok, _ = fx.srv.deviceAuthSnapshot(req)
 			got["device"] = ok
-			_, got["device org"] = fx.srv.deviceOrg(fx.a.ID)
+			_, got["device org"], err = fx.srv.deviceOrg(fx.a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			// Distinct source addresses keep the DAV lockout out of the answer.
 			got["carddav"] = davRequest(fx.srv, fx.a.Username, "dav-app-password", fmt.Sprintf("203.0.113.%d:4000", 10+i)).Code != http.StatusUnauthorized
@@ -556,5 +559,51 @@ func TestTwoReplicasSeeOneSuspension(t *testing.T) {
 	}
 	if _, ok, _ := b.lookupSession(context.Background(), "session-token-"+member.ID); ok {
 		t.Fatal("the shared session survived the suspension")
+	}
+}
+
+// An unreadable org cache is "try again later" on every credential path, never a dead
+// credential: a 401 would make a CardDAV client drop its password and a phone re-pair.
+func TestOrgCacheOutageIsRetryable(t *testing.T) {
+	fx, _ := newOrgFixture(t)
+	ctx := context.Background()
+	deviceID, deviceSecret := pairNativeDevice(t, fx.srv, fx.a.ID, "outage-device")
+	hash, err := users.HashPassword(ctx, "dav-app-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.srv.writeDAVPassword(fx.a.ID, davPasswordFile{Hash: hash, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	_, agentToken := seedAgentToken(t, fx.srv, fx.a.ID, state.AgentScopeRead, time.Now())
+	if err := fx.srv.tenancy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	authRequestAs(fx.srv, req, fx.a.ID)
+	if _, ok, err := fx.srv.currentUser(req); ok || err == nil {
+		t.Errorf("session: ok %v err %v, want a retryable error", ok, err)
+	}
+	if _, ok, err := fx.srv.currentUser(req); err == nil || ok {
+		t.Error("the session was dropped by the outage")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/contacts", nil)
+	setDeviceHeaders(req, deviceID, deviceSecret)
+	if _, _, _, ok, retry := fx.srv.deviceAuthSnapshot(req); ok || retry != retryAfterKDFBusy {
+		t.Errorf("device: ok %v retry %v, want come back later", ok, retry)
+	}
+	if _, _, err := fx.srv.deviceOrg(fx.a.ID); err == nil {
+		t.Error("deviceOrg hid the outage")
+	}
+	if w := davRequest(fx.srv, fx.a.Username, "dav-app-password", "203.0.113.90:4000"); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("carddav: %d, want 503", w.Code)
+	}
+	// A wrong password still gets 401: the outage is reported only after the password.
+	if w := davRequest(fx.srv, fx.a.Username, "wrong", "203.0.113.91:4000"); w.Code != http.StatusUnauthorized {
+		t.Errorf("carddav wrong password: %d, want 401", w.Code)
+	}
+	if w := rawMCP(t, fx.srv, listToolsRPC, bearerHeader(agentToken)); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("mcp: %d, want 503", w.Code)
 	}
 }

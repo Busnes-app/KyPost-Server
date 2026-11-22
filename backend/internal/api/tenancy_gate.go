@@ -116,12 +116,16 @@ func (s *Server) strictPeerOrgOK(f strictPeerOrg) bool {
 
 // deviceOrg is a paired device's account org, read from the user record. Multi mode
 // refuses an account without one like a revoked credential; single mode reads nothing.
-func (s *Server) deviceOrg(userID string) (string, bool) {
+func (s *Server) deviceOrg(userID string) (string, bool, error) {
 	if !s.multiTenant() {
-		return "", true
+		return "", true, nil
 	}
 	u, err := s.users.Get(userID)
-	return u.OrgID, err == nil && u.OrgID != "" && s.orgServed(context.Background(), u)
+	if err != nil || u.OrgID == "" {
+		return u.OrgID, false, nil
+	}
+	served, err := s.orgServed(context.Background(), u)
+	return u.OrgID, served, err
 }
 
 var errQuarantineOtherOrg = fmt.Errorf("%w: the address has been held in another org", sso.ErrQuarantineRelease)

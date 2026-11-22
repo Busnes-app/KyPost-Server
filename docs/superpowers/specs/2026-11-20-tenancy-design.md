@@ -1188,7 +1188,7 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
 
 - **The cache** (`tenancy/orgs.go`) is PR 1's `orgs` table; no table is added, so
   `TestEveryStoreIsClassified` is unchanged.
-  - `ApplyOrg` (`:145`) writes one listed org in one statement. A lower revision than the
+  - `ApplyOrg` (`:159`) writes one listed org in one statement. A lower revision than the
     cached one changes nothing, and `deleted` is terminal (T "Account holder guard"). An entry
     whose ID is not PR 1's canonical form, whose status is unknown, or whose quotas are over
     4 KiB or not a JSON object (`null` included) is refused (`ValidOrg`). `pollOrgs` checks every listed entry first, so a malformed
@@ -1196,7 +1196,7 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - **The cursor** (`OrgCursor`, `:134`) is the highest cached revision minus one, so orgs that
     share it are listed again. An equal revision applies as the same state. No cursor row is
     stored.
-  - **The poll stamp.** After every listed org applied, `MarkPolled` (`:173`) sets every row's
+  - **The poll stamp.** After every listed org applied, `MarkPolled` (`:182`) sets every row's
     `polled_at` to the poll's time. A failed poll stamps nothing. `polled_at` therefore means
     "the last good poll", which is what the stale bound reads.
   - `LookupOrg` (`:81`) reads a row; a missing row is not known.
@@ -1204,16 +1204,16 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   last good poll no more than 15 minutes old (`StaleAfter`, `:19`; a stamp in the future is
   stale). `enabled: false` is not in K's table. It is read as "not served" (owner question 1
   below).
-- **The gate** is `tenancy.Gate.Serve` (`:206`). The staff org is always served (K8). A nil gate,
+- **The gate** is `tenancy.Gate.Serve` (`:215`). The staff org is always served (K8). A nil gate,
   one without a database, or an empty org serves nobody, so an unwired caller fails closed. The
   api's gate is `orgGate` (`api/tenancy_lifecycle.go:29`); single mode never asks it
   (`orgServe`, `:34`).
-- **The poller** (`StartOrgPoller`, `api/tenancy_lifecycle.go:47`) runs about every 60 s on the
+- **The poller** (`StartOrgPoller`, `api/tenancy_lifecycle.go:52`) runs about every 60 s on the
   `api-sweepers` owner (`app/app.go:477`), and only when the server holds `tenancy.db`.
-  - `pollOrgs` (`:69`) calls `suitedir.Orgs` with the SSO settings' suite directory
+  - `pollOrgs` (`:75`) calls `suitedir.Orgs` with the SSO settings' suite directory
     credentials.
   - **Session revocation.** For an org that stops being served (it was served or unknown, the
-    entry is not stale, and it is not the staff org), `revokeIfStopping` (`:100`) runs
+    entry is not stale, and it is not the staff org), `revokeIfStopping` (`:112`) runs
     `revokeUserSessions` for every `user_orgs` member before the row changes. That is R's
     per-user generation on PostgreSQL, and the in-memory sessions on SQLite. A failed
     revocation fails the poll before anything is applied, so the next poll retries it.
@@ -1221,10 +1221,13 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
 - **Sign-in and credentials.** Each check answers like the dead credential on that path:
   - The session (`currentUser`, `api/server_auth_session.go:1330`) is dropped when not served.
     A cache read error answers `503` and keeps the session.
-  - The paired device (`deviceAuthSnapshot`, `api/device_auth.go:161`, and `deviceOrg`,
-    `api/tenancy_gate.go:124`).
+  - The paired device (`deviceAuthSnapshot`, `api/device_auth.go:164`, and `deviceOrg`,
+    `api/tenancy_gate.go:119`).
   - CardDAV, on a cache hit and a miss, and MCP agent tokens, through `davAccountActive`
-    (`api/dav_auth.go:291`). A refused CardDAV password still pays the KDF timing.
+    (`api/dav_auth.go:300`). A refused CardDAV password still pays the KDF timing.
+  - **An unreadable cache is "try again later", never a dead credential.** Device auth
+    answers busy. CardDAV, after the password is verified (`davOrgUnavailable`, `:307`), and
+    MCP answer `503`. A `401` would make a client drop a working password or re-pair.
   - Browser sign-in and device sign-on (`resolveSSOUser`, `api/sso_handlers.go:668`): `403`
     "this account is not available right now". It is reached only after the token's org and
     the three binding records agree, so it tells only the account's holder. The security log
@@ -1234,9 +1237,9 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - **A stale cache drops sessions too.** After a KyIdentity outage longer than 15 minutes,
     every customer signs in again (owner question 3).
 - **Sending.** Every send is charged through `chargeSend`, so the org check sits there
-  (`api/send_quota.go:58`): immediate sends (`403` "sending is paused for this account"),
+  (`api/send_quota.go:59`): immediate sends (`403` "sending is paused for this account"),
   scheduled sends, and KyCalendar and KyPulse mail.
-  - **A scheduled send is held** (`api/scheduled_send.go:497`). It waits with `reasonHeld` and is
+  - **A scheduled send is held** (`api/scheduled_send.go:498`). It waits with `reasonHeld` and is
     retried until its one-hour retry window ends. Then it returns to Drafts keeping that reason
     (`:453`), as open question 6 recommends.
   - **A queued native send is held, not sent.** `sso.NativeOutbound.Submit` refuses an org-bound
@@ -1259,18 +1262,18 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - **Parsing.** A missing key keeps today's default. A known key that is not a whole
     non-negative number reads as 0, and a body that does not decode zeroes every key. 0 refuses
     new mail and creations, never existing data.
-  - **`sendPerHour` and `recipientsPerDay`** (`chargeOrgSend`, `api/tenancy_lifecycle.go:126`).
+  - **`sendPerHour` and `recipientsPerDay`** (`chargeOrgSend`, `api/tenancy_lifecycle.go:139`).
     The user's own charge is written first. Then every member's charges, this one included,
     are summed from `send_ledger` (`state.OrgSendUsage`, `state/send_ledger.go:128`, members
     from `user_orgs` plus the sender). Past a cap, this charge is deleted and the send gets
     the quota answer. Two concurrent sends can both be refused but never both admitted past the
     cap. Only a charge this call wrote is deleted: a retry of an admitted send that a lowered cap
     now refuses keeps its earlier charge. The org refusal's `Retry-After` is one hour, not computed.
-  - **`mailboxes`** (`orgMailboxRoom`, `:172`) counts the org's extra mailboxes in any state.
+  - **`mailboxes`** (`orgMailboxRoom`, `:186`) counts the org's extra mailboxes in any state.
     It refuses a new one on `POST /api/admin/mailboxes` with `409 mailbox_quota`
     (`api/native_mailbox_handlers.go:201`). Two staff creations at once can pass together.
   - **`mailboxBytes` and `storageBytes`** are applied at receiving acceptance (`orgRoom`,
-    `app/receiving.go:93`, after the mailbox's own check at `:83`), with mail held for import
+    `app/receiving.go:94`, after the mailbox's own check at `:83`), with mail held for import
     counted. At DATA, a delivery to several mailboxes of one org counts one copy per mailbox
     (`sameOrgCopies`). They answer the existing mailbox-full exit 9.
     - The owner's org comes from `subject_orgs` and the members from `user_orgs`, because the
@@ -1293,10 +1296,11 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
     - `TestStaffKeepTheConsoleWithThePollerFailing`;
     - `TestOrgQuotas`;
     - `TestSingleTenantHasNoLifecycle`;
+    - `TestOrgCacheOutageIsRetryable`;
     - `TestTwoReplicasSeeOneSuspension`, PostgreSQL only.
   - Elsewhere: `tenancy` `TestOrgCache`, `TestApplyOrgRefusesMalformedEntries` and
     `TestParseQuotas`; `sso` `TestNativeOutboundHoldsANotServedOrg`; `app`
-    `TestReceivingOrgStorageQuotas`.
+    `TestReceivingOrgStorageQuotas` and `TestReceivingOrgStorageCountsEveryCopy`.
   - **Proof that the gates bite:** each of these mutations fails its test:
     - the session check, the sign-in check and the gate's staleness;
     - the outbox hold;

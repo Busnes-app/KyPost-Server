@@ -174,6 +174,11 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 		}
 		if secretOK {
 			user, userErr = s.users.Get(tok.UserID)
+			if userErr == nil && s.davOrgUnavailable(user) {
+				s.mcpLockout.cancelAttempt(strike)
+				writeUnavailable(w)
+				return
+			}
 		}
 		// A revoked, idle or inactive token fails like a wrong secret: the answer
 		// never says which.
