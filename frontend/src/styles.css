@@ -4166,14 +4166,16 @@ pre {
   outline: none;
 }
 
-.recipient-autocomplete {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% + 4px);
+/* Base UI Combobox's positioner, portalled into the field (inside the compose
+   <dialog>'s top layer) and anchored under it at its width. */
+.recipient-autocomplete-positioner {
   z-index: 20;
-  display: grid;
-  gap: 2px;
+  width: var(--anchor-width);
+  outline: 0;
+}
+
+.recipient-autocomplete {
+  outline: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 6px;
@@ -4181,6 +4183,12 @@ pre {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
   max-height: 220px;
   overflow-y: auto;
+}
+
+.recipient-autocomplete-list,
+.recipient-autocomplete-people {
+  display: grid;
+  gap: 2px;
 }
 
 .recipient-autocomplete-row {
@@ -4193,8 +4201,7 @@ pre {
   color: var(--ink);
 }
 
-.recipient-autocomplete-row.active,
-.recipient-autocomplete-row:hover {
+.recipient-autocomplete-row[data-highlighted] {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
@@ -4218,9 +4225,11 @@ pre {
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--ink);
+  /* Sits flush on the first person, as it did inside that row's wrapper. */
+  margin-bottom: -2px;
 }
 
-.recipient-autocomplete > :first-child > .recipient-autocomplete-group {
+.recipient-autocomplete-list > .recipient-autocomplete-people:first-child > .recipient-autocomplete-group {
   border-top: 0;
 }
 
