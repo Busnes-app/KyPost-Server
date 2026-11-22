@@ -1225,7 +1225,10 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
     `api/tenancy_gate.go:119`).
   - CardDAV, on a cache hit and a miss, and MCP agent tokens, through `davAccountActive`
     (`api/dav_auth.go:300`). A refused CardDAV password still pays the KDF timing.
-  - **An unreadable cache is "try again later", never a dead credential.** Device auth
+  - **An unreadable or stale cache is "try again later", never a dead credential.** A
+    stale cache whose last known state is served is `tenancy.ErrStale`, which is still
+    `ErrNotServed` for sign-in and sending. An org whose last known state is not served
+    answers as before. Device auth
     answers busy. CardDAV, after the password is verified (`davOrgUnavailable`, `:307`), and
     MCP answer `503`. A `401` would make a client drop a working password or re-pair.
   - Browser sign-in and device sign-on (`resolveSSOUser`, `api/sso_handlers.go:668`): `403`
@@ -1235,7 +1238,8 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - Agent tokens, devices and CardDAV passwords are kept, and they work again on resume with
     nothing re-issued. Sessions do not come back, because they were revoked.
   - **A stale cache drops sessions too.** After a KyIdentity outage longer than 15 minutes,
-    every customer signs in again (owner question 3).
+    every customer signs in again (owner question 3). Devices, CardDAV and MCP keep their
+    credentials and get busy or `503` until the cache is fresh.
 - **Sending.** Every send is charged through `chargeSend`, so the org check sits there
   (`api/send_quota.go:59`): immediate sends (`403` "sending is paused for this account"),
   scheduled sends, and KyCalendar and KyPulse mail.

@@ -38,11 +38,12 @@ func (s *Server) orgServe(ctx context.Context, org string) error {
 	return s.orgGate().Serve(ctx, org)
 }
 
-// orgServed reports whether u's org is served; err is a cache read failure, which a
-// credential check answers as "try again later", never as a dead credential.
+// orgServed reports whether u's org is served; err is a cache read failure or a stale
+// cache (tenancy.ErrStale), which a credential check answers as "try again later", never
+// as a dead credential.
 func (s *Server) orgServed(ctx context.Context, u users.User) (served bool, err error) {
 	err = s.orgServe(ctx, u.OrgID)
-	if errors.Is(err, tenancy.ErrNotServed) {
+	if errors.Is(err, tenancy.ErrNotServed) && !errors.Is(err, tenancy.ErrStale) {
 		return false, nil
 	}
 	return err == nil, err

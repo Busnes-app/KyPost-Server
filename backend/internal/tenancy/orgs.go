@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
@@ -21,6 +22,11 @@ const StaleAfter = 15 * time.Minute
 // ErrNotServed refuses sign-in, a session or a send for an org that is not active, is
 // disabled for KyPost, is missing from the cache, or whose cache is stale. It names no org.
 var ErrNotServed = errors.New("this account's organisation is not served")
+
+// ErrStale is ErrNotServed for an org whose last known state is served but whose cache
+// is past StaleAfter: an upstream outage, which a credential check answers as "try again
+// later" rather than as a dead credential.
+var ErrStale = fmt.Errorf("%w: the entitlement cache is stale", ErrNotServed)
 
 // Quotas are the quotas_json keys KyPost enforces (K "Abuse limits per org"). A missing
 // key is nil: today's default applies. The masked-address keys are PR 7's (M D7).
@@ -227,7 +233,11 @@ func (g *Gate) Serve(ctx context.Context, org string) error {
 	if g.Now != nil {
 		now = g.Now
 	}
-	if !o.Served(now()) {
+	switch {
+	case o.Served(now()):
+	case o.Known && o.Status == suitedir.OrgActive && o.Enabled:
+		return ErrStale
+	default:
 		return ErrNotServed
 	}
 	return nil

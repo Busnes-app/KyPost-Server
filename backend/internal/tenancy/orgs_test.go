@@ -90,6 +90,23 @@ func TestOrgCache(t *testing.T) {
 		}
 	}
 
+	// Only staleness on a served org is ErrStale; it is still ErrNotServed.
+	if _, err := g.DB.Exec(`DELETE FROM orgs`); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(t, g, "active", 1, true, `{}`, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Serve(ctx, orgOne); !errors.Is(err, ErrStale) || !errors.Is(err, ErrNotServed) {
+		t.Fatalf("stale active org: %v", err)
+	}
+	if err := apply(t, g, "suspended", 2, true, `{}`, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Serve(ctx, orgOne); errors.Is(err, ErrStale) || !errors.Is(err, ErrNotServed) {
+		t.Fatalf("stale suspended org: %v", err)
+	}
+
 	// MarkPolled stamps every row; staff are never gated; a nil gate serves nobody.
 	if err := MarkPolled(ctx, g.DB, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)

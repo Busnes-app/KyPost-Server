@@ -57,6 +57,8 @@ type orgCase struct {
 	set     func(t *testing.T, db *sql.DB)
 	served  bool
 	receive tenancy.Receiving
+	// retry: the cache is only stale, so credentials answer "try again later".
+	retry bool
 }
 
 func orgCases() []orgCase {
@@ -67,24 +69,24 @@ func orgCases() []orgCase {
 		return func(t *testing.T, db *sql.DB) { setOrg(t, db, orgA, "active", true, `{}`); agePoll(t, db, orgA, d) }
 	}
 	return []orgCase{
-		{"active", state("active", true), true, tenancy.ReceiveAccept},
-		{"suspended", state("suspended", true), false, tenancy.ReceiveTemporary},
-		{"deletion_scheduled", state("deletion_scheduled", true), false, tenancy.ReceiveUnknown},
-		{"deleted", state("deleted", true), false, tenancy.ReceiveUnknown},
-		{"disabled for KyPost", state("active", false), false, tenancy.ReceiveTemporary},
+		{"active", state("active", true), true, tenancy.ReceiveAccept, false},
+		{"suspended", state("suspended", true), false, tenancy.ReceiveTemporary, false},
+		{"deletion_scheduled", state("deletion_scheduled", true), false, tenancy.ReceiveUnknown, false},
+		{"deleted", state("deleted", true), false, tenancy.ReceiveUnknown, false},
+		{"disabled for KyPost", state("active", false), false, tenancy.ReceiveTemporary, false},
 		{"not in the cache", func(t *testing.T, db *sql.DB) {
 			if _, err := db.Exec(`DELETE FROM orgs WHERE id = ?`, orgA); err != nil {
 				t.Fatal(err)
 			}
-		}, false, tenancy.ReceiveTemporary},
-		{"last good poll 14 minutes ago", aged(14 * time.Minute), true, tenancy.ReceiveAccept},
-		{"last good poll 16 minutes ago (stale)", aged(16 * time.Minute), false, tenancy.ReceiveAccept},
+		}, false, tenancy.ReceiveTemporary, false},
+		{"last good poll 14 minutes ago", aged(14 * time.Minute), true, tenancy.ReceiveAccept, false},
+		{"last good poll 16 minutes ago (stale)", aged(16 * time.Minute), false, tenancy.ReceiveAccept, true},
 		{"stale and suspended", func(t *testing.T, db *sql.DB) {
 			setOrg(t, db, orgA, "suspended", true, `{}`)
 			agePoll(t, db, orgA, time.Hour)
-		}, false, tenancy.ReceiveTemporary},
+		}, false, tenancy.ReceiveTemporary, false},
 		// Kept credentials work again with nothing re-issued.
-		{"active again", state("active", true), true, tenancy.ReceiveAccept},
+		{"active again", state("active", true), true, tenancy.ReceiveAccept, false},
 	}
 }
 
@@ -120,16 +122,25 @@ func TestOrgStatusOnEverySurface(t *testing.T) {
 
 			req = httptest.NewRequest(http.MethodGet, "/api/contacts", nil)
 			setDeviceHeaders(req, deviceID, deviceSecret)
-			_, _, _, ok, _ = fx.srv.deviceAuthSnapshot(req)
+			_, _, _, ok, retry := fx.srv.deviceAuthSnapshot(req)
 			got["device"] = ok
 			_, got["device org"], err = fx.srv.deviceOrg(fx.a.ID)
-			if err != nil {
-				t.Fatal(err)
+			if (err != nil) != c.retry || c.retry != (retry == retryAfterKDFBusy) {
+				t.Errorf("device: retry %v, deviceOrg err %v; want come back later %v", retry, err, c.retry)
 			}
 
 			// Distinct source addresses keep the DAV lockout out of the answer.
-			got["carddav"] = davRequest(fx.srv, fx.a.Username, "dav-app-password", fmt.Sprintf("203.0.113.%d:4000", 10+i)).Code != http.StatusUnauthorized
-			got["mcp"] = rawMCP(t, fx.srv, listToolsRPC, bearerHeader(agentToken)).Code == http.StatusOK
+			dav := davRequest(fx.srv, fx.a.Username, "dav-app-password", fmt.Sprintf("203.0.113.%d:4000", 10+i)).Code
+			mcp := rawMCP(t, fx.srv, listToolsRPC, bearerHeader(agentToken)).Code
+			got["carddav"] = dav != http.StatusUnauthorized && dav != http.StatusServiceUnavailable
+			got["mcp"] = mcp == http.StatusOK
+			refused := http.StatusUnauthorized
+			if c.retry {
+				refused = http.StatusServiceUnavailable
+			}
+			if !c.served && (dav != refused || mcp != refused) {
+				t.Errorf("carddav %d, mcp %d; want %d", dav, mcp, refused)
+			}
 
 			_, err = fx.srv.chargeSend(ctx, "org-status-"+strconv.Itoa(i), fx.a.ID, 1, time.Now())
 			if err != nil && !errors.Is(err, tenancy.ErrNotServed) {
