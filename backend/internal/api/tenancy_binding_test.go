@@ -152,6 +152,24 @@ func TestTenancySyncRefusesEventsWithoutAValidOrg(t *testing.T) {
 
 // The first event binds the subject; a later, replayed or reordered event naming
 // another org is refused before the revision fence and changes nothing.
+// An org missing from the cache is not deleted: a new org's first event before its poll,
+// and every org's right after a restore empties the cache (tenancy.ForgetRestored), apply.
+func TestTenancySyncAppliesEventsForAnUncachedOrg(t *testing.T) {
+	srv := newDirectoryTestServer(t)
+	db := makeMultiTenant(t, srv)
+	const orgNew = "1a2b3c4d-0000-4000-8000-00000000000c"
+	u := provisionMember(t, srv, db, "member-new", orgNew)
+	if !u.Active {
+		t.Fatal("an uncached org's member was provisioned inactive")
+	}
+	if err := tenancy.ForgetRestored(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	if u := provisionMember(t, srv, db, "member-restored", orgA); !u.Active {
+		t.Fatal("a member was provisioned inactive after the restore emptied the cache")
+	}
+}
+
 func TestTenancySyncCannotMoveASubject(t *testing.T) {
 	srv := newDirectoryTestServer(t)
 	db := makeMultiTenant(t, srv)
