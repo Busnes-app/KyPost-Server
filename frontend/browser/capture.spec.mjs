@@ -48,7 +48,7 @@ async function measure(page, keys) {
       if (!el) return [key, null];
       const r = el.getBoundingClientRect();
       const cs = getComputedStyle(el);
-      return [key, { selector: targets[key], width: round(r.width), height: round(r.height), fontSize: cs.fontSize, lineHeight: cs.lineHeight }];
+      return [key, { selector: targets[key], x: round(r.left), y: round(r.top), width: round(r.width), height: round(r.height), fontSize: cs.fontSize, lineHeight: cs.lineHeight }];
     }));
   }, { targets: TARGETS, keys });
 }
