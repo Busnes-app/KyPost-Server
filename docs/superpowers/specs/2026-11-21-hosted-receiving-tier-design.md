@@ -885,6 +885,9 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - **`{source_ip}` on `bind`.** Only the hosted profile renders it (`bindSource`,
      `app/receiving_config.go:162`). `checkReceivingArgs` (`app/receiving.go:258`) accepts the
      fifth argument only when `KYPOST_TENANCY=multi`, and only as one literal IP with no zone.
+     Maddy 0.9.5 expands `{source_ip}` at `RCPT` with the same function as at DATA
+     (`internal/check/command/command.go:171-178` and `:356-364` in Maddy's v0.9.5 source; read,
+     not run). A non-TCP connection gives an empty string, which is refused as exit 1.
      - A single-tenant five-argument `bind` stays a usage error.
      - A four-argument `bind` in multi mode still works for primary domains, so the callers from
        PRs 2–4 are unchanged.
