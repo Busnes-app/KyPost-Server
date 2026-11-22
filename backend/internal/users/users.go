@@ -2813,3 +2813,25 @@ func (s *Store) ReleaseIncomingEncryption(id string) error {
 	})
 	return err
 }
+
+// RemoveUsers deletes the accounts' records in one write (the multi-tenant org purge,
+// tenancy design "Purge" step 5): their password hashes, sealed TOTP secrets, recovery
+// codes and PGP keys go with them. Missing IDs are ignored; it returns how many it removed.
+func (s *Store) RemoveUsers(ids []string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	err := withWriteLock(s.path, func() error {
+		f, err := s.readFileUnlocked()
+		if err != nil {
+			return err
+		}
+		n := len(f.Users)
+		f.Users = slices.DeleteFunc(f.Users, func(u User) bool { return slices.Contains(ids, u.ID) })
+		if removed = n - len(f.Users); removed == 0 {
+			return nil
+		}
+		return s.writeFileUnlocked(f)
+	})
+	return removed, err
+}

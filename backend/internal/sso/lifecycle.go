@@ -63,6 +63,9 @@ type LifecycleStore struct {
 	// offline is an exclusive, stopped store (restore staging, migrate-native):
 	// it also reads and writes the v1/v2 files and leaves no WAL after a write.
 	offline bool
+	// Tombstoned is set in multi-tenant mode only: it reports whether an address is one a
+	// purge tombstoned (K10), which every allocation refuses before reading the ledger.
+	Tombstoned func(address string) (bool, error)
 }
 
 // staged is this store for offline work on stopped storage.

@@ -61,6 +61,11 @@ func (s *Server) StartOrgPoller(ctx context.Context) {
 			// The error can quote an org ID; the line names none.
 			s.logger.Error("org entitlements not refreshed; members are refused once the cache is 15 minutes old", "error", "suite directory unavailable or its answer malformed")
 		}
+		// The purge reads only the cache, so it runs whether or not this poll succeeded. Its
+		// errors can carry paths and database detail; the line names none.
+		if err := s.runPurges(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			s.logger.Error("an org purge did not finish; it runs again after the next poll", "error", "a purge step or its final check failed")
+		}
 		select {
 		case <-ctx.Done():
 			return

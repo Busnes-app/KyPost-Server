@@ -63,6 +63,7 @@ var tableClass = map[string]map[string]string{
 	"tenancy": {
 		"orgs": platform, "user_orgs": org, "subject_orgs": org, "receiving_gateways": platform,
 		"sender_blocks": platform, "sender_evidence": platform,
+		"org_purges": platform, "org_purge_members": platform, "address_tombstones": platform,
 	},
 	"catalog": {"stores": platform},
 }
@@ -98,7 +99,7 @@ var fileClass = map[string]string{
 	"relay-identity.key": platform, "scheduled-send.key": platform, "push_relay_key": platform,
 	"apns_relay_key": platform, "notifications-vapid-private.pem": platform, "cloudflare-receiving.json": platform,
 	"cloudflare-receiving.host.json": platform, "bulk-backup.key": platform, "bulk-backup.repo": platform,
-	"imap-import.key": platform, "receiving-tls.key": platform,
+	"imap-import.key": platform, "receiving-tls.key": platform, TombstoneKeyFile: platform,
 	// The databases, classified table by table above.
 	"state.db": platform, "mailbox.db": derived, "ingress.db": platform, "cloudflare.db": platform,
 	"native-authority.db": platform, File: platform,
@@ -248,4 +249,32 @@ func sqliteTables(t *testing.T, path string) map[string]bool {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// TestPurgeCoversEveryOrgStore fails when an org-owned or derived store has no part of the
+// purge's final check (PurgeCoverage), or the coverage names a store that is not one.
+func TestPurgeCoversEveryOrgStore(t *testing.T) {
+	want := map[string]bool{}
+	for kind, tables := range tableClass {
+		for table, class := range tables {
+			if class == org || class == derived {
+				want[kind+"."+table] = true
+			}
+		}
+	}
+	for name, class := range fileClass {
+		if class == org || class == derived {
+			want[name] = true
+		}
+	}
+	for name := range want {
+		if PurgeCoverage[name] == "" {
+			t.Errorf("%s is org-owned or derived but the purge's final check does not cover it (PurgeCoverage)", name)
+		}
+	}
+	for name := range PurgeCoverage {
+		if !want[name] {
+			t.Errorf("PurgeCoverage names %s, which is not an org-owned or derived store", name)
+		}
+	}
 }

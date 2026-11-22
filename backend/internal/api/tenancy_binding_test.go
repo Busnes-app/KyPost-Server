@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -27,6 +28,21 @@ const (
 
 // makeMultiTenant gives srv the side store a multi first start creates (PR 1's
 // tenancy.Check). Startup still refuses multi, so tests reach the multi paths here.
+// useTenancy makes s multi-tenant as PR 7's startup must: the side store, the staff org,
+// and the address tombstones every allocation consults first (K10).
+func (s *Server) useTenancy(db *sql.DB, staffOrg string) {
+	s.tenancy, s.staffOrg, s.users.StaffOrg = db, staffOrg, staffOrg
+	if s.ssoLifecycle != nil {
+		s.ssoLifecycle.Tombstoned = func(address string) (bool, error) {
+			key, err := tenancy.TombstoneKey(context.Background(), db, config.SecretDir())
+			if err != nil {
+				return false, err
+			}
+			return tenancy.Tombstoned(context.Background(), db, tenancy.Tombstone(key, address))
+		}
+	}
+}
+
 func makeMultiTenant(t *testing.T, srv *Server) *sql.DB {
 	t.Helper()
 	db, err := tenancy.Open(t.TempDir(), true)
@@ -34,7 +50,7 @@ func makeMultiTenant(t *testing.T, srv *Server) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	srv.tenancy, srv.staffOrg, srv.users.StaffOrg = db, staffOrg, staffOrg
+	srv.useTenancy(db, staffOrg)
 	// The fixtures' customer orgs are served unless a test changes them (PR 5).
 	setOrg(t, db, orgA, "active", true, `{}`)
 	setOrg(t, db, orgB, "active", true, `{}`)

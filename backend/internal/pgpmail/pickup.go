@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -585,4 +586,41 @@ func (s *PickupStore) Sweep(retention time.Duration) error {
 		}
 	}
 	return nil
+}
+
+// SenderRecords counts the records of the senders, in any state, and removes them when
+// remove is set (the multi-tenant org purge). A record that cannot be read is an error, so
+// the purge's final check never passes over one.
+func (s *PickupStore) SenderRecords(senders []string, remove bool) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := os.ReadDir(s.baseDir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(s.baseDir, entry.Name())
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return n, err
+		}
+		var record PickupRecord
+		if err := json.Unmarshal(b, &record); err != nil || !slices.Contains(senders, record.SenderUserID) {
+			continue
+		}
+		n++
+		if remove {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return n, err
+			}
+		}
+	}
+	return n, nil
 }

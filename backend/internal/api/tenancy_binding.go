@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Busnes-app/ky-primitives/suitedir"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -123,6 +124,22 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 		} else if err != nil {
 			return http.StatusInternalServerError, errors.New("failed to check the account's org")
 		}
+	}
+	// A deleted org's subject, or a purged one, never gets an account again (K "Nothing is
+	// reused"): an active event applies as inactive, so removals still succeed.
+	gone, err := tenancy.Purged(ctx, s.tenancy, ev.OrgID, u.ID)
+	if err == nil && !gone {
+		var o tenancy.Org
+		o, err = tenancy.LookupOrg(ctx, s.tenancy, ev.OrgID)
+		gone = o.Status == suitedir.OrgDeleted
+	}
+	if err != nil {
+		return http.StatusInternalServerError, errors.New("failed to read the org's state")
+	}
+	if gone && u.Active != nil && *u.Active {
+		inactive := false
+		u.Active = &inactive
+		s.logger.Info("directory event for a deleted org applied as inactive", "event_id", eventID)
 	}
 	switch admin := sso.HasAdminRole(u.Roles); {
 	case admin && ev.OrgID != s.staffOrg:

@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 are built ("PR 1 as built" to "PR 5 as built"), the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PR 6a are built ("PR 1 as built" to "PR 6 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -97,7 +97,7 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | New `tenancy.db` `orgs` cache | (multi-only) `tenancy/tenancy.go` | P | K8. The registry every org check reads. |
 | New `tenancy.db` `receiving_gateways` | (multi-only) `tenancy/tenancy.go`, `tenancy/gateways.go` | P | The hosted receiving tier's MX key pins (receiving tier spec, PR 2). Rows are never deleted. |
 | New `tenancy.db` `sender_blocks`, `sender_evidence` | (multi-only) `tenancy/tenancy.go`, `ingress/senders_table.go` | P | The sender block list and its automatic-block evidence in multi mode (receiving tier spec R7, PR 3), with the file rules. Multi mode never has the two files. |
-| New `org_purges`, `org_purge_members` | (multi-only, PR 6; in `tenancy.db`, as the other side tables) | P | Purge progress, one row per deleted org, plus the snapshot of its user, mailbox and subject IDs taken at purge start, so a purge that died halfway resumes (Lifecycle). The snapshot is deleted when the purge is marked done. |
+| New `tenancy.db` `org_purges`, `org_purge_members` | (multi-only) `tenancy/tenancy.go`, `tenancy/purge.go` | P | Purge progress, one row per deleted org, plus the snapshot of its user, mailbox and subject IDs taken at purge start, so a purge that died halfway resumes (Lifecycle). The snapshot is deleted when the purge is marked done. |
 | Per-user / per-mailbox `state.db` (`processed`, `decisions`, `notifications`, `native_devices`, `pull_notifications`, `deferrals`, `sorter_*`, `snoozes`, `ooo_*`) | `api/server_userscope.go:86-92`; same schema as root | D (user or mailbox directory) | The directory, or on Postgres the `kypost_f_*` schema, is the owner. |
 | `mailbox.db` (messages, folders, labels, receipts, usage, `outbox*`, …) | `mailbox/store.go:118-132`, `mailbox/pg_schema.go:17-32` | D (mailbox) | The `identity` row names `(issuer, subject, mailbox)` (`mailbox/store.go:118`). It gains no `org_id`: the mailbox's account carries it. |
 | `native-authority.db` `directory`, `directory_primary_emails` | `sso/authority_v3.go:39-48` | D (`(issuer, subject)`, via `subject_orgs`) | The KyIdentity directory mirror. |
@@ -105,7 +105,7 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | New `tenancy.db` `subject_orgs` | (multi-only) `tenancy/tenancy.go` | O | K3. The subject root, written once from the signed webhook (Identity binding). |
 | `native-authority.db` `mailboxes` | `sso/authority_v3.go:56-63` | D (`(issuer, subject)` FK to `accounts`) | |
 | `native-authority.db` `addresses`, `address_history`, `routes_pending` | `sso/authority_v3.go:65-76` | D (via `mailbox`) | Address keys are global (M D4). The purge deletes an org's rows after writing their hashes to `address_tombstones` (K10). |
-| New `address_tombstones` | (multi-only, PR 6; not in `native-authority.db`, whose exact-schema check refuses an extra table: in `tenancy.db` or a store of its own) | P | K10. HMACs of every address a deleted org held, under the tombstone key. No org or owner, never deleted, consulted first by the conflict check. |
+| New `tenancy.db` `address_tombstones` | (multi-only) `tenancy/tenancy.go`, `tenancy/purge.go`; not in `native-authority.db`, whose exact-schema check refuses an extra table | P | K10. HMACs of every address a deleted org held, under the tombstone key. No org or owner, never deleted, consulted first by the conflict check. |
 | `native-authority.db` `meta`, `directory_events`, `logouts`, `sign_ons`, floors, barriers, `lifecycle_records` | `sso/authority_v3.go:77-88` | P | Replay and recovery ledgers keyed by event or JTI. Restore authority is whole-install. |
 | `ingress.db` `routes`, `bindings` | `ingress/store.go:108,110` | D (`mailbox`) | Recipient bindings name the mailbox. |
 | `ingress.db` `deliveries`, `archived`, `limits` | `ingress/store.go:107,109,117` | P, with org found through `bindings` | The receiving buffer and quarantine. A delivery can bind several recipients in several orgs, so it has no single org. Staff-only (Admin surface). |
@@ -1336,6 +1336,172 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   4. `mailboxes` counts extra mailboxes only.
   5. Storage quotas apply to received mail only.
   6. A held scheduled send returns to Drafts after the one-hour retry window, not at resume.
+
+## PR 6 as built (2026-11-22)
+
+PR 6 is split into three stacked PRs, because one would pass what a reviewer can read: **6a**
+(purge, tombstones, backups), **6b** (one-user purge for `user.erased`, the `export_only` route
+gate) and **6c** (the multi-mode restore release). This section records 6a; 6b and 6c add their
+own parts. Paths are under `backend/internal/` at 6a's head. Startup still refuses `multi`, so the
+tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the test helper
+`useTenancy` in `api/tenancy_binding_test.go`).
+
+- **Tables** (`tenancy/tenancy.go:67-75`, PostgreSQL `:112-121`), all class P:
+  - `org_purges(org_id, subject, step, started_at, done_at)`, keyed `(org_id, subject)`. A whole
+    org's purge has `subject = ''`; 6b's one-user purge names the erased subject.
+  - `org_purge_members(org_id, subject, kind, issuer, id)` is the snapshot: `user`, `mailbox` and
+    `subject` rows.
+  - `address_tombstones(hmac)`: triggers refuse every update and delete.
+- **When it runs.** After every org poll, whether or not the poll succeeded, on the `api-sweepers`
+  owner (`runPurges`, `api/tenancy_purge.go:33`, called at `api/tenancy_lifecycle.go:66`).
+  - A purge starts for each cached org whose status is `deleted` and has no purge row yet. The
+    staff org is never purged.
+  - Every live purge then runs.
+  - The failure log line names no org, path or database detail.
+- **The snapshot** (`purgeSnapshot`, `:77`) is K's union: `user_orgs`, the `users.json` accounts
+  bound to the org, and the accounts of the org's `subject_orgs` subjects. Then every ledger
+  mailbox of those subjects (`sso.NativePurgeMailboxes`, `sso/native_purge.go:62`).
+  - Reading: the union is the reconciliation's outcome, so the snapshot writes no `user_orgs` row
+    that step 5 would delete.
+  - An account bound to another org is never taken. A `user_orgs` row naming one stops the purge
+    with an error.
+  - `StartPurge` (`tenancy/purge.go:43`) writes the row and the snapshot in one transaction, once.
+- **Steps** (`purge`, `api/tenancy_purge.go:131`). Every run executes all five, re-listing what
+  still exists. `step` records the last one finished, and nothing reads it to skip.
+  1. Revoke every session, delete agent tokens and scheduled sends, cancel a running import on
+     this replica.
+  2. `ingress.PurgeMailboxes` (`ingress/purge.go:17`) deletes the mailboxes' routes and bindings.
+     - A delivery bound only to them is archived as `discarded`: its bytes go, and an exact replay
+       is still recognised.
+     - A delivery shared with another org keeps its other bindings.
+  3. Storage, under each mailbox's `receiving/quota-<id>` lock:
+     - On PostgreSQL, the schemas under each user and mailbox directory go (`dbbackend.Remove`).
+     - The directories go: `CONFIG_DIR/users/<id>`, `STATE_DIR/users/<id>` and
+       `STATE_DIR/mailboxes/<id>`. That covers paired devices, CardDAV passwords, sealed IMAP and
+       CardDAV client credentials, and every per-user file.
+     - Then the lock files go, and the users' pickup records (`PickupStore.SenderRecords`).
+     - Every ID is checked as a safe path component first.
+  4. The ledger, under the named trigger exception (below). Then `ingress.ScrubArchived`
+     (`ingress/purge.go:65`) drops every tombstoned address from the receiving tombstones'
+     recipient lists.
+  5. The users' root-store rows (`state.PurgeUsers`: `agent_tokens`, `scheduled_sends`,
+     `send_ledger`, `sessions`, `session_revocations`, `auth_challenges`, `import_jobs`). Then
+     their `users.json` records (`users.Store.RemoveUsers`), then their `user_orgs` rows.
+
+  Afterwards the final check runs. Then one `tenancy.purge` row is written to the audit log
+  (`backup_audit`): target `org:<org_id>`, with the scope and the account, mailbox and subject
+  counts, and no content. Last, `FinishPurge` marks the row done and deletes the snapshot in one
+  transaction. Without the audit log or the root state store the purge refuses to run.
+- **The named trigger exception** (`sso.PurgeNative`, `sso/native_purge.go:96`, owner answer to
+  open question 9).
+  - **Why not a trigger change.** `native-authority.db` opens only when its schema equals the
+    binary's DDL exactly, on every connection, on both backends. A trigger that read a live
+    `org_purges` row, or a new `purged` state, would change every single-tenant install's schema,
+    and `org_purges` is in another database anyway.
+  - **How it works instead.** Inside its one write transaction, under the directory fence:
+    1. It calls `live`, which must find the scope's live `org_purges` row.
+    2. It lists every address the owners' mailboxes ever held, current or in history.
+    3. It calls `tomb`, which records their HMACs.
+    4. It suspends three triggers: `mailboxes_no_delete`, `addresses_no_delete` and
+       `address_history_no_delete`. SQLite drops each and recreates it from its exact text in
+       `authoritySchemaV3`; PostgreSQL uses `DISABLE` and `ENABLE TRIGGER`.
+    5. It deletes and updates the rows below, restores the triggers, and bumps the Cloudflare
+       change mark.
+  - **What other connections see.** Every other connection, and the exact-schema check after the
+    commit, sees the triggers unchanged. A failure at any point rolls the whole transaction
+    back, triggers included.
+- **The ledger, by table** (readings where K could not hold as written):
+  - **`addresses`, `address_history`, `routes_pending`:** the owners' rows are deleted, after
+    their tombstones.
+  - **`mailboxes`:** primary mailboxes stay as `disabled` tombstones. **Extra mailboxes are
+    deleted**, because the ledger's own validation (`validateNativeLedger`) refuses an extra
+    mailbox without its primary address. A kept extra mailbox would make every later ledger
+    write fail. `state_root` is not cleared: it is the install's `STATE_DIR`, shared by every
+    mailbox, not the user's, and a trigger fences it. The schema has no `purged` state, so
+    `disabled` stands for it.
+  - **`accounts`:** kept, with `desired_active = 0`.
+  - **`directory`:** kept as the revision fence, with `resource` NULL and `active = 0`.
+    Reconcile refuses a NULL resource (`sso/native_provision.go:666`), so a purged subject is
+    never provisioned from it.
+  - **`directory_primary_emails`:** the owners' rows are deleted.
+  - **`subject_orgs`:** kept.
+- **Tombstones.**
+  - **The key.** `SECRET_DIR/address-tombstone.key` is created exclusively (`cryptutil.LoadOrCreateKey`),
+    but only while no tombstone exists. With tombstones and no key, `tenancy.ErrTombstoneKeyMissing`
+    refuses every allocation, rather than mint a key under which every tombstoned address would
+    be free again.
+  - **The HMAC.** HMAC-SHA-256 of the lowercased address.
+  - **Who consults it.** The conflict check reads the tombstones before the ledger, through
+    `LifecycleStore.Tombstoned` (`sso/lifecycle.go`). Only the test helper `useTenancy` sets that
+    hook today, so a single install never consults it. **PR 7 must set it wherever it sets
+    `Server.tenancy`**, as `useTenancy` does; without it allocation would not see tombstones. The two allocation paths are new aliases and reassignment
+    (`changeNativeAddress`, `sso/native_address.go:343`) and a primary allocation
+    (`sso/native_provision.go:742`, the durable `address_conflict` failure). HR reservation is
+    off in multi mode.
+- **Nothing is reused.** A signed directory event for a deleted org, or for a subject with a purge
+  row, applies as inactive (`api/tenancy_binding.go:147`). Removals still succeed, and no account
+  is created.
+- **The final check** (`purgeLeft`, `api/tenancy_purge.go:326`) has eight parts:
+  - `users.json`, `user_orgs`, `root-state`;
+  - `directories` (with the quota lock files) and `schemas` (PostgreSQL catalog entries under
+    them);
+  - `pickup`, `ingress` (routes, bindings, and tombstoned archived recipients);
+  - `ledger` (`sso.NativePurgeLeft`).
+
+  `tenancy.PurgeCoverage` maps every O and D entry of the Store inventory to one part.
+  `TestPurgeCoversEveryOrgStore` (`tenancy/inventory_test.go:256`) fails when a new
+  org-owned or derived store has no part. `TestPurgeFinalCheckCoversTheClassification` fails
+  when a part is named but not run. Reading: import uploads (`imports`) live only while their
+  job runs; the purge cancels the job, whose exit removes the file. They have no owner on disk
+  to check, so they map to the `import_jobs` rows.
+- **Backups.**
+  - **In the backup set.** `tenancy.db` is a snapshotted database (`backup/collect.go:38`):
+    `VACUUM INTO` on SQLite, the catalog export on PostgreSQL. Before this, SQLite copied the
+    raw file without its WAL. So sender blocks, gateway pins, the org roots, purge rows and
+    tombstones survive a restore.
+  - **The key travels with the tombstones.** A capsule with tombstones but without
+    `private/address-tombstone.key` is refused (`tombstoneKeyCollected`, `:326`).
+  - **Native or not.** `tenancy.db` alone does not make a capsule native
+    (`backup/native.go:74`). A multi install is held on restore by its ledger, as before.
+  - **The restore fence.** `runRestore` calls `tenancy.FenceRestored` (`app/backup.go:214`) on
+    the staged SQLite file, before any PostgreSQL import:
+    - it empties the `orgs` cache, so no org is served until a poll after the restore;
+    - it deletes the finished purge rows, so every deleted org is purged again once KyIdentity
+      lists it;
+    - live purges keep their snapshot and resume.
+  - **Reading.** The brief's "org state survives a restore" holds for the org roots and purge
+    records. The cache is emptied on purpose, as K says.
+- **Tests:**
+  - `api/tenancy_purge_test.go`, in every `internal/api` job:
+    - `TestOrgPurgeResumesFromEveryStep`: a fixture of two orgs. Org A holds sessions, contacts,
+      devices, agent tokens, scheduled sends, send charges, messages, pickup records, its own
+      delivery, one shared with B and one already imported. The purge is killed before and
+      after each of the five steps, then resumes. Each time nothing of A remains, B's digest is
+      unchanged, the tombstones refuse all four addresses, and neither the purged subject nor a
+      new subject of the deleted org gets an account.
+    - `TestOrgPurgeFinalCheckRefusesLeftovers`.
+    - `TestOrgPurgeRefusals`: the staff org, no live row, another org's account, a lost key.
+    - `TestOrgPurgeKeepsTheLedgerTriggers`.
+    - `TestOrgPurgeRunsAgainAfterARestore`: after the fence, B is refused until polled, and A's
+      purge runs again and passes its final check. The tombstones still refuse reuse under the
+      same key.
+    - `TestPurgeFinalCheckCoversTheClassification`.
+  - Elsewhere:
+    - `backup/tenancy_test.go`: `TestTenancySurvivesARestore` seals and restores, and on the
+      PostgreSQL job imports into PostgreSQL. `TestTombstonesNeedTheirKeyInTheCapsule`.
+    - `app/backup_test.go`: `TestRestoreCLIFencesTheOrgCache`, through `runRestore`.
+    - `tenancy/inventory_test.go`: `TestPurgeCoversEveryOrgStore`.
+  - **Proof that the gates bite:** removing each of these fails the purge tests:
+    - the alias tombstone check;
+    - the archived-recipient scrub;
+    - the deleted-org rule on directory events;
+    - restoring the triggers;
+    - the receiving step;
+    - the root-store step.
+- **Not in 6a:** the one-user purge for `user.erased` and the `export_only` gate (6b), and the
+  multi-mode restore release with the full poll and erased-subject read (6c). The end-to-end
+  Delete everything tests (click, purge, restore a capsule from before the click, release,
+  poll) need 6c's release, so they are 6c's.
 
 ## Residual risks
 

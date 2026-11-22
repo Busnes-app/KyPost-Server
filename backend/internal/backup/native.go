@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -69,7 +70,8 @@ func nativeSnapshot(dir string) (bool, error) {
 			return err
 		}
 		if !entry.IsDir() && snapshotDatabase(entry.Name()) {
-			if entry.Name() != "state.db" {
+			// tenancy.db is the org side store: a multi install is native, and held, by its ledger.
+			if entry.Name() != "state.db" && entry.Name() != tenancy.File {
 				native = true
 				if !qualified {
 					return sso.ErrNativeProvisioning
