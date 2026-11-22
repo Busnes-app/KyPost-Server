@@ -215,17 +215,26 @@ type orgsIdP struct {
 	status int
 	sinces []string
 	page   int // orgs per page; 0 lists everything on one page
+	erased []erasedSubject
 }
 
 func newOrgsIdP(t *testing.T) *orgsIdP {
 	idp := &orgsIdP{}
 	idp.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if id, secret, ok := r.BasicAuth(); r.URL.Path != "/api/suite/orgs" || !ok || id != "kypost" || secret != "suite-secret" {
+		if id, secret, ok := r.BasicAuth(); r.URL.Path != "/api/suite/orgs" && r.URL.Path != "/api/suite/erased" || !ok || id != "kypost" || secret != "suite-secret" {
 			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
 			return
 		}
 		idp.mu.Lock()
 		defer idp.mu.Unlock()
+		if r.URL.Path == "/api/suite/erased" {
+			if idp.status != 0 {
+				http.Error(w, "down", idp.status)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"subjects": append([]erasedSubject{}, idp.erased...)})
+			return
+		}
 		idp.sinces = append(idp.sinces, r.URL.Query().Get("since"))
 		if idp.status != 0 {
 			http.Error(w, "down", idp.status)

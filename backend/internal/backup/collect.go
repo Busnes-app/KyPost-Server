@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -24,6 +25,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,7 +35,7 @@ const scratchDirName = dbbackend.ScratchDir
 var required = []string{"config/config.yaml", "config/users.json", "private/totp-secret.key", "state/state.db"}
 
 func snapshotDatabase(name string) bool {
-	return name == "state.db" || name == "mailbox.db" || name == "ingress.db" || name == cfreceiving.DBFile || name == sso.NativeAuthorityFile
+	return name == "state.db" || name == "mailbox.db" || name == "ingress.db" || name == cfreceiving.DBFile || name == sso.NativeAuthorityFile || name == tenancy.File
 }
 
 // ".v1-migrated" and ".v2-migrated" (native storage migration copies) need
@@ -248,6 +250,9 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 			return empty, fmt.Errorf("refusing to seal without %s", name)
 		}
 	}
+	if err := tombstoneKeyCollected(ctx, s.dirs.State, have); err != nil {
+		return empty, err
+	}
 	if len(imaps) > 0 {
 		if _, err := cryptutil.LoadKey(filepath.Join(s.dirs.Secret, "imap-config.key")); err != nil {
 			return empty, fmt.Errorf("IMAP master key required by stored credentials: %w", err)
@@ -314,6 +319,23 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	return recoveryclient.Payload{ServiceName: AppName, AppVersion: s.version, Files: files,
 		Dependencies:       map[string]any{"ollama": "model cache downloads again", "layout": "restore config, private and state to CONFIG_DIR, SECRET_DIR and STATE_DIR"},
 		VerificationRecipe: recipe}, nil
+}
+
+// tombstoneKeyCollected refuses a multi-tenant capsule whose address tombstones it could
+// not check after a restore: their HMAC key must be sealed with them (K10).
+func tombstoneKeyCollected(ctx context.Context, stateDir string, have map[string]bool) error {
+	if !have["state/"+tenancy.File] || have["private/"+tenancy.TombstoneKeyFile] {
+		return nil
+	}
+	db, err := tenancy.Open(stateDir, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if n, err := tenancy.TombstoneCount(ctx, db); err != nil || n > 0 {
+		return errors.Join(err, fmt.Errorf("refusing to seal address tombstones without private/%s", tenancy.TombstoneKeyFile))
+	}
+	return nil
 }
 
 // validateDependencies refuses a capsule whose stored identities cannot be

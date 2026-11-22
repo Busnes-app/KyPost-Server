@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -27,6 +28,22 @@ const (
 
 // makeMultiTenant gives srv the side store a multi first start creates (PR 1's
 // tenancy.Check). Startup still refuses multi, so tests reach the multi paths here.
+// useTenancy makes s multi-tenant as PR 7's startup must: the side store, the staff org,
+// and the address tombstones every allocation consults first (K10).
+func (s *Server) useTenancy(db *sql.DB, staffOrg string) {
+	s.tenancy, s.staffOrg, s.users.StaffOrg = db, staffOrg, staffOrg
+	if s.ssoLifecycle != nil {
+		s.ssoLifecycle.Tombstoned = func(address string) (bool, error) {
+			key, err := tenancy.TombstoneKey(context.Background(), db, config.SecretDir())
+			if err != nil {
+				return false, err
+			}
+			return tenancy.Tombstoned(context.Background(), db, tenancy.Tombstone(key, address))
+		}
+		s.ssoLifecycle.Purged = s.mailboxPurged // tests may replace ssoLifecycle after NewServer
+	}
+}
+
 func makeMultiTenant(t *testing.T, srv *Server) *sql.DB {
 	t.Helper()
 	db, err := tenancy.Open(t.TempDir(), true)
@@ -34,7 +51,7 @@ func makeMultiTenant(t *testing.T, srv *Server) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	srv.tenancy, srv.staffOrg, srv.users.StaffOrg = db, staffOrg, staffOrg
+	srv.useTenancy(db, staffOrg)
 	// The fixtures' customer orgs are served unless a test changes them (PR 5).
 	setOrg(t, db, orgA, "active", true, `{}`)
 	setOrg(t, db, orgB, "active", true, `{}`)
@@ -135,6 +152,24 @@ func TestTenancySyncRefusesEventsWithoutAValidOrg(t *testing.T) {
 
 // The first event binds the subject; a later, replayed or reordered event naming
 // another org is refused before the revision fence and changes nothing.
+// An org missing from the cache is not deleted: a new org's first event before its poll,
+// and every org's right after a restore empties the cache (tenancy.ForgetRestored), apply.
+func TestTenancySyncAppliesEventsForAnUncachedOrg(t *testing.T) {
+	srv := newDirectoryTestServer(t)
+	db := makeMultiTenant(t, srv)
+	const orgNew = "1a2b3c4d-0000-4000-8000-00000000000c"
+	u := provisionMember(t, srv, db, "member-new", orgNew)
+	if !u.Active {
+		t.Fatal("an uncached org's member was provisioned inactive")
+	}
+	if err := tenancy.ForgetRestored(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	if u := provisionMember(t, srv, db, "member-restored", orgA); !u.Active {
+		t.Fatal("a member was provisioned inactive after the restore emptied the cache")
+	}
+}
+
 func TestTenancySyncCannotMoveASubject(t *testing.T) {
 	srv := newDirectoryTestServer(t)
 	db := makeMultiTenant(t, srv)
@@ -318,11 +353,12 @@ func TestTenancySignInBindsTheTokenOrg(t *testing.T) {
 		"malformed org_id":     {claims("alice", "org-a"), http.StatusBadGateway},
 		"non-canonical org_id": {claims("alice", strings.ToUpper(orgA)), http.StatusBadGateway},
 		"numeric org_id":       {claims("alice", 1), http.StatusBadGateway},
-		"export-only token":    {claims("alice", orgA, "export_only", true), http.StatusBadGateway},
-		"string export_only":   {claims("alice", orgA, "export_only", "false"), http.StatusBadGateway},
-		"another org":          {claims("alice", orgB), http.StatusForbidden},
-		"the staff org":        {claims("alice", staffOrg, "roles", []string{"kypost.admin"}), http.StatusForbidden},
-		"unprovisioned":        {claims("nobody", orgA), http.StatusForbidden},
+		// Export-only tokens sign in only while the org is deletion_scheduled (PR 6b).
+		"export-only token":  {claims("alice", orgA, "export_only", true), http.StatusForbidden},
+		"string export_only": {claims("alice", orgA, "export_only", "false"), http.StatusForbidden},
+		"another org":        {claims("alice", orgB), http.StatusForbidden},
+		"the staff org":      {claims("alice", staffOrg, "roles", []string{"kypost.admin"}), http.StatusForbidden},
+		"unprovisioned":      {claims("nobody", orgA), http.StatusForbidden},
 	} {
 		rec := signInRecorder(t, srv, idp, tc.claims)
 		if rec.Code != tc.status || sessionCookieFrom(rec) != nil {

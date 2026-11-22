@@ -339,6 +339,11 @@ func (s *LifecycleStore) changeNativeAddress(ctx context.Context, stateRoot, add
 		return NativeAddress{}, err
 	}
 	x, exists := f.stored.Addresses[address]
+	if !exists {
+		if err := s.tombstoned(address); err != nil {
+			return NativeAddress{}, err
+		}
+	}
 	x, err = change(f, domains, directory, x, exists)
 	if err != nil {
 		return NativeAddress{}, err

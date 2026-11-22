@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -57,9 +58,22 @@ func (s *Server) StartOrgPoller(ctx context.Context) {
 	t := time.NewTicker(orgPollInterval)
 	defer t.Stop()
 	for {
-		if err := s.pollOrgs(ctx, time.Now()); err != nil && ctx.Err() == nil {
+		// While a restore hold stands, the poll is the full restore read (6c).
+		poll := s.pollOrgs
+		if epoch, held := s.heldEpoch(); held {
+			poll = func(ctx context.Context, now time.Time) error { return s.restoreReads(ctx, epoch, now) }
+		}
+		var stuck *erasedPurgeError
+		if err := poll(ctx, time.Now()); errors.As(err, &stuck) && ctx.Err() == nil {
+			s.logger.Error("restore hold stays: an erased subject's purge cannot start", "revision", strconv.FormatInt(stuck.revision, 10))
+		} else if err != nil && ctx.Err() == nil {
 			// The error can quote an org ID; the line names none.
 			s.logger.Error("org entitlements not refreshed; members are refused once the cache is 15 minutes old", "error", "suite directory unavailable or its answer malformed")
+		}
+		// The purge reads only the cache, so it runs whether or not this poll succeeded. Its
+		// errors can carry paths and database detail; the line names none.
+		if err := s.runPurges(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			s.logger.Error("an org purge did not finish; it runs again after the next poll", "error", "a purge step or its final check failed")
 		}
 		select {
 		case <-ctx.Done():
@@ -82,6 +96,11 @@ func (s *Server) pollOrgs(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	return s.pollOrgsFrom(ctx, dir, since, now)
+}
+
+// pollOrgsFrom is pollOrgs from a given revision; the restore reads start at 0.
+func (s *Server) pollOrgsFrom(ctx context.Context, dir suitedir.Client, since int64, now time.Time) error {
 	// A call cut short at its page bound returns a cursor below its last revision; keep
 	// listing, so MarkPolled never stamps fresh an org whose change is still unread.
 	for {
@@ -228,4 +247,39 @@ func (s *Server) orgMailboxRoom(ctx context.Context, u users.User) error {
 		return errOrgMailboxQuota
 	}
 	return nil
+}
+
+// exportOnlyLanding is where an export-only sign-in lands: the export page.
+const exportOnlyLanding = "/settings/account?tab=export"
+
+// exportOnlyRoutes are the only routes an export-only session reaches (K open question 4
+// (a)): who it is, sign-out, the step-up that confirms an export, the mailbox list and the
+// export itself. Any other answers as for a session that does not exist.
+var exportOnlyRoutes = map[string]bool{
+	"GET /api/auth/me": true, "GET /api/auth/csrf": true, "POST /api/auth/logout": true,
+	"POST /api/auth/oidc/step-up": true, "GET /api/auth/oidc/step-up/{id}": true, "DELETE /api/auth/oidc/step-up/{id}": true,
+	"GET /auth/sso/callback": true,
+	"GET /api/mailboxes":     true, "GET /api/export/folders": true, "POST /api/export": true, "GET /api/export/{token}": true,
+}
+
+// orgExportable is nil while org's members may hold an export-only session: the cache
+// knows it, fresh, as deletion_scheduled and enabled for KyPost. The staff org never is.
+func (s *Server) orgExportable(ctx context.Context, org string) error {
+	if !s.multiTenant() || org == s.staffOrg {
+		return tenancy.ErrNotServed
+	}
+	o, err := tenancy.LookupOrg(ctx, s.tenancy, org)
+	if err != nil {
+		return err
+	}
+	if !o.Fresh(time.Now()) || o.Status != suitedir.OrgDeletionScheduled || !o.Enabled {
+		return tenancy.ErrNotServed
+	}
+	return nil
+}
+
+// exportOnlySession reports whether r carries a live export-only session.
+func (s *Server) exportOnlySession(r *http.Request) bool {
+	ac, ok, err := s.currentUser(r)
+	return err == nil && ok && ac.ExportOnly
 }

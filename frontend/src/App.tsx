@@ -2,6 +2,7 @@ import { type DragEvent, type MouseEvent as ReactMouseEvent, type ReactElement, 
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { deleteJSON, getJSON, HttpError, onMailboxGone, postJSON, putJSON, selectedMailboxId, selectMailbox, toErrorMessage } from "./api/client";
 import { AuthContext, type AuthState } from "./auth";
+import { ExportOnlyPage } from "./pages/ExportOnlyPage";
 import { AppRail, loadSuiteApps, type SuiteApp } from "./components/AppRail";
 import { calendarOrigin } from "./lib/meetingLink";
 import { chatOrigin } from "./api/kymessage";
@@ -167,7 +168,8 @@ export function App() {
       selectMailbox(restored);
       setSelectedMailbox(restored);
       setUnavailable(false);
-      setAuth(next);
+      // An export-only session reaches nothing but the export: signed out everywhere else.
+      setAuth(next.exportOnly ? { ...next, authenticated: false } : next);
       return false;
     } catch (e) {
       // No answer, a 5xx or a 429 says nothing about the session: the server (or its
@@ -612,6 +614,10 @@ export function App() {
         </div>
       </main>
     );
+  }
+
+  if (auth.exportOnly) {
+    return <ExportOnlyPage auth={auth} />;
   }
 
   const isAdmin = auth.role === "admin";

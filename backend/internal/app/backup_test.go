@@ -2,7 +2,9 @@ package app
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"io"
 	"os"
 	"path/filepath"
@@ -155,5 +157,72 @@ func TestRestoreCLIRefusesBulkBeforeShares(t *testing.T) {
 	err = runRestore([]string{path, filepath.Join(t.TempDir(), "restore")}, stdin, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "before entering shares") || stdin.read {
 		t.Fatal("bulk restore read shares without a repository", err)
+	}
+}
+
+// TestRestoreCLIFencesTheOrgCache: runRestore empties a multi-tenant capsule's org cache and
+// forgets its finished purges, so no org is served before a poll after the restore and
+// every deleted org is purged again; a live purge and the other tables are kept.
+func TestRestoreCLIFencesTheOrgCache(t *testing.T) {
+	dbbackend.IsolateForTest(t)
+	dbbackend.SetURLForTest(t, "")
+	src := t.TempDir()
+	db, err := tenancy.Open(src, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const org = "1a2b3c4d-0000-4000-8000-00000000000a"
+	for _, q := range []string{
+		`INSERT INTO orgs(id, status, revision, enabled, quotas_json, polled_at) VALUES('` + org + `', 'active', 1, 1, '{}', 1)`,
+		`INSERT INTO org_purges(org_id, subject, step, started_at, done_at) VALUES('` + org + `', 'erased-sub', 5, 1, 2)`,
+		`INSERT INTO org_purges(org_id, subject, step, started_at) VALUES('` + org + `', 'live-sub', 2, 1)`,
+		`INSERT INTO subject_orgs(issuer, subject, org_id) VALUES('https://identity.example', 'kept', '` + org + `')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	raw, err := os.ReadFile(filepath.Join(src, tenancy.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := recoverykey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shares, err := recoverykey.Split(key, 2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, _, err := recoveryclient.Seal(recoveryclient.Payload{ServiceName: backup.AppName, AppVersion: "test", Files: []recoveryclient.File{{Path: "state/" + tenancy.File, Data: raw, Mode: 0600}}}, recoveryclient.RecoveryKey{Public: key.Public(), Threshold: 2, TotalShares: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, target := filepath.Join(t.TempDir(), "multi.kycap"), filepath.Join(t.TempDir(), "restore")
+	if err := os.WriteFile(path, sealed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runRestore([]string{path, target}, strings.NewReader(shares[0].String()+"\n"+shares[1].String()+"\n"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := sql.Open("sqlite", "file:"+filepath.Join(target, "state", tenancy.File)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	for query, want := range map[string]int{
+		`SELECT count(*) FROM orgs`:                                    0,
+		`SELECT count(*) FROM org_purges WHERE subject = 'erased-sub'`: 0,
+		`SELECT count(*) FROM org_purges WHERE subject = 'live-sub'`:   1,
+		`SELECT count(*) FROM subject_orgs WHERE subject = 'kept'`:     1,
+	} {
+		var n int
+		if err := restored.QueryRow(query).Scan(&n); err != nil || n != want {
+			t.Errorf("%s = %d (%v), want %d", query, n, err, want)
+		}
 	}
 }

@@ -76,6 +76,7 @@ var orgAdmitExempt = map[string]string{
 	"StartContactPhotoSweeper":      orgExemptWorker,
 	"StartContactsTombstoneSweeper": orgExemptWorker,
 	"sweepDeviceIndex":              orgExemptWorker,
+	"purgeLeft":                     orgExemptWorker + " (the purge's final check reads only its own org's snapshot)",
 	"rescanDeviceIndex":             orgExemptWorker,
 	"rescanSubscriberIndex":         orgExemptWorker,
 	"resyncOOOCalendars":            orgExemptWorker,

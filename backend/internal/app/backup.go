@@ -26,6 +26,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -207,6 +208,11 @@ func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 	}
 	if err := state.ResetReplicaState(filepath.Join(staging, "state")); err != nil {
 		return fmt.Errorf("cannot clear the restored deployment's sessions and replica records; preserve private staging %s for inspection: %w", stage, err)
+	}
+	// A multi-tenant capsule's orgs cache predates the restore: no org is served until a
+	// poll after it, and every deleted org is purged again (tenancy design, Delete everything).
+	if err := tenancy.FenceRestored(filepath.Join(staging, "state")); err != nil {
+		return fmt.Errorf("cannot empty the restored org cache; preserve private staging %s for inspection: %w", stage, err)
 	}
 	// Every hold and revocation above ran on the staged SQLite files; Postgres gets them
 	// as they are now, in one transaction, and the published tree holds no copy.

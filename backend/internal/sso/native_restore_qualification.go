@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -88,6 +89,21 @@ func (s *LifecycleStore) CheckNativeRestoreQualification(stateRoot string) (Nati
 	all, ledgerErr := s.NativeRestoreMailboxes(stateRoot)
 	if ledgerErr != nil {
 		reasons = append(reasons, "native mailbox ledger is unreadable")
+	}
+	// A purge after the restore removed its mailboxes' storage, and the ledger keeps a
+	// primary as a disabled tombstone: only those proven purged leave both sets.
+	if s.Purged != nil {
+		for _, id := range append(slices.Collect(maps.Keys(all)), slices.Collect(maps.Keys(q.Mailboxes))...) {
+			gone, err := s.Purged(id)
+			if err != nil {
+				reasons = append(reasons, "purge records are unreadable")
+				break
+			}
+			if gone {
+				delete(all, id)
+				delete(q.Mailboxes, id)
+			}
+		}
 	}
 	ids := make([]string, 0, len(all))
 	for id := range all {

@@ -741,6 +741,13 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 		if x, taken := f.stored.Addresses[address]; taken && (x.Mailbox != localID || x.Kind != "primary") {
 			return fail("address_conflict")
 		}
+		if _, taken := f.stored.Addresses[address]; !taken {
+			if e = s.tombstoned(address); errors.Is(e, ErrNativeAddressConflict) {
+				return fail("address_conflict")
+			} else if e != nil {
+				return e
+			}
+		}
 		a.Address = address
 		a.Status = "pending"
 		a.Failure = ""

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Busnes-app/ky-primitives/suitedir"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -18,16 +19,16 @@ import (
 
 func (s *Server) multiTenant() bool { return s.tenancy != nil }
 
-var errTokenOrg = errors.New("the identity token has no valid org_id, or is export-only")
+var errTokenOrg = errors.New("the identity token has no valid org_id, or is export-only where that is refused")
 
-// tokenOrg is a verified ID token's org. A missing, malformed or non-canonical org_id is
-// refused, and so is an export-only token: KyPost has no export-only gate yet.
-func tokenOrg(c *sso.SSOTokenClaims) (string, error) {
-	org, exportOnly := c.TenantClaims()
-	if !config.ValidOrgID(org) || exportOnly {
-		return "", errTokenOrg
+// tokenOrg is a verified ID token's org and whether it carries the export_only claim (K
+// open question 4 (a)). A missing, malformed or non-canonical org_id is refused.
+func tokenOrg(c *sso.SSOTokenClaims) (org string, exportOnly bool, err error) {
+	org, exportOnly = c.TenantClaims()
+	if !config.ValidOrgID(org) {
+		return "", false, errTokenOrg
 	}
-	return org, nil
+	return org, exportOnly, nil
 }
 
 // ssoAppAdmin is an SSO session's administrator ceiling. In multi mode it is K7: the
@@ -88,17 +89,17 @@ func (s *Server) bindNewAccount(ctx context.Context, u users.User) error {
 // an event for another org than the subject's or account's, and applies K7 to u: a
 // customer naming kypost.admin is applied as a member, and a staff-org subject without it
 // is applied as inactive, because staff accounts exist only as administrators.
-func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, body []byte, u *sso.DirectoryUser) (int, error) {
+func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, body []byte, u *sso.DirectoryUser) (string, int, error) {
 	var ev struct {
 		OrgID string `json:"org_id"`
 	}
 	if json.Unmarshal(body, &ev) != nil || !config.ValidOrgID(ev.OrgID) {
-		return http.StatusBadRequest, errors.New("invalid directory event: org_id is required")
+		return "", http.StatusBadRequest, errors.New("invalid directory event: org_id is required")
 	}
-	refused := func(userID string) (int, error) {
+	refused := func(userID string) (string, int, error) {
 		s.orgRefused("directory_event", userID)
 		s.logger.Info("directory event refused", "event_id", eventID, "reason", "org binding mismatch")
-		return http.StatusUnprocessableEntity, errors.New("directory event refused: the subject is bound to another org")
+		return "", http.StatusUnprocessableEntity, errors.New("directory event refused: the subject is bound to another org")
 	}
 	// The account is compared before the subject is bound, so an event for another org
 	// never writes a binding.
@@ -108,21 +109,37 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 	case found && existing.OrgID != ev.OrgID:
 		return refused(existing.ID)
 	case errors.Is(err, users.ErrNativeAccountConflict):
-		return http.StatusUnprocessableEntity, errIssuerConflict
+		return "", http.StatusUnprocessableEntity, errIssuerConflict
 	case !found && !errors.Is(err, users.ErrNotFound):
-		return http.StatusInternalServerError, errors.New("failed to look up user")
+		return "", http.StatusInternalServerError, errors.New("failed to look up user")
 	}
 	if err := tenancy.BindSubject(ctx, s.tenancy, issuer, u.ID, ev.OrgID); errors.Is(err, tenancy.ErrOrgMismatch) {
 		return refused(existing.ID)
 	} else if err != nil {
-		return http.StatusInternalServerError, errors.New("failed to bind the subject's org")
+		return "", http.StatusInternalServerError, errors.New("failed to bind the subject's org")
 	}
 	if found {
 		if err := s.checkAccountOrg(ctx, existing, ev.OrgID); errors.Is(err, tenancy.ErrOrgMismatch) {
 			return refused(existing.ID)
 		} else if err != nil {
-			return http.StatusInternalServerError, errors.New("failed to check the account's org")
+			return "", http.StatusInternalServerError, errors.New("failed to check the account's org")
 		}
+	}
+	// A deleted org's subject, or a purged one, never gets an account again (K "Nothing is
+	// reused"): an active event applies as inactive, so removals still succeed.
+	gone, err := tenancy.Purged(ctx, s.tenancy, ev.OrgID, u.ID)
+	if err == nil && !gone {
+		var o tenancy.Org
+		o, err = tenancy.LookupOrg(ctx, s.tenancy, ev.OrgID)
+		gone = o.Status == suitedir.OrgDeleted
+	}
+	if err != nil {
+		return "", http.StatusInternalServerError, errors.New("failed to read the org's state")
+	}
+	if gone {
+		inactive := false
+		u.Active = &inactive
+		s.logger.Info("directory event for a deleted org applied as inactive", "event_id", eventID)
 	}
 	switch admin := sso.HasAdminRole(u.Roles); {
 	case admin && ev.OrgID != s.staffOrg:
@@ -132,5 +149,5 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 		inactive := false
 		u.Active = &inactive
 	}
-	return 0, nil
+	return ev.OrgID, 0, nil
 }
