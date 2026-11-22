@@ -3,6 +3,7 @@ package pgpmail
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -589,8 +590,8 @@ func (s *PickupStore) Sweep(retention time.Duration) error {
 }
 
 // SenderRecords counts the records of the senders, in any state, and removes them when
-// remove is set (the multi-tenant org purge). A record that cannot be read is an error, so
-// the purge's final check never passes over one.
+// remove is set (the multi-tenant org purge). A record that cannot be read or parsed is an
+// error, so the purge never passes over one whose owner it cannot tell.
 func (s *PickupStore) SenderRecords(senders []string, remove bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -612,7 +613,11 @@ func (s *PickupStore) SenderRecords(senders []string, remove bool) (int, error) 
 			return n, err
 		}
 		var record PickupRecord
-		if err := json.Unmarshal(b, &record); err != nil || !slices.Contains(senders, record.SenderUserID) {
+		if err := json.Unmarshal(b, &record); err != nil {
+			// Its owner cannot be read, so it cannot be ruled out: fail closed.
+			return n, fmt.Errorf("pickup record %s is unreadable", entry.Name())
+		}
+		if !slices.Contains(senders, record.SenderUserID) {
 			continue
 		}
 		n++

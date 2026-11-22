@@ -1439,8 +1439,12 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
     (`sso/native_provision.go:742`, the durable `address_conflict` failure). HR reservation is
     off in multi mode.
 - **Nothing is reused.** A signed directory event for a deleted org, or for a subject with a purge
-  row, applies as inactive (`api/tenancy_binding.go:147`). Removals still succeed, and no account
-  is created.
+  row, applies as inactive, whatever its `active` field says (`api/tenancy_binding.go`, in
+  `bindDirectoryOrg`). Removals still succeed, and no account is created. An event with no
+  `active` field is refused earlier, as malformed (`sso/directory.go:92`).
+- **Pickup records.** A pickup record that cannot be parsed stops the purge with an error,
+  because its owner cannot be ruled out. A corrupt file therefore needs an operator before the
+  purge can finish (`TestOrgPurgeFailsClosedOnAnUnreadablePickup`).
 - **The final check** (`purgeLeft`, `api/tenancy_purge.go:326`) has eight parts:
   - `users.json`, `user_orgs`, `root-state`;
   - `directories` (with the quota lock files) and `schemas` (PostgreSQL catalog entries under

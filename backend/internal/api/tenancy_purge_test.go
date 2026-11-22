@@ -203,6 +203,16 @@ func (px *purgeFixture) assertPurged(t *testing.T) {
 	if _, err := srv.users.GetBySSOSub("member-a3"); !errors.Is(err, users.ErrNotFound) {
 		t.Fatal("a deleted org's new subject was provisioned", err)
 	}
+	// An event that leaves "active" out is malformed before any org rule runs.
+	silent := orgUser("member-a4", orgA, true)
+	delete(silent, "active")
+	silent["emails"] = []map[string]any{{"value": "member-a4@example.test", "primary": true}}
+	if w := postDirectory(t, srv, testSyncKey, "user.created", "ev-silent", 1, silent); w.Code != http.StatusBadRequest {
+		t.Fatal("an event without active", w.Code, w.Body)
+	}
+	if _, err := srv.users.GetBySSOSub("member-a4"); !errors.Is(err, users.ErrNotFound) {
+		t.Fatal("a deleted org's event without active was provisioned", err)
+	}
 	// A second pass changes nothing.
 	if err := srv.runPurges(ctx, time.Now()); err != nil {
 		t.Fatal(err)
@@ -364,4 +374,28 @@ func TestPurgeFinalCheckCoversTheClassification(t *testing.T) {
 	if len(left) != len(purgeChecks) {
 		t.Errorf("the final check reports %v, want exactly %v", left, purgeChecks)
 	}
+}
+
+// TestOrgPurgeFailsClosedOnAnUnreadablePickup: a pickup record whose owner cannot be read
+// stops the purge rather than letting the final check pass over it.
+func TestOrgPurgeFailsClosedOnAnUnreadablePickup(t *testing.T) {
+	px := newPurgeFixture(t)
+	setOrg(t, px.db, orgA, "deleted", false, `{}`)
+	corrupt := filepath.Join(px.srv.stateDir, "pickup", "corrupt.json")
+	if err := os.MkdirAll(filepath.Dir(corrupt), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(corrupt, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := px.srv.runPurges(context.Background(), time.Now()); err == nil || !strings.Contains(err.Error(), "unreadable") {
+		t.Fatal("a purge passed over an unreadable pickup record:", err)
+	}
+	if err := os.Remove(corrupt); err != nil {
+		t.Fatal(err)
+	}
+	if err := px.srv.runPurges(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	px.assertPurged(t)
 }

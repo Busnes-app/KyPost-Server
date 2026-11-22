@@ -136,7 +136,7 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 	if err != nil {
 		return http.StatusInternalServerError, errors.New("failed to read the org's state")
 	}
-	if gone && u.Active != nil && *u.Active {
+	if gone {
 		inactive := false
 		u.Active = &inactive
 		s.logger.Info("directory event for a deleted org applied as inactive", "event_id", eventID)
