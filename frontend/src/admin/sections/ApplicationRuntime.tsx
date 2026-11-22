@@ -108,7 +108,7 @@ export function ApplicationRuntime() {
     // Render the card shell (and the status line, once it exists) so the
     // tab is never silently empty.
     return (
-      <div className="config-card" role="tabpanel">
+      <div className="config-card">
         <h3>Application</h3>
         <p className="config-muted">Core runtime and interface settings.</p>
         {configStatus ? <p className={configStatusTone}>{configStatus}</p> : null}
@@ -117,7 +117,7 @@ export function ApplicationRuntime() {
   }
 
   return (
-    <div className="config-card" role="tabpanel">
+    <div className="config-card">
       <h3>Application</h3>
       <p className="config-muted">Core runtime and interface settings.</p>
       <div className="config-grid config-grid-two">

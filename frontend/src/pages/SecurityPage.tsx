@@ -11,6 +11,7 @@ import {
 import type { PreparedRecoveryBackup } from "./security/sections/MailKeys";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
 import { countApprovers, countMailEnrolled, joinDeviceRows } from "./security/deviceJoin";
+import { Tabs } from "@base-ui/react/tabs";
 import { SECURITY_TABS, SECURITY_TAB_LABELS, resolveSecurityTab, type SecurityTab } from "./security/tabs";
 import type { MfaStatus, TotpSetup } from "./security/types";
 import { SignIn } from "./security/sections/SignIn";
@@ -273,29 +274,24 @@ export function SecurityPage() {
         </li>
       </ul>
 
-      <div className="sec-tabs" role="tablist" aria-label="Security sections">
-        {SECURITY_TABS.map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab}
-            className={`sec-tab${activeTab === tab ? " active" : ""}`}
-            onClick={() => setActiveTab(tab)}
-          >
-            {SECURITY_TAB_LABELS[tab]}
-          </button>
-        ))}
-      </div>
+      {/* Base UI Tabs: arrows move focus along the strip, Enter or Space opens
+          a tab, each panel is labelled by its tab. setActiveTab may refuse a
+          switch (a one-time secret on screen); the value stays where it was. */}
+      <Tabs.Root value={activeTab} onValueChange={(tab) => setActiveTab(tab as SecurityTab)}>
+        <Tabs.List className="sec-tabs" aria-label="Security sections">
+          {SECURITY_TABS.map((tab) => (
+            <Tabs.Tab key={tab} value={tab} className={`sec-tab${activeTab === tab ? " active" : ""}`}>
+              {SECURITY_TAB_LABELS[tab]}
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+        {tabSwitchBlockedMessage ? (
+          <p className="notice notice-error" role="alert">
+            {tabSwitchBlockedMessage}
+          </p>
+        ) : null}
 
-      {tabSwitchBlockedMessage ? (
-        <p className="notice notice-error" role="alert">
-          {tabSwitchBlockedMessage}
-        </p>
-      ) : null}
-
-      <div className="sec-layout">
-        {activeTab === "signin" ? (
+        <Tabs.Panel value="signin" className="sec-layout">
           <SignIn
             status={status}
             refreshStatus={refreshStatus}
@@ -305,9 +301,8 @@ export function SecurityPage() {
             setup={totpSetup}
             setSetup={setTotpSetup}
           />
-        ) : null}
-
-        {activeTab === "devices" ? (
+        </Tabs.Panel>
+        <Tabs.Panel value="devices" className="sec-layout">
           <Devices
             status={status}
             refreshStatus={refreshStatus}
@@ -325,15 +320,14 @@ export function SecurityPage() {
             setUnlockOpen={setUnlockOpen}
             onGoToSignIn={() => setActiveTab("signin")}
           />
-        ) : null}
-
-        {activeTab === "carddav" ? (
+        </Tabs.Panel>
+        <Tabs.Panel value="carddav" className="sec-layout">
           <CardDavAccess onRevealedPasswordChange={setDavPasswordRevealed} />
-        ) : null}
-
-        {activeTab === "agents" ? <AgentAccess onRevealedTokenChange={setAgentTokenRevealed} /> : null}
-
-        {activeTab === "mail" ? (
+        </Tabs.Panel>
+        <Tabs.Panel value="agents" className="sec-layout">
+          <AgentAccess onRevealedTokenChange={setAgentTokenRevealed} />
+        </Tabs.Panel>
+        <Tabs.Panel value="mail" className="sec-layout">
           <MailKeys
             pgpIdentity={pgpIdentity}
             setPgpIdentity={setPgpIdentity}
@@ -345,12 +339,14 @@ export function SecurityPage() {
             recoverySecret={recoverySecret}
             setRecoverySecret={setRecoverySecret}
           />
-        ) : null}
-
-        {activeTab === "import" ? <MailImport /> : null}
-
-        {activeTab === "export" ? <MailExport /> : null}
-      </div>
+        </Tabs.Panel>
+        <Tabs.Panel value="import" className="sec-layout">
+          <MailImport />
+        </Tabs.Panel>
+        <Tabs.Panel value="export" className="sec-layout">
+          <MailExport />
+        </Tabs.Panel>
+      </Tabs.Root>
 
       {/* Page level, outside the tabs on purpose: the Devices tab's enrollment
           card also asks for an unlock, and a dialog mounted only under Mail
