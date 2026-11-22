@@ -58,6 +58,7 @@ export function RecipientField({ label, state, onDraftChange, onAddToken, onRemo
 
   function selectContact(suggestion: Suggestion) {
     justHandledRef.current = true;
+    highlightedRef.current = undefined;
     onAddToken({ email: suggestion.email, name: suggestion.name || undefined, isCustom: false });
     onDraftChange("");
     setFieldError("");
@@ -100,8 +101,11 @@ export function RecipientField({ label, state, onDraftChange, onAddToken, onRemo
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement> & { preventBaseUIHandler: () => void }) {
     if (event.key === "Tab") {
-      if (isOpen && highlightedRef.current) {
-        selectContact(highlightedRef.current);
+      // Only an option still listed: Base UI clears the highlight when the
+      // list closes, but Tab must not depend on that timing.
+      const highlighted = highlightedRef.current;
+      if (isOpen && highlighted && results.includes(highlighted)) {
+        selectContact(highlighted);
       }
       return;
     }

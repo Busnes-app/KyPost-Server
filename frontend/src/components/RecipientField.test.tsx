@@ -153,6 +153,22 @@ it("Tab accepts the highlighted suggestion and moves on", async () => {
   expect(document.activeElement).toBe(screen.getByText("after"));
 });
 
+it("Tab never accepts a suggestion that is no longer listed (a stale highlight)", async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await typeAndWait(user, "al");
+  await waitFor(() => expect(box().getAttribute("aria-activedescendant")).toBeTruthy());
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(chips()).toEqual(["Alan Ames <alan@example.com>"]);
+  // The next search is still pending (debounced): no options are listed yet,
+  // so Tab must leave the field and commit the typed address on blur.
+  await user.type(box(), "zz@q.test");
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
+  await user.tab();
+  expect(chips()).toEqual(["Alan Ames <alan@example.com>", "zz@q.test"]);
+  expect(screen.getByTestId("notice").textContent).toBe("");
+});
+
 it("a click on a suggestion chooses it; an organisation person without a name is their address", async () => {
   const user = userEvent.setup();
   const onAdd = vi.fn();
