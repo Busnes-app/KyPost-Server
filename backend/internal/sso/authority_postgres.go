@@ -230,7 +230,10 @@ func buildAuthorityPostgres(ctx context.Context, path string, rows authorityRows
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+dbbackend.QuoteIdent(schema)+` CASCADE; DELETE FROM kypost_catalog.stores WHERE path='`+strings.ReplaceAll(rel, "'", "''")+`'`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+dbbackend.QuoteIdent(schema)+` CASCADE`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM kypost_catalog.stores WHERE path=?`, rel); err != nil {
 		return err
 	}
 	if err := dbbackend.CreateSchemaTx(ctx, tx, schema, rel, AuthorityKind, authorityPGSchema); err != nil {

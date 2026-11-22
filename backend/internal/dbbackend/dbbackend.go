@@ -367,11 +367,6 @@ func CreateSchemaTx(ctx context.Context, tx *sql.Tx, schema, rel, kind, ddl stri
 	if _, err := tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS `+QuoteIdent(schema)+`; SET LOCAL search_path TO `+QuoteIdent(schema)+`, public`); err != nil {
 		return err
 	}
-	if testHook() {
-		if _, err := tx.ExecContext(ctx, `COMMENT ON SCHEMA `+QuoteIdent(schema)+` IS 'path:`+strings.ReplaceAll(rel, "'", "''")+`'`); err != nil {
-			return err
-		}
-	}
 	if ddl != "" {
 		if _, err := tx.ExecContext(ctx, ddl); err != nil {
 			return fmt.Errorf("creating the %s schema: %w", kind, err)
