@@ -181,7 +181,7 @@ The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/invento
 | `replica-volume.id` | `replica/topology.go:19` | P | absent in multi mode | MH7 |
 | `server-instance.lock` | `state/coordination.go:319` | P | absent (SQLite only) | |
 | `tenancy.db` and every other `.db` | `dbbackend` | O/D/P | already PG | R and K PR 1 |
-| `recovery.pub` | `backup/replica.go:240,303` (`recoveryclient.RecoveryKeyPath`) | P | per host, rewritten from the sealed anchor | R already rewrites a missing `recovery.pub` from the sealed record (`app/replica.go:52-58`, `backup/replica.go:28-30`). Every host gets it at start. |
+| `recovery.pub` | `STATE_DIR/recovery.pub`: `backup/replica.go:240,303` call `recoveryclient.RecoveryKeyPath(stateDir)`, which joins the data directory and the file name (ky-primitives `recoveryclient/pin.go:38-40` at the `backend/go.mod` pin) | P | per host, in `STATE_DIR` (never `SECRET_DIR`), rewritten from the sealed anchor | R already rewrites a missing `recovery.pub` from the sealed record (`app/replica.go:52-58`, `backup/replica.go:28-30`). Every host gets it at start. |
 | TLS certificate files (`TLS_CERT_FILE`, `KYPOST_TLS_CERT_FILE`) | `api/tls.go:42`, `api/pairing_pin.go:180` | P | per host (read-only, provisioned) | HAProxy or the edge proxy ends TLS (`docs/RUNNING.md:257-258`). The pin source must be the same on every host. The shared-settings fingerprint already covers the path (`replica/config.go:48`). |
 | Logs, supervisord socket and pid, Ollama models, backup scratch | `docs/RUNNING.md:289-290`; `replica/config.go:60-69` (`PerHost`) | P | per host | Already per container |
 
