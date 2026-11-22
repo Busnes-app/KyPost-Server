@@ -79,6 +79,11 @@ func newPurgeFixture(t *testing.T) *purgeFixture {
 	d, err := holding.Claim(ctx, purgeGateway, "imported", time.Minute)
 	check(fx, err)
 	check(fx, holding.Acknowledge(ctx, purgeGateway, "imported", d.Lease, d.Digest))
+	for _, m := range []string{fx.a.ID, fx.a.extra, fx.b.ID} {
+		_, err := tenancy.TakeImportLease(ctx, px.db, m, "importer", time.Now())
+		check(fx, err)
+		check(fx, tenancy.RecordRetired(ctx, px.db, purgeGateway, "retired", m, time.Now()))
+	}
 	px.bDigest = fx.orgDigest(fx.b)
 	return px
 }
@@ -173,6 +178,12 @@ func (px *purgeFixture) assertPurged(t *testing.T) {
 		if err != nil || len(d.Bindings) != 1 || d.Bindings[0].Mailbox != px.b.ID || len(d.Raw) == 0 {
 			t.Fatalf("org B's delivery %s: %+v %v", id, d.Bindings, err)
 		}
+	}
+	if n, err := tenancy.ImportRows(ctx, px.db, []string{px.a.ID, px.a.extra}); err != nil || n != 0 {
+		t.Fatalf("org A's import leases or retired records survived: %d %v", n, err)
+	}
+	if n, err := tenancy.ImportRows(ctx, px.db, []string{px.b.ID}); err != nil || n != 2 {
+		t.Fatalf("org B's import rows: %d %v, want 2", n, err)
 	}
 	if left, err := holding.PurgeLeft(ctx, []string{px.a.ID, px.a.extra, px.other.ID, px.other.extra}, func(a string) (bool, error) { return slices.Contains(px.aAddress, a), nil }); err != nil || left != 0 {
 		t.Fatalf("receiving still names org A: %d %v", left, err)

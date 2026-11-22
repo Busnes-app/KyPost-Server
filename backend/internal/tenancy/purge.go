@@ -205,6 +205,36 @@ func UserOrgRows(ctx context.Context, db *sql.DB, ids []string) (int, error) {
 	return total, nil
 }
 
+// importTables are receiving import's per-mailbox rows (imports.go).
+var importTables = []string{"import_leases", "retired_bindings"}
+
+// PurgeImports deletes the mailboxes' import leases and retired-binding records.
+func PurgeImports(ctx context.Context, db *sql.DB, mailboxes []string) error {
+	for _, table := range importTables {
+		for _, m := range mailboxes {
+			if _, err := db.ExecContext(ctx, `DELETE FROM `+table+` WHERE mailbox = ?`, m); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ImportRows counts the mailboxes' import rows (the final check).
+func ImportRows(ctx context.Context, db *sql.DB, mailboxes []string) (int, error) {
+	total := 0
+	for _, table := range importTables {
+		for _, m := range mailboxes {
+			var n int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+table+` WHERE mailbox = ?`, m).Scan(&n); err != nil {
+				return 0, err
+			}
+			total += n
+		}
+	}
+	return total, nil
+}
+
 func queryColumn(ctx context.Context, db *sql.DB, query string, args ...any) ([]string, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -336,6 +366,7 @@ var PurgeCoverage = map[string]string{
 	"mailbox.usage": "directories", "mailbox.changes": "directories", "mailbox.outbox": "directories",
 	"mailbox.outbox_deliveries": "directories", "mailbox.outbox_independent": "directories",
 	"ingress.routes": "ingress", "ingress.bindings": "ingress",
+	"tenancy.import_leases": "ingress", "tenancy.retired_bindings": "ingress",
 	"native-authority.directory": "ledger", "native-authority.directory_primary_emails": "ledger",
 	"native-authority.accounts": "ledger", "native-authority.mailboxes": "ledger", "native-authority.addresses": "ledger",
 	"native-authority.address_history": "ledger", "native-authority.routes_pending": "ledger",
