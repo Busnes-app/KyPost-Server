@@ -148,7 +148,7 @@ The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/invento
 
 | File | Defined | Class | Target | Why |
 |---|---|---|---|---|
-| `users.json` | `app/bootstrap.go:47`, `users/users.go:701,812` | O | `accounts` | One file holds every customer's account and is rewritten whole under one lock (K "Replicas", "Scale before launch"). One row per account lets writers lock one account. |
+| `users.json` | `app/bootstrap.go:47`, `users/users.go:701,812` | O | `accounts` | One file holds every customer's account and is rewritten whole under one lock (`users/users.go:871`, gated writes of the whole file). One row per account lets writers lock one account. |
 | `admin.env`, `first-run-password.txt` | `app/bootstrap.go:83` | – | absent | K6 |
 | Root `config.yaml` | `config/config.go` (root config) | P | `documents` | Edited at runtime from the admin settings and re-read by every replica within 5 seconds (`docs/RUNNING.md:285`). The re-read becomes a revision check. |
 | `mail-defaults.json` | `api/server_mail_defaults.go:26` | P | `documents` | Admin-edited at runtime |
@@ -240,9 +240,12 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
   with no tombstone and no timing argument. A restore sets the sequence above the restored
   table's highest revision before any replica starts. The SQLite DDL exists only for the capsule
   copy (K "PR 1 as built"). Multi mode never writes through it.
-- **Size.** Each document has a cap of 16 MiB, refused at the write. That is about twice the
-  largest store's own bound. MH2 measures the bounds per store, and the stores keep their own,
-  smaller caps.
+- **Size.** Each document has a cap, refused at the write. **The figure is provisional**:
+  16 MiB is a placeholder, not derived from anything. Before any store moves, MH2 measures each
+  store's largest legitimate document: each store's own limits, and the worst case its existing
+  tests build, as `TestEvidenceWorstCaseSize` does for evidence. The cap is then set at or above
+  the largest of those, so the table never refuses a write that the file implementation accepts.
+  Each store keeps its own caps.
 - **Class and owner.** `owner` is the owning user's ID for a D row and NULL for a P row. The
   seam sets it on every write and never takes it from the request:
   - from the path for `users/<id>/…`;
@@ -568,7 +571,7 @@ in tests, as K's do (`makeMultiTenant`).
    gated on multi mode, which keeps single-tenant byte for byte. The `migrate-volumes-to-postgres`
    sketch (Migration) is the path if the owner wants it later. This matches RX open question 1.
 2. **Object storage for photos and large documents?** *Recommend* no: use PostgreSQL `BYTEA` with a
-   16 MiB cap per document. Object storage adds a dependency, a second consistency domain and a
+   per-document cap set from MH2's measured bounds (16 MiB is a placeholder). Object storage adds a dependency, a second consistency domain and a
    second backup path. Revisit if the capacity measurement shows documents dominate the database.
 3. **Local backup copies in multi mode?** *Recommend* refusing local copies in multi mode and
    requiring KyRecovery deposit, so no capsule sits on whichever host ran the job. The alternative
