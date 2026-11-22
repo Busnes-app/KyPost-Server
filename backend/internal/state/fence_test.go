@@ -312,12 +312,13 @@ func TestFenceCycleEndsInABoundedWait(t *testing.T) {
 	}
 }
 
-// Fence sessions come from their own capped pool: once it is full, another set is a bounded
-// wait, and the store's own queries still run.
+// Fence sessions come from one capped pool per schema in the process, shared by every Store:
+// once it is full, another set on any Store is a bounded wait, and the store's own queries
+// still run.
 func TestFenceSessionsDoNotStarveTheStore(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	shortFenceWait(t, 500*time.Millisecond)
-	a, _ := twoReplicas(t)
+	a, b := twoReplicas(t)
 	var leaves []chan struct{}
 	for i := range maxFenceSessions {
 		inside, leave, _ := hold(a, []Fence{{Name: FenceMailbox + "m" + strings.Repeat("x", i+1)}})
@@ -329,8 +330,10 @@ func TestFenceSessionsDoNotStarveTheStore(t *testing.T) {
 			close(l)
 		}
 	}()
-	if err := a.WithFences(context.Background(), []Fence{{Name: FenceSSO}}, nop); !errors.Is(err, ErrFenceWait) {
-		t.Fatalf("a set past the session cap: %v", err)
+	for _, s := range []*Store{a, b} {
+		if err := s.WithFences(context.Background(), []Fence{{Name: FenceSSO}}, nop); !errors.Is(err, ErrFenceWait) {
+			t.Fatalf("a set past the process's session cap: %v", err)
+		}
 	}
 	if _, _, _, err := a.TakeAttempt(context.Background(), "fence-test", 1, time.Minute); err != nil {
 		t.Fatalf("the store's own query with every fence session held: %v", err)

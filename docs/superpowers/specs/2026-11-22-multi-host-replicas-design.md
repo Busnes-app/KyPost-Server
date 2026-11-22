@@ -506,11 +506,14 @@ in tests, as K's do (`makeMultiTenant`).
      PostgreSQL pool holds at most 4 connections (`dbbackend/dbbackend.go:314`). A held fence keeps
      its connection, so fences taken from that pool would let five fenced requests starve every
      other `state.db` query, their own work's included. That wait would be unbounded. MH1's
-     first writer-preference test ran into exactly this. So each `state.Store` opens a separate
-     fence pool on the same schema, capped at `maxFenceSessions` (32, provisional until the
-     capacity measurement). A set that cannot get a session within the wait is `ErrFenceWait`
-     (`TestFenceSessionsDoNotStarveTheStore`). Open question 5's connection budget must add up to
-     32 connections per process from MH4 on, when fences are first used. `docs/RUNNING.md` is
+     first writer-preference test ran into exactly this. So fences take their sessions from
+     `fencePool`: one pool per schema, shared by every `state.Store` in the process, capped at
+     `maxFenceSessions` (32, provisional until the capacity measurement). Only a successful
+     open is kept, and a pool keeps no idle connection. A set that cannot get a session within
+     the wait is `ErrFenceWait` on every Store of the process
+     (`TestFenceSessionsDoNotStarveTheStore`). Fences are on the global `state.db` only, so open
+     question 5's connection budget must add up to 32 connections per process from MH4 on, when
+     fences are first used. `docs/RUNNING.md` is
      unchanged until then.
    - **The bounded wait** covers the whole set: 10 s (`fenceWait`), enforced by the context and by
      a session `lock_timeout`. A lock timeout (`55P03`) and a deadlock that PostgreSQL detects

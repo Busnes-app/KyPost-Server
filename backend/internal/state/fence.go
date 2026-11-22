@@ -45,47 +45,40 @@ const (
 // sit is MH4's to confirm.
 var fenceOrder = []string{"org", "settings", "native-domains", "sso-lifecycle", "mailbox", "quota", "sso", "backup-operation"}
 
-// fencePool is each Store's own pool of fence sessions, opened on first use. A held fence
-// keeps its connection for the whole section, so sharing the store's small pool would let
-// fenced requests starve every other query, their own included. maxFenceSessions caps what
-// one process holds (provisional until the capacity measurement); a set that cannot get a
-// session within fenceWait is ErrFenceWait.
-type fencePool struct {
-	once sync.Once
-	mu   sync.Mutex
-	db   *sql.DB
-	err  error
+// fencePools holds one pool of fence sessions per schema, shared by every Store in the
+// process. A held fence keeps its connection for the whole section, so the store's own small
+// pool would let fenced requests starve every other query, their own included.
+// maxFenceSessions caps what one process holds per schema (provisional until the capacity
+// measurement); a set that cannot get a session within fenceWait is ErrFenceWait. Only a
+// successful open is kept, and a pool is never closed: it keeps no idle connection.
+var fencePools struct {
+	sync.Mutex
+	bySchema map[string]*sql.DB
 }
 
 const maxFenceSessions = 32
 
-func (p *fencePool) get(baseDir string) (*sql.DB, error) {
-	p.once.Do(func() {
-		schema, _, err := dbbackend.SchemaName(filepath.Join(baseDir, "state.db"))
-		var db *sql.DB
-		if err == nil {
-			db, err = dbbackend.Pool(schema, false)
-		}
-		if err == nil {
-			db.SetMaxOpenConns(maxFenceSessions)
-			db.SetMaxIdleConns(0) // every session is discarded on release
-		}
-		p.mu.Lock()
-		p.db, p.err = db, err
-		p.mu.Unlock()
-	})
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.db, p.err
-}
-
-func (p *fencePool) close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.db == nil {
-		return nil
+func fencePool(baseDir string) (*sql.DB, error) {
+	schema, _, err := dbbackend.SchemaName(filepath.Join(baseDir, "state.db"))
+	if err != nil {
+		return nil, err
 	}
-	return p.db.Close()
+	fencePools.Lock()
+	defer fencePools.Unlock()
+	if db := fencePools.bySchema[schema]; db != nil {
+		return db, nil
+	}
+	db, err := dbbackend.Pool(schema, false)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(maxFenceSessions)
+	db.SetMaxIdleConns(0) // every session is discarded on release
+	if fencePools.bySchema == nil {
+		fencePools.bySchema = map[string]*sql.DB{}
+	}
+	fencePools.bySchema[schema] = db
+	return db, nil
 }
 
 // fenceWait bounds the wait for a whole fence set (R's pairingLockWait). A variable so tests
@@ -121,7 +114,7 @@ const fenceKey = `('x' || left(encode(sha256(convert_to(current_schema() || ':' 
 
 var fenceName = func(name string) string { return name }
 
-// WithFences runs work holding every fence of the set on one dedicated session, taken in
+// WithFences runs work holding every fence of the set on one dedicated session (fencePool), taken in
 // fenceOrder (then by name), so fences within one request never wait on each other,
 // including two whose keys collide. The whole set is acquired within fenceWait or the call
 // fails with ErrFenceWait. While work runs the session is probed as WithLock's is: a probe
@@ -147,7 +140,7 @@ func (s *Store) WithFences(ctx context.Context, fences []Fence, work func(contex
 	})
 	wait, cancelWait := context.WithTimeout(ctx, fenceWait)
 	defer cancelWait()
-	pool, err := s.fences.get(s.baseDir)
+	pool, err := fencePool(s.baseDir)
 	if err != nil {
 		return err
 	}
