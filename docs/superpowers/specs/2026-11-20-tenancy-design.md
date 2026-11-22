@@ -808,7 +808,7 @@ accept `multi` until multi-host works. Startup keeps refusing `multi` until **al
 (`docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`, "Phased build plan") and RX
 PRs 1–5 have merged. Where it accepts `multi`, PR 7 adds MH's prerequisites to the K2 checks:
 `sslmode=verify-full` for a database that is not on loopback, and a provisioned, complete
-`SECRET_DIR` (MH5). It also runs MH7's two-host harness among its tests. MH sits against this plan as follows:
+`SECRET_DIR` (MH5). It also adds the container two-host harness, two containers with separate volumes on one database, which needs a startable multi mode. MH7 has only the in-process two-host test. MH sits against this plan as follows:
 - MH1 can start now.
 - MH2 needs PR 6's addition of `tenancy.db` to the backup set.
 - MH4's catalog tombstone is the purge's database-level fence, so PR 6's final check asserts it

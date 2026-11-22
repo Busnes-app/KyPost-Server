@@ -265,7 +265,9 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
   either commits first, and the document delete removes it, or it waits on the row lock and then
   finds no account. Both tables are in one store, so this is one database rule, not a lock that
   can be lost. The purge's final check also lists `documents WHERE owner IN` the snapshot, and an
-  empty list is required before the purge is done.
+  empty list is required before the purge is done. The guard needs the `accounts` table, so it
+  ships in MH3. Between MH2 and MH3, only the final check guards this. That is safe, because
+  multi mode cannot start before MH7 (K PR 7's gate).
 - **Expired rows.** The elected `api-sweepers` worker already sweeps expired pickup links
   (`docs/RUNNING.md:277`, "pickup and contact sweeps"). In multi mode it deletes their rows.
 - **Backups.** `tenancy.db` joins the backup set in K PR 6 (K "PR 1 as built"). A multi install's
@@ -356,9 +358,13 @@ Across hosts, three things can happen that one host did not see often:
    cancels its jobs. PostgreSQL releases the lock only when it notices the dead connection. That
    takes TCP keepalive time, which defaults to hours on Linux (unverified for the Compose
    PostgreSQL image). Until then no other replica can win the role. That is a stall, not a split
-   brain. **Requirement (MH7):** the multi profile sets PostgreSQL's `tcp_keepalives_idle`,
-   `tcp_keepalives_interval` and `tcp_keepalives_count` so that a dead holder is dropped within
-   about 30 s. (`client_connection_check_interval` does not help here: it checks only during a
+   brain. **Requirement (MH7):** the multi profile bounds both ways a dead connection can sit:
+   - **an idle socket:** PostgreSQL's `tcp_keepalives_idle`, `tcp_keepalives_interval` and
+     `tcp_keepalives_count`, about 30 s in total;
+   - **a socket with unacknowledged data:** `tcp_user_timeout` (PostgreSQL 12 or later), 30 s.
+     Keepalives do not run on such a socket, so without this Linux falls back to retransmission
+     timeouts (`tcp_retries2`, about 15 minutes). The holder's 1 s probe makes this the likely
+     case in a partition. (`client_connection_check_interval` does not help here: it checks only during a
    running query, and a lock holder's connection is idle.)
 2. **A holder paused longer than `Grace`** (VM freeze or GC). PostgreSQL drops it, a new owner
    starts after `Grace`, and the old one resumes with a job mid-write before its next probe. This
@@ -473,8 +479,7 @@ in tests, as K's do (`makeMultiTenant`).
    - the root `config.yaml` change seen by a second replica within 5 s;
    - K PR 6's purge removing every document of the org by `owner`, pickup links included,
      checked against the classification;
-   - a writer paused across the purge, then resumed and retried: it writes nothing, because the
-     owner's account row is gone;
+   - the purge's final check failing while a document of a purged owner remains;
    - expired-pickup cleanup;
    - a cross-org case in `TestCrossOrgMatrix` per new document kind.
 3. **MH3: accounts.** The `accounts` table, per-row invariants, the `REPEATABLE READ` read-only
@@ -488,6 +493,8 @@ in tests, as K's do (`makeMultiTenant`).
    - two unbound accounts coexisting;
    - provisioning racing a purge snapshot: the new account is refused or purged, and never
      survives (including with the fence forced lost);
+   - the owner guard on D documents: a writer paused across the purge, then resumed and
+     retried, writes nothing, because the owner's account row is gone;
    - PR 2's write-once and K7 tests in multi mode;
    - a uniqueness race between two replicas creating one subject, where one wins and the other
      gets `ErrSSOSubTaken`;
@@ -527,8 +534,13 @@ in tests, as K's do (`makeMultiTenant`).
    Tests:
    - `TestTopologyGuard` multi cases: another boot ID admitted, a file-backed store refused;
    - the volume-free test;
-   - a two-host harness, two containers with separate volumes and different boot IDs on one
-     database, running `TestTwoReplicasSeeOneSuspension` and a sign-in on A then a request on B.
+   - **an in-process two-host test.** Startup still refuses `multi`, so this runs as K's tests do:
+     two servers built with `makeMultiTenant`-style wiring on one PostgreSQL. Each has its own
+     temporary roots and calls `replica.Start` with its own `BootID` (the field is injectable,
+     `replica/topology.go:45`). It runs `TestTwoReplicasSeeOneSuspension`, a
+     sign-in on A followed by a request on B, and a fence and role handover when A is killed.
+   The **container** two-host harness needs a startable multi mode, so it is K PR 7's: two
+   containers with separate volumes and different kernels' boot IDs.
 
 **Against K and RX.**
 - MH1 can start now. MH2 needs K PR 6's backup inclusion of `tenancy.db`.
