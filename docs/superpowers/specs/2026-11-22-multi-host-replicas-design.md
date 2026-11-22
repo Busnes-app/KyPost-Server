@@ -182,7 +182,7 @@ The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/invento
 | `replica-volume.id` | `replica/topology.go:19` | P | absent in multi mode | MH7 |
 | `server-instance.lock` | `state/coordination.go:319` | P | absent (SQLite only) | |
 | `tenancy.db` and every other `.db` | `dbbackend` | O/D/P | already PG | R and K PR 1 |
-| `recovery.pub` | `STATE_DIR/recovery.pub`: `backup/replica.go:240,303` call `recoveryclient.RecoveryKeyPath(stateDir)`, which joins the data directory and the file name (ky-primitives `recoveryclient/pin.go:38-40` at the `backend/go.mod` pin) | P | per host, in `STATE_DIR` (never `SECRET_DIR`), rewritten from the sealed anchor | R already rewrites a missing `recovery.pub` from the sealed record (`app/replica.go:52-58`, `backup/replica.go:28-30`). Every host gets it at start. |
+| `recovery.pub` | `STATE_DIR/recovery.pub`: `backup/replica.go:240,303` call `recoveryclient.RecoveryKeyPath(stateDir)`, which joins the data directory and the file name (ky-primitives `recoveryclient/pin.go:38-40` at the `backend/go.mod` pin) | P | per host, in `STATE_DIR` (never `SECRET_DIR`), rewritten from the sealed anchor | R rewrites a missing `recovery.pub` from the sealed record (`app/replica.go:52-58`). `SyncRecoveryKey` runs at start and before every run and export (`backup/backup.go:197,253`), and a file naming another key refuses with `ErrAnchor` (`backup/replica.go:240-243`). So a stale host fails closed and never deposits to an unpinned key. Across hosts, though, a re-pin on one replica would leave every other host's file stale, and that host would refuse every backup until the file was fixed by hand. **In multi mode** (MH5), `SyncRecoveryKey` therefore replaces a mismatching file with the key from the sealed record, after the record has opened under its AEAD. That record is the authority, so the file is only a cache of it. It writes an audit line naming the key ID only. A record that does not open still refuses. |
 | TLS certificate files (`TLS_CERT_FILE`, `KYPOST_TLS_CERT_FILE`) | `api/tls.go:42`, `api/pairing_pin.go:180` | P | per host (read-only, provisioned) | HAProxy or the edge proxy ends TLS (`docs/RUNNING.md:257-258`). The pin source must be the same on every host. The shared-settings fingerprint already covers the path (`replica/config.go:48`). |
 | Logs, supervisord socket and pid, Ollama models, backup scratch | `docs/RUNNING.md:289-290`; `replica/config.go:60-69` (`PerHost`) | P | per host | Already per container |
 
@@ -508,6 +508,9 @@ in tests, as K's do (`makeMultiTenant`).
    Tests:
    - a missing key;
    - a different key on one host;
+   - a re-pin on replica A, then a backup run on host B, whose stale `recovery.pub` is replaced
+     from the sealed record and the deposit made to the new key; a record that does not open
+     still refuses;
    - every `LoadOrCreateKey` and `CreateExclusive` call site reached in multi mode;
    - single mode still creating keys lazily.
 6. **MH6: shared meters and leases.** The meters marked "shared window" above move to R's
@@ -584,8 +587,8 @@ in tests, as K's do (`makeMultiTenant`).
 - **Document scale is unmeasured.** Per-user documents are rewritten whole, as the files are. A
   very large `contacts.json` costs one large row write per change. The capacity measurement (K
   open question 8, RX "Capacity measurement") must include documents per user and write rates.
-- **K's residual risk "One install, one database, one host"** (K "Residual risks") is outside the
-  sections this PR may edit. Once MH7 ships it reads "one install, one database".
+- **K's residual risk "One install, one database, one host"** (K "Residual risks") now reads
+  "one host until MH7 ships".
 
 ## Open questions, with recommendations
 

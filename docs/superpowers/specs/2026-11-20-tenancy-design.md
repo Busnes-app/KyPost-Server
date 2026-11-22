@@ -1362,8 +1362,10 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
 
 ## Residual risks
 
-- **One install, one database, one host.** Every org shares R's single host and single
-  PostgreSQL, and a restore rolls every org back (R, T).
+- **One install, one database, one host until MH7 ships.** Every org shares one PostgreSQL, and a
+  restore rolls every org back (R, T). Until MH7
+  (`docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`), R's replicas also share one
+  host, and multi mode cannot start before then (Phased build plan, amendment 2026-11-22).
 - **Backups outlive a purge.** A deleted org's mail stays in older capsules until they expire.
 - **Delete everything cannot be undone.** Someone who holds the password and the second factor can
   delete the whole org. Step-up and the typed address stop a stray click, not a thief.
