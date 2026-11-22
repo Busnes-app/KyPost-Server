@@ -307,13 +307,31 @@ func FenceRestored(stateDir string) (err error) {
 	return ForgetRestored(context.Background(), db)
 }
 
-// ForgetRestored is FenceRestored's change: the org cache and the finished purges go.
+// ForgetRestored is FenceRestored's change: the org cache, the finished purges and any
+// restore read go.
 func ForgetRestored(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `DELETE FROM orgs`); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `DELETE FROM org_purges WHERE done_at IS NOT NULL`)
+	if _, err := db.ExecContext(ctx, `DELETE FROM org_purges WHERE done_at IS NOT NULL`); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM restore_reads`)
 	return err
+}
+
+// RecordRestoreRead records that, during the restore hold epoch, a poll of every org from
+// revision 0 and a read of every erased subject both succeeded (K "Delete everything").
+func RecordRestoreRead(ctx context.Context, db *sql.DB, epoch string, now time.Time) error {
+	_, err := db.ExecContext(ctx, `INSERT INTO restore_reads(epoch, read_at) VALUES(?, ?) ON CONFLICT DO NOTHING`, epoch, now.Unix())
+	return err
+}
+
+// RestoreRead reports whether RecordRestoreRead ran for epoch.
+func RestoreRead(ctx context.Context, db *sql.DB, epoch string) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM restore_reads WHERE epoch = ?`, epoch).Scan(&n)
+	return n > 0, err
 }
 
 // PurgeCoverage maps every org-owned (O) and derived (D) store of the design's Store

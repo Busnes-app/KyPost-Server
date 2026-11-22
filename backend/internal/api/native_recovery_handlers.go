@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -250,7 +251,14 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 	// administrator, checked before step-up so no SSO challenge is minted. A
 	// linked one could be deactivated by the release itself (decision a).
 	const p6 = "P6: hold release requires a password session of an active local administrator without an SSO link"
-	if sess, _, ok := s.sessionOf(r); ok && (sess.SSO.Issuer != "" || sess.SSOKySignOn) {
+	// Multi mode has no local administrators (K6): a staff administrator (withAdmin already
+	// proved K7) on a KySignOn session releases, confirmed by an action-bound step-up.
+	const p6Multi = "P6: hold release requires a staff administrator's KySignOn session"
+	multi := s.multiTenant()
+	if sess, _, ok := s.sessionOf(r); ok && multi && !sess.SSOKySignOn {
+		http.Error(w, p6Multi, http.StatusForbidden)
+		return
+	} else if ok && !multi && (sess.SSO.Issuer != "" || sess.SSOKySignOn) {
 		http.Error(w, p6, http.StatusForbidden)
 		return
 	}
@@ -259,7 +267,7 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	actor := operator.actor
-	if operator.session.SSO.Issuer != "" || operator.session.SSOKySignOn || actor.SSOSub != "" || actor.PasswordHash == "" {
+	if !multi && (operator.session.SSO.Issuer != "" || operator.session.SSOKySignOn || actor.SSOSub != "" || actor.PasswordHash == "") {
 		http.Error(w, p6, http.StatusForbidden)
 		return
 	}
@@ -283,6 +291,12 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 	if _, err := os.Lstat(filepath.Join(s.stateDir, sso.NativeRestoreHoldFile)); errors.Is(err, os.ErrNotExist) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "no native restore hold: nothing to release", "restoreHeld": false})
 		return
+	}
+	if multi {
+		if why, err := s.restoreReleaseRefusal(ctx); err != nil || why != "" {
+			refuse(cmp.Or(why, "the org cache is unreadable; retry"))
+			return
+		}
 	}
 	maddy, err := maddyProfile(s.configDir)
 	if err != nil {

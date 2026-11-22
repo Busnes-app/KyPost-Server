@@ -58,7 +58,12 @@ func (s *Server) StartOrgPoller(ctx context.Context) {
 	t := time.NewTicker(orgPollInterval)
 	defer t.Stop()
 	for {
-		if err := s.pollOrgs(ctx, time.Now()); err != nil && ctx.Err() == nil {
+		// While a restore hold stands, the poll is the full restore read (6c).
+		poll := s.pollOrgs
+		if epoch, held := s.heldEpoch(); held {
+			poll = func(ctx context.Context, now time.Time) error { return s.restoreReads(ctx, epoch, now) }
+		}
+		if err := poll(ctx, time.Now()); err != nil && ctx.Err() == nil {
 			// The error can quote an org ID; the line names none.
 			s.logger.Error("org entitlements not refreshed; members are refused once the cache is 15 minutes old", "error", "suite directory unavailable or its answer malformed")
 		}
@@ -88,6 +93,11 @@ func (s *Server) pollOrgs(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	return s.pollOrgsFrom(ctx, dir, since, now)
+}
+
+// pollOrgsFrom is pollOrgs from a given revision; the restore reads start at 0.
+func (s *Server) pollOrgsFrom(ctx context.Context, dir suitedir.Client, since int64, now time.Time) error {
 	// A call cut short at its page bound returns a cursor below its last revision; keep
 	// listing, so MarkPolled never stamps fresh an org whose change is still unread.
 	for {

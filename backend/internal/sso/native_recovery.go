@@ -65,6 +65,11 @@ type nativeRecoveryReceipt struct {
 }
 
 func nativeRecoveryIdentifier(s string) bool { return recoveryIdentifierPattern.MatchString(s) }
+
+// NativeRestoreHoldEpoch is the current restore hold's epoch; any error means it cannot be
+// read (no hold included).
+func NativeRestoreHoldEpoch(root string) (string, error) { return nativeRecoveryEpoch(root) }
+
 func nativeRecoveryEpoch(root string) (string, error) {
 	return readRestoreEpoch(filepath.Join(root, NativeRestoreHoldFile))
 }

@@ -32,7 +32,8 @@ const (
 // deleted and only gain revoked_at and retired_at. sender_blocks and sender_evidence are
 // the multi-mode sender block list and its evidence (ingress.TableSenders). org_purges,
 // its org_purge_members snapshot and the never-changed address_tombstones are the purge's
-// (purge.go).
+// (purge.go); restore_reads records, per restore hold, that KyIdentity was read in full
+// after the restore.
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS orgs (
  id TEXT PRIMARY KEY,
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS org_purge_members (
 CREATE TABLE IF NOT EXISTS address_tombstones (hmac TEXT PRIMARY KEY);
 CREATE TRIGGER IF NOT EXISTS address_tombstones_kept BEFORE DELETE ON address_tombstones BEGIN SELECT RAISE(ABORT, 'address tombstones are never deleted'); END;
 CREATE TRIGGER IF NOT EXISTS address_tombstones_final BEFORE UPDATE ON address_tombstones BEGIN SELECT RAISE(ABORT, 'address tombstones are never changed'); END;
+CREATE TABLE IF NOT EXISTS restore_reads (epoch TEXT PRIMARY KEY, read_at INTEGER NOT NULL);
 `
 
 const pgSchema = `
@@ -118,6 +120,7 @@ CREATE TABLE IF NOT EXISTS org_purge_members (
 CREATE TABLE IF NOT EXISTS address_tombstones (hmac TEXT PRIMARY KEY);
 CREATE OR REPLACE FUNCTION address_tombstone_kept() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'address tombstones are never deleted or changed'; END $$;
 CREATE OR REPLACE TRIGGER address_tombstones_kept BEFORE UPDATE OR DELETE ON address_tombstones FOR EACH ROW EXECUTE FUNCTION address_tombstone_kept();
+CREATE TABLE IF NOT EXISTS restore_reads (epoch TEXT PRIMARY KEY, read_at BIGINT NOT NULL);
 `
 
 func init() {
