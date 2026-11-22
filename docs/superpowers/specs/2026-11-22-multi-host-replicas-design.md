@@ -63,8 +63,9 @@ code.
 **The volume-free assertion** (MH7). At startup, before any listener or worker starts, a multi
 replica checks that every store it opens for writing resolves to PostgreSQL. It checks this against
 `TestEveryStoreIsClassified`'s list (`tenancy/inventory_test.go:71-105`) extended with a target
-column (below). A store with a file target, other than one marked "per host" in this note, refuses
-the start. This is the check that makes removing `ErrHost` safe: a host can join only when nothing
+column (below). A store with a file target refuses the start unless its path matches the explicit
+per-host pattern list that the volume-free test also uses ("Proof that single-tenant stays byte for byte", below). The test and the
+assertion read one list, and an inventory label is not enough on its own. This is the check that makes removing `ErrHost` safe: a host can join only when nothing
 it writes lives on its own disk.
 
 ### Every host-local lock
@@ -157,7 +158,7 @@ The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/invento
 | `native-domains.json` | `sso/native_domain.go:27` | P | `documents` | Platform domains (K9). It is also the domain fence's name. |
 | `native-relay.json` (relay credentials and **every DKIM private key**, sealed under `native-relay.key`) | `api/native_relay_handlers.go:47` | P | `documents` | The sealed bytes move unchanged. The sealing key stays in `SECRET_DIR` (MH5). |
 | `wkd-domains.json` | `wkdpublish/store.go:74` | P | `documents` | |
-| `receiving.conf` | `api/native_recovery_handlers.go:379` | P | per host (MX host) | In multi mode an MX host renders its own profile from the replica's `config` answer (RX PR 2 as built, "`config`"). Whether a multi replica still writes `receiving.conf` is unverified. MH7's volume-free assertion fails if it does, and the fix is then to make it absent. |
+| `receiving.conf` | `api/native_recovery_handlers.go:379` | P | absent on replicas (unverified) | In multi mode an MX host renders its own profile from the replica's `config` answer (RX PR 2 as built, "`config`"), on the MX host's own disk. Whether a multi replica still writes `receiving.conf` is unverified. It is not on the per-host pattern list, so the startup assertion and the volume-free test both fail if a replica writes it. The fix is then to stop writing it in multi mode. |
 | `quota-<mailbox>` | `app/receiving.go:61` | D | fence (lock only, no data) | See the lock table above. |
 | `sender-blocks.json`, `sender-evidence.json`, `sender-evidence.damaged.json` | `ingress/blocks.go`, `ingress/autoblocks.go` | – | absent (already PG tables) | RX PR 3 |
 | Per-user `config.yaml` (settings, signatures, masked records) | `config/config.go:414-416` | D | `documents` | M D8 moves the masked records into their own table in hosted mode (K PR 7). The rest of the settings become one document per user. |
@@ -256,6 +257,15 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
   A D store with no owner mapping fails `TestEveryStoreIsClassified`, which gains the per-store
   owner rule. K PR 6's purge deletes an org's rows `WHERE owner IN` the snapshot's user IDs, so
   pickup links go with the org.
+- **No write after the owner is gone.** A purged user's documents must not come back. Otherwise
+  a paused writer whose CAS failed would retry, read the document as absent, and re-create it.
+  So every D write locks its owner's `accounts` row (`SELECT … FROM accounts WHERE id = owner FOR
+  KEY SHARE`) in the same `tenancy.db` transaction, and writes nothing if the row is missing.
+  The purge deletes the snapshot's `accounts` rows **before** their documents. A concurrent write
+  either commits first, and the document delete removes it, or it waits on the row lock and then
+  finds no account. Both tables are in one store, so this is one database rule, not a lock that
+  can be lost. The purge's final check also lists `documents WHERE owner IN` the snapshot, and an
+  empty list is required before the purge is done.
 - **Expired rows.** The elected `api-sweepers` worker already sweeps expired pickup links
   (`docs/RUNNING.md:277`, "pickup and contact sweeps"). In multi mode it deletes their rows.
 - **Backups.** `tenancy.db` joins the backup set in K PR 6 (K "PR 1 as built"). A multi install's
@@ -455,6 +465,8 @@ in tests, as K's do (`makeMultiTenant`).
    - the root `config.yaml` change seen by a second replica within 5 s;
    - K PR 6's purge removing every document of the org by `owner`, pickup links included,
      checked against the classification;
+   - a writer paused across the purge, then resumed and retried: it writes nothing, because the
+     owner's account row is gone;
    - expired-pickup cleanup;
    - a cross-org case in `TestCrossOrgMatrix` per new document kind.
 3. **MH3: accounts.** The `accounts` table, per-row invariants, the `REPEATABLE READ` read-only
