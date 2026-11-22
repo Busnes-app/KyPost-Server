@@ -14,7 +14,7 @@ including every "PR N as built" section), the hosted receiving tier
 (`docs/RUNNING.md` "Replicas on one host", `backend/internal/replica/AGENTS.md`), and the hosted
 masked-address note (`docs/superpowers/specs/2026-11-19-masked-addresses-hosted-design.md`, **M**).
 
-Line references are to KyPost `origin/main` at `3e467f2b`. Paths are relative to
+Line references are to KyPost `origin/main` at `3e467f2b`, re-checked at `3d0465a2` (RX PR 4) for the files it changed. Paths are relative to
 `backend/internal/` unless they start with `docs/` or a top-level folder. The references were
 checked by reading the code at that commit. "Unverified" marks a claim this note did not check in
 code or by running it. **Nothing here was run.** Every statement about behaviour comes from reading
@@ -62,7 +62,7 @@ code.
 
 **The volume-free assertion** (MH7). At startup, before any listener or worker starts, a multi
 replica checks that every store it opens for writing resolves to PostgreSQL. It checks this against
-`TestEveryStoreIsClassified`'s list (`tenancy/inventory_test.go:71-105`) extended with a target
+`TestEveryStoreIsClassified`'s list (`tenancy/inventory_test.go:72-106`) extended with a target
 column (below). A store with a file target refuses the start unless its path matches the explicit
 per-host pattern list that the volume-free test also uses ("Proof that single-tenant stays byte for byte", below). The test and the
 assertion read one list, and an inventory label is not enough on its own. This is the check that makes removing `ErrHost` safe: a host can join only when nothing
@@ -77,7 +77,7 @@ All volume locks go through `fsutil` (`fsutil/lock.go:29` `WithFileLock`, `:42` 
 | Lock (file it fences) | Call sites | What it orders | Replacement in multi mode |
 |---|---|---|---|
 | `users.json` | `users/users.go:839` (shared reads), `:871` (gated writes), `:1396`; `users/native_recovery.go:35,120` | Every account write against every snapshot reader | The `accounts` table's own transactions (MH3). Writers lock the rows they change (`SELECT … FOR UPDATE`). A whole-set snapshot reads in one `REPEATABLE READ` transaction, so no writer waits for a reader. |
-| **The domain fence** (`native-domains.json`) | `sso/native_domain.go:363,448,511`; `sso/native_mailbox.go:144`; `sso/native_address.go:318`; `sso/native_allocate.go:65`; `sso/hr_mailbox.go:28`; `sso/native_outbound.go:94` (shared); `api/native_relay_handlers.go:124,282`; `api/native_recovery_handlers.go:312`; `app/receiving.go:502` (shared); `app/receiving_config.go:231`; `app/migrate_native.go:75` | Domain proof, address and mailbox allocation, outbound admission and the receiving `config` fetch against one another. It spans the domains document, the ledger (`native-authority.db`) and `users.json`. | A **fence** (below): a session advisory lock named `fence:native-domains`, with shared and exclusive modes and R's probe. |
+| **The domain fence** (`native-domains.json`) | `sso/native_domain.go:363,448,511`; `sso/native_mailbox.go:144`; `sso/native_address.go:318`; `sso/native_allocate.go:65`; `sso/hr_mailbox.go:28`; `sso/native_outbound.go:94` (shared); `api/native_relay_handlers.go:124,282`; `api/native_recovery_handlers.go:312`; `app/receiving.go:519` (shared); `app/receiving_config.go:231`; `app/migrate_native.go:75` | Domain proof, address and mailbox allocation, outbound admission and the receiving `config` fetch against one another. It spans the domains document, the ledger (`native-authority.db`) and `users.json`. | A **fence** (below): a session advisory lock named `fence:native-domains`, with shared and exclusive modes and R's probe. |
 | **The directory fence** (`sso-lifecycle.json`) | `sso/directory.go:284` (gated), `:291` (shared) | Every lifecycle write in every process (`sso/directory.go:277-278`) | A fence named `fence:sso-lifecycle`. |
 | The settings lock (per-user `config.yaml`) | `config/config.go:519`; `api/masked_addresses.go:176`; `api/native_mailbox_handlers.go:286` | Settings and masked records, before the domain fence and then the directory fence (`api/masked_addresses.go:166-168`, order settings → domains → directory) | A fence named `fence:settings:<user ID>`, taken in the same order. |
 | `quota-<mailbox>` | `app/receiving.go:61` | The mailbox quota check against its write. RX PR 4 also uses it as the fence between an import write and the purge (RX "Import leased per mailbox"). | A fence named `fence:quota:<mailbox>`. The purge's safety must not depend on it alone: see "The purge and a lost fence". |
@@ -145,7 +145,7 @@ Classes are K's (O, D, P, `-`). **Target** is where the data lives in multi mode
 - **absent:** not present in multi mode;
 - **per host:** stays on the host's own disk, with the reason.
 
-The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/inventory_test.go:71-105`).
+The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/inventory_test.go:72-106`).
 
 | File | Defined | Class | Target | Why |
 |---|---|---|---|---|
@@ -169,7 +169,7 @@ The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/invento
 | Per-user `pgp-discovery.json`, `pgp-discovery-suppressions.json` | `pgpdiscovery/settings.go:23`, `pgpdiscovery/suppress.go:28` | D | `documents` | |
 | Per-user `kycalendar-invitations.json`, `kycalendar-flags.json` | `kycalendar/invitations.go:32`, `kycalendar/flags.go:35` | D | `documents` | |
 | Per-user `incoming-encryption.json` | `processor/incoming_encryption.go:58` | D | `documents` | |
-| **Per-user `contact-photos/`** (one file per photo, named by content hash) | `api/server_userscope.go:417-424`, locked at `api/contacts_photo.go:173` | D | `documents`, one row per photo | **Not in `TestEveryStoreIsClassified`**, because the name is a directory with no extension (`tenancy/inventory_test.go:119-120`). MH2 adds it to `extras` and classifies it as D. K PR 6's purge must cover it whichever PR lands first. |
+| **Per-user `contact-photos/`** (one file per photo, named by content hash) | `api/server_userscope.go:417-424`, locked at `api/contacts_photo.go:173` | D | `documents`, one row per photo | **Not in `TestEveryStoreIsClassified`**, because the name is a directory with no extension (`tenancy/inventory_test.go:120-121`). MH2 adds it to `extras` and classifies it as D. K PR 6's purge must cover it whichever PR lands first. |
 | Per-mailbox `mailcache.json` | `mailcache/store.go:105` | D | `documents` | |
 | Per-mailbox `native-mailbox.json` | `mailbox/prepare.go:26` | D | `documents` | |
 | Per-mailbox `outbox-idle` | `mailbox/outbox_idle.go:22` | D | absent | Dropped in multi mode (lock table) |
@@ -186,7 +186,7 @@ The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/invento
 | TLS certificate files (`TLS_CERT_FILE`, `KYPOST_TLS_CERT_FILE`) | `api/tls.go:42`, `api/pairing_pin.go:180` | P | per host (read-only, provisioned) | HAProxy or the edge proxy ends TLS (`docs/RUNNING.md:257-258`). The pin source must be the same on every host. The shared-settings fingerprint already covers the path (`replica/config.go:48`). |
 | Logs, supervisord socket and pid, Ollama models, backup scratch | `docs/RUNNING.md:289-290`; `replica/config.go:60-69` (`PerHost`) | P | per host | Already per container |
 
-**Keys (`SECRET_DIR`).** All keys in `TestEveryStoreIsClassified` (`tenancy/inventory_test.go:96-101`)
+**Keys (`SECRET_DIR`).** All keys in `TestEveryStoreIsClassified` (`tenancy/inventory_test.go:97-102`)
 are **per host, provisioned identically and read-only** (MH5). They are not moved into PostgreSQL,
 because then a database dump would hold both the sealed records and the keys that open them. Today
 they are created lazily by `cryptutil.LoadOrCreateKey` (`cryptutil/cryptutil.go:47-57`). The
@@ -222,7 +222,7 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
 - **One seam.** A `vol` interface (Read, Write with an expected revision, Remove, List under a
   prefix) has a file implementation, which is today's `fsutil` calls unchanged, and a table
   implementation. The choice is made once, at open, by `KYPOST_TENANCY=multi`, as RX PR 3 picks the
-  sender tables (`app/receiving.go:455-461`). No store branches on the mode
+  sender tables (`app/receiving.go:472-478`). No store branches on the mode
   anywhere else.
 - **CAS on a global revision.** Every write takes a fresh `revision` from one PostgreSQL
   sequence (`nextval`), so no two versions of any document, before or after a remove, ever share a
@@ -378,7 +378,15 @@ Across hosts, three things can happen that one host did not see often:
    committed is lost.
 
 **Every lease or window compares database time** (`state/coordination.go:26-28` `nowMillis`).
-Leases added by RX PR 4 and MH6 must too, so clock skew between hosts changes no answer.
+Leases added by MH6 must too, so clock skew between hosts changes no answer. **RX PR 4's import
+lease does not yet** (found on `origin/main` `3d0465a2`): `TakeImportLease` takes the caller's
+`now time.Time` and writes `now+60 s` and `now` as Unix seconds (`tenancy/imports.go:18-30`), and its callers pass `time.Now()` (`app/receiving_imports.go:119,138,258`), so
+the lease's expiry is decided by the replica's own clock. On one host every replica shares that
+clock. Across hosts, a host whose clock runs 60 s fast takes a lease that is still live on
+another host. Two importers then work one mailbox, and the arrival order RX R8 promises is lost
+(the receipts keep it from writing twice). MH4 moves the lease's comparisons to database time,
+as `nowMillis` does, and adds a test with two replicas whose clocks are skewed by more than the
+lease.
 
 ## The purge and a lost fence
 
@@ -388,7 +396,7 @@ purge"). With a fence that can be lost, a paused import worker could write after
 the schema. If the store's open recreates a missing schema, that write would bring the deleted
 org's mail back.
 
-**Requirement (MH4, before RX PR 4 ships in multi mode):** a purged mailbox's catalog entry
+**Requirement (MH4, before multi mode starts; RX PR 4 is built with the quota lock alone):** a purged mailbox's catalog entry
 (`kypost_catalog.stores`, `dbbackend/dbbackend.go:205-207`) is tombstoned in the
 same step that drops its schema, and opening a tombstoned store fails. The purge is then safe in
 the database whatever happens to the lock. The fence only reduces wasted work. K PR 6's final check
@@ -520,9 +528,11 @@ in tests, as K's do (`makeMultiTenant`).
      database, running `TestTwoReplicasSeeOneSuspension` and a sign-in on A then a request on B.
 
 **Against K and RX.**
-- MH1 can start now. MH2 needs K PR 6's backup inclusion of `tenancy.db`. MH4's catalog tombstone
-  must land before RX PR 4's import fence is relied on in multi mode, so it lands with or before
-  RX PR 4's multi path. If RX PR 4 merges first, it is still safe, because multi cannot start.
+- MH1 can start now. MH2 needs K PR 6's backup inclusion of `tenancy.db`.
+- RX PR 4 is built (#694). Its purge fence is the quota lock and a re-read of the org under it,
+  as this note assumed. That is safe on one host, and multi mode cannot start yet. MH4 adds the
+  catalog tombstone and moves RX's lease to database time. Both must land before multi starts
+  (K PR 7's gate).
 - RX PR 5's hosted profile and MH7's multi-host profile are one Compose profile. Whichever lands
   second extends the first.
 - **K PR 7 accepts `multi` only after MH1–MH7 and RX PRs 1–5.** It also adds MH7's prerequisites
