@@ -371,6 +371,12 @@ func runDaemon(ctx context.Context, d runDeps) error {
 	// released first and a standby takes over while this process drains it.
 	var backups sync.WaitGroup
 	defer backups.Wait()
+	// Multi mode's receiving import runs on every daemon, not only the elected one (RX R8).
+	importDone, err := startLeasedImport(ctx, d)
+	if err != nil {
+		return err
+	}
+	defer func() { restart(nil); <-importDone }()
 	waitMail := elect(ctx, d, worker.RoleMailRuntime, func(owned context.Context) { runMailRuntime(owned, d) })
 	waitDaemon := elect(ctx, d, worker.RoleDaemon, func(owned context.Context) {
 		if err := runDaemonRole(owned, d, &backups); err != nil {

@@ -213,14 +213,19 @@ func (s *Server) purgeBlock(ctx context.Context, snap tenancy.PurgeSnapshot) err
 }
 
 // Step 2: the org's routes and bindings, before storage, so no pending delivery is left
-// that an import could write back.
+// that an import could write back; then the mailboxes' import leases and retired records.
 func (s *Server) purgeReceiving(ctx context.Context, snap tenancy.PurgeSnapshot) error {
 	h, err := s.openHolding()
-	if err != nil || h == nil {
+	if err != nil {
 		return err
 	}
-	defer h.Close()
-	return h.PurgeMailboxes(ctx, snap.Mailboxes)
+	if h != nil {
+		err = errors.Join(h.PurgeMailboxes(ctx, snap.Mailboxes), h.Close())
+		if err != nil {
+			return err
+		}
+	}
+	return tenancy.PurgeImports(ctx, s.tenancy, snap.Mailboxes)
 }
 
 // purgeDirs is every directory of the snapshot: each user's under CONFIG_DIR and
@@ -380,6 +385,8 @@ func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone
 		n, err = h.PurgeLeft(ctx, snap.Mailboxes, gone)
 		note("ingress", n, errors.Join(err, h.Close()))
 	}
+	n, err = tenancy.ImportRows(ctx, s.tenancy, snap.Mailboxes)
+	note("ingress", n, err)
 	if len(snap.Subjects) > 0 {
 		n, err = s.ssoLifecycle.NativePurgeLeft(ctx, purgeOwners(snap.Subjects), snap.Mailboxes)
 		if errors.Is(err, sso.ErrNoNativeLedger) {

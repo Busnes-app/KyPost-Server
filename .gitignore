@@ -25,6 +25,9 @@ pnpm-debug.log*
 frontend/node_modules/
 frontend/lint/node_modules/
 frontend/dist/
+frontend/.browser/
+frontend/test-results/
+frontend/playwright-report/
 
 # Root-level too, not just frontend/. Running npm or npx from the repo root
 # creates one here, and an unignored copy is worse than clutter: it shadows
