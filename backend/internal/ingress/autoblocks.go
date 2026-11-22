@@ -243,6 +243,107 @@ func trim[V any](m map[string]V, limit int, keep func(V) int64) {
 	}
 }
 
+// evidenceState is one locked evidence write in either home: the file's document
+// (docState) or tenancy.db rows (tableState). Reject and Accepted are written once
+// against it, so both homes apply the same rules.
+type evidenceState interface {
+	record(address bool, id string) evidenceRecord
+	setRecord(address bool, id string, r evidenceRecord)
+	blockedSince(domainID string, since int64) int // address records of domainID blocked after since
+	good(id string) bool
+	goodCount() int
+	parent(id string) int
+	addGood(id, parent string, at int64)
+	goodSince() int64
+	setGoodSince(at int64)
+	unblocked(id string) int64
+	setUnblocked(id string, until int64)
+	put(ctx context.Context, b SenderBlock, own []string, now time.Time) (SenderBlock, error)
+}
+
+// evidenceStore is one home's evidence: a locked write after the shared cleanup, and the
+// lock-free good-domain read Accepted tries first.
+type evidenceStore interface {
+	edit(ctx context.Context, now int64, fn func(evidenceState) error) error
+	knownGood(ctx context.Context, id string) bool
+}
+
+func (e Evidence) edit(ctx context.Context, now int64, fn func(evidenceState) error) error {
+	return e.change(ctx, now, func(doc *evidenceDoc) error { return fn(docState{doc, e.dir}) })
+}
+
+// ponytail: parses the whole file per authenticated acceptance, fine at
+// household volume; past that, cache it by file inode and mtime.
+func (e Evidence) knownGood(_ context.Context, id string) bool {
+	doc, err := e.load()
+	return err == nil && doc.Good[id] > 0
+}
+
+// docState is evidenceState over the file's document. Maps are created only when written,
+// as before, so the file's bytes are unchanged.
+type docState struct {
+	doc *evidenceDoc
+	dir string
+}
+
+func (s docState) records(address bool) *map[string]evidenceRecord {
+	if address {
+		return &s.doc.Addresses
+	}
+	return &s.doc.Domains
+}
+
+func (s docState) record(address bool, id string) evidenceRecord {
+	return (*s.records(address))[id]
+}
+
+func (s docState) setRecord(address bool, id string, r evidenceRecord) {
+	m := s.records(address)
+	if *m == nil {
+		*m = map[string]evidenceRecord{}
+	}
+	(*m)[id] = r
+}
+
+func (s docState) blockedSince(domainID string, since int64) int {
+	count := 0
+	for _, x := range s.doc.Addresses {
+		if x.Domain == domainID && x.Blocked > since {
+			count++
+		}
+	}
+	return count
+}
+
+func (s docState) good(id string) bool       { _, ok := s.doc.Good[id]; return ok }
+func (s docState) goodCount() int            { return len(s.doc.Good) }
+func (s docState) parent(id string) int      { return s.doc.Parents[id] }
+func (s docState) goodSince() int64          { return s.doc.GoodSince }
+func (s docState) setGoodSince(at int64)     { s.doc.GoodSince = at }
+func (s docState) unblocked(id string) int64 { return s.doc.Unblocked[id] }
+
+func (s docState) addGood(id, parent string, at int64) {
+	if s.doc.Good == nil {
+		s.doc.Good = map[string]int64{}
+	}
+	if s.doc.Parents == nil {
+		s.doc.Parents = map[string]int{}
+	}
+	s.doc.Good[id] = at
+	s.doc.Parents[parent]++
+}
+
+func (s docState) setUnblocked(id string, until int64) {
+	if s.doc.Unblocked == nil {
+		s.doc.Unblocked = map[string]int64{}
+	}
+	s.doc.Unblocked[id] = until
+}
+
+func (s docState) put(ctx context.Context, b SenderBlock, own []string, now time.Time) (SenderBlock, error) {
+	return NewBlocks(s.dir).Put(ctx, b, own, now)
+}
+
 // Reject counts one reject verdict and returns the automatic blocks it made.
 // Only an authenticated identity (Identity) counts; own domains, the null
 // sender and anything under a manual block or a recent manual unblock never
@@ -252,6 +353,10 @@ func trim[V any](m map[string]V, limit int, keep func(V) int64) {
 // authenticated mail was accepted from it or acceptances have been recorded
 // for less than domainWarmUp.
 func (e Evidence) Reject(ctx context.Context, auth Authentication, own []string, now time.Time) ([]SenderBlock, error) {
+	return reject(ctx, e, auth, own, now)
+}
+
+func reject(ctx context.Context, e evidenceStore, auth Authentication, own []string, now time.Time) ([]SenderBlock, error) {
 	address, ok := auth.Identity()
 	if !ok {
 		return nil, nil
@@ -266,11 +371,11 @@ func (e Evidence) Reject(ctx context.Context, auth Authentication, own []string,
 	var putErr error
 	// escalate puts the next level's block; the level climbs only when the
 	// block was actually made.
-	escalate := func(r *evidenceRecord, kind, value string) {
+	escalate := func(st evidenceState, r *evidenceRecord, kind, value string) {
 		level := min(r.Level+1, len(autoCooldown))
 		until := now.Add(autoCooldown[level-1]).UnixMilli()
 		r.Hits, r.Last = nil, ms
-		block, err := NewBlocks(e.dir).Put(ctx, SenderBlock{Kind: kind, Value: value, Until: &until, Source: "automatic", Level: level, Actor: "automatic", Reason: "abuse"}, own, now)
+		block, err := st.put(ctx, SenderBlock{Kind: kind, Value: value, Until: &until, Source: "automatic", Level: level, Actor: "automatic", Reason: "abuse"}, own, now)
 		switch {
 		case err == nil:
 			r.Level, r.Blocked = level, ms
@@ -279,41 +384,28 @@ func (e Evidence) Reject(ctx context.Context, auth Authentication, own []string,
 			putErr = err
 		}
 	}
-	err := e.change(ctx, ms, func(doc *evidenceDoc) error {
-		if doc.Unblocked[addressID] > ms {
+	err := e.edit(ctx, ms, func(st evidenceState) error {
+		if st.unblocked(addressID) > ms {
 			return nil
 		}
-		if doc.Addresses == nil {
-			doc.Addresses = map[string]evidenceRecord{}
-		}
-		r := doc.Addresses[addressID]
+		r := st.record(true, addressID)
 		r.Domain = domainID
 		r.Hits = append(slices.DeleteFunc(r.Hits, func(t int64) bool { return t <= ms-autoWindow.Milliseconds() }), ms)
 		r.Last = ms
 		if len(r.Hits) >= autoHits {
-			escalate(&r, "address", address)
+			escalate(st, &r, "address", address)
 		}
-		doc.Addresses[addressID] = r
+		st.setRecord(true, addressID, r)
 		if r.Blocked != ms {
 			return nil
 		}
-		d := doc.Domains[domainID]
-		since := max(ms-domainWindow.Milliseconds(), d.Blocked)
-		count := 0
-		for _, x := range doc.Addresses {
-			if x.Domain == domainID && x.Blocked > since {
-				count++
-			}
-		}
-		_, good := doc.Good[domainID]
-		if count < domainHits || good || doc.GoodSince == 0 || ms < doc.GoodSince+domainWarmUp.Milliseconds() || doc.Unblocked[domainID] > ms {
+		d := st.record(false, domainID)
+		count := st.blockedSince(domainID, max(ms-domainWindow.Milliseconds(), d.Blocked))
+		if count < domainHits || st.good(domainID) || st.goodSince() == 0 || ms < st.goodSince()+domainWarmUp.Milliseconds() || st.unblocked(domainID) > ms {
 			return nil
 		}
-		if doc.Domains == nil {
-			doc.Domains = map[string]evidenceRecord{}
-		}
-		escalate(&d, "domain", domain)
-		doc.Domains[domainID] = d
+		escalate(st, &d, "domain", domain)
+		st.setRecord(false, domainID, d)
 		return nil
 	})
 	if err != nil {
@@ -329,6 +421,10 @@ func (e Evidence) Reject(ctx context.Context, auth Authentication, own []string,
 // throwaway domains cannot unprotect a real one: past MaxGoodDomains, or
 // maxGoodPerParent under one parent, new domains are simply not recorded.
 func (e Evidence) Accepted(ctx context.Context, auth Authentication, now time.Time) error {
+	return accepted(ctx, e, auth, now)
+}
+
+func accepted(ctx context.Context, e evidenceStore, auth Authentication, now time.Time) error {
 	address, ok := auth.Identity()
 	if !ok {
 		return nil
@@ -336,26 +432,17 @@ func (e Evidence) Accepted(ctx context.Context, auth Authentication, now time.Ti
 	domain := address[strings.LastIndexByte(address, '@')+1:]
 	labels := strings.Split(domain, ".")
 	id, parent, ms := BlockID("domain", domain), BlockID("domain", strings.Join(labels[max(len(labels)-2, 0):], ".")), now.UnixMilli()
-	// ponytail: parses the whole file per authenticated acceptance, fine at
-	// household volume; past that, cache it by file inode and mtime.
-	if doc, err := e.load(); err == nil && doc.Good[id] > 0 {
+	if e.knownGood(ctx, id) {
 		return nil
 	}
-	return e.change(ctx, ms, func(doc *evidenceDoc) error {
-		if doc.GoodSince == 0 {
-			doc.GoodSince = ms
+	return e.edit(ctx, ms, func(st evidenceState) error {
+		if st.goodSince() == 0 {
+			st.setGoodSince(ms)
 		}
-		if doc.Good[id] > 0 || len(doc.Good) >= MaxGoodDomains || doc.Parents[parent] >= maxGoodPerParent {
+		if st.good(id) || st.goodCount() >= MaxGoodDomains || st.parent(parent) >= maxGoodPerParent {
 			return nil
 		}
-		if doc.Good == nil {
-			doc.Good = map[string]int64{}
-		}
-		if doc.Parents == nil {
-			doc.Parents = map[string]int{}
-		}
-		doc.Good[id] = ms
-		doc.Parents[parent]++
+		st.addGood(id, parent, ms)
 		return nil
 	})
 }
@@ -363,13 +450,10 @@ func (e Evidence) Accepted(ctx context.Context, auth Authentication, now time.Ti
 // unblocked records an administrator's unblock of block id: automatic blocks
 // of exactly that address or domain are suppressed for UnblockWindow.
 // Nothing counts meanwhile, so its escalation has reset when it ends.
-func (e Evidence) unblocked(ctx context.Context, id string, now time.Time) error {
+func unblocked(ctx context.Context, e evidenceStore, id string, now time.Time) error {
 	ms := now.UnixMilli()
-	return e.change(ctx, ms, func(doc *evidenceDoc) error {
-		if doc.Unblocked == nil {
-			doc.Unblocked = map[string]int64{}
-		}
-		doc.Unblocked[id] = ms + UnblockWindow.Milliseconds()
+	return e.edit(ctx, ms, func(st evidenceState) error {
+		st.setUnblocked(id, ms+UnblockWindow.Milliseconds())
 		return nil
 	})
 }
@@ -394,9 +478,9 @@ type EvidenceStatus struct {
 	AutomaticFull bool `json:"automaticFull"`
 }
 
-func (e Evidence) Status(now time.Time) EvidenceStatus {
+func (e Evidence) Status(ctx context.Context, now time.Time) EvidenceStatus {
 	var s EvidenceStatus
-	if blocks, err := NewBlocks(e.dir).List(now); err == nil {
+	if blocks, err := NewBlocks(e.dir).List(ctx, now); err == nil {
 		s.AutomaticFull = automaticFull(blocks)
 	}
 	doc, err := e.load()

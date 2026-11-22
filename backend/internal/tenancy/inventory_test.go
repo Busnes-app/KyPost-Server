@@ -62,6 +62,7 @@ var tableClass = map[string]map[string]string{
 	},
 	"tenancy": {
 		"orgs": platform, "user_orgs": org, "subject_orgs": org, "receiving_gateways": platform,
+		"sender_blocks": platform, "sender_evidence": platform,
 	},
 	"catalog": {"stores": platform},
 }
@@ -74,8 +75,9 @@ var fileClass = map[string]string{
 	"config.yaml": platform, "mail-defaults.json": platform, "sso.json": platform,
 	"sso-lifecycle.json": platform, "native-provisioning.json": platform,
 	"native-domains.json": platform, "native-relay.json": platform, "wkd-domains.json": platform,
-	"receiving.conf": platform, "sender-blocks.json": platform, "sender-evidence.json": platform,
-	"sender-evidence.damaged.json": platform, "quota-": derived,
+	"receiving.conf": platform, "quota-": derived,
+	// Single mode only: multi mode keeps them in tenancy.db (receiving tier R7).
+	"sender-blocks.json": absent, "sender-evidence.json": absent, "sender-evidence.damaged.json": absent,
 	// Per user.
 	"imap-config.json": absent, "tuning.md": derived, "carddav-auth.json": derived, "carddav-client.json": derived,
 	"contacts.json": derived, "groups.json": derived, "rules.json": derived, "send_as_aliases.json": derived,

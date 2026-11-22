@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/replica"
 )
 
@@ -205,7 +207,7 @@ func diffSnapshots(a, b map[string]string) []string {
 // TestSingleTenantUpgradeIsByteForByte (tenancy design K1/K3, build plan PR 1): a fixture
 // install, restarted under this binary with KYPOST_TENANCY unset and then set to single,
 // keeps users.json, every other file and every database's schema and rows exactly as they
-// were. On the PostgreSQL job the fixture is a replica install, so the fingerprint record
+// were, sender-blocks.json and sender-evidence.json among them. On the PostgreSQL job the fixture is a replica install, so the fingerprint record
 // is among the rows compared. SQLite's -shm index is rebuilt by every open and is skipped.
 // The children cannot reach GitHub, so the release check never records a version.
 func TestSingleTenantUpgradeIsByteForByte(t *testing.T) {
@@ -231,7 +233,24 @@ func TestSingleTenantUpgradeIsByteForByte(t *testing.T) {
 		stopChild(t, c)
 	}
 	start("fixture", true)
+	// Sender blocks and evidence as single mode writes them (RX PR 3): the files stay.
+	receiving := filepath.Join(root, "state", "receiving")
+	if err := os.Mkdir(receiving, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	senders, now := ingress.FileSenders(receiving), time.Now()
+	if _, err := senders.Put(context.Background(), ingress.SenderBlock{Kind: "domain", Value: "evil.test", Source: "manual", Actor: "a", Reason: "spam"}, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := senders.Accepted(context.Background(), ingress.Authentication{Sender: "a@friendly.test", From: "a@friendly.test", SPF: true, DKIM: []string{"friendly.test"}}, now); err != nil {
+		t.Fatal(err)
+	}
 	want := installSnapshot(t, root)
+	for _, name := range []string{ingress.BlocksFile, ingress.EvidenceFile} {
+		if want["file state/receiving/"+name] == "" {
+			t.Fatalf("the fixture has no %s", name)
+		}
+	}
 	if want["file config/users.json"] == "" || want["db state/state.db meta"] == "" && want["pg kypost_state meta"] == "" {
 		t.Fatalf("the fixture has no users.json or root meta: %v", slices.Sorted(maps.Keys(want)))
 	}

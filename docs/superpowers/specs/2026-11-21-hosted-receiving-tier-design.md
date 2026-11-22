@@ -1,6 +1,7 @@
 # KyPost hosted receiving tier, design
 
-Date: 2026-11-21. Status: proposed design; PR 1 (#686) and PR 2 (TLS transport) built.
+Date: 2026-11-21. Status: proposed design; PR 1 (#686), PR 2 (TLS transport, #689) and PR 3
+(sender blocks and evidence in PostgreSQL) built.
 
 This is the receiving tier's own spec, which the owner asked for on 2026-11-21 (answer to open
 question 3 of KyPost's tenancy design, `docs/superpowers/specs/2026-11-20-tenancy-design.md`,
@@ -682,6 +683,65 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
 3. **Sender blocks and evidence in PostgreSQL** (R7), behind one interface. Tests: the
    `blocks.json` fixture, today's sender-block tests and `TestEvidenceWorstCaseSize`, all run
    against both implementations. Multi mode never touches the files.
+   *PR 3 as built:* paths under `backend/internal/` at the PR's head.
+   - **One interface.** `ingress.SenderStore` (`ingress/blocks.go:64`) is List, Blocked, Put,
+     Remove, Reject, Accepted and Status. `FileSenders` (`:75`) is today's two files, unchanged;
+     `TableSenders` (`ingress/senders_table.go:18`) is the tables. The rules are written once:
+     `put` (`ingress/blocks.go:237`) over either home's read-modify-write, and `reject` and
+     `accepted` (`ingress/autoblocks.go:359`, `:427`) over `evidenceState` (`:249`), which the
+     file's document and the rows both implement. The file implementation keeps its bytes:
+     maps are still created only when written.
+   - **Selection.** `openReceivingRuntime` picks the tables when `KYPOST_TENANCY=multi`
+     (`app/receiving.go:356-367`, through PR 2's `receivingMultiStore`); a replica without its
+     multi record or `tenancy.db` refuses and never falls back to the files. The admin API's
+     `senderBlocks` (`api/native_quarantine_handlers.go:163`) uses `Server.tenancy` the same
+     way. `bind`, the CLI, `senderEvidence` and the Cloudflare publisher call the interface.
+   - **Tables** (`tenancy/tenancy.go:56`, PostgreSQL `:92`). `sender_blocks` has the
+     `SenderBlock` fields, primary key `id`. `sender_evidence(kind, id, ref, hits, level, last,
+     blocked)`, primary key `(kind, id)`, has one row per address, domain, good domain and
+     unblock. `ref` is an address's domain ID or a good domain's crude parent, `hits` a JSON
+     array, and `last` is a good domain's first acceptance or an unblock's end. Reading:
+     `parents` and `goodSince` are not stored; they are the count of good rows per `ref` and
+     the earliest good row, which equals the file's value because the first acceptance is
+     always recorded and good rows are never evicted.
+   - **Reads and writes.** `Blocked` reads the sender's address row and its domain's row by
+     primary key (`ingress/senders_table.go:71`). `List` and each block write read the whole
+     table under the file's whole-list rule. Each write is one `tenancy.db` transaction, which
+     the store serializes (SQLite's single writer, the PostgreSQL schema's writer lock), and
+     writes only changed rows (`changeTx`, `:155`). An automatic block that `Reject` makes is
+     written inside the evidence transaction (`:325`), so the two cannot disagree; a failed
+     row write fails the whole transaction. Evidence cleanup, caps and eviction order are the
+     file's, in SQL (`:206`).
+   - **Differences from the files, by design.** A row that breaks the entry rule refuses the
+     read that meets it (`Blocked` reads two rows, so a bad row elsewhere does not refuse
+     `RCPT`). There is no damaged file to set aside, so `Status.ResetAt` stays null and
+     `Damaged` means the table is unreadable. Writes need `tenancy.db`, not the receiving
+     directory, so the list can be filled before `receiving init`.
+   - **Tests.** `eachHome` (`ingress/senders_test.go:29`) runs `TestSenderBlocks`,
+     `TestSenderBlocksMatchWorker` (the `blocks.json` fixture), every `TestAutomatic*` and
+     `TestEvidenceWorstCaseSize` against both homes, and fails if the table home writes the
+     receiving directory. File-only parts (file mode, `ParseBlocks`, `ParseEvidence`, damage
+     reset, a missing directory) run only for the files. The table worst case seeds every
+     kind at its cap with the widest values, writes once more, and checks every cap holds and
+     the stored bytes stay under three quarters of `MaxEvidenceBytes`.
+     `TestReceivingMultiModeBlocksLiveInTenancy` (`app/receiving_blocks_multi_test.go:20`) turns
+     both file names into unreadable directories, then adds, lists and removes a block through
+     the CLI and binds over TLS (exit 6, then 0); the directories are untouched and the rows are
+     in `tenancy.db`. `TestReceivingMultiModeWithoutTenancyRefuses` (`:77`) covers multi mode
+     without its record. `TestStaffSenderBlocksUseTenancyTables`
+     (`api/tenancy_blocks_test.go:16`) does the same through the staff console's routes. In
+     production `Server.tenancy` is set only once multi mode can start (K PR 7), so today the
+     API always reads the files. `TestSingleTenantUpgradeIsByteForByte` now seeds both files and
+     keeps them byte for byte. `TestEveryStoreIsClassified` has both tables (P), and the three
+     sender files are absent (`-`) in multi mode.
+   - **Not in PR 3.** `tenancy.db` is still outside the backup set (K PR 6; Where the new
+     tables live), so multi-mode blocks and evidence do not survive a restore yet. Multi mode
+     still cannot start (K PR 7). Cloudflare's change mark (`cfChangeMark`) still watches the
+     file; Cloudflare is single-mode only by R1, and no code refuses it in multi mode yet
+     (which PR adds the refusal is unverified). The staff console warning for a
+     pin with 14 days or less left (open question 3) is not built: K PR 4 built no console
+     screen, and the only receiving status screen is Cloudflare's, so it needs a new platform
+     admin route and a banner, in the admin route tests K PR 5 is changing.
 4. **Per-mailbox import obligations and leases** (R8), and the pending-gateway import list. Tests:
    - commit through a gateway, revoke its pin (and separately, let it expire), and the mail still
      imports;

@@ -298,7 +298,7 @@ func runReceivingServeTLS(address string) error {
 	if err != nil {
 		return err
 	}
-	defer r.holding.Close()
+	defer r.close()
 	ln, err := net.Listen("tcp", addr.String())
 	if err != nil {
 		return err

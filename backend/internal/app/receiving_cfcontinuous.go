@@ -127,13 +127,13 @@ func startCloudflareReceiving(ctx context.Context, d runDeps) (<-chan struct{}, 
 	r.gateway = cfGateway
 	db, err := cfreceiving.Open(filepath.Join(r.stateDir, "receiving"))
 	if err != nil {
-		_ = r.holding.Close()
+		_ = r.close()
 		return nil, err
 	}
 	l := newCFLoop(r, db, origin)
 	go func() {
 		defer close(done)
-		defer r.holding.Close()
+		defer r.close()
 		defer db.Close()
 		var last time.Time
 		var seen string
@@ -240,8 +240,8 @@ func (l *cfLoop) refused(ctx context.Context, used cfreceiving.Material) error {
 // blockedSenders is the block list in force in the Worker's form, by
 // priority: manual before automatic, then newest first, so truncation
 // (cfreceiving.FitBlocks) drops automatic and old blocks first.
-func (l *cfLoop) blockedSenders() ([]cfreceiving.Block, error) {
-	list, err := ingress.NewBlocks(filepath.Join(l.r.stateDir, "receiving")).List(l.now())
+func (l *cfLoop) blockedSenders(ctx context.Context) ([]cfreceiving.Block, error) {
+	list, err := l.r.senders.List(ctx, l.now())
 	slices.SortStableFunc(list, func(a, b ingress.SenderBlock) int {
 		if am, bm := a.Source == "manual", b.Source == "manual"; am != bm {
 			if am {
@@ -276,7 +276,7 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	// An unreadable block list must not stop routes: the Worker refuses all
 	// mail once its table is 14 days old. Keep the last installed blocks
 	// (none if never published) and report the error.
-	blocks, blockErr := l.blockedSenders()
+	blocks, blockErr := l.blockedSenders(ctx)
 	if blockErr != nil {
 		if blocks, err = l.db.InstalledBlocks(ctx); err != nil {
 			return err
@@ -921,6 +921,6 @@ func runCloudflareContinuous(args []string, output io.Writer) (result error) {
 	if err != nil {
 		return err
 	}
-	_ = r.holding.Close()
+	_ = r.close()
 	return cfRotate(ctx, keys, cfreceiving.Client{Origin: origin, HTTP: cfreceiving.NewHTTPClient()}, action == "takeover", nil)
 }

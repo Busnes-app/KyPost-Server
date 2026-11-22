@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -90,6 +91,18 @@ type receivingRuntime struct {
 	life      *sso.LifecycleStore
 	domains   *sso.NativeDomainStore
 	holding   *ingress.Store
+	// senders is the sender block list: the files in single mode, tenancy.db's tables in
+	// multi mode (receiving tier R7). tenancy is that store, nil in single mode.
+	senders ingress.SenderStore
+	tenancy *sql.DB
+}
+
+func (r *receivingRuntime) close() error {
+	err := r.holding.Close()
+	if r.tenancy != nil {
+		err = errors.Join(err, r.tenancy.Close())
+	}
+	return err
 }
 
 func (r *receivingRuntime) gatewayID() string {
@@ -132,7 +145,7 @@ func runReceivingCommand(args []string, input io.Reader) error {
 		logReceiving(receivingGateway, args, false, err)
 		return &receivingCommandError{err: err, code: receivingExit(err)}
 	}
-	defer r.holding.Close()
+	defer r.close()
 	return r.run(ctx, args, input)
 }
 
@@ -236,7 +249,7 @@ func startReceivingImport(ctx context.Context, d runDeps) (<-chan struct{}, erro
 	}
 	go func() {
 		defer close(done)
-		defer r.holding.Close()
+		defer r.close()
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -340,6 +353,19 @@ func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRunti
 	if err != nil {
 		return nil, err
 	}
+	r.senders = ingress.FileSenders(path)
+	// Multi mode never reads or writes the block files; a replica without its multi
+	// record or tenancy.db refuses rather than fall back to them.
+	if mode, _, err := config.Tenancy(); err != nil || mode == config.TenancyMulti {
+		if err == nil {
+			r.tenancy, err = receivingMultiStore()
+		}
+		if err != nil {
+			_ = r.holding.Close()
+			return nil, err
+		}
+		r.senders = ingress.TableSenders(r.tenancy)
+	}
 	return r, nil
 }
 
@@ -418,7 +444,7 @@ func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient strin
 	if !cfreceiving.ValidSender(sender) {
 		return &receivingCommandError{err: errInvalidSender, code: 7}
 	}
-	blocked, err := ingress.NewBlocks(filepath.Join(r.stateDir, "receiving")).Blocked(sender, time.Now())
+	blocked, err := r.senders.Blocked(ctx, sender, time.Now())
 	if err != nil {
 		return &receivingCommandError{err: fmt.Errorf("sender blocks unreadable: %w", err), code: 8}
 	}

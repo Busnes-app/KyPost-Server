@@ -69,7 +69,7 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 	if err != nil {
 		return err
 	}
-	defer r.holding.Close()
+	defer r.close()
 	return r.writeConfig(ctx, executable, address.String(), host, args[2], args[3], spamArgs, output)
 }
 

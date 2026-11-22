@@ -114,7 +114,7 @@ func runReceivingServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer r.holding.Close()
+	defer r.close()
 	ln, err := listenReceiving(receivingSocket())
 	if err != nil {
 		return err

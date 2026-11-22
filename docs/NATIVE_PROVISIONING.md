@@ -1155,6 +1155,10 @@ Admin → Server → Sender blocks lists the blocks in force with the evidence
 status below, adds manual blocks and removes either source; see also
 [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#abusive-senders).
 
+- **Multi-tenant installs** (`KYPOST_TENANCY=multi`, hosted receiving tier) keep the
+  same list and the automatic-block evidence in `tenancy.db`'s `sender_blocks` and
+  `sender_evidence` tables instead, with the same rules, and never read or write the
+  files below. Single-tenant installs keep the files.
 - **Store.** `STATE_DIR/receiving/sender-blocks.json` (0600), written under its
   own lock file and published by rename; it exists only after `receiving init`
   (writes refuse before, and never create the receiving directory). Sealed
