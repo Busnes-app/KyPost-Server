@@ -180,3 +180,49 @@ for overlay in ["docker-compose.receiving.yml", "docker-compose.rspamd.yml", "do
 assert "Replicas have no native receiving" in running and "Cloudflare and external-IMAP profiles work" not in running, \
     "RUNNING.md must say replicas have no native receiving: Cloudflare pickup needs the Rspamd overlay, which refuses replicas"
 print("PASS replicas: receiving, rspamd and lan-dns overlays refuse to render with replicas, as RUNNING.md says")
+
+# The hosted receiving profile (multi-tenant): docker-compose.hosted.yml after the replica
+# chain, and docker-compose.mx.yml alone on an MX host. Rendered only; multi mode cannot
+# start until the tenancy design's PR 7.
+hosted_files = files + ["docker-compose.hosted.yml"]
+hosted = {"KYPOST_STAFF_ORG_ID": "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d", "KYPOST_RECEIVING_SUBNET": "10.89.2.0/24",
+          "KYPOST_RECEIVING_A_IP": "10.89.2.10", "KYPOST_RECEIVING_B_IP": "10.89.2.11", "KYPOST_RECEIVING_PUBLISH_IP": "192.168.40.5"}
+for missing in hosted:
+    result = compose(hosted_files, base_env | required | {k: v for k, v in hosted.items() if k != missing})
+    assert result.returncode != 0 and missing in result.stderr, f"hosted profile rendered without {missing}: {result.stderr}"
+result = compose(hosted_files, base_env | required | hosted)
+assert result.returncode == 0, result.stderr
+services = json.loads(result.stdout)["services"]
+pin = re.search(r"^\s*image:\s*(rspamd/rspamd:\S+@sha256:[0-9a-f]{64})\s*$", (root / "docker-compose.rspamd.yml").read_text(), re.M).group(1)
+replica_env = services["kypost-server"]["environment"]
+assert replica_env["KYPOST_TENANCY"] == "multi" and replica_env["KYPOST_NATIVE_RECEIVING"] == "true", "replicas do not import in multi mode"
+assert replica_env.get("KYPOST_NATIVE_RECEIVER") in (None, "false"), "a replica runs Maddy"
+for name, ip, port in [("receiving-a", hosted["KYPOST_RECEIVING_A_IP"], "2601"), ("receiving-b", hosted["KYPOST_RECEIVING_B_IP"], "2602")]:
+    rx, spam = services[name], services["rspamd-" + name[-1]]
+    assert rx["entrypoint"] == ["/usr/local/bin/kypost-server", "receiving", "serve", "--tls"] and rx["command"] == [ip + ":2600"], (name, rx["entrypoint"], rx["command"])
+    assert rx["networks"]["receiving"]["ipv4_address"] == ip, f"{name} listens on an address it does not hold"
+    assert [(p["host_ip"], p["published"], p["target"]) for p in rx["ports"]] == [(hosted["KYPOST_RECEIVING_PUBLISH_IP"], port, 2600)], f"{name} publishes {rx['ports']}"
+    assert rx["read_only"] and rx["cap_drop"] == ["ALL"] and rx["user"] == "1000:1000", f"{name} is not read-only, capability-free and unprivileged"
+    assert rx["environment"]["KYPOST_TENANCY"] == "multi" and rx["environment"]["KYPOST_RECEIVING_RSPAMD"] == "true"
+    assert not any("postgres://" in a for a in rx["entrypoint"] + rx["command"]), f"{name} has the database URL in argv"
+    assert sorted((v["source"], v["target"]) for v in rx["volumes"]) == shared, f"{name} does not share the three data volumes"
+    assert spam["network_mode"] == "service:" + name and spam["image"] == pin, f"rspamd-{name[-1]} is not {name}'s own pinned scanner"
+    assert spam["read_only"] and spam["cap_drop"] == ["ALL"] and not spam.get("ports"), f"rspamd-{name[-1]} is exposed or writable"
+print("PASS hosted: two receiving servers on the shared volumes, each with its own pinned Rspamd, published only on the private address")
+
+mx_env = {"KYPOST_STAFF_ORG_ID": hosted["KYPOST_STAFF_ORG_ID"], "KYPOST_RECEIVING_HOSTNAME": "mx-a.example.test", "KYPOST_SMTP_BIND": "203.0.113.25",
+          "KYPOST_MADDY_BINARY": "/opt/maddy", "KYPOST_RECEIVING_TLS_DIR": "/etc/mx-tls", "KYPOST_MX_DIR": "/etc/kypost-mx"}
+for missing in mx_env:
+    result = compose(["docker-compose.mx.yml"], base_env | {k: v for k, v in mx_env.items() if k != missing})
+    assert result.returncode != 0 and missing in result.stderr, f"MX profile rendered without {missing}: {result.stderr}"
+result = compose(["docker-compose.mx.yml"], base_env | mx_env)
+assert result.returncode == 0, result.stderr
+doc = json.loads(result.stdout)
+assert list(doc["services"]) == ["mx"] and not doc.get("volumes"), "an MX host runs more than Maddy or keeps a volume"
+mx = doc["services"]["mx"]
+assert all(v["type"] == "bind" and v["read_only"] for v in mx["volumes"]), "an MX host mounts something writable"
+assert mx["read_only"] and mx["cap_drop"] == ["ALL"] and mx["init"] and mx["user"] == "1000:1000"
+assert mx["environment"]["KYPOST_RECEIVING_REMOTE"] == "/kypost/mx/remote.json" and mx["environment"]["KYPOST_TENANCY"] == "multi"
+assert not any(k in mx["environment"] for k in ("KYPOST_DATABASE_URL", "KYPOST_NATIVE_MAIL", "KYPOST_RECEIVING_RSPAMD")), "an MX host is given state or a scanner"
+assert [(p["host_ip"], p["published"], p["target"]) for p in mx["ports"]] == [(mx_env["KYPOST_SMTP_BIND"], "25", 2525)], mx["ports"]
+print("PASS hosted: the MX host holds nothing, mounts read-only, and forwards to the replicas")

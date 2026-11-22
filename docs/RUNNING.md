@@ -260,7 +260,10 @@ speaks plain HTTP to the replicas, so TLS ends in a proxy in front of HAProxy.
 **Replicas have no native receiving.** Cloudflare pickup requires `KYPOST_RECEIVING_RSPAMD=true`
 and the Rspamd sidecar, and `docker-compose.rspamd.yml` shares one container's network, so
 Compose refuses it with the replicas overlay. With replicas, receive through an external IMAP
-account; for Maddy or Cloudflare, stay on the single container.
+account; for Maddy or Cloudflare, stay on the single container. The one exception is a
+multi-tenant install's hosted receiving profile (`docker-compose.hosted.yml` and
+`docker-compose.mx.yml`, [RECEIVING_SETUP.md](RECEIVING_SETUP.md#hosted-receiving-tier-multi-tenant-only)),
+which gives each receiving server its own Rspamd. It cannot start until multi mode can.
 
 Separate hosts, separate volumes, NFS/RWX volumes and multi-node Kubernetes are refused or
 unsupported. KyPost has no IMAP, submission or LMTP server and no search index, so nothing
