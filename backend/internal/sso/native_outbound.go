@@ -20,6 +20,10 @@ import (
 
 var ErrNativeOutboundStale = errors.New("queued sender authority changed; retain the job and reconcile instead of resubmitting")
 
+// ErrNativeOutboundHeld keeps a queued job unsent while its owner's org is not served
+// (tenancy design "Org status"); it is retried, never quarantined.
+var ErrNativeOutboundHeld = errors.New("sending is held for this account; the job stays queued")
+
 // NativeOutbound coordinates current authority and durable storage, shared by
 // foreground sends and recovery workers. Construction alone authorizes nothing.
 // Callers select this only in explicit native mode and preflight MIME/PGP policy.
@@ -29,6 +33,11 @@ type NativeOutbound struct {
 	Accounts                        *users.Store
 	Domains                         *NativeDomainStore
 	Settings                        *Store
+	// Orgs gates an org-bound (multi-tenant) owner's sends (tenancy.Gate); nil holds
+	// every one.
+	Orgs interface {
+		Serve(ctx context.Context, org string) error
+	}
 }
 
 type NativeOutboundResult struct {
@@ -342,6 +351,9 @@ func (s NativeOutbound) Submit(ctx context.Context, mailboxID, id string, sequen
 		if !job.Independent && sequence > 0 && (len(statuses) == 0 || statuses[0].State != "accepted") {
 			return mailbox.ErrOutbound
 		}
+		if u.OrgID != "" && (s.Orgs == nil || s.Orgs.Serve(ctx, u.OrgID) != nil) {
+			return ErrNativeOutboundHeld
+		}
 		return s.withJobAuthority(ctx, u, a, x, d, relay, job, unproven, func(ctx context.Context) error {
 			delivery, token, err := box.ClaimOutbound(ctx, key, id, sequence, relay.Generation)
 			if err != nil {
@@ -503,6 +515,9 @@ func (s NativeOutbound) Recover(ctx context.Context, mailboxID, id string) error
 			continue
 		}
 		result, submitErr := s.Submit(ctx, mailboxID, id, status.Sequence)
+		if errors.Is(submitErr, ErrNativeOutboundHeld) {
+			return filingErr
+		}
 		if status.Sequence == 0 {
 			primaryAccepted = result.Accepted
 		}

@@ -26,6 +26,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -449,8 +450,8 @@ func (s *Server) runScheduled(ctx context.Context, key []byte, row state.Schedul
 	deadline := time.Unix(row.SendAt, 0).Add(scheduledRetryWindow)
 	// A row held for quota keeps saying so, through to its return.
 	late := reasonLate
-	if row.Reason == reasonQuota {
-		late = reasonQuota
+	if row.Reason == reasonQuota || row.Reason == reasonHeld {
+		late = row.Reason
 	}
 	next, reason := state.ScheduledReturning, late
 	if !now().After(deadline) {
@@ -493,6 +494,8 @@ func (s *Server) dispatchScheduled(ctx context.Context, j scheduledJob, now func
 		return retry, reasonQuota
 	case errors.Is(err, state.ErrSendTooLarge):
 		return state.ScheduledReturning, err.Error()
+	case errors.Is(err, tenancy.ErrNotServed):
+		return retry, reasonHeld
 	case err != nil:
 		return retry, ""
 	}

@@ -474,6 +474,7 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server, d runDeps) (w
 			srv.StartVersionMonitor,
 			srv.StartScheduledSendSweeper,
 			srv.StartAgentTokenSweeper,
+			srv.StartOrgPoller,
 			func(ctx context.Context) {
 				cleanCoordination(ctx, d.store, func(err error) {
 					d.logger.Error("expired shared rows not cleaned", "error", err.Error())

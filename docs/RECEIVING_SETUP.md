@@ -518,6 +518,11 @@ fewer than 14 days left. `receiving gateway retire <id>` revokes every pin of a 
 or compromised host and never takes that ID again. A key that was ever enrolled is never
 enrolled again. A revocation applies to the next connection.
 
+Org storage quotas: an org's `mailboxBytes` (per mailbox) and `storageBytes` (all of the org's
+mailboxes) from KyIdentity's entitlements are checked with the mailbox's own quota, mail waiting
+in the buffer counted. Past either, the recipient gets the same `452 4.2.2 Mailbox full` (exit 9).
+Refusing by org status (suspended, deleted) is not wired into `bind` yet.
+
 ## Verify and roll back
 
 Use the actual pinned-Maddy test from the assessment. It consumes generated

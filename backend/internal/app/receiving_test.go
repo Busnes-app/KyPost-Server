@@ -27,6 +27,12 @@ import (
 
 func receivingFixture(t *testing.T) (*receivingRuntime, []users.User) {
 	t.Helper()
+	return receivingFixtureIn(t, "", "")
+}
+
+// receivingFixtureIn is receivingFixture with accounts one and two bound to orgs.
+func receivingFixtureIn(t *testing.T, orgs ...string) (*receivingRuntime, []users.User) {
+	t.Helper()
 	ctx := context.Background()
 	configDir, stateDir := t.TempDir(), t.TempDir()
 	for _, dir := range []string{configDir, stateDir} {
@@ -51,7 +57,7 @@ func receivingFixture(t *testing.T) (*receivingRuntime, []users.User) {
 		return []string{d.RecordValue()}, err
 	})
 	var created []users.User
-	for _, subject := range []string{"one", "two"} {
+	for i, subject := range []string{"one", "two"} {
 		raw := []byte(fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":%q,"externalId":%q,"userName":%q,"active":true,"emails":[{"value":%q,"primary":true}],"meta":{"version":"W/\"1\""}}`, subject, subject, subject, subject+"@example.test"))
 		var resource sso.DirectoryUser
 		if err := json.Unmarshal(raw, &resource); err != nil {
@@ -61,7 +67,7 @@ func receivingFixture(t *testing.T) (*receivingRuntime, []users.User) {
 		if _, err := r.life.ApplyDirectoryUser(issuer, ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return false, nil }); err != nil {
 			t.Fatal(err)
 		}
-		u, err := r.life.AllocateNativeAccount(ctx, stateDir, issuer, subject, r.domains, accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}, "")
+		u, err := r.life.AllocateNativeAccount(ctx, stateDir, issuer, subject, r.domains, accounts, mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}, orgs[i])
 		if err != nil {
 			t.Fatal(err)
 		}
