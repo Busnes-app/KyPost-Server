@@ -211,6 +211,20 @@ func UserOrgRows(ctx context.Context, db *sql.DB, ids []string) (int, error) {
 	return total, nil
 }
 
+// DocumentRows counts the accounts' documents rows (the final check). Deleting them is
+// MH2's, with the first store that writes them.
+func DocumentRows(ctx context.Context, db *sql.DB, ids []string) (int, error) {
+	total := 0
+	for _, id := range ids {
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM documents WHERE owner = ?`, id).Scan(&n); err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
 // importTables are receiving import's per-mailbox rows (imports.go).
 var importTables = []string{"import_leases", "retired_bindings"}
 
@@ -398,7 +412,7 @@ var PurgeCoverage = map[string]string{
 	"mailbox.usage": "directories", "mailbox.changes": "directories", "mailbox.outbox": "directories",
 	"mailbox.outbox_deliveries": "directories", "mailbox.outbox_independent": "directories",
 	"ingress.routes": "ingress", "ingress.bindings": "ingress",
-	"tenancy.import_leases": "ingress", "tenancy.retired_bindings": "ingress",
+	"tenancy.import_leases": "ingress", "tenancy.retired_bindings": "ingress", "tenancy.documents": "documents",
 	"native-authority.directory": "ledger", "native-authority.directory_primary_emails": "ledger",
 	"native-authority.accounts": "ledger", "native-authority.mailboxes": "ledger", "native-authority.addresses": "ledger",
 	"native-authority.address_history": "ledger", "native-authority.routes_pending": "ledger",

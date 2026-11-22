@@ -387,6 +387,19 @@ func TestPurgeFinalCheckCoversTheClassification(t *testing.T) {
 	}
 }
 
+// TestPurgeFinalCheckFindsADocument: a documents row (MH) owned by a purged account keeps
+// the purge from finishing.
+func TestPurgeFinalCheckFindsADocument(t *testing.T) {
+	px := newPurgeFixture(t)
+	if _, err := px.db.Exec(`INSERT INTO documents(root, path, owner, revision, body, updated_at) VALUES('config', 'users/u-doc/rules.json', 'u-doc', 1, ?, 1)`, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	left, err := px.srv.purgeLeft(context.Background(), tenancy.PurgeSnapshot{Users: []string{"u-doc"}}, func(string) (bool, error) { return false, nil })
+	if err != nil || left["documents"] != 1 {
+		t.Fatalf("final check %v, %v: want one document left", left, err)
+	}
+}
+
 // TestOrgPurgeFailsClosedOnAnUnreadablePickup: a pickup record whose owner cannot be read
 // stops the purge rather than letting the final check pass over it.
 func TestOrgPurgeFailsClosedOnAnUnreadablePickup(t *testing.T) {

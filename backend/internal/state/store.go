@@ -25,6 +25,7 @@ import (
 type Store struct {
 	baseDir string
 	db      *sql.DB
+	fences  fencePool
 }
 
 // Native notification delivery modes. "push" (the default) sends via the
@@ -231,7 +232,7 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	return errors.Join(s.db.Close(), s.fences.close())
 }
 
 // path/decisionsPath name the legacy JSON files. They exist only so the

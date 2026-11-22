@@ -65,6 +65,8 @@ var tableClass = map[string]map[string]string{
 		"sender_blocks": platform, "sender_evidence": platform,
 		"org_purges": platform, "org_purge_members": platform, "address_tombstones": platform, "restore_reads": platform, "purged_mailboxes": platform,
 		"import_leases": derived, "retired_bindings": derived,
+		// Owner-keyed volume documents (MH); a row with no owner is a P document.
+		"documents": derived,
 	},
 	"catalog": {"stores": platform},
 }
