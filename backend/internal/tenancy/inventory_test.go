@@ -63,6 +63,7 @@ var tableClass = map[string]map[string]string{
 	"tenancy": {
 		"orgs": platform, "user_orgs": org, "subject_orgs": org, "receiving_gateways": platform,
 		"sender_blocks": platform, "sender_evidence": platform,
+		"import_leases": derived, "retired_bindings": derived,
 	},
 	"catalog": {"stores": platform},
 }

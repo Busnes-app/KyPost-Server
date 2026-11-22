@@ -1,7 +1,7 @@
 # KyPost hosted receiving tier, design
 
-Date: 2026-11-21. Status: proposed design; PR 1 (#686), PR 2 (TLS transport, #689) and PR 3
-(sender blocks and evidence in PostgreSQL) built.
+Date: 2026-11-21. Status: proposed design; PR 1 (#686), PR 2 (TLS transport, #689), PR 3
+(sender blocks and evidence in PostgreSQL, #691) and PR 4 (import leases) built.
 
 This is the receiving tier's own spec, which the owner asked for on 2026-11-21 (answer to open
 question 3 of KyPost's tenancy design, `docs/superpowers/specs/2026-11-20-tenancy-design.md`,
@@ -772,6 +772,88 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - a lease holder killed mid-batch, and a mailbox under constant load giving its lease up after
      each batch;
    - single-tenant: the daemon importer and all-or-nothing import are unchanged.
+   *PR 4 as built:* paths under `backend/internal/` at the PR's head. Startup still refuses
+   `multi` (K PR 7), so the tests set the runtime's `tenancy.db` directly, as K's do.
+   - **Tables** (`tenancy/tenancy.go:67-68`, PostgreSQL `:105-106`; functions in
+     `tenancy/imports.go`). `import_leases(mailbox PK, holder, lease_until)` and
+     `retired_bindings(gateway, id, mailbox, at)`, primary key `(gateway, id, mailbox)`. Both are
+     class D in K's inventory (the mailbox's org); the purge deletes them with the bindings.
+   - **Leases** (`TakeImportLease`, `tenancy/imports.go:23`). One upsert that takes a free or
+     expired lease, or renews the holder's own, for 60 s. Reading: no `SKIP LOCKED`; every
+     `tenancy.db` write already runs under the store's single writer (SQLite's, or the
+     PostgreSQL schema's writer lock), so two takers cannot both win. Release deletes only the
+     holder's own row.
+   - **Workers** (`startLeasedImport`, `app/receiving_imports.go:39`). Four per daemon process,
+     started in `runDaemon` outside the role election (`app/app.go:375`), so every replica
+     imports. Each pass lists the mailboxes with pending mail (`PendingMailboxes`,
+     `ingress/obligations.go:36`) and runs one batch per mailbox (`importMailbox`, `:117`): take
+     the lease, renew it before each obligation, attempt at most 100 obligations or 60 s in
+     arrival order, then release it. A mailbox whose batch hit the bound is skipped for that
+     worker's next pass, so another worker takes it. Readings:
+     - **Arrival order** is the delivery's `rowid`, its first bind (`Obligations`, `:59`), across
+       every gateway. An obligation already done (receipt or retired row) is skipped and does
+       not count against the 100, so done mail waiting on another mailbox never starves later
+       mail.
+     - **A failed obligation** is logged and retried next pass, as the single-mode importer
+       does; it does not stop the mailbox, so one bad delivery cannot block a mailbox for good.
+       Only the org check stops the mailbox's batch (deleted, or not cached).
+     - **The brief's "lease sets in sorted order, waiting"** is the draft RX replaced before
+       #680 merged. This follows the merged text: one obligation per mailbox, one lease per
+       worker.
+   - **One obligation** (`importObligation`, `app/receiving_imports.go:157`). Bytes that
+     permanent storage refuses quarantine the whole delivery, as `importDeliveryTo` does. Step 1
+     is `tenancy.MailboxImport` (`tenancy/imports.go:83`): the owner's org from `subject_orgs`,
+     then the cache's last known status (not cached or no org waits; `deleted` waits for the
+     purge; every other status imports, `enabled` or not). Step 2 (`writeObligation`, `:182`):
+     under the shared authority fences an owner or address that no longer matches is retired, as
+     `frozenAuthority` reads it; any other refusal is retired only if `bindingsRetired`'s
+     directory-locked read proves it, as `quarantineRetired` does. Otherwise the mailbox's copy
+     is written under its quota lock (`writeMailbox`, `:212`), after re-reading the org there:
+     `deleted` writes nothing (the purge fence). The write is `ingress.Store.ImportMailbox`
+     (`ingress/obligations.go:92`), one receipt for all the mailbox's bindings, with no claim.
+   - **Completion** (`complete`, `app/receiving_imports.go:292`; `ingress.Store.Complete`,
+     `ingress/obligations.go:133`). Reading: the done-state (`mailbox.Store.HasReceipt`, or a
+     `retired_bindings` row) is read after the caller's own write commits and before the
+     `kypost_ingress` writer transaction, which re-reads the bindings. Of two workers, the later
+     committer sees both done, and the transaction ends the delivery once. No `FOR UPDATE`: the
+     ingress writer lock serializes it. Archived as `imported` when none is retired; otherwise
+     the imported bindings are deleted and the delivery is quarantined with only the retired
+     ones (lease cleared, so a discard says `discarded`). A delivery under a live single-mode
+     claim is left alone.
+   - **Backstop sweep** (`sweepCompletions`, `app/receiving_imports.go:310`). Every minute on
+     the elected `daemon` role (`app/receiving.go:346`), which in multi mode runs only the sweep.
+     Reading: not on `api-sweepers` as R8 says, because only the daemon process opens the
+     receiving runtime. It walks `PendingGateways` (`ingress/obligations.go:29`), every gateway
+     with pending mail, never the pins.
+   - **Single mode** never calls any of it: `startLeasedImport` returns at once, and
+     `startReceivingImport`'s two-gateway loop is unchanged byte for byte below the new
+     multi-mode branch.
+   - **Tests** (`app/receiving_imports_test.go`, all on both backends): `TestLeasedImportOutlivesItsGatewayPin`
+     (revoked and expired pins, the other pin, a second rotation, re-enrolment, revoked key and
+     retired ID refused, over TLS; the store rules are PR 2's `TestGatewayPins`),
+     `TestLeasedImportTwoReplicasKeepOrder`, `TestLeasedImportDeletedOrgWaitsForItsPurge`,
+     `TestLeasedImportSuspendedOrgImports`, `TestLeasedImportUncachedOrgWaits`,
+     `TestLeasedImportPurgeFence` (the re-read alone, a worker waiting on the purge's lock, and
+     write first), `TestLeasedImportCrashBeforeCompletion`,
+     `TestLeasedImportConcurrentCompletion`, `TestLeasedImportRetiredBinding` (active plus
+     retired, and a purge leaving only retired), `TestLeasedImportLeases` (killed holder, and the
+     100 bound with its skipped pass), and `TestSingleModeKeepsTheDaemonImporter`. Also
+     `ingress` `TestObligations`, `TestCompleteLeavesAClaimedDelivery`; `tenancy`
+     `TestImportLease`, `TestRetiredBindingsAndOrgImport`; and
+     `TestSingleTenantUpgradeIsByteForByte` unchanged. Each of these mutations fails its test:
+     no re-read under the quota lock, a retired binding counted as imported, the skip ignored,
+     `deleted` importing, a lease taken while live, and an uncached org importing.
+   - **K PR 6 stand-in.** The deleted-org and retired-purge tests use `purgeStandIn`, written
+     against K "Purge" steps 2–3: delete the org's bindings and `retired_bindings` rows, delete a
+     delivery left with none, run Completion, then remove storage under each quota lock. Switch
+     `TestLeasedImportDeletedOrgWaitsForItsPurge`, `TestLeasedImportPurgeFence` and
+     `TestLeasedImportRetiredBinding` to the real purge once K PR 6 merges, and have the purge
+     call `ingress.Store.Complete` for its step 2.
+   - **Not in PR 4.** The 60 s time bound has no test of its own (the 100 bound does).
+     `HeldBytes` still counts a delivery against a mailbox that already imported it until the
+     delivery completes, so a mailbox waiting on another org's purge or poll can refuse new mail
+     (452) a little early; it is bounded by that wait. Cloudflare's importers still take the
+     whole-delivery claim, which `Complete` leaves alone (R1 keeps Cloudflare out of multi mode).
 5. **Hosted profile.** Compose for MX hosts and per-replica Rspamd, the relay domain as a
    `destination`, `{source_ip}` on `bind`, exit 12 for K's org check, and exit 13 with the
    per-source budget. Tests:

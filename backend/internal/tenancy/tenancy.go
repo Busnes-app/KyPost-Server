@@ -30,7 +30,9 @@ const (
 // subject_orgs are write-once: an UPDATE is refused, and writers use plain INSERT.
 // receiving_gateways holds the MX hosts' pinned keys (gateways.go); its rows are never
 // deleted and only gain revoked_at and retired_at. sender_blocks and sender_evidence are
-// the multi-mode sender block list and its evidence (ingress.TableSenders).
+// the multi-mode sender block list and its evidence (ingress.TableSenders). import_leases
+// and retired_bindings are receiving import's per-mailbox leases and done-records
+// (imports.go, RX R8).
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS orgs (
  id TEXT PRIMARY KEY,
@@ -62,6 +64,8 @@ CREATE TABLE IF NOT EXISTS sender_evidence (
  hits TEXT NOT NULL, level INTEGER NOT NULL, last INTEGER NOT NULL, blocked INTEGER NOT NULL, PRIMARY KEY(kind, id));
 CREATE INDEX IF NOT EXISTS sender_evidence_ref ON sender_evidence(kind, ref, blocked);
 CREATE INDEX IF NOT EXISTS sender_evidence_last ON sender_evidence(kind, last);
+CREATE TABLE IF NOT EXISTS import_leases (mailbox TEXT PRIMARY KEY, holder TEXT NOT NULL, lease_until INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS retired_bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, mailbox TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(gateway, id, mailbox));
 `
 
 const pgSchema = `
@@ -98,6 +102,8 @@ CREATE TABLE IF NOT EXISTS sender_evidence (
  hits TEXT NOT NULL, level BIGINT NOT NULL, last BIGINT NOT NULL, blocked BIGINT NOT NULL, PRIMARY KEY(kind, id));
 CREATE INDEX IF NOT EXISTS sender_evidence_ref ON sender_evidence(kind, ref, blocked);
 CREATE INDEX IF NOT EXISTS sender_evidence_last ON sender_evidence(kind, last);
+CREATE TABLE IF NOT EXISTS import_leases (mailbox TEXT PRIMARY KEY, holder TEXT NOT NULL, lease_until BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS retired_bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, mailbox TEXT NOT NULL, at BIGINT NOT NULL, PRIMARY KEY(gateway, id, mailbox));
 `
 
 func init() {
