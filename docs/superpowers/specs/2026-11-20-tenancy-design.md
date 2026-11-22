@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 6 are built (PR 6 as 6a, 6b and 6c) ("PR 1 as built" to "PR 6 as built"), the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PRs 6a and 6b are built ("PR 1 as built" to "PR 6 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -1570,73 +1570,9 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
     - the sign-in org window;
     - the erasure's purge record;
     - the multi-mode condition on `user.erased`.
-- **6c: the multi-mode restore release.** Paths at 6c's head.
-  - **After the restore.** `tenancy.FenceRestored` (6a) empties the cache, so every customer org
-    is unknown. Sign-in is refused, and receiving's decision for an unknown org is a temporary
-    refusal (`Org.Receiving`; wiring it into `receiving bind` is RX PR 5). The native hold also
-    stands.
-  - **The poll while held.** While the hold stands, each poll is the restore read
-    (`restoreReads`, `api/tenancy_restore.go:122`, chosen at `api/tenancy_lifecycle.go:64`):
-    1. A poll of every org from revision 0 (`pollOrgsFrom`, `:100`).
-    2. Every erased subject from `GET /api/suite/erased` (`suiteErased`, `api/tenancy_restore.go:47`).
-    3. A one-subject purge for each erased subject (6b's scope). A deleted org's purge is
-       started by the purge runner, as always.
-    4. Only when all of these succeed, `restore_reads` records the hold's epoch
-       (`tenancy.RecordRestoreRead`; the table is P).
-  - **The epoch.** A new restore has a fresh epoch, and the fence deletes the table's rows. So a
-    read never counts for a later restore, and an unreadable hold never counts.
-  - **The erased-list client.** It is KyPost's own, because ky-primitives `suitedir` has no
-    `Erased` method yet. It behaves as `suitedir.Orgs` does:
-    - client credentials, HTTPS only (loopback HTTP for tests), no redirects;
-    - a 1 MiB page bound, at most 100 pages of 500;
-    - revisions must increase and `next` must equal the last one;
-    - one malformed entry fails the whole read, and no error quotes an entry.
-    Moving it into `suitedir` is a follow-up (owner question 2 below).
-  - **The release in multi mode** (`handleNativeRecoveryRelease`):
-    - **P6** cannot ask for a local password administrator, because K6 removes them. It
-      requires a staff administrator (K7, already proved by `withPlatformAdmin`) on a KySignOn
-      session (`api/native_recovery_handlers.go:256`). `confirmActor` then requires a
-      KySignOn step-up bound to the action.
-    - **The new precondition** comes before P8 (`:296`). Without the restore read for this
-      hold's epoch, the answer is `409` with the reason "KyIdentity has not been read in full
-      since this restore".
-    - Every other precondition (P1-P9, the evidence, the repair) is today's, unchanged.
-    - Single mode keeps today's P6.
-  - **Unverified.** That KyIdentity's restore evidence export (`/challenge`, `/evidence`)
-    works for a multi-tenant issuer was not run. The staff path reaches the existing plan,
-    which refuses without evidence.
-  - **Tests:**
-    - `TestRestoreReleaseWaitsForKyIdentity`, on a held install after the restore fence:
-      - KyIdentity down: no read is recorded, the release answers `409` with the reason, a
-        member gets `401`, and receiving's decision is temporary.
-      - KyIdentity up: the org poll starts at revision 0, the deleted org and an erased
-        member are purged again with clean final checks, and the release passes this gate.
-      - An unreadable hold, or a read the next restore forgot, is refused again.
-    - `TestSuiteErasedRefusesMalformedAnswers`: bad org, empty subject, no progress, no
-      list, a cursor mismatch, oversize, `401`, a redirect, plain HTTP, and two pages.
-    - **Proof that the gates bite:** removing each of these fails the test: the release gate,
-      the erased purges, the unreadable-hold refusal, and the entry validation.
-  - **Reading of K's end-to-end test.** K's "click, purge, restore a capsule taken before the
-    click, release, and poll" is covered in parts, not as one run:
-    - 6a's backup tests seal and restore `tenancy.db` through the real `runRestore`, and on
-      PostgreSQL also through the import.
-    - 6a's purge tests cover a restored state: data present, no purge row, the cache empty.
-    - 6c's test covers the read and the release gate on a held install.
-    - A single run through a sealed capsule, a second server over the restored directories,
-      and a full release with KyIdentity evidence was not built: multi mode cannot start
-      (PR 7). It is unproven as one run.
-- **Owner questions, each with the default now in code:**
-  1. Extra mailboxes are deleted, not kept, as ledger tombstones, because the ledger refuses
-     an extra mailbox without its primary address. Their addresses stay tombstoned, and
-     mailbox IDs are random.
-  2. KyPost reads `/api/suite/erased` with its own small client until ky-primitives `suitedir`
-     gains `Erased`.
-  3. An export-only session's other routes answer `401` without ending the session, so the
-     export page keeps working.
-  4. A restore always purges every deleted org and erased subject again, even ones purged
-     before the backup was taken. Finished purge rows are not trusted across a restore.
-  5. The restore release does not wait for the purges the reads started. They run during the
-     hold and after it, and a deleted or erased account is refused at sign-in either way.
+- **Not in 6a or 6b:** the multi-mode restore release with the full poll and erased-subject read (6c). The end-to-end
+  Delete everything tests (click, purge, restore a capsule from before the click, release,
+  poll) need 6c's release, so they are 6c's.
 
 ## Residual risks
 
