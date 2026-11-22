@@ -48,14 +48,26 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid SCIM User", http.StatusBadRequest)
 		return
 	}
-	revision, err := u.Revision(event.Type)
+	// user.erased (multi-tenant only) is a removal that also deletes the member's data
+	// (tenancy design, Delete everything): applied as user.deleted, then purged.
+	erased := s.multiTenant() && event.Type == "user.erased"
+	eventType := event.Type
+	if erased {
+		eventType = "user.deleted"
+	}
+	revision, err := u.Revision(eventType)
 	if err != nil {
 		http.Error(w, "invalid directory event: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if s.multiTenant() {
-		if status, err := s.bindDirectoryOrg(r.Context(), settings.IssuerURL, event.ID, body, &u); err != nil {
+		org, status, err := s.bindDirectoryOrg(r.Context(), settings.IssuerURL, event.ID, body, &u)
+		if err != nil {
 			http.Error(w, err.Error(), status)
+			return
+		}
+		if erased {
+			s.eraseMember(w, r, settings.IssuerURL, event, u, body, org)
 			return
 		}
 	}

@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PR 6a are built ("PR 1 as built" to "PR 6 as built"), the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PRs 6a and 6b are built ("PR 1 as built" to "PR 6 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -1342,7 +1342,7 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
 PR 6 is split into three stacked PRs, because one would pass what a reviewer can read: **6a**
 (purge, tombstones, backups), **6b** (one-user purge for `user.erased`, the `export_only` route
 gate) and **6c** (the multi-mode restore release). This section records 6a; 6b and 6c add their
-own parts. Paths are under `backend/internal/` at 6a's head. Startup still refuses `multi`, so the
+own parts. Paths are under `backend/internal/` at 6a's head unless marked. Startup still refuses `multi`, so the
 tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the test helper
 `useTenancy` in `api/tenancy_binding_test.go`).
 
@@ -1502,8 +1502,75 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
     - restoring the triggers;
     - the receiving step;
     - the root-store step.
-- **Not in 6a:** the one-user purge for `user.erased` and the `export_only` gate (6b), and the
-  multi-mode restore release with the full poll and erased-subject read (6c). The end-to-end
+- **6b: the one-user purge (`user.erased`).** Paths at 6b's head.
+  - **Admitted in multi mode only.** In multi mode the webhook accepts `user.erased`
+    (`api/sync_handlers.go:53`). A single install still refuses the type as unsupported (`400`),
+    as before.
+  - **Validated as a removal.** The event must be inactive, and `bindDirectoryOrg` checks its
+    `org_id` exactly as for `user.deleted`.
+  - **The purge is recorded first** (`eraseMember`, `api/tenancy_purge.go:397`). It writes the
+    purge row and snapshot for scope `(org, subject)`, so a failure after it still purges.
+    Then the event applies as `user.deleted`, which revokes the account's credentials at once.
+  - **The fence does not decide.** The fence's digest still names `user.erased`. A fence
+    refusal (`ErrDirectoryConflict`) answers `200 erased`, because the purge does not depend
+    on the revision. A failure to record the purge answers `500`, so KyIdentity retries.
+  - **The purge is 6a's, scoped to one subject.** The snapshot holds only that subject, its
+    accounts and its ledger mailboxes. The next poll runs it, and the audit row's scope is
+    `member`.
+  - **What else applies.** A whole-org purge row covers its members, so no member row is added
+    under it. A later active event for the subject applies as inactive (6a's rule).
+- **6b: the `export_only` route gate** (K open question 4 (a)). Before this, PR 2 refused the
+  claim at sign-in.
+  - **Parsing.** `tokenOrg` now returns the claim (`api/tenancy_binding.go:43`).
+  - **Where the token is accepted.** In the browser sign-in only, and only while the account's
+    org is cached, fresh, enabled and `deletion_scheduled` (`orgExportable`,
+    `api/tenancy_lifecycle.go:254`). The staff org never qualifies.
+    - Device sign-on still refuses it like a token without an org (`resolveSSOUser`'s
+      `admitExport`, `api/sso_handlers.go:670`).
+    - A link refuses it.
+    - A step-up admits it only for an export-only session (`:537`).
+    - An ordinary token for a `deletion_scheduled` org is still refused.
+  - **The session** carries `ExportOnly` (`Session`, `api/server_auth_session.go:74`, omitted
+    when false, so a single install's stored sessions keep their bytes). It is never an
+    administrator, and it lands on `/settings/account?tab=export`.
+  - **The gate is in `currentUser`** (`:1294`), which every session wrapper calls. Outside
+    `exportOnlyRoutes` (`api/tenancy_lifecycle.go:245`) the session is treated as absent, so
+    every other route answers exactly as without a session. The session itself is kept.
+    `exportOnlyRoutes` is:
+    - `/api/auth/me`, `/api/auth/csrf` and logout;
+    - the three OIDC step-up routes and the SSO callback, which confirm the export;
+    - `/api/mailboxes` and the four export routes.
+
+    Once the org is no longer `deletion_scheduled`, or the cache goes stale, every route
+    refuses the session.
+  - **`GET /api/auth/me`** adds `exportOnly: true` only for such a session.
+  - **The SPA** renders `pages/ExportOnlyPage` (the deletion notice, the existing `MailExport`
+    and Sign out) before any route or shell, so it calls nothing the server refuses.
+    Screenshots are in `docs/ui-tenancy-2026-11-22/screenshots/`, captured against a mocked
+    API, because `multi` cannot start yet. "Before" is the generic sign-in failure PR 2 gave
+    the same token.
+- **6b tests:**
+  - `TestMemberErasurePurgesOnlyThatMember`: the member's account, mailboxes, addresses and
+    data go; the other member and org B are byte for byte unchanged; a repeat and a later
+    active event change nothing.
+  - `TestMemberErasureRefusals`: another org, active, no org, and single mode.
+  - `TestExportOnlySession`:
+    - org active: refused;
+    - an ordinary token while deletion is scheduled: refused;
+    - another org's member: refused;
+    - `/api/auth/me` returns `exportOnly`;
+    - every route of `server.go` outside the list answers exactly as with no session, and the
+      session survives;
+    - deletion ends it.
+  - `TestSingleTenantIgnoresExportOnly`, and frontend `App.exportOnly.test.tsx`.
+  - PR 2's sign-in test now expects `403` for an export-only token while the org is active.
+  - **Proof that the gates bite:** removing each of these fails its test:
+    - the route gate (244 failures);
+    - the session's org window;
+    - the sign-in org window;
+    - the erasure's purge record;
+    - the multi-mode condition on `user.erased`.
+- **Not in 6a or 6b:** the multi-mode restore release with the full poll and erased-subject read (6c). The end-to-end
   Delete everything tests (click, purge, restore a capsule from before the click, release,
   poll) need 6c's release, so they are 6c's.
 

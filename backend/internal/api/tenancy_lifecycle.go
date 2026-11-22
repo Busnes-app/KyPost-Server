@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -233,4 +234,39 @@ func (s *Server) orgMailboxRoom(ctx context.Context, u users.User) error {
 		return errOrgMailboxQuota
 	}
 	return nil
+}
+
+// exportOnlyLanding is where an export-only sign-in lands: the export page.
+const exportOnlyLanding = "/settings/account?tab=export"
+
+// exportOnlyRoutes are the only routes an export-only session reaches (K open question 4
+// (a)): who it is, sign-out, the step-up that confirms an export, the mailbox list and the
+// export itself. Any other answers as for a session that does not exist.
+var exportOnlyRoutes = map[string]bool{
+	"GET /api/auth/me": true, "GET /api/auth/csrf": true, "POST /api/auth/logout": true,
+	"POST /api/auth/oidc/step-up": true, "GET /api/auth/oidc/step-up/{id}": true, "DELETE /api/auth/oidc/step-up/{id}": true,
+	"GET /auth/sso/callback": true,
+	"GET /api/mailboxes":     true, "GET /api/export/folders": true, "POST /api/export": true, "GET /api/export/{token}": true,
+}
+
+// orgExportable is nil while org's members may hold an export-only session: the cache
+// knows it, fresh, as deletion_scheduled and enabled for KyPost. The staff org never is.
+func (s *Server) orgExportable(ctx context.Context, org string) error {
+	if !s.multiTenant() || org == s.staffOrg {
+		return tenancy.ErrNotServed
+	}
+	o, err := tenancy.LookupOrg(ctx, s.tenancy, org)
+	if err != nil {
+		return err
+	}
+	if !o.Fresh(time.Now()) || o.Status != suitedir.OrgDeletionScheduled || !o.Enabled {
+		return tenancy.ErrNotServed
+	}
+	return nil
+}
+
+// exportOnlySession reports whether r carries a live export-only session.
+func (s *Server) exportOnlySession(r *http.Request) bool {
+	ac, ok, err := s.currentUser(r)
+	return err == nil && ok && ac.ExportOnly
 }

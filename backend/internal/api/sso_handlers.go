@@ -526,10 +526,16 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		s.ssoFailure(w, "exchange", err)
 		return
 	}
-	org := ""
+	org, exportOnly := "", false
 	if s.multiTenant() {
-		if org, err = tokenOrg(claims); err != nil {
+		if org, exportOnly, err = tokenOrg(claims); err != nil {
 			s.ssoFailure(w, "exchange", err)
+			return
+		}
+		// An export-only token signs in to an export-only session, or re-proves an action
+		// for one; it never links (K "Export").
+		if exportOnly && (linkUserID != "" || strings.HasPrefix(mode, ssoModeStepUp+":") && !s.exportOnlySession(r)) {
+			s.ssoFailure(w, "exchange", errTokenOrg)
 			return
 		}
 	}
@@ -572,7 +578,7 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.resolveSSOUser(w, settings, claims)
+	user, err := s.resolveSSOUser(w, settings, claims, true)
 	if err != nil {
 		return // resolveSSOUser wrote the response
 	}
@@ -604,11 +610,15 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: s.ssoAppAdmin(claims, settings, org), SSOKySignOn: claims.KySignOn(), SSOEpoch: epoch}); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: !exportOnly && s.ssoAppAdmin(claims, settings, org), SSOKySignOn: claims.KySignOn(), SSOEpoch: epoch, ExportOnly: exportOnly}); err != nil {
 		http.Error(w, "failed to initialize session", http.StatusInternalServerError)
 		return
 	}
 
+	if exportOnly {
+		http.Redirect(w, r, exportOnlyLanding, http.StatusFound)
+		return
+	}
 	http.Redirect(w, r, "/read", http.StatusFound)
 }
 
@@ -654,17 +664,26 @@ func (s *Server) linkSSOIdentity(w http.ResponseWriter, r *http.Request, userID 
 // A correctly signed token does not make that safe, because the IdP really did
 // sign the name the attacker chose. Linking an existing account now requires
 // an authenticated session on that account — see linkSSOIdentity.
-func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings, claims *sso.SSOTokenClaims) (users.User, error) {
+//
+// admitExport admits an export_only token (the browser sign-in); device sign-on refuses it
+// like a token without an org. Such a token needs the account's org in deletion_scheduled.
+func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings, claims *sso.SSOTokenClaims, admitExport bool) (users.User, error) {
 	// K "Identity binding": the token's org must be the account's, as a wrong issuer
 	// must be its issuer, and the answer is the same.
-	org, orgErr := "", error(nil)
+	org, exportOnly, orgErr := "", false, error(nil)
 	if s.multiTenant() {
-		org, orgErr = tokenOrg(claims)
+		if org, exportOnly, orgErr = tokenOrg(claims); orgErr == nil && exportOnly && !admitExport {
+			orgErr = errTokenOrg
+		}
 	}
 	user, err := s.users.GetBySSOSubIssuer(claims.Issuer, claims.Sub)
 	if orgErr == nil && err == nil && s.multiTenant() {
 		orgErr = s.checkAccountOrg(context.Background(), user, org)
-		if orgErr == nil {
+		switch {
+		case orgErr != nil:
+		case exportOnly:
+			orgErr = s.orgExportable(context.Background(), org)
+		default:
 			orgErr = s.orgServe(context.Background(), org)
 		}
 	}

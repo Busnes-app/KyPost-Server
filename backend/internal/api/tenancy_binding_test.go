@@ -334,11 +334,12 @@ func TestTenancySignInBindsTheTokenOrg(t *testing.T) {
 		"malformed org_id":     {claims("alice", "org-a"), http.StatusBadGateway},
 		"non-canonical org_id": {claims("alice", strings.ToUpper(orgA)), http.StatusBadGateway},
 		"numeric org_id":       {claims("alice", 1), http.StatusBadGateway},
-		"export-only token":    {claims("alice", orgA, "export_only", true), http.StatusBadGateway},
-		"string export_only":   {claims("alice", orgA, "export_only", "false"), http.StatusBadGateway},
-		"another org":          {claims("alice", orgB), http.StatusForbidden},
-		"the staff org":        {claims("alice", staffOrg, "roles", []string{"kypost.admin"}), http.StatusForbidden},
-		"unprovisioned":        {claims("nobody", orgA), http.StatusForbidden},
+		// Export-only tokens sign in only while the org is deletion_scheduled (PR 6b).
+		"export-only token":  {claims("alice", orgA, "export_only", true), http.StatusForbidden},
+		"string export_only": {claims("alice", orgA, "export_only", "false"), http.StatusForbidden},
+		"another org":        {claims("alice", orgB), http.StatusForbidden},
+		"the staff org":      {claims("alice", staffOrg, "roles", []string{"kypost.admin"}), http.StatusForbidden},
+		"unprovisioned":      {claims("nobody", orgA), http.StatusForbidden},
 	} {
 		rec := signInRecorder(t, srv, idp, tc.claims)
 		if rec.Code != tc.status || sessionCookieFrom(rec) != nil {

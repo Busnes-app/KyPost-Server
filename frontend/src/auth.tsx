@@ -38,6 +38,10 @@ export type AuthState = {
   ssoLinkRevoked?: boolean;
   // Absent on older servers: no setup step.
   encryptionSetup?: EncryptionSetup;
+  // Hosted mode only: a session that may only export its mail while the account's
+  // organisation is scheduled for deletion. The app treats it as signed out except
+  // for the export page.
+  exportOnly?: boolean;
 };
 
 export const AuthContext = createContext<AuthState>({ authenticated: false });
