@@ -143,7 +143,8 @@ func MarkPurgeStep(ctx context.Context, db *sql.DB, scope PurgeScope, step int) 
 	return err
 }
 
-// FinishPurge marks scope done and deletes its snapshot, in one transaction.
+// FinishPurge marks scope done, records its mailboxes as purged and deletes its snapshot,
+// in one transaction.
 func FinishPurge(ctx context.Context, db *sql.DB, scope PurgeScope, now time.Time) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -151,6 +152,11 @@ func FinishPurge(ctx context.Context, db *sql.DB, scope PurgeScope, now time.Tim
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `UPDATE org_purges SET done_at = ? WHERE org_id = ? AND subject = ? AND done_at IS NULL`, now.Unix(), scope.Org, scope.Subject); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO purged_mailboxes(mailbox, org_id, subject, purged_at)
+ SELECT id, org_id, subject, ? FROM org_purge_members WHERE org_id = ? AND subject = ? AND kind = 'mailbox'
+ ON CONFLICT DO NOTHING`, now.Unix(), scope.Org, scope.Subject); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM org_purge_members WHERE org_id = ? AND subject = ?`, scope.Org, scope.Subject); err != nil {
@@ -355,6 +361,14 @@ func ForgetRestored(ctx context.Context, db *sql.DB) error {
 func RecordRestoreRead(ctx context.Context, db *sql.DB, epoch string, now time.Time) error {
 	_, err := db.ExecContext(ctx, `INSERT INTO restore_reads(epoch, read_at) VALUES(?, ?) ON CONFLICT DO NOTHING`, epoch, now.Unix())
 	return err
+}
+
+// MailboxPurged reports whether a finished purge removed mailbox. The record outlives
+// ForgetRestored: tombstones and subject_orgs keep the ID from ever being reused.
+func MailboxPurged(ctx context.Context, db *sql.DB, mailbox string) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM purged_mailboxes WHERE mailbox = ?`, mailbox).Scan(&n)
+	return n > 0, err
 }
 
 // RestoreRead reports whether RecordRestoreRead ran for epoch.

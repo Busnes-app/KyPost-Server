@@ -1435,7 +1435,9 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
   - **Who consults it.** The conflict check reads the tombstones before the ledger, through
     `LifecycleStore.Tombstoned` (`sso/lifecycle.go`). Only the test helper `useTenancy` sets that
     hook today, so a single install never consults it. **PR 7 must set it wherever it sets
-    `Server.tenancy`**, as `useTenancy` does; without it allocation would not see tombstones. The two allocation paths are new aliases and reassignment
+    `Server.tenancy`**, as `useTenancy` does; without it allocation would not see tombstones. The same holds for
+    `LifecycleStore.Purged` (`tenancy.MailboxPurged` over `purged_mailboxes`, written by `FinishPurge`):
+    without it a purge during a restore hold leaves restore qualification unable to pass. The two allocation paths are new aliases and reassignment
     (`changeNativeAddress`, `sso/native_address.go:343`) and a primary allocation
     (`sso/native_provision.go:742`, the durable `address_conflict` failure). HR reservation is
     off in multi mode.

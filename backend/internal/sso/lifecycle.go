@@ -66,6 +66,9 @@ type LifecycleStore struct {
 	// Tombstoned is set in multi-tenant mode only: it reports whether an address is one a
 	// purge tombstoned (K10), which every allocation refuses before reading the ledger.
 	Tombstoned func(address string) (bool, error)
+	// Purged is set in multi-tenant mode only: it reports whether a finished purge removed
+	// a mailbox, which restore qualification then no longer requires.
+	Purged func(mailbox string) (bool, error)
 }
 
 // staged is this store for offline work on stopped storage.

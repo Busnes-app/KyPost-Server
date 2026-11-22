@@ -14,6 +14,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -54,8 +55,33 @@ func TestRestoreReleaseWaitsForKyIdentity(t *testing.T) {
 	if _, err := srv.users.ClearMustChangePassword(staff.ID); err != nil {
 		t.Fatal(err)
 	}
+	// An unaffected tenant member, whose mailboxes must stay qualified.
+	kept := orgUser("member-b3", orgB, true)
+	kept["emails"] = []map[string]any{{"value": "member-b3@example.test", "primary": true}}
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "ev-b3", 1, kept))
+	b3, err := srv.users.GetBySSOSub("member-b3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.ssoLifecycle.CreateNativeMailbox(ctx, srv.stateDir, b3.ID, "member-b3-box@example.test"); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("KYPOST_NATIVE_RESTORE_RELEASE", "true")
 	epoch := heldAfterRestore(t, px)
+	// The restore's last stage: every ledger mailbox gets a fresh reference generation, and
+	// the qualification marker records them.
+	restored, err := srv.ssoLifecycle.NativeRestoreMailboxes(srv.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range restored {
+		if err := mailbox.RotateRestoredMessageReferences(filepath.Join(m.Dir, "mailbox", "mailbox.db"), m.Source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := srv.ssoLifecycle.RecordNativeRestoreQualification(srv.stateDir, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
 	idp := newOrgsIdP(t)
 	pointAtOrgs(t, srv, idp, "suite-secret")
 	idp.set(http.StatusServiceUnavailable)
@@ -106,6 +132,37 @@ func TestRestoreReleaseWaitsForKyIdentity(t *testing.T) {
 	}
 	if live, err := tenancy.LivePurges(ctx, px.db); err != nil || len(live) != 0 {
 		t.Fatal("purges after the restore did not finish", live, err)
+	}
+	// The purged mailboxes leave the restore qualification; every other one keeps it.
+	q, err := srv.ssoLifecycle.CheckNativeRestoreQualification(srv.stateDir)
+	if err != nil {
+		t.Fatal("the purges after the restore broke its qualification:", err)
+	}
+	var survivors []sso.NativeRestoreMailbox
+	for id, m := range restored {
+		gone, err := tenancy.MailboxPurged(ctx, px.db, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, listed := q.Mailboxes[id]; listed == gone {
+			t.Fatalf("mailbox %s: purged %v, still qualified %v", id, gone, listed)
+		}
+		if !gone {
+			survivors = append(survivors, m)
+		}
+	}
+	if _, err := srv.users.Get(b3.ID); err != nil {
+		t.Fatal("the unaffected member was purged:", err)
+	}
+	if len(survivors) != 2 || len(restored) != 8 {
+		t.Fatalf("%d of %d mailboxes survived, want b3's 2 of 8", len(survivors), len(restored))
+	}
+	// A survivor keeps the generation check.
+	if err := mailbox.RotateRestoredMessageReferences(filepath.Join(survivors[0].Dir, "mailbox", "mailbox.db"), survivors[0].Source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.ssoLifecycle.CheckNativeRestoreQualification(srv.stateDir); err == nil || !strings.Contains(err.Error(), "reference generation changed") {
+		t.Fatal("a surviving mailbox passed with a changed generation:", err)
 	}
 	if w := release(); strings.Contains(w.Body.String(), gate) {
 		t.Fatalf("release still refused by the restore read: %d %s", w.Code, w.Body)

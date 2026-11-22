@@ -33,7 +33,8 @@ const (
 // the multi-mode sender block list and its evidence (ingress.TableSenders). org_purges,
 // its org_purge_members snapshot and the never-changed address_tombstones are the purge's
 // (purge.go); restore_reads records, per restore hold, that KyIdentity was read in full
-// after the restore. import_leases and retired_bindings are receiving import's per-mailbox
+// after the restore; purged_mailboxes is each finished purge's mailboxes, which restore
+// qualification no longer requires. import_leases and retired_bindings are receiving import's per-mailbox
 // leases and done-records (imports.go, RX R8).
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS orgs (
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS address_tombstones (hmac TEXT PRIMARY KEY);
 CREATE TRIGGER IF NOT EXISTS address_tombstones_kept BEFORE DELETE ON address_tombstones BEGIN SELECT RAISE(ABORT, 'address tombstones are never deleted'); END;
 CREATE TRIGGER IF NOT EXISTS address_tombstones_final BEFORE UPDATE ON address_tombstones BEGIN SELECT RAISE(ABORT, 'address tombstones are never changed'); END;
 CREATE TABLE IF NOT EXISTS restore_reads (epoch TEXT PRIMARY KEY, read_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS purged_mailboxes (mailbox TEXT PRIMARY KEY, org_id TEXT NOT NULL, subject TEXT NOT NULL, purged_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS import_leases (mailbox TEXT PRIMARY KEY, holder TEXT NOT NULL, lease_until INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS retired_bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, mailbox TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(gateway, id, mailbox));
 `
@@ -124,6 +126,7 @@ CREATE TABLE IF NOT EXISTS address_tombstones (hmac TEXT PRIMARY KEY);
 CREATE OR REPLACE FUNCTION address_tombstone_kept() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'address tombstones are never deleted or changed'; END $$;
 CREATE OR REPLACE TRIGGER address_tombstones_kept BEFORE UPDATE OR DELETE ON address_tombstones FOR EACH ROW EXECUTE FUNCTION address_tombstone_kept();
 CREATE TABLE IF NOT EXISTS restore_reads (epoch TEXT PRIMARY KEY, read_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS purged_mailboxes (mailbox TEXT PRIMARY KEY, org_id TEXT NOT NULL, subject TEXT NOT NULL, purged_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS import_leases (mailbox TEXT PRIMARY KEY, holder TEXT NOT NULL, lease_until BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS retired_bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, mailbox TEXT NOT NULL, at BIGINT NOT NULL, PRIMARY KEY(gateway, id, mailbox));
 `
