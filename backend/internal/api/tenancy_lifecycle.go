@@ -65,7 +65,7 @@ func (s *Server) StartOrgPoller(ctx context.Context) {
 		}
 		var stuck *erasedPurgeError
 		if err := poll(ctx, time.Now()); errors.As(err, &stuck) && ctx.Err() == nil {
-			s.logger.Error("restore hold stays: an erased subject's purge cannot start", "erased_revision", strconv.FormatInt(stuck.revision, 10))
+			s.logger.Error("restore hold stays: an erased subject's purge cannot start", "revision", strconv.FormatInt(stuck.revision, 10))
 		} else if err != nil && ctx.Err() == nil {
 			// The error can quote an org ID; the line names none.
 			s.logger.Error("org entitlements not refreshed; members are refused once the cache is 15 minutes old", "error", "suite directory unavailable or its answer malformed")
