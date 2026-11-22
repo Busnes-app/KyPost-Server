@@ -488,6 +488,36 @@ the container. Mail already in R2 waits there (the Worker keeps accepting
 against its last table for up to 14 days); set the origin again to drain it.
 Disabling Email Routing deletes Cloudflare's locked SPF record; restore your own.
 
+## Hosted receiving tier (multi-tenant only)
+
+Not available yet: it needs `KYPOST_TENANCY=multi`, which startup still refuses. Every command
+below refuses on a self-hosted install, and the self-hosted profiles above do not change. Design:
+`docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`.
+
+Stateless MX hosts run Maddy and the `kypost-server` helper. The helper sends each `bind` and
+`accept` to `receiving serve --tls` on the replicas over TLS 1.3, and both sides check the other's
+key against a pin (SHA-256 of its SubjectPublicKeyInfo). There is no CA and no hostname check.
+
+1. On a replica: `kypost-server receiving gateway server-pin` prints the replicas' shared key pin.
+   The first run creates `SECRET_DIR/receiving-tls.key`.
+2. On each MX host: `kypost-server receiving gateway keygen /abs/path/gateway.key` writes an
+   owner-only Ed25519 key and prints its pin. The key never leaves the host.
+3. On a replica: `kypost-server receiving gateway add <id> <pin>` enrols it for 90 days. The ID is
+   1–63 lowercase letters, digits and hyphens. It becomes the gateway every delivery from that host
+   is stored under. `maddy-local`, `cloudflare-worker` and `cloudflare-continuous` are reserved.
+   Each change writes an audit log line.
+4. On the MX host, set `KYPOST_RECEIVING_REMOTE` to its remote file
+   ([configuration](CONFIGURATION.md)). Then run `kypost-server receiving config <IP:port>
+   <hostname> <cert> <key>` to build its Maddy profile from the replicas' domains.
+5. On each replica: `kypost-server receiving serve --tls <private-IP:port>`.
+
+Rotation: generate a new key on the host and `add` it under the same ID (at most two live pins
+per ID). Switch the host's remote file to it, then `receiving gateway revoke <id> <old-pin>`.
+Pins also expire after 90 days; a replica logs a warning on each connection from a pin with
+fewer than 14 days left. `receiving gateway retire <id>` revokes every pin of a decommissioned
+or compromised host and never takes that ID again. A key that was ever enrolled is never
+enrolled again. A revocation applies to the next connection.
+
 ## Verify and roll back
 
 Use the actual pinned-Maddy test from the assessment. It consumes generated

@@ -41,7 +41,6 @@ import (
 
 const (
 	receivingRemoteProtocol = 3
-	receivingRemoteEnv      = "KYPOST_RECEIVING_REMOTE"
 	receivingServerKeyFile  = "receiving-tls.key"
 	receivingConfigBytes    = 64 << 10
 )
@@ -383,7 +382,7 @@ type receivingRemote struct {
 // loadReceivingRemote reads KYPOST_RECEIVING_REMOTE. Unset is nil: the command runs as it
 // always has. Set, it must be valid on a multi install, and there is no local fallback.
 func loadReceivingRemote() (*receivingRemote, error) {
-	path := os.Getenv(receivingRemoteEnv)
+	path := os.Getenv("KYPOST_RECEIVING_REMOTE")
 	if path == "" {
 		return nil, nil
 	}

@@ -45,7 +45,7 @@ func multiReceivingFixture(t *testing.T) *tlsFixture {
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
 	t.Setenv("KYPOST_STAFF_ORG_ID", tlsStaffOrg)
 	t.Setenv("SECRET_DIR", t.TempDir())
-	t.Setenv(receivingRemoteEnv, "")
+	t.Setenv("KYPOST_RECEIVING_REMOTE", "")
 	st, err := state.New(r.stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func (f *tlsFixture) remote(t *testing.T, key string, servers []string, pins ...
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(receivingRemoteEnv, path)
+	t.Setenv("KYPOST_RECEIVING_REMOTE", path)
 }
 
 // rawCall completes a TLS handshake with key and sends header and body as given. It
@@ -486,7 +486,7 @@ func TestReceivingTLSRefusedOutsideMultiMode(t *testing.T) {
 	r, _ := receivingFixture(t)
 	quarantineCLI(t, r)
 	t.Setenv("SECRET_DIR", t.TempDir())
-	t.Setenv(receivingRemoteEnv, "")
+	t.Setenv("KYPOST_RECEIVING_REMOTE", "")
 	st, err := state.New(r.stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -512,11 +512,11 @@ func TestReceivingTLSRefusedOutsideMultiMode(t *testing.T) {
 			if err := runReceivingGateway([]string{"keygen", key}, io.Discard); !errors.Is(err, errReceivingSingle) {
 				t.Errorf("%q: keygen: %v", mode, err)
 			}
-			t.Setenv(receivingRemoteEnv, filepath.Join(t.TempDir(), "remote.json"))
+			t.Setenv("KYPOST_RECEIVING_REMOTE", filepath.Join(t.TempDir(), "remote.json"))
 			if err := runReceivingCommand([]string{"bind", "x", tlsSender, "one@example.test"}, nil); !errors.Is(err, errReceivingSingle) || exitCode(err) != 1 {
 				t.Errorf("%q: remote helper: %v", mode, err)
 			}
-			t.Setenv(receivingRemoteEnv, "")
+			t.Setenv("KYPOST_RECEIVING_REMOTE", "")
 		}
 	}
 	if _, err := os.Lstat(key); !errors.Is(err, os.ErrNotExist) {
@@ -588,7 +588,7 @@ func TestReceivingRemoteHasNoLocalFallback(t *testing.T) {
 		if err := os.WriteFile(bad, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv(receivingRemoteEnv, bad)
+		t.Setenv("KYPOST_RECEIVING_REMOTE", bad)
 		if _, err := loadReceivingRemote(); err == nil {
 			t.Errorf("accepted remote file %s", body)
 		}
