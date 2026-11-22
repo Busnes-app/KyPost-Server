@@ -98,6 +98,10 @@ func (s *Server) handleUserSendQuota(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "sending quota limits must be greater than zero", http.StatusBadRequest)
 		return
 	}
+	if err := s.staffTarget(r, r.PathValue("id")); err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
 	u, err := s.users.SetSendQuota(r.PathValue("id"), req.SendQuota)
 	if err != nil {
 		writeUserStoreError(w, err)

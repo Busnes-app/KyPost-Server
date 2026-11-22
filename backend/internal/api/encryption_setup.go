@@ -345,7 +345,10 @@ func (s *Server) handleUserKeySetup(w http.ResponseWriter, r *http.Request) {
 	}
 	ac, _ := authFromContext(r)
 	id := r.PathValue("id")
-	if _, err := s.users.Get(id); err != nil {
+	if u, err := s.users.Get(id); err != nil || !s.staffOrgAdmit(r, u) {
+		if err == nil {
+			err = users.ErrNotFound
+		}
 		writeUserStoreError(w, err)
 		return
 	}

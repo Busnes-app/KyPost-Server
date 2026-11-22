@@ -427,8 +427,8 @@ func TestDKIMKeyLockRequiresStepUp(t *testing.T) {
 		slices.Sort(routes)
 		// Every key action keeps the relay PUT's wrappers.
 		for _, route := range []string{"PUT /api/admin/mail-relay", "POST /api/admin/mail-relay/dkim/rotate", "POST /api/admin/mail-relay/dkim/confirm"} {
-			if !regexp.MustCompile(`mux\.HandleFunc\("` + regexp.QuoteMeta(route) + `", s\.withAdmin\(withActionDigest\(s\.`).Match(raw) {
-				t.Fatal("route lost withAdmin(withActionDigest(...))", route)
+			if !regexp.MustCompile(`mux\.HandleFunc\("` + regexp.QuoteMeta(route) + `", s\.withPlatformAdmin\(withActionDigest\(s\.`).Match(raw) {
+				t.Fatal("route lost withPlatformAdmin(withActionDigest(...))", route)
 			}
 		}
 		want := []string{"GET /api/admin/mail-relay", "GET /api/admin/mail-relay/deliverability", "POST /api/admin/mail-relay/dkim/confirm", "POST /api/admin/mail-relay/dkim/rotate", "POST /api/admin/mail-relay/test", "PUT /api/admin/mail-relay"}

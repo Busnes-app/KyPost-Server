@@ -16,7 +16,7 @@ import (
 func (s *Server) withAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		ac, ok := authFromContext(r)
-		if !ok || ac.Role != users.RoleAdmin {
+		if !ok || ac.Role != users.RoleAdmin || !s.isStaff(ac) {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "admin access required"})
 			return
 		}
@@ -54,7 +54,9 @@ func (s *Server) handleUsersList(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]users.Public, 0, len(all))
 	for _, u := range all {
-		out = append(out, u.Public())
+		if s.staffOrgAdmit(r, u) {
+			out = append(out, u.Public())
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": out})
 }
@@ -114,6 +116,10 @@ func (s *Server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
 	role, err := parseRole(req.Role)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.staffTarget(r, id); err != nil {
+		writeUserStoreError(w, err)
 		return
 	}
 	if role != users.RoleAdmin {
@@ -199,6 +205,10 @@ func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleUsersDeactivate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if err := s.staffTarget(r, id); err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
 	if blocked, err := s.isLastActiveAdmin(id); err != nil {
 		http.Error(w, "failed to deactivate user", http.StatusInternalServerError)
 		return
@@ -229,6 +239,10 @@ func (s *Server) handleUsersDeactivate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUsersReactivate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if err := s.staffTarget(r, id); err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
 	u, err := s.users.Reactivate(id)
 	if err != nil {
 		writeUserStoreError(w, err)
@@ -243,6 +257,10 @@ func (s *Server) handleUsersReactivate(w http.ResponseWriter, r *http.Request) {
 // authenticator, e.g. a new device with no recovery codes saved.
 func (s *Server) handleUsersClearMFA(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if err := s.staffTarget(r, id); err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
 	if !s.revokeSessionsFirst(w, id, "") {
 		return
 	}

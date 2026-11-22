@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PRs 1, 2 and 3 are built ("PR 1 as built", "PR 2 as built", "PR 3 as built"), the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 4 are built ("PR 1 as built" to "PR 4 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -1069,6 +1069,112 @@ build the multi paths as PR 2's do (`makeMultiTenant`).
     `TestOrgAdmit` and the mailbox, inbound-peer, people-search and address-move tests. It
     does not fail the matrix, because the per-user stores and the ledger already separate
     users.
+
+## PR 4 as built (2026-11-21)
+
+PR 4 follows the plan with these readings, each the safer one where K was ambiguous. Paths are
+under `backend/internal/` at the PR's head; T was read at KyIdentity `origin/master` `39d7d30`. Startup
+still refuses `multi`, so the tests build the multi paths as PRs 2 and 3 do (`makeMultiTenant`),
+with a staff administrator provisioned from a signed staff-org event.
+
+- **Route classes are the wrappers themselves** (`api/tenancy_staff.go`). Every administrator
+  route in `api/server.go` names one: `withPlatformAdmin` (53 routes), `withOrgAdmin` (15) or
+  `withRefusedAdmin` (9). Each calls `withAdmin`, so the class cannot disagree with what the
+  route does. Every other route is a member route, whose auth model
+  `TestEveryRouteDeclaresItsAuthModel` already requires.
+  - **The check:** `TestEveryAdminRouteHasAClass` (`api/route_class_test.go`) fails a route that
+    uses a bare `withAdmin` or names two classes.
+  - `TestRouteClassCheckFailsAnUnclassifiedRoute` runs the same check on a fixture, which must
+    fail on both kinds of route.
+  - The classes are K's Admin surface table. `GET /api/admin/kycalendar`, `kydrive` and
+    `kymessage` are the "suite peer status" rows. Native recovery repair is platform: it repairs
+    the accounts the restored ledger names, whole-install.
+- **K7 where routes are admitted.** `withAdmin` also needs `isStaff` (`api/tenancy_staff.go:165`,
+  called at `api/server_users.go:19`): in multi mode the caller's `AuthContext.OrgID` must equal
+  `KYPOST_STAFF_ORG_ID`. PR 2's users-store rules already refuse a customer administrator. This
+  is the second, independent check K7 asks for. Single mode compares nothing.
+- **`X-Ky-Org`** is read by `withOrgAdmin` (`:40`) only in multi mode, and only after `withAdmin`
+  has proved K7. Every refusal comes before the handler, the step-up and any audit row:
+  - **No header** (or an empty one): `400 {"error":"org_required"}`, as T says.
+  - **A malformed value:** `400 {"error":"org_invalid"}`. That covers more than one header, or a
+    value that is not PR 1's canonical lowercase UUID (`config.ValidOrgID`).
+  - **An unknown org:** `404 {"error":"org_unknown"}`. The org must have a row in the `orgs`
+    cache (`tenancy.KnownOrg`, `tenancy/tenancy.go:243`), in any status. A failed read answers
+    `503`. The staff org is exempt (K8).
+  - **Before PR 5 the cache is empty**, so only the staff org can be selected outside tests.
+  - **A customer member never reaches the header.** Every administrator route gives them
+    today's `403 {"error":"admin access required"}`, with or without it. A member route never
+    reads it ("URL, form or header" in Identity binding).
+- **Every query is limited to the selected org.** Each handler's own "missing" answer refuses
+  an object of another org. The gates are in `api/tenancy_staff.go`, and each is in the call-site
+  scan's `orgGates`:
+  - `staffTarget` covers the `/api/users/{id}` routes.
+  - `staffMailboxAdmit` covers a mailbox in the path or body.
+  - `staffAddressAdmit` covers an address's holding mailbox.
+  - The lists drop other orgs' accounts and mailboxes (`staffOrgMailboxes`). The mailbox list's
+    storage summary is summed over the selected org only, not the install.
+  - The address routes check the holder before the masked-address `409` and the step-up. A
+    staff member therefore cannot tell another org's masked address from an unknown one.
+  - The reassign keeps PR 3's `addressOneOrg`, and its target must also be in the selected org.
+    So the handler path PR 3 left unproven is now in the matrix.
+  - On a refusal, the operational log line's `target` is empty, so it names no other-org
+    mailbox.
+- **Staff audit.** Before the handler runs, `withOrgAdmin` writes one row to the audit log
+  (`backup_audit`, through `backup.Service.Audit`):
+  - `staff.read` for `GET`/`HEAD`, `staff.write` otherwise;
+  - actor: the staff account; target: `org:<org_id>`; details: `{"route":"<pattern>"}`;
+    outcome: `requested`.
+  - It names no subject, address, account or object ID. A request that cannot be audited
+    answers `503` and runs nothing.
+  - Writes keep their existing log lines unchanged. The org reaches them through the paired
+    `staff.write` row, not by a new field on each line, which would have changed each line's
+    single-mode bytes or needed a mode branch per handler.
+  - A KySignOn step-up's first call (the challenge) and its confirmed retry each write a row.
+- **K6, all answering `404 page not found` (`http.NotFound`) in multi mode:**
+  - `withRefusedAdmin` (`:32`): local user creation, password reset, administrator IMAP and
+    CardDAV assignment, and poll-now. It answers after the administrator check, so a customer
+    member still gets `403`.
+  - `offInMulti` (`:82`) on member routes:
+    - local password sign-in: `POST /api/auth/login`, `GET /api/auth/login-params` and the Play
+      reviewer's `POST /api/notifications/review-pairing`, which signs in with a password;
+    - the external-IMAP source: `GET|POST|DELETE /api/imap/config` and `POST /api/imap/test`.
+    The IMAP import tool is not a mail source and stays.
+  - **AutoProvision:** `PUT /api/admin/sso` with `autoProvision: true` answers `404`
+    (`api/sso_handlers.go:92`). `false` is saved. `sso.Store.Load`'s default of `true` for a
+    missing file is unchanged. PR 2 already makes sign-in ignore the setting in multi mode.
+  - The bootstrap administrator is still refused by `bootstrap-admin` refusing `multi` (PR 1).
+    PR 7 must keep it off when it accepts `multi`.
+  - PRs 2 and 3 already turned off SSO link and unlink and HR.
+- **Step-up replay across orgs.** The action digest (`withActionDigest`) does not cover
+  `X-Ky-Org`. A grant replayed with another org's header reaches the same object, which belongs
+  to one org, so it gets the missing answer. Read in code; not separately tested.
+- **Tests** (`api/tenancy_staff_test.go`, in every `internal/api` job, SQLite and PostgreSQL):
+  - **The staff variant:** `TestCrossOrgMatrixStaff`. Every `withOrgAdmin` route needs a case in
+    `staffCases` or the build fails. As staff with org A selected, each case makes three calls:
+    - with A's object: the control must succeed;
+    - with B's object: it must equal the missing answer byte for byte, leave B's digest
+      unchanged, write audit rows naming only org A, the staff actor and the route, and write
+      no log line naming B or org B;
+    - with an ID that never existed.
+  - `TestStaffListsKeepTheSelectedOrg`.
+  - `TestStaffOrgSelection` covers no header, an empty one, and malformed, oversize, case,
+    whitespace and repeated values. It also covers an unknown org, a customer member's header
+    on a member route, and the missing audit log.
+  - `TestEveryAdminRouteRefusesACustomerMember` calls every administrator route (77) as a
+    customer member with no header, A, B and the staff org. Each gets `403`, nothing changes,
+    and no audit row is written.
+  - `TestTenancyK6RefusalsAnswer404`, `TestIsStaff`.
+  - `TestSingleTenantIgnoresTheOrgHeader`: a single install answers the same with any
+    `X-Ky-Org` and writes no audit row.
+  - **Proof that the gates bite:** making `staffOrgAdmit` admit everything fails every staff
+    matrix case except reassign, which `addressOneOrg` still refuses, and fails the list test.
+- **Not built, by phase.**
+  - **The admin UI's org selector.** Nothing the SPA calls changes in single mode, and multi
+    cannot start, so there is no changed screen. The selector needs PR 5's `orgs` cache to
+    offer orgs.
+  - **Staff reading the audit across orgs by actor** (T "Audit"). KyPost's audit log is
+    whole-install, and no route reads it by org yet.
+  - The org status effects on staff routes (a suspended org's accounts) are PR 5's.
 
 ## Residual risks
 
