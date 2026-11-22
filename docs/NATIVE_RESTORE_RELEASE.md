@@ -20,7 +20,7 @@ Status: PRs 1–5 implemented: release floors, qualification marker, read-only s
 - **P3** A restore qualification marker `state/native-restore-qualification.json` `{epoch, createdAt, mailboxes:{id:referenceGeneration}}`, written as the last `QuarantineNativeRestore` step, matches at release; no queued or retryable outbox rows exist.
 - **P4** Release floors (below, implemented).
 - **P5** Administrator step-up.
-- **P6** Only an active local administrator with no SSO link, on a password session (not native, not KySignOn, not generic SSO), may release. An SSO-linked one could be deactivated by the release itself.
+- **P6** Only an active local administrator with no SSO link, on a password session (not native, not KySignOn, not generic SSO), may release. An SSO-linked one could be deactivated by the release itself. In a hosted (multi-tenant) install, which has no local administrators, P6 is instead a staff administrator on a KySignOn session, confirmed by an action-bound KySignOn step-up, and the release also refuses until a poll of every org from revision 0 and KyIdentity's erased-subject list have both succeeded since this restore (tenancy design, "PR 6 as built").
 - **P7** `qualification.createdAt <= challenge.CreatedAt`; every native `RevokedBefore >= createdAt`; release raises `RevokedBefore` to now + 31 s again.
 - **P8** Fresh domain proof for at least one configured domain.
 - **P9** Holds with zero subjects take a separate path later; the release refuses them.

@@ -563,6 +563,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		nativeDomains:            sso.NewNativeDomainStore(configDir),
 		ssoLifecycle:             sso.NewLifecycleStore(configDir),
 	}
+	s.ssoLifecycle.Purged = s.mailboxPurged
 	if globalStore != nil {
 		bc, err := config.LoadBackupConfig()
 		if err != nil {

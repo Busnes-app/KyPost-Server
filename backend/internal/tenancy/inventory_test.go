@@ -63,7 +63,7 @@ var tableClass = map[string]map[string]string{
 	"tenancy": {
 		"orgs": platform, "user_orgs": org, "subject_orgs": org, "receiving_gateways": platform,
 		"sender_blocks": platform, "sender_evidence": platform,
-		"org_purges": platform, "org_purge_members": platform, "address_tombstones": platform,
+		"org_purges": platform, "org_purge_members": platform, "address_tombstones": platform, "restore_reads": platform, "purged_mailboxes": platform,
 		"import_leases": derived, "retired_bindings": derived,
 	},
 	"catalog": {"stores": platform},

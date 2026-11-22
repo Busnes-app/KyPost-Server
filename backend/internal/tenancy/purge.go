@@ -143,7 +143,8 @@ func MarkPurgeStep(ctx context.Context, db *sql.DB, scope PurgeScope, step int) 
 	return err
 }
 
-// FinishPurge marks scope done and deletes its snapshot, in one transaction.
+// FinishPurge marks scope done, records its mailboxes as purged and deletes its snapshot,
+// in one transaction.
 func FinishPurge(ctx context.Context, db *sql.DB, scope PurgeScope, now time.Time) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -151,6 +152,11 @@ func FinishPurge(ctx context.Context, db *sql.DB, scope PurgeScope, now time.Tim
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `UPDATE org_purges SET done_at = ? WHERE org_id = ? AND subject = ? AND done_at IS NULL`, now.Unix(), scope.Org, scope.Subject); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO purged_mailboxes(mailbox, org_id, subject, purged_at)
+ SELECT id, org_id, subject, ? FROM org_purge_members WHERE org_id = ? AND subject = ? AND kind = 'mailbox'
+ ON CONFLICT DO NOTHING`, now.Unix(), scope.Org, scope.Subject); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM org_purge_members WHERE org_id = ? AND subject = ?`, scope.Org, scope.Subject); err != nil {
@@ -337,13 +343,39 @@ func FenceRestored(stateDir string) (err error) {
 	return ForgetRestored(context.Background(), db)
 }
 
-// ForgetRestored is FenceRestored's change: the org cache and the finished purges go.
+// ForgetRestored is FenceRestored's change: the org cache, the finished purges and any
+// restore read go.
 func ForgetRestored(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `DELETE FROM orgs`); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `DELETE FROM org_purges WHERE done_at IS NOT NULL`)
+	if _, err := db.ExecContext(ctx, `DELETE FROM org_purges WHERE done_at IS NOT NULL`); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM restore_reads`)
 	return err
+}
+
+// RecordRestoreRead records that, during the restore hold epoch, a poll of every org from
+// revision 0 and a read of every erased subject both succeeded (K "Delete everything").
+func RecordRestoreRead(ctx context.Context, db *sql.DB, epoch string, now time.Time) error {
+	_, err := db.ExecContext(ctx, `INSERT INTO restore_reads(epoch, read_at) VALUES(?, ?) ON CONFLICT DO NOTHING`, epoch, now.Unix())
+	return err
+}
+
+// MailboxPurged reports whether a finished purge removed mailbox. The record outlives
+// ForgetRestored: tombstones and subject_orgs keep the ID from ever being reused.
+func MailboxPurged(ctx context.Context, db *sql.DB, mailbox string) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM purged_mailboxes WHERE mailbox = ?`, mailbox).Scan(&n)
+	return n > 0, err
+}
+
+// RestoreRead reports whether RecordRestoreRead ran for epoch.
+func RestoreRead(ctx context.Context, db *sql.DB, epoch string) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM restore_reads WHERE epoch = ?`, epoch).Scan(&n)
+	return n > 0, err
 }
 
 // PurgeCoverage maps every org-owned (O) and derived (D) store of the design's Store
