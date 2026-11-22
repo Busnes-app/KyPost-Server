@@ -223,16 +223,23 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
   implementation. The choice is made once, at open, by `KYPOST_TENANCY=multi`, as RX PR 3 picks the
   sender tables (`app/receiving.go:455-461`). No store branches on the mode
   anywhere else.
-- **CAS.** A write gives the revision it read. `UPDATE … SET body=?, revision=revision+1 WHERE
-  root=? AND path=? AND revision=?`, or, for revision 0 (the document was absent),
-  `INSERT … ON CONFLICT (root, path) DO NOTHING`, so two replicas creating one document never
-  see a key violation. If either statement touches no row, the write returns `ErrStale`.
-  **Remove keeps a tombstone.** It sets `body` to NULL and bumps the revision. It never deletes the
-  row, so a document's revision only grows. A writer that read revision 1 before a remove and
-  re-create can never match the new row: that is the ABA case. A re-create from a tombstone is an
-  `UPDATE` on the tombstone's revision. Only the purge deletes rows, and only under user and
-  mailbox IDs, which are random UUIDs and never reused (`fsutil.NewUUIDv4` at `users/users.go:765,1432`, `sso/native_allocate.go:95`, `sso/native_mailbox.go:69`), and the store retries its read-modify-write. The retry is bounded. A store
-  that exhausts the bound fails the request with `503`, never with a partial write.
+- **CAS on a global revision.** Every write takes a fresh `revision` from one PostgreSQL
+  sequence (`nextval`), so no two versions of any document, before or after a remove, ever share a
+  revision. A write gives the revision it read:
+  - an update is `UPDATE … SET body=?, revision=nextval(…) WHERE root=? AND path=? AND revision=?`;
+  - a create (the document was absent) is `INSERT … ON CONFLICT (root, path) DO NOTHING`, so two
+    replicas creating one document never see a key violation;
+  - a remove is `DELETE … WHERE root=? AND path=? AND revision=?`.
+
+  If any of these touches no row, the write returns `ErrStale`, and the store retries its
+  read-modify-write. The retry is bounded. A store that exhausts the bound fails the request with
+  `503`, never with a partial write.
+
+  Because revisions never repeat, a writer that read a document before a remove and re-create
+  cannot match the new row (the ABA case), however long it stalled. So a remove deletes the row,
+  with no tombstone and no timing argument. A restore sets the sequence above the restored
+  table's highest revision before any replica starts. The SQLite DDL exists only for the capsule
+  copy (K "PR 1 as built"). Multi mode never writes through it.
 - **Size.** Each document has a cap of 16 MiB, refused at the write. That is about twice the
   largest store's own bound. MH2 measures the bounds per store, and the stores keep their own,
   smaller caps.
@@ -246,14 +253,8 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
   A D store with no owner mapping fails `TestEveryStoreIsClassified`, which gains the per-store
   owner rule. K PR 6's purge deletes an org's rows `WHERE owner IN` the snapshot's user IDs, so
   pickup links go with the org.
-- **Tombstone cleanup.** The elected `api-sweepers` worker hard-deletes tombstones older than 24
-  hours. It also hard-deletes expired pickup rows, which it already sweeps today
-  (`docs/RUNNING.md:277`, "pickup and contact sweeps"). The ABA guard needs a tombstone only while
-  a writer could still hold the old revision. Every write runs inside a request or job with a
-  deadline far shorter than 24 hours (`docs/RUNNING.md:471`, "Request deadline and proxy
-  timeouts"; the longest is the 16-minute backup drain). A path re-created after cleanup restarts
-  its revision, so a stale writer could match it only by holding its read for over 24 hours, which
-  no deadline allows.
+- **Expired rows.** The elected `api-sweepers` worker already sweeps expired pickup links
+  (`docs/RUNNING.md:277`, "pickup and contact sweeps"). In multi mode it deletes their rows.
 - **Backups.** `tenancy.db` joins the backup set in K PR 6 (K "PR 1 as built"). A multi install's
   documents and accounts are then in every capsule's database export. A restore loads them with the
   rest of `tenancy.db`, so it writes no files. That PR is therefore a hard dependency of MH2.
@@ -278,20 +279,28 @@ account from being misreported as `ErrSSOSubTaken`.
   per-row comparisons in the same transaction. The `UNIQUE` constraints enforce `ErrSSOSubTaken`
   and username uniqueness in the database rather than in a whole-file scan.
 - `WithCurrentUsers` (`users/users.go:830-865`) reads every account under the shared lock, and
-  today that lock also keeps writers out while a caller checks and then acts. Its replacement is
-  split in two:
+  today that lock also keeps writers out while a caller checks and then acts. Its replacement:
   - **A caller that only reads** gets one `REPEATABLE READ` scan.
   - **A write that checks a whole-set invariant runs `SERIALIZABLE`.** Examples are the
     last-administrator rule, and a staff demotion or deactivation checked against it. On
     serialization failure (`40001`) it retries within the CAS bound, then answers `503`.
     `REPEATABLE READ` would allow write skew here. Two demotions on two replicas each lock only
     their own row, each sees the other administrator still active, and both commit, which leaves
-    no administrator.
-  - **The purge snapshot** keeps K PR 2's order: it lists `user_orgs` before it lists accounts. It
-    runs `SERIALIZABLE` against concurrent provisioning for the org, so a new account cannot fall
-    between the two reads. The stat-based read cache (`users/users.go:644-682`)
-  becomes a per-account read that is revision-checked, so no replica serves an account it has not
-  re-read this request (`currentUser` already re-reads, K "What KyPost has today").
+    no administrator. Every writer that can change an administrator runs `SERIALIZABLE`, so
+    PostgreSQL's serializable snapshot isolation sees both sides of the conflict.
+  - **The purge snapshot against provisioning** uses a fence, not isolation, because provisioning
+    is several ordered writes in several stores (`subject_orgs`, `accounts`, `user_orgs`; K "PR 2
+    as built"), which one `SERIALIZABLE` transaction cannot cover.
+    - Provisioning an account holds `fence:org:<org_id>` shared from its first write to its last.
+      It re-reads the org's cache row under the fence and refuses an org that is `deleted`.
+    - The purge takes the same fence exclusively for its snapshot. It keeps K PR 2's order:
+      `user_orgs` before accounts.
+    - The fence can be lost. So the purge's final check (K step 6) lists `subject_orgs`,
+      `user_orgs` and `accounts` for the org once more, and re-runs the member steps for any
+      survivor before the purge is marked done.
+- The stat-based read cache (`users/users.go:644-682`) becomes a per-account read that is
+  revision-checked, so no replica serves an account it has not re-read this request
+  (`currentUser` already re-reads, K "What KyPost has today").
 - `user_orgs` stays as it is (K3). PR 2's three-record check (`checkAccountOrg`) is unchanged,
   because `accounts.record.OrgID` is the `users.json` `OrgID`.
 
@@ -427,7 +436,7 @@ in tests, as K's do (`makeMultiTenant`).
    Tests:
    - CAS: a stale revision is refused, two writers race on an update and on a first create and in
      each case one wins with the other retrying, a writer that read before a remove and
-     re-create is refused (ABA), and
+     re-create is refused (ABA) whatever the delay, and
      the retry bound gives `503`;
    - boundary: an absolute path, `..`, NUL, an empty segment, oversize paths and bodies, all refused
      before SQL;
@@ -443,16 +452,19 @@ in tests, as K's do (`makeMultiTenant`).
    - the root `config.yaml` change seen by a second replica within 5 s;
    - K PR 6's purge removing every document of the org by `owner`, pickup links included,
      checked against the classification;
-   - tombstone and expired-pickup cleanup;
+   - expired-pickup cleanup;
    - a cross-org case in `TestCrossOrgMatrix` per new document kind.
 3. **MH3: accounts.** The `accounts` table, per-row invariants, the `REPEATABLE READ` read-only
    snapshot, and `SERIALIZABLE` with a bounded `40001` retry for every write that checks a
-   whole-set invariant (the last-administrator rule and the demotions checked against it) and for
-   the purge snapshot (The `accounts` table).
+   whole-set invariant (the last-administrator rule and the demotions checked against it), plus
+   the per-org fence between provisioning and the purge snapshot, and the purge's final re-check
+   (The `accounts` table).
    Tests:
    - every users-store test on both implementations;
    - two concurrent demotions of the last two administrators on two replicas: exactly one commits;
    - two unbound accounts coexisting;
+   - provisioning racing a purge snapshot: the new account is refused or purged, and never
+     survives (including with the fence forced lost);
    - PR 2's write-once and K7 tests in multi mode;
    - a uniqueness race between two replicas creating one subject, where one wins and the other
      gets `ErrSSOSubTaken`;
