@@ -96,7 +96,7 @@ All volume locks go through `fsutil` (`fsutil/lock.go:29` `WithFileLock`, `:42` 
 | `server-instance.lock`, `state.db.<hash>.lock` | `state/coordination.go:324-343` (`HoldInstance`), `:299-315` (`withFlock`) | SQLite only (`app/replica.go:123-137`; `state/coordination.go:172-174`) | Not reached: multi mode is PostgreSQL only (K2). |
 
 **Fences.** A fence is R's existing session advisory lock (`state.Store.Hold`,
-`state/coordination.go:281-296`), with three changes, all made only in multi mode:
+`state/coordination.go:281-296`), with four changes, all made only in multi mode:
 
 1. **R's probe.** Today `Hold` and `Serialized` (`:270-279`) take the lock on a connection of their
    own and never probe it. Only `WithLock` (`:164-195`) probes, so a holder whose lock
@@ -114,10 +114,26 @@ All volume locks go through `fsutil` (`fsutil/lock.go:29` `WithFileLock`, `:42` 
    writing for up to the probe bound (2 s, `ProbeBound`, `:144`) fails its write instead of
    overwriting a newer one.
 
-Advisory keys are `hashtext(current_schema() || ':' || name)` (`state/coordination.go:160-162`),
-a 32-bit hash. Two fence names can collide. A collision only makes two unrelated fences wait for
-each other, which is safe, but it can cost throughput at hosted scale. The capacity measurement
-counts collisions.
+4. **Keys, sessions and waits.** R's lock keys are `(space, hashtext(current_schema() || ':' ||
+   name))` (`state/coordination.go:154-162`), so the name part is a 32-bit hash. With one fence per
+   user and per mailbox, collisions are expected at hosted scale. Fences are nested (settings →
+   domains → directory), so a collision is not only a slowdown. A request holding fence A on one
+   connection that asks for a colliding fence B on a second connection waits on itself. Two
+   requests can also wait on each other in a cycle. PostgreSQL's deadlock detector cannot see
+   either wait, because the holder is idle and the waiting happens in the application. So a fence:
+   - **uses a 64-bit key**: `pg_advisory_lock(bigint)` on the first 8 bytes of
+     SHA-256(schema, `:`, name). The bigint form is a separate key space from R's two-int locks
+     (`state/coordination.go:153`), so a fence never meets them. It does share that space with the
+     per-schema writer locks (`dbbackend/pgdialect/driver.go:120-123`, FNV-64 of the schema name).
+     With 64-bit keys, a collision with one of those is negligible, but it is not impossible;
+   - **holds every fence of one request on one session.** A fence set takes its fences in the fixed
+     order on one dedicated connection. A session advisory lock is re-entrant within its session,
+     so a collision inside one request is harmless;
+   - **has a bounded wait** like R's `pairingLockWait` (10 s, `api/shared_state.go:63-65`). A wait
+     that runs out fails the request with `503` and logs the fence's kind, never its name (a name
+     carries a user or mailbox ID). A cycle between two requests therefore ends in one `503`, not
+     a hang. MH1 tests a forced collision (a test hook that maps two names to one key) both inside
+     one request and across two.
 
 ## Inventory of volume files, with targets
 
@@ -208,8 +224,9 @@ documents(root TEXT, path TEXT, revision BIGINT, body BYTEA, updated_at BIGINT,
   sender tables (`app/receiving.go:455-461`). No store branches on the mode
   anywhere else.
 - **CAS.** A write gives the revision it read. `UPDATE … SET body=?, revision=revision+1 WHERE
-  root=? AND path=? AND revision=?`, or `INSERT` for revision 0. If it touches no row, the write
-  returns `ErrStale`, and the store retries its read-modify-write. The retry is bounded. A store
+  root=? AND path=? AND revision=?`, or, for revision 0 (the document was absent),
+  `INSERT … ON CONFLICT (root, path) DO NOTHING`, so two replicas creating one document never
+  see a key violation. If either statement touches no row, the write returns `ErrStale`, and the store retries its read-modify-write. The retry is bounded. A store
   that exhausts the bound fails the request with `503`, never with a partial write.
 - **Size.** Each document has a cap of 16 MiB, refused at the write. That is about twice the
   largest store's own bound. MH2 measures the bounds per store, and the stores keep their own,
@@ -371,7 +388,8 @@ in tests, as K's do (`makeMultiTenant`).
    `documents` table, and the fence type: `Hold` with R's probe, a shared mode, and the fence
    names. Nothing uses them in production yet.
    Tests:
-   - CAS: a stale revision is refused, two writers race and one wins with the other retrying, and
+   - CAS: a stale revision is refused, two writers race on an update and on a first create and in
+     each case one wins with the other retrying, and
      the retry bound gives `503`;
    - boundary: an absolute path, `..`, NUL, an empty segment, oversize paths and bodies, all refused
      before SQL;
@@ -478,7 +496,8 @@ in tests, as K's do (`makeMultiTenant`).
   verification mail or an SMTP call made twice. The outbox claim fences sends. The others are at
   least once, as today.
 - **Per-replica meters** that stay per replica allow N times their limit (above). N is now larger.
-- **Advisory-key collisions** (a 32-bit hash) can make unrelated fences wait for each other.
+- **Advisory-key collisions** are negligible with 64-bit fence keys but still possible. The bounded
+  wait turns one into a `503`, not a hang.
 - **More machines hold every key.** The operator and staff are trusted, as in K.
 - **Document scale is unmeasured.** Per-user documents are rewritten whole, as the files are. A
   very large `contacts.json` costs one large row write per change. The capacity measurement (K
@@ -504,8 +523,8 @@ in tests, as K's do (`makeMultiTenant`).
    connections, and R requires "a direct connection or session pooling, never transaction
    pooling" (`state/coordination.go:166-167`). *Recommend* direct connections or PgBouncer in session
    mode, with `max_connections` sized by R's budget formula (`docs/RUNNING.md:447-456`) times the
-   number of hosts. Fences add one dedicated connection per fence held at once, so that peak is
-   part of the capacity measurement.
+   number of hosts. Fences add one dedicated connection per request holding a fence set, so that
+   peak is part of the capacity measurement.
 6. **Which per-replica meters to share.** *Recommend* the five "shared window" rows above (nine meters), which
    send something to a third party or face unauthenticated callers, and leaving the per-account
    load-shedding meters per replica.

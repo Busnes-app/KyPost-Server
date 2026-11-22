@@ -679,7 +679,7 @@ nobody is disabled".
 R runs several app replicas on one host, with one PostgreSQL and shared volumes. Multi mode must
 also run across hosts (below, "Several hosts"). The `.db` stores
 are in PostgreSQL. Accounts (`users.json`), per-user JSON and `config.yaml`, DKIM keys and the
-secret keys stay on the volumes behind host-local file locks (R `docs/RUNNING.md:242-245,283`).
+secret keys stay on the volumes behind host-local file locks (`docs/RUNNING.md:240-245,287` at `origin/main` `3e467f2b`).
 Tenancy fits on top:
 
 - **Mode and staff org stay out of R's fingerprint.** Adding them would make R's `Diff` merge new
@@ -710,7 +710,7 @@ Tenancy fits on top:
   That is acceptable, because it is rare and audited.
 - **Lockout keys** hash the username or IP with no namespace (R `api/shared_state.go:41-61`).
   Hosted usernames are unique across the install, so no change is needed.
-- **Per-replica meters** allow up to N times their limit with N replicas (R `docs/RUNNING.md:278`,
+- **Per-replica meters** allow up to N times their limit with N replicas (`docs/RUNNING.md:282` at `3e467f2b`,
   "O4"). Per-org quotas must not use those in-memory meters. They read PostgreSQL (`send_ledger`)
   or the ledger, so they hold across replicas. MH "Per-replica meters" lists every meter and moves
   the ones that reach a third party or unauthenticated callers into R's shared windows (MH6).
