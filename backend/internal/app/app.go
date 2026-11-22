@@ -74,6 +74,9 @@ func Run(args []string) error {
 		if len(args) > 1 && args[1] == "config" {
 			return runReceivingConfig(args[2:], os.Stdout)
 		}
+		if len(args) > 1 && args[1] == "gateway" {
+			return runReceivingGateway(args[2:], os.Stdout)
+		}
 		if len(args) > 1 && args[1] == "serve" {
 			return runReceivingServe(args[2:])
 		}

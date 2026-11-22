@@ -100,6 +100,9 @@ func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 // runReceivingServe opens the receiving runtime once, as the daemon's import
 // loop does, and answers forwarded commands until SIGTERM.
 func runReceivingServe(args []string) error {
+	if len(args) == 2 && args[0] == "--tls" {
+		return runReceivingServeTLS(args[1])
+	}
 	if len(args) != 0 {
 		return errors.New("usage: receiving serve")
 	}
@@ -117,6 +120,11 @@ func runReceivingServe(args []string) error {
 		return err
 	}
 	slog.Info("receiving server listening", "actor", receivingGateway, "task_id", "native-receiving")
+	return serveReceiving(ctx, ln, func(conn net.Conn) { r.serveConn(conn.(*net.UnixConn)) })
+}
+
+// serveReceiving answers connections until ctx ends, at most receivingServeHandlers at once.
+func serveReceiving(ctx context.Context, ln net.Listener, handle func(net.Conn)) error {
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -125,7 +133,7 @@ func runReceivingServe(args []string) error {
 	defer wg.Wait()
 	slots := make(chan struct{}, receivingServeHandlers)
 	for {
-		conn, err := ln.AcceptUnix()
+		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -135,7 +143,7 @@ func runReceivingServe(args []string) error {
 		slots <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-slots }()
-			r.serveConn(conn)
+			handle(conn)
 		})
 	}
 }
@@ -174,13 +182,20 @@ func (r *receivingRuntime) serveConn(conn *net.UnixConn) {
 	if !sameUser(conn) {
 		return
 	}
+	r.answer(conn, receivingProtocol)
+}
+
+// answer reads one request of protocol (2 on the socket, 3 over TLS) and writes its exit
+// code, then for a protocol 3 config its reply.
+func (r *receivingRuntime) answer(conn net.Conn, protocol int) {
 	code := byte(1)
+	var reply []byte
 	defer func() {
 		if p := recover(); p != nil {
 			slog.Error("receiving command panicked; answered as a temporary refusal", "actor", receivingGateway, "panic", fmt.Sprint(p))
-			code = 1
+			code, reply = 1, nil
 		}
-		_, _ = conn.Write([]byte{code})
+		_, _ = conn.Write(append([]byte{code}, reply...))
 	}()
 	limit := time.Now().Add(30 * time.Second)
 	if conn.SetDeadline(limit.Add(time.Second)) != nil {
@@ -191,29 +206,65 @@ func (r *receivingRuntime) serveConn(conn *net.UnixConn) {
 	if err != nil {
 		return
 	}
-	var req receivingRequest
-	if json.Unmarshal(line, &req) != nil || req.V != receivingProtocol || len(req.Args) == 0 || (req.Args[0] != "bind" && req.Args[0] != "accept") {
+	args, deadline, length, ok := parseReceivingRequest(line, protocol, limit)
+	if !ok {
 		return
 	}
-	if err := checkReceivingArgs(req.Args); err != nil {
+	if args[0] == "config" {
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		if _, ok := readReceivingBody(in, "bind", length); ok {
+			code, reply = r.configReply(ctx)
+		}
+		return
+	}
+	if err := checkReceivingArgs(args); err != nil {
 		code = byte(receivingExit(err))
 		return
 	}
-	deadline := time.Unix(0, req.Deadline)
-	if deadline.After(limit) {
-		deadline = limit
-	}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	body, ok := readReceivingBody(in, req.Args[0], req.Length)
+	body, ok := readReceivingBody(in, args[0], length)
 	if !ok {
 		return // a short, long or misdeclared message is never committed
 	}
-	err = r.run(ctx, req.Args, bytes.NewReader(body))
+	err = r.run(ctx, args, bytes.NewReader(body))
 	code = byte(receivingExit(err))
 	if err == nil {
 		code = 0
 	}
+}
+
+// parseReceivingRequest checks a header line. Protocol 2 carries an absolute deadline;
+// protocol 3 carries budget_ms, the time left, because hosts do not share a clock, and
+// adds config. The server caps every command at limit.
+func parseReceivingRequest(line []byte, protocol int, limit time.Time) (args []string, deadline time.Time, length int64, ok bool) {
+	if protocol == receivingProtocol {
+		var req receivingRequest
+		if json.Unmarshal(line, &req) != nil || req.V != receivingProtocol || len(req.Args) == 0 || (req.Args[0] != "bind" && req.Args[0] != "accept") {
+			return nil, time.Time{}, 0, false
+		}
+		deadline = time.Unix(0, req.Deadline)
+		if deadline.After(limit) {
+			deadline = limit
+		}
+		return req.Args, deadline, req.Length, true
+	}
+	var req receivingRemoteRequest
+	dec := json.NewDecoder(bytes.NewReader(line))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&req) != nil || req.V != receivingRemoteProtocol || req.BudgetMS < 1 || req.BudgetMS > 30_000 || len(req.Args) == 0 ||
+		(req.Args[0] != "bind" && req.Args[0] != "accept" && (req.Args[0] != "config" || len(req.Args) != 1)) {
+		return nil, time.Time{}, 0, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, time.Time{}, 0, false
+	}
+	deadline = time.Now().Add(time.Duration(req.BudgetMS) * time.Millisecond)
+	if deadline.After(limit) {
+		deadline = limit
+	}
+	return req.Args, deadline, req.Length, true
 }
 
 // readReceivingBody reads exactly the declared message and then requires EOF:

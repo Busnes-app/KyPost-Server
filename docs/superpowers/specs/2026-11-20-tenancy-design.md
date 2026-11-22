@@ -95,6 +95,7 @@ K6). "Multi-only" means the store or column exists only in a multi install (K3).
 | New `tenancy.db` `user_orgs` | (multi-only) `tenancy/tenancy.go` | O | K3. The user root: one row per account, written once with `users.User.OrgID`. |
 | Root `state.db` `backup_audit` | `state/schema.go` | P | Whole-install backups. |
 | New `tenancy.db` `orgs` cache | (multi-only) `tenancy/tenancy.go` | P | K8. The registry every org check reads. |
+| New `tenancy.db` `receiving_gateways` | (multi-only) `tenancy/tenancy.go`, `tenancy/gateways.go` | P | The hosted receiving tier's MX key pins (receiving tier spec, PR 2). Rows are never deleted. |
 | New `org_purges`, `org_purge_members` | (multi-only, PR 6; in `tenancy.db`, as the other side tables) | P | Purge progress, one row per deleted org, plus the snapshot of its user, mailbox and subject IDs taken at purge start, so a purge that died halfway resumes (Lifecycle). The snapshot is deleted when the purge is marked done. |
 | Per-user / per-mailbox `state.db` (`processed`, `decisions`, `notifications`, `native_devices`, `pull_notifications`, `deferrals`, `sorter_*`, `snoozes`, `ooo_*`) | `api/server_userscope.go:86-92`; same schema as root | D (user or mailbox directory) | The directory, or on Postgres the `kypost_f_*` schema, is the owner. |
 | `mailbox.db` (messages, folders, labels, receipts, usage, `outbox*`, …) | `mailbox/store.go:118-132`, `mailbox/pg_schema.go:17-32` | D (mailbox) | The `identity` row names `(issuer, subject, mailbox)` (`mailbox/store.go:118`). It gains no `org_id`: the mailbox's account carries it. |
@@ -144,7 +145,8 @@ client credentials), `totp-secret.key` (TOTP secrets, recovery-code digests and 
 HMAC), `pgp-private-key.key` (users' sealed PGP private keys), `pickup-store.key`, `pairing.key`,
 `pow.key`, `relay-identity.key`, `scheduled-send.key`, `push_relay_key` and `apns_relay_key`,
 `notifications-vapid-private.pem`, `cloudflare-receiving.json`, `bulk-backup.key` and `.repo`, and
-R's `imap-import.key` (`api/server.go:384-426`, `api/scheduled_send.go:161`,
+R's `imap-import.key`, and the hosted receiving tier's `receiving-tls.key` (multi-only, created by
+`receiving serve --tls` or `receiving gateway server-pin`, `app/receiving_tls.go`) (`api/server.go:384-426`, `api/scheduled_send.go:161`,
 `processor/native_sender.go:211-218`, `config/config.go:778`, `cfreceiving/state.go:22`,
 `backup/bulk.go:40-41`). Per-org keys are not proposed. Every key already seals per-user records,
 and a per-org key would protect nothing from the operator, who holds all of them (Residual risks).

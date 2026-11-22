@@ -28,6 +28,8 @@ const (
 
 // The entitlement cache (orgs, K8) and the two org roots (K3/K4). user_orgs and
 // subject_orgs are write-once: an UPDATE is refused, and writers use plain INSERT.
+// receiving_gateways holds the MX hosts' pinned keys (gateways.go); its rows are never
+// deleted and only gain revoked_at and retired_at.
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS orgs (
  id TEXT PRIMARY KEY,
@@ -40,6 +42,16 @@ CREATE TABLE IF NOT EXISTS subject_orgs (
  PRIMARY KEY(issuer, subject));
 CREATE TRIGGER IF NOT EXISTS user_orgs_write_once BEFORE UPDATE ON user_orgs BEGIN SELECT RAISE(ABORT, 'org bindings are write-once'); END;
 CREATE TRIGGER IF NOT EXISTS subject_orgs_write_once BEFORE UPDATE ON subject_orgs BEGIN SELECT RAISE(ABORT, 'org bindings are write-once'); END;
+CREATE TABLE IF NOT EXISTS receiving_gateways (
+ id TEXT NOT NULL, spki_sha256 TEXT NOT NULL UNIQUE,
+ created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER, retired_at INTEGER,
+ PRIMARY KEY(id, spki_sha256));
+CREATE TRIGGER IF NOT EXISTS receiving_gateways_kept BEFORE DELETE ON receiving_gateways BEGIN SELECT RAISE(ABORT, 'gateway pins are never deleted'); END;
+CREATE TRIGGER IF NOT EXISTS receiving_gateways_final BEFORE UPDATE ON receiving_gateways
+ WHEN NEW.id IS NOT OLD.id OR NEW.spki_sha256 IS NOT OLD.spki_sha256 OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.expires_at IS NOT OLD.expires_at OR (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NOT OLD.revoked_at)
+  OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
+ BEGIN SELECT RAISE(ABORT, 'a gateway pin only ever gains revoked_at and retired_at'); END;
 `
 
 const pgSchema = `
@@ -55,6 +67,18 @@ CREATE TABLE IF NOT EXISTS subject_orgs (
 CREATE OR REPLACE FUNCTION org_binding_write_once() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'org bindings are write-once'; END $$;
 CREATE OR REPLACE TRIGGER user_orgs_write_once BEFORE UPDATE ON user_orgs FOR EACH ROW EXECUTE FUNCTION org_binding_write_once();
 CREATE OR REPLACE TRIGGER subject_orgs_write_once BEFORE UPDATE ON subject_orgs FOR EACH ROW EXECUTE FUNCTION org_binding_write_once();
+CREATE TABLE IF NOT EXISTS receiving_gateways (
+ id TEXT NOT NULL, spki_sha256 TEXT NOT NULL UNIQUE,
+ created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL, revoked_at BIGINT, retired_at BIGINT,
+ PRIMARY KEY(id, spki_sha256));
+CREATE OR REPLACE FUNCTION receiving_gateway_final() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'gateway pins are never deleted'; END IF;
+ IF NEW.id IS DISTINCT FROM OLD.id OR NEW.spki_sha256 IS DISTINCT FROM OLD.spki_sha256 OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  OR NEW.expires_at IS DISTINCT FROM OLD.expires_at OR (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at)
+  OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS DISTINCT FROM OLD.retired_at) THEN
+  RAISE EXCEPTION 'a gateway pin only ever gains revoked_at and retired_at'; END IF;
+ RETURN NEW; END $$;
+CREATE OR REPLACE TRIGGER receiving_gateways_final BEFORE UPDATE OR DELETE ON receiving_gateways FOR EACH ROW EXECUTE FUNCTION receiving_gateway_final();
 `
 
 func init() {

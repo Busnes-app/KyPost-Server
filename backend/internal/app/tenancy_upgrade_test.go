@@ -240,6 +240,15 @@ func TestSingleTenantUpgradeIsByteForByte(t *testing.T) {
 	}
 	for _, v := range []struct{ name, env string }{{"unset", "KYPOST_TENANCY="}, {"single", "KYPOST_TENANCY=single"}} {
 		start(v.name, false, v.env)
+		// The hosted receiving transport (RX PR 2) refuses and writes nothing: no server
+		// key in SECRET_DIR, no tenancy.db, no pin.
+		for _, args := range [][]string{{"receiving", "serve", "--tls", "127.0.0.1:2526"}, {"receiving", "gateway", "server-pin"}, {"receiving", "gateway", "add", "mx-a", strings.Repeat("a", 64)}} {
+			cmd := exec.Command(bin, args...)
+			cmd.Env = append(slices.Clone(env), v.env)
+			if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "multi-tenant install") {
+				t.Errorf("KYPOST_TENANCY %s: %v ran: %v %s", v.name, args, err, out)
+			}
+		}
 		got := installSnapshot(t, root)
 		if diff := diffSnapshots(want, got); len(diff) > 0 {
 			t.Errorf("KYPOST_TENANCY %s changed the install: %v", v.name, diff)
