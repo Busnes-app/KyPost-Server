@@ -715,7 +715,8 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - **Differences from the files, by design.** A row that breaks the entry rule refuses the
      read that meets it (`Blocked` reads two rows, so a bad row elsewhere does not refuse
      `RCPT`). There is no damaged file to set aside, so `Status.ResetAt` stays null and
-     `Damaged` means the table is unreadable.
+     `Damaged` means the table is unreadable. Writes need `tenancy.db`, not the receiving
+     directory, so the list can be filled before `receiving init`.
    - **Tests.** `eachHome` (`ingress/senders_test.go:29`) runs `TestSenderBlocks`,
      `TestSenderBlocksMatchWorker` (the `blocks.json` fixture), every `TestAutomatic*` and
      `TestEvidenceWorstCaseSize` against both homes, and fails if the table home writes the
@@ -727,13 +728,17 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      both file names into unreadable directories, then adds, lists and removes a block through
      the CLI and binds over TLS (exit 6, then 0); the directories are untouched and the rows are
      in `tenancy.db`. `TestReceivingMultiModeWithoutTenancyRefuses` (`:77`) covers multi mode
-     without its record. `TestSingleTenantUpgradeIsByteForByte` now seeds both files and
+     without its record. `TestStaffSenderBlocksUseTenancyTables`
+     (`api/tenancy_blocks_test.go:16`) does the same through the staff console's routes. In
+     production `Server.tenancy` is set only once multi mode can start (K PR 7), so today the
+     API always reads the files. `TestSingleTenantUpgradeIsByteForByte` now seeds both files and
      keeps them byte for byte. `TestEveryStoreIsClassified` has both tables (P), and the three
      sender files are absent (`-`) in multi mode.
    - **Not in PR 3.** `tenancy.db` is still outside the backup set (K PR 6; Where the new
      tables live), so multi-mode blocks and evidence do not survive a restore yet. Multi mode
      still cannot start (K PR 7). Cloudflare's change mark (`cfChangeMark`) still watches the
-     file; Cloudflare is single-mode only by R1, and no code refuses it in multi mode yet (the PR that adds the refusal is unverified). The staff console warning for a
+     file; Cloudflare is single-mode only by R1, and no code refuses it in multi mode yet
+     (which PR adds the refusal is unverified). The staff console warning for a
      pin with 14 days or less left (open question 3) is not built: K PR 4 built no console
      screen, and the only receiving status screen is Cloudflare's, so it needs a new platform
      admin route and a banner, in the admin route tests K PR 5 is changing.
