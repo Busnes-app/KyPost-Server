@@ -328,6 +328,26 @@ func (s *Store) HeldBytes(ctx context.Context, mailbox string) (int64, error) {
 	return n, err
 }
 
+// HeldBytesByMailbox is HeldBytes for every mailbox with held mail, in one scan, for a
+// sum over many mailboxes.
+func (s *Store) HeldBytesByMailbox(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT b.mailbox, coalesce(sum(length(d.raw)),0) FROM deliveries d JOIN bindings b ON b.gateway=d.gateway AND b.id=d.id WHERE d.state='pending' GROUP BY b.mailbox")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	held := map[string]int64{}
+	for rows.Next() {
+		var mailbox string
+		var n int64
+		if err := rows.Scan(&mailbox, &n); err != nil {
+			return nil, err
+		}
+		held[mailbox] = n
+	}
+	return held, rows.Err()
+}
+
 var errLimits = errors.New("ingress limits differ from durable configuration and would lower them; run the newer release")
 
 // raisableTo reports whether every durable limit is at most the configured one.

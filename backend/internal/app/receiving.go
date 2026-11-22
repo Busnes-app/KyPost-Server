@@ -89,8 +89,10 @@ func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignme
 // in the org, each storing its own copy (sameOrgCopies). A full answer is the mailbox-full exit 9; a lower
 // quota refuses new mail only. It runs inside the users fence, so the owner's org and
 // the members come from tenancy.db (subject_orgs, user_orgs), never the users store.
-// ponytail: the org sum reads each org mailbox per message and is not fenced across
-// mailboxes, so concurrent deliveries can pass it together; a per-org lease is the upgrade.
+// ponytail: the org sum costs one usage read per org mailbox and one held-bytes scan per
+// message, and is not fenced across mailboxes, so concurrent deliveries can pass it
+// together. A cached per-org sum under a per-org lease is the upgrade, when RX's capacity
+// measurement (K open question 8) shows the cost.
 func (r *receivingRuntime) orgRoom(ctx context.Context, a sso.NativeAssignment, used, size, copies int64) error {
 	if r.tenancy == nil {
 		return nil
@@ -118,24 +120,28 @@ func (r *receivingRuntime) orgRoom(ctx context.Context, a sso.NativeAssignment, 
 	if err != nil {
 		return err
 	}
+	members := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		members[id] = true
+	}
 	mailboxes, err := r.life.NativeMailboxesWithoutAddresses()
+	if err != nil {
+		return err
+	}
+	held, err := r.holding.HeldBytesByMailbox(ctx)
 	if err != nil {
 		return err
 	}
 	total := size * copies
 	for _, m := range mailboxes {
-		if !slices.Contains(ids, m.User) || m.Dir == "" {
+		if !members[m.User] || m.Dir == "" {
 			continue
 		}
 		u, err := mailbox.ReadUsage(filepath.Join(m.Dir, "mailbox"))
 		if err != nil {
 			return err
 		}
-		held, err := r.holding.HeldBytes(ctx, m.ID)
-		if err != nil {
-			return err
-		}
-		total += u.Bytes + held
+		total += u.Bytes + held[m.ID]
 	}
 	if total > *q {
 		return full
