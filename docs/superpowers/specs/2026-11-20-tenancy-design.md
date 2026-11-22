@@ -1271,11 +1271,12 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
     (`api/native_mailbox_handlers.go:201`). Two staff creations at once can pass together.
   - **`mailboxBytes` and `storageBytes`** are applied at receiving acceptance (`orgRoom`,
     `app/receiving.go:93`, after the mailbox's own check at `:83`), with mail held for import
-    counted. They answer the existing mailbox-full exit 9.
+    counted. At DATA, a delivery to several mailboxes of one org counts one copy per mailbox
+    (`sameOrgCopies`). They answer the existing mailbox-full exit 9.
     - The owner's org comes from `subject_orgs` and the members from `user_orgs`, because the
       check runs inside the users fence. A subject with no recorded org is refused.
     - It reads the runtime's `tenancy.db` handle, which RX PR 3 opens when
-      `KYPOST_TENANCY=multi` (`app/receiving.go:420`); single mode has none and checks nothing.
+      `KYPOST_TENANCY=multi` (`app/receiving.go:449`); single mode has none and checks nothing.
     - Imports, drafts and Sent copies stay bounded by the install's mailbox quota only.
 - **Staff** keep the console with the poller failing and the staff org absent from the cache.
   PR 4's `X-Ky-Org` still accepts any cached org in any status, so staff reach a suspended org's
