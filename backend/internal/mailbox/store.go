@@ -364,6 +364,13 @@ func (s *Store) Import(ctx context.Context, receipt Receipt, input io.Reader) (i
 	return s.append(ctx, folder, input, receipt.Gateway, receipt.Delivery, envelope, false, nil)
 }
 
+// HasReceipt reports whether the mailbox holds delivery (gateway, delivery)'s receipt.
+func (s *Store) HasReceipt(ctx context.Context, gateway, delivery string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM receipts WHERE gateway=? AND delivery=?", gateway, delivery).Scan(&n)
+	return n > 0, err
+}
+
 // Append stores a local Drafts/Sent copy without an SMTP delivery receipt.
 func (s *Store) Append(ctx context.Context, folder string, input io.Reader, draft bool) (int64, error) {
 	if !validFolder(folder) {

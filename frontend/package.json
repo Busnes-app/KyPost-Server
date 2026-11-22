@@ -8,11 +8,13 @@
     "preview": "vite preview",
     "test": "vitest",
     "typecheck": "tsc --noEmit",
+    "test:browser": "playwright test",
     "lint": "node lint/node_modules/eslint/bin/eslint.js --config lint/eslint.config.js src",
     "prebuild": "node src/ky-ui/check-vendor.mjs",
     "pretest": "node src/ky-ui/check-vendor.mjs"
   },
   "dependencies": {
+    "@base-ui/react": "1.9.0",
     "@hpke/core": "1.10.1",
     "dompurify": "3.4.18",
     "openpgp": "^6.3.2",
@@ -23,6 +25,7 @@
     "react-router": "^8.5.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.12",
     "@types/qrcode": "^1.5.6",

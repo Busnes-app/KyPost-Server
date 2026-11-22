@@ -197,7 +197,7 @@ export function NotificationPrefs() {
   }
 
   return (
-    <div className="config-card" role="tabpanel">
+    <div className="config-card">
       <h3>Notifications</h3>
       <p className="config-muted">Choose how alerts are delivered to this account and which IMAP keywords trigger them.</p>
 

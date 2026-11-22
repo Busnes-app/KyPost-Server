@@ -64,6 +64,7 @@ var tableClass = map[string]map[string]string{
 		"orgs": platform, "user_orgs": org, "subject_orgs": org, "receiving_gateways": platform,
 		"sender_blocks": platform, "sender_evidence": platform,
 		"org_purges": platform, "org_purge_members": platform, "address_tombstones": platform,
+		"import_leases": derived, "retired_bindings": derived,
 	},
 	"catalog": {"stores": platform},
 }
