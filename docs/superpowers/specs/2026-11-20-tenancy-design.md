@@ -1191,7 +1191,7 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - `ApplyOrg` (`:145`) writes one listed org in one statement. A lower revision than the
     cached one changes nothing, and `deleted` is terminal (T "Account holder guard"). An entry
     whose ID is not PR 1's canonical form, whose status is unknown, or whose quotas are over
-    4 KiB is refused (`ValidOrg`). `pollOrgs` checks every listed entry first, so a malformed
+    4 KiB or not a JSON object (`null` included) is refused (`ValidOrg`). `pollOrgs` checks every listed entry first, so a malformed
     one fails the whole poll before any session is revoked, as `suitedir.Orgs` fails on one.
   - **The cursor** (`OrgCursor`, `:134`) is the highest cached revision minus one, so orgs that
     share it are listed again. An equal revision applies as the same state. No cursor row is

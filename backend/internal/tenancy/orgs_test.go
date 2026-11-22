@@ -115,6 +115,8 @@ func TestApplyOrgRefusesMalformedEntries(t *testing.T) {
 		"empty id":        {Status: "active", Revision: 1, Quotas: json.RawMessage(`{}`)},
 		"upper-case id":   {ID: "1A2B3C4D-0000-4000-8000-00000000000A", Status: "active", Revision: 1},
 		"unknown status":  {ID: orgOne, Status: "paused", Revision: 1},
+		"null quotas":     {ID: orgOne, Status: "active", Revision: 1, Quotas: json.RawMessage(`null`)},
+		"array quotas":    {ID: orgOne, Status: "active", Revision: 1, Quotas: json.RawMessage(`[]`)},
 		"negative rev":    {ID: orgOne, Status: "active", Revision: -1},
 		"oversize quotas": {ID: orgOne, Status: "active", Revision: 1, Quotas: json.RawMessage(`{"x":"` + string(make([]byte, 5000)) + `"}`)},
 	} {

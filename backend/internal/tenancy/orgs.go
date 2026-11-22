@@ -140,10 +140,13 @@ func OrgCursor(ctx context.Context, db *sql.DB) (int64, error) {
 }
 
 // ValidOrg refuses a listed org that ApplyOrg would not write: an ID that is not
-// canonical, a negative revision, an unknown status or quotas over 4 KiB.
+// canonical, a negative revision, an unknown status, or quotas over 4 KiB or not a JSON
+// object (null included; an absent field is {}).
 func ValidOrg(o suitedir.Org) error {
+	var quotas map[string]json.RawMessage
 	switch {
 	case !config.ValidOrgID(o.ID) || o.Revision < 0 || len(o.Quotas) > 4<<10:
+	case len(o.Quotas) > 0 && (json.Unmarshal(o.Quotas, &quotas) != nil || quotas == nil):
 	case o.Status == suitedir.OrgActive, o.Status == suitedir.OrgSuspended, o.Status == suitedir.OrgDeletionScheduled, o.Status == suitedir.OrgDeleted:
 		return nil
 	}
