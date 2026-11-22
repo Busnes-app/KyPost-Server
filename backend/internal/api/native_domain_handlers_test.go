@@ -96,7 +96,7 @@ func TestNativeAccountIssuerFenceUsesVerifiedProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	if _, err = srv.resolveSSOUser(w, srv.ssoStore.Load(), &sso.SSOTokenClaims{Issuer: "https://replacement.example.test", Sub: "same-sub"}); err == nil {
+	if _, err = srv.resolveSSOUser(w, srv.ssoStore.Load(), &sso.SSOTokenClaims{Issuer: "https://replacement.example.test", Sub: "same-sub"}, false); err == nil {
 		t.Fatal("new issuer authenticated old mailbox")
 	}
 	active := false

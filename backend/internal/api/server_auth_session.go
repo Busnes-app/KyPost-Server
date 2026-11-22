@@ -69,6 +69,9 @@ type Session struct {
 	// such a session gets no mail until setup is complete
 	// (refuseUntilEncryptionSetup).
 	KeySetupGate bool
+	// ExportOnly is a multi-tenant session minted from an export_only token while its org
+	// is deletion_scheduled: it reaches only exportOnlyRoutes (tenancy design "Export").
+	ExportOnly bool `json:",omitempty"`
 	// revocations is Server.revocations+1 as read before a password sign-in
 	// checked the credential; zero skips the check.
 	revocations uint64
@@ -140,6 +143,8 @@ type AuthContext struct {
 	SSOSession bool
 	// KeySetupGate is the session's Session.KeySetupGate.
 	KeySetupGate bool
+	// ExportOnly is the session's Session.ExportOnly.
+	ExportOnly bool
 
 	// SessionCSRFToken is the CSRF token of the session this request authenticated
 	// with, and is EMPTY for every other authentication path (paired-device
@@ -886,7 +891,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	setup, err := s.encryptionSetupFor(u, canSetUpKey(u, ac.SSOSession))
 	setup.Required = ac.KeySetupGate && (setup.Required || err != nil)
-	writeJSON(w, http.StatusOK, map[string]any{
+	me := map[string]any{
 		"encryptionSetup":    setup,
 		"authenticated":      true,
 		"userId":             u.ID,
@@ -901,7 +906,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"ssoEmail":           u.SSOEmail,
 		"ssoLinkedAt":        u.SSOLinkedAt,
 		"ssoLinkRevoked":     u.SSOLinkRevoked(),
-	})
+	}
+	if ac.ExportOnly {
+		me["exportOnly"] = true
+	}
+	writeJSON(w, http.StatusOK, me)
 }
 
 // handlePasswordSnapshot exposes only preparation data for the password change.
@@ -1280,6 +1289,11 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool, error) {
 	if !ok {
 		return AuthContext{}, false, nil
 	}
+	// An export-only session is unauthenticated outside the export routes; it is kept, so
+	// the export it was minted for still works.
+	if sess.ExportOnly && !exportOnlyRoutes[r.Pattern] {
+		return AuthContext{}, false, nil
+	}
 
 	// Idle timeout, then the absolute cap. The cap is checked separately so
 	// that renewing below can never push a session past sessionMaxLifetime.
@@ -1326,7 +1340,11 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool, error) {
 	// Multi mode: the account's org must be served now (tenancy design "Org status"). A
 	// cache that cannot be read answers 503 and keeps the session.
 	orgErr := error(nil)
-	if err == nil {
+	switch {
+	case err != nil:
+	case sess.ExportOnly:
+		orgErr = s.orgExportable(r.Context(), u.OrgID)
+	default:
 		orgErr = s.orgServe(r.Context(), u.OrgID)
 	}
 	if orgErr != nil && !errors.Is(orgErr, tenancy.ErrNotServed) {
@@ -1351,6 +1369,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool, error) {
 		MustChangePassword: u.MustChangePassword,
 		SSOSession:         sess.SSOKySignOn,
 		KeySetupGate:       sess.KeySetupGate,
+		ExportOnly:         sess.ExportOnly,
 		// This request authenticated by cookie, so it carries an ambient
 		// credential and csrfCheckOK must enforce the double submit.
 		SessionCSRFToken: sess.CSRFToken,

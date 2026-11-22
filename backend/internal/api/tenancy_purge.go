@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -386,4 +388,35 @@ func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone
 		note("ledger", n, err)
 	}
 	return left, errors.Join(errs...)
+}
+
+// eraseMember applies a signed user.erased (multi-tenant only): one member's own Delete
+// everything (K "Delete everything"). Their purge is recorded first, so a failure after it
+// still purges; then the event applies as a removal, which revokes their credentials now.
+// A fence refusal is not a failure: the purge does not depend on the revision.
+func (s *Server) eraseMember(w http.ResponseWriter, r *http.Request, issuer string, event syncauth.Event, u sso.DirectoryUser, body []byte, org string) {
+	if err := s.beginPurge(r.Context(), tenancy.PurgeScope{Org: org, Subject: u.ID}, time.Now()); err != nil {
+		s.logger.Error("member erasure not recorded; the sender retries", "event_id", event.ID)
+		http.Error(w, "directory event was not applied", http.StatusInternalServerError)
+		return
+	}
+	removal := event
+	removal.Type = "user.deleted"
+	status, err := s.ssoLifecycle.ApplyDirectoryUser(issuer, removal, u, sso.EventDigest(event.Type, body), func() (bool, error) {
+		return s.applyDirectoryUser(issuer, u)
+	})
+	var refusal *syncRefusal
+	switch {
+	case errors.Is(err, sso.ErrDirectoryConflict):
+		status = "erased"
+	case errors.As(err, &refusal):
+		http.Error(w, refusal.Error(), refusal.status)
+		return
+	case err != nil:
+		s.logger.Error("directory event was not applied", "event_id", event.ID, "error", err.Error())
+		http.Error(w, "directory event was not applied", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("member erasure recorded", "event_id", event.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"status": status, "eventId": event.ID, "version": u.Meta.Version})
 }

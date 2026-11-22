@@ -70,7 +70,7 @@ func (s *Server) admitNativeSignOn(w http.ResponseWriter, claims *sso.SSOTokenCl
 	if s.nativeSignOnAfterAdmit != nil {
 		s.nativeSignOnAfterAdmit()
 	}
-	user, err := s.resolveSSOUser(w, settings, claims)
+	user, err := s.resolveSSOUser(w, settings, claims, false)
 	if err != nil {
 		return nil, "", false // resolveSSOUser wrote the response
 	}

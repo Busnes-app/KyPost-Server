@@ -154,7 +154,7 @@ func TestNativeRuntimeRetriesRetainedDirectoryWithoutJIT(t *testing.T) {
 		t.Fatalf("pending provision created legacy user: %v", err)
 	}
 	w := httptest.NewRecorder()
-	if _, err := s.resolveSSOUser(w, s.ssoStore.Load(), &sso.SSOTokenClaims{Issuer: "https://idp.example", Sub: "native-runtime-one", PreferredUsername: "runtime-one"}); err == nil || w.Code != 403 {
+	if _, err := s.resolveSSOUser(w, s.ssoStore.Load(), &sso.SSOTokenClaims{Issuer: "https://idp.example", Sub: "native-runtime-one", PreferredUsername: "runtime-one"}, false); err == nil || w.Code != 403 {
 		t.Fatal("JIT bypassed domain proof")
 	}
 	s.nativeDomains.SetLookupForTest(func(context.Context, string) ([]string, error) {
