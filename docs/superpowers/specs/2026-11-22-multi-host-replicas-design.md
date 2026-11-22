@@ -353,8 +353,13 @@ the database whatever happens to the lock. The fence only reduces wasted work. K
   implementation must pass unchanged.
 - **The volume-free test** (MH7), the converse proof for multi mode: a multi fixture runs sign-in,
   provisioning, mail, contacts, settings, masked addresses, DKIM rotation, a scheduled send, a
-  pickup link and a backup. CONFIG_DIR and STATE_DIR are mounted read-only, and SECRET_DIR holds
-  only provisioned keys. Every step succeeds, and no path under the three roots changes.
+  pickup link, an import and a backup. SECRET_DIR is mounted read-only and holds only provisioned
+  keys. Every step succeeds. The test then diffs the three roots against their state before the
+  run: the only paths allowed to change are the inventory's "per host" rows (`imports/upload-*`,
+  `mail-bulk.json`, `backups/` while open question 3 stands, `recovery.pub`), each matched by an
+  explicit pattern list kept beside `TestEveryStoreIsClassified`. Any other changed path fails,
+  and so does a per-host pattern that nothing in the inventory names. If open question 3 is
+  answered "refuse local copies", `backups/` leaves the list.
 
 ## Phased build plan
 
@@ -501,7 +506,7 @@ in tests, as K's do (`makeMultiTenant`).
    mode, with `max_connections` sized by R's budget formula (`docs/RUNNING.md:447-456`) times the
    number of hosts. Fences add one dedicated connection per fence held at once, so that peak is
    part of the capacity measurement.
-6. **Which per-replica meters to share.** *Recommend* the six "shared window" rows above, which
+6. **Which per-replica meters to share.** *Recommend* the five "shared window" rows above (nine meters), which
    send something to a third party or face unauthenticated callers, and leaving the per-account
    load-shedding meters per replica.
 7. **One table per store instead of `documents`?** *Recommend* `documents` for every store except
