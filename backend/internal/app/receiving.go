@@ -341,6 +341,23 @@ func startReceivingImport(ctx context.Context, d runDeps) (<-chan struct{}, erro
 	if err != nil {
 		return nil, err
 	}
+	// Multi mode imports on every daemon process (startLeasedImport); the elected
+	// daemon runs only the backstop Completion sweep (RX R8).
+	if r.tenancy != nil {
+		go func() {
+			defer close(done)
+			defer r.close()
+			for {
+				r.sweepCompletions(ctx, d.logger)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(importSweep):
+				}
+			}
+		}()
+		return done, nil
+	}
 	go func() {
 		defer close(done)
 		defer r.close()

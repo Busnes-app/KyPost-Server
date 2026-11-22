@@ -272,7 +272,7 @@ else is per container.
 |---|---|
 | HTTP listener (5866) | Per replica, behind HAProxy, which routes on `/readyz` |
 | Maddy SMTP receiving, `receiver.sock` | Refused: single-container profile only |
-| External IMAP polling, receiving import, poller, push, WKD recheck, retention, backup schedule | Run by the one replica holding the `daemon` role; the others stand by |
+| External IMAP polling, receiving import, poller, push, WKD recheck, retention, backup schedule | Run by the one replica holding the `daemon` role; the others stand by. In multi-tenant mode receiving import runs on every replica instead, one worker per mailbox at a time under a lease (receiving tier spec R8), and the `daemon` role keeps only its backstop sweep |
 | Native outbox recovery, DKIM rotation | The `mail-runtime` role; the outbox claim token fences request-path sends |
 | Scheduled sends, Send delay, provisioning, pickup and contact sweeps, agent-token expiry, version check, shared-row cleanup, and in multi-tenant mode the `/api/suite/orgs` poller | The `api-sweepers` role; a `sending` row records its replica, and only a dead replica's rows become uncertain; a mail a dead replica was returning to Drafts is returned again, so it can appear there twice, never lost |
 | Sessions (token hash only), CSRF, revocations, SSO epoch | PostgreSQL: a sign-out or revocation on one replica holds on every other at the next request |
