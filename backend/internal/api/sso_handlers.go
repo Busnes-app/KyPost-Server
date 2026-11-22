@@ -664,6 +664,14 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 	user, err := s.users.GetBySSOSubIssuer(claims.Issuer, claims.Sub)
 	if orgErr == nil && err == nil && s.multiTenant() {
 		orgErr = s.checkAccountOrg(context.Background(), user, org)
+		if orgErr == nil {
+			orgErr = s.orgServe(context.Background(), org)
+		}
+	}
+	if errors.Is(orgErr, tenancy.ErrNotServed) {
+		s.orgRefused("sign_in_org_status", user.ID)
+		http.Error(w, "Access denied: this account is not available right now. Contact support.", http.StatusForbidden)
+		return users.User{}, orgErr
 	}
 	if orgErr != nil && !errors.Is(orgErr, tenancy.ErrOrgMismatch) && !errors.Is(orgErr, errTokenOrg) {
 		http.Error(w, "failed to look up SSO identity", http.StatusInternalServerError)

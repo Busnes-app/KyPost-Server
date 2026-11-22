@@ -274,7 +274,7 @@ else is per container.
 | Maddy SMTP receiving, `receiver.sock` | Refused: single-container profile only |
 | External IMAP polling, receiving import, poller, push, WKD recheck, retention, backup schedule | Run by the one replica holding the `daemon` role; the others stand by |
 | Native outbox recovery, DKIM rotation | The `mail-runtime` role; the outbox claim token fences request-path sends |
-| Scheduled sends, Send delay, provisioning, pickup and contact sweeps, agent-token expiry, version check, shared-row cleanup | The `api-sweepers` role; a `sending` row records its replica, and only a dead replica's rows become uncertain; a mail a dead replica was returning to Drafts is returned again, so it can appear there twice, never lost |
+| Scheduled sends, Send delay, provisioning, pickup and contact sweeps, agent-token expiry, version check, shared-row cleanup, and in multi-tenant mode the `/api/suite/orgs` poller | The `api-sweepers` role; a `sending` row records its replica, and only a dead replica's rows become uncertain; a mail a dead replica was returning to Drafts is returned again, so it can appear there twice, never lost |
 | Sessions (token hash only), CSRF, revocations, SSO epoch | PostgreSQL: a sign-out or revocation on one replica holds on every other at the next request |
 | MFA challenges, step-ups, SSO states, pairing nonces, pending device approvals, export grants | PostgreSQL, each spent once across replicas |
 | Login, DAV, MCP, MFA, device, password-change, IMAP-login and review-pairing lockouts, the login budget, office budgets | PostgreSQL windows on database time: the limits are the same in total, never N times |

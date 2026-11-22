@@ -24,17 +24,12 @@ import (
 
 const staffToken = "staff-session-token"
 
-// staffFixture is newOrgFixture plus a staff administrator, an audit log, and orgs A and B
-// in the entitlement cache.
+// staffFixture is newOrgFixture plus a staff administrator and an audit log; makeMultiTenant
+// puts orgs A and B in the entitlement cache.
 func staffFixture(t *testing.T) (*orgFixture, *syncBuffer, users.User) {
 	t.Helper()
 	fx, logs := newOrgFixture(t)
 	withAuditLog(t, fx.srv)
-	for _, org := range []string{orgA, orgB} {
-		if _, err := fx.srv.tenancy.Exec(`INSERT INTO orgs(id, status, revision, enabled, quotas_json, polled_at) VALUES(?, 'active', 1, 1, '{}', 0)`, org); err != nil {
-			t.Fatal(err)
-		}
-	}
 	directoryStatus(t, postDirectory(t, fx.srv, testSyncKey, "user.created", "ev-staff", 1, orgUser("staff-1", staffOrg, true, "kypost.admin")))
 	staff, err := fx.srv.users.GetBySSOSub("staff-1")
 	if err != nil || staff.Role != users.RoleAdmin {

@@ -288,7 +288,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 // Restored account flags cannot authorize CardDAV while native recovery is held.
 // Check even cache hits; offline restore also removes historical app passwords.
 func (s *Server) davAccountActive(u users.User) bool {
-	return u.Active && s.requireAccountRestoreReleased(u) == nil
+	return u.Active && s.requireAccountRestoreReleased(u) == nil && s.orgServed(context.Background(), u)
 }
 
 // rehashDAVAppPassword re-derives an app password's hash at the current cost

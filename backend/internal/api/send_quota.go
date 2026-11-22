@@ -13,6 +13,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -50,7 +51,23 @@ func (s *Server) chargeSend(ctx context.Context, id, userID string, recipients i
 	if err != nil {
 		return 0, err
 	}
-	return s.globalStore.AdmitSend(ctx, id, userID, recipients, q.MessagesPerHour, q.RecipientsPerDay, now.Unix())
+	// Multi mode: the org must be served (K "Org status"), and its caps hold too.
+	var u users.User
+	if s.multiTenant() {
+		if u, err = s.users.Get(userID); err == nil {
+			err = s.orgServe(ctx, u.OrgID)
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+	wait, err := s.globalStore.AdmitSend(ctx, id, userID, recipients, q.MessagesPerHour, q.RecipientsPerDay, now.Unix())
+	if err == nil && s.multiTenant() {
+		if err = s.chargeOrgSend(ctx, id, u, now); errors.Is(err, state.ErrSendQuota) {
+			wait = time.Hour // ponytail: the org window's exact wait is not computed
+		}
+	}
+	return wait, err
 }
 
 // admitSend charges an immediate send, answering the client itself when the
@@ -78,6 +95,8 @@ func (s *Server) admitSend(w http.ResponseWriter, ctx context.Context, userID st
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 	case errors.Is(err, users.ErrNotFound):
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+	case errors.Is(err, tenancy.ErrNotServed):
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "sending is paused for this account"})
 	default:
 		s.logger.Error("sending quota check failed", "error", err.Error())
 		http.Error(w, "sending unavailable; retry later", http.StatusServiceUnavailable)

@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 4 are built ("PR 1 as built" to "PR 4 as built"), the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 are built ("PR 1 as built" to "PR 5 as built"), the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -1178,6 +1178,148 @@ with a staff administrator provisioned from a signed staff-org event.
   - **Staff reading the audit across orgs by actor** (T "Audit"). KyPost's audit log is
     whole-install, and no route reads it by org yet.
   - The org status effects on staff routes (a suspended org's accounts) are PR 5's.
+
+## PR 5 as built (2026-11-21)
+
+PR 5 follows the plan with these readings, each the safer one where K was ambiguous. Paths are
+under `backend/internal/` at the PR's head. ky-primitives is bumped to `9deb288` (#72), the
+first commit with `suitedir.Client.Orgs`. Startup still refuses `multi`, so the tests build the
+multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A and B as active).
+
+- **The cache** (`tenancy/orgs.go`) is PR 1's `orgs` table; no table is added, so
+  `TestEveryStoreIsClassified` is unchanged.
+  - `ApplyOrg` (`:145`) writes one listed org in one statement. A lower revision than the
+    cached one changes nothing, and `deleted` is terminal (T "Account holder guard"). An entry
+    whose ID is not PR 1's canonical form, whose status is unknown, or whose quotas are over
+    4 KiB is refused, which fails the whole poll, as `suitedir.Orgs` does for a malformed entry.
+  - **The cursor** (`OrgCursor`, `:134`) is the highest cached revision minus one, so orgs that
+    share it are listed again. An equal revision applies as the same state. No cursor row is
+    stored.
+  - **The poll stamp.** After every listed org applied, `MarkPolled` (`:173`) sets every row's
+    `polled_at` to the poll's time. A failed poll stamps nothing. `polled_at` therefore means
+    "the last good poll", which is what the stale bound reads.
+  - `LookupOrg` (`:81`) reads a row; a missing row is not known.
+- **What "served" means** (`Org.Served`, `:54`): known, `active`, `enabled` for KyPost, and a
+  last good poll no more than 15 minutes old (`StaleAfter`, `:19`; a stamp in the future is
+  stale). `enabled: false` is not in K's table. It is read as "not served" (owner question 1
+  below).
+- **The gate** is `tenancy.Gate.Serve` (`:206`). The staff org is always served (K8). A nil gate,
+  one without a database, or an empty org serves nobody, so an unwired caller fails closed. The
+  api's gate is `orgGate` (`api/tenancy_lifecycle.go:29`); single mode never asks it
+  (`orgServe`, `:34`).
+- **The poller** (`StartOrgPoller`, `api/tenancy_lifecycle.go:47`) runs about every 60 s on the
+  `api-sweepers` owner (`app/app.go:477`), and only when the server holds `tenancy.db`.
+  - `pollOrgs` (`:69`) calls `suitedir.Orgs` with the SSO settings' suite directory
+    credentials.
+  - **Session revocation.** For an org that stops being served (it was served or unknown, the
+    entry is not stale, and it is not the staff org), `revokeIfStopping` (`:100`) runs
+    `revokeUserSessions` for every `user_orgs` member before the row changes. That is R's
+    per-user generation on PostgreSQL, and the in-memory sessions on SQLite. A failed
+    revocation fails the poll before anything is applied, so the next poll retries it.
+  - The failure log line names no org: `suitedir`'s error can quote an org ID.
+- **Sign-in and credentials.** Each check answers like the dead credential on that path:
+  - The session (`currentUser`, `api/server_auth_session.go:1330`) is dropped when not served.
+    A cache read error answers `503` and keeps the session.
+  - The paired device (`deviceAuthSnapshot`, `api/device_auth.go:161`, and `deviceOrg`,
+    `api/tenancy_gate.go:124`).
+  - CardDAV, on a cache hit and a miss, and MCP agent tokens, through `davAccountActive`
+    (`api/dav_auth.go:291`). A refused CardDAV password still pays the KDF timing.
+  - Browser sign-in and device sign-on (`resolveSSOUser`, `api/sso_handlers.go:668`): `403`
+    "this account is not available right now". It is reached only after the token's org and
+    the three binding records agree, so it tells only the account's holder. The security log
+    line names no org.
+  - Agent tokens, devices and CardDAV passwords are kept, and they work again on resume with
+    nothing re-issued. Sessions do not come back, because they were revoked.
+  - **A stale cache drops sessions too.** After a KyIdentity outage longer than 15 minutes,
+    every customer signs in again (owner question 3).
+- **Sending.** Every send is charged through `chargeSend`, so the org check sits there
+  (`api/send_quota.go:58`): immediate sends (`403` "sending is paused for this account"),
+  scheduled sends, and KyCalendar and KyPulse mail.
+  - **A scheduled send is held** (`api/scheduled_send.go:497`). It waits with `reasonHeld` and is
+    retried until its one-hour retry window ends. Then it returns to Drafts keeping that reason
+    (`:453`), as open question 6 recommends.
+  - **A queued native send is held, not sent.** `sso.NativeOutbound.Submit` refuses an org-bound
+    owner whose org is not served with `ErrNativeOutboundHeld`
+    (`sso/native_outbound.go:355`), before the claim, so nothing is consumed or quarantined.
+    `Recover` treats the refusal as a quiet skip (`:518`).
+  - `NativeOutbound.Orgs` is an interface, because the `tenancy` tests import `sso`. Only the
+    api sets it (`api/native_outbound.go:20`). The daemon's outbox worker and the processor's
+    out-of-office replies leave it nil, so they hold every org-bound send until PR 7 wires the
+    gate where it accepts `multi`.
+- **Receiving.** The status decision is `Org.Receiving` (`tenancy/orgs.go:68`), from the last
+  known status whatever the cache's age, as open question 5 recommends:
+  - accept for `active` and enabled;
+  - temporary (`451`, RX exit 12) for `suspended`, disabled or not cached;
+  - unknown (`550`, exit 3) for `deletion_scheduled` and `deleted`.
+
+  Wiring it into `receiving bind` is RX PR 5's exit 12 (the brief keeps exit codes 12 and 13
+  out of this PR). A suspended org's mail therefore still binds today, on the RX profile only.
+- **Quotas** (`tenancy.Quotas`; masked quotas are M change 3, PR 7):
+  - **Parsing.** A missing key keeps today's default. A known key that is not a whole
+    non-negative number reads as 0, and a body that does not decode zeroes every key. 0 refuses
+    new mail and creations, never existing data.
+  - **`sendPerHour` and `recipientsPerDay`** (`chargeOrgSend`, `api/tenancy_lifecycle.go:126`).
+    The user's own charge is written first. Then every member's charges, this one included,
+    are summed from `send_ledger` (`state.OrgSendUsage`, `state/send_ledger.go:128`, members
+    from `user_orgs` plus the sender). Past a cap, this charge is deleted and the send gets
+    the quota answer. Two concurrent sends can both be refused but never both admitted past the
+    cap. The org refusal's `Retry-After` is one hour, not computed.
+  - **`mailboxes`** (`orgMailboxRoom`, `:172`) counts the org's extra mailboxes in any state.
+    It refuses a new one on `POST /api/admin/mailboxes` with `409 mailbox_quota`
+    (`api/native_mailbox_handlers.go:201`). Two staff creations at once can pass together.
+  - **`mailboxBytes` and `storageBytes`** are applied at receiving acceptance (`orgRoom`,
+    `app/receiving.go:93`, after the mailbox's own check at `:83`), with mail held for import
+    counted. They answer the existing mailbox-full exit 9.
+    - The owner's org comes from `subject_orgs` and the members from `user_orgs`, because the
+      check runs inside the users fence. A subject with no recorded org is refused.
+    - `openReceivingRuntime` opens `tenancy.db` when `KYPOST_TENANCY=multi`
+      (`app/receiving.go:370`); single mode opens nothing and checks nothing.
+    - Imports, drafts and Sent copies stay bounded by the install's mailbox quota only.
+- **Staff** keep the console with the poller failing and the staff org absent from the cache.
+  PR 4's `X-Ky-Org` still accepts any cached org in any status, so staff reach a suspended org's
+  accounts.
+- **Tests:**
+  - `api/tenancy_lifecycle_test.go` runs in every `internal/api` job:
+    - `TestOrgStatusOnEverySurface`: ten cache states, including both sides of the stale bound,
+      against session, device, CardDAV, MCP, sending, a scheduled send and the receiving
+      decision, with org B unaffected and credentials working again;
+    - `TestOrgStatusAtSignIn` (browser and device);
+    - `TestOrgPoller`: revocation, cursor, stale revision, terminal `deleted`, KyIdentity down,
+      wrong credentials, malformed, non-canonical and oversize entries, no directory, and the
+      poll stamp;
+    - `TestStaffKeepTheConsoleWithThePollerFailing`;
+    - `TestOrgQuotas`;
+    - `TestSingleTenantHasNoLifecycle`;
+    - `TestTwoReplicasSeeOneSuspension`, PostgreSQL only.
+  - Elsewhere: `tenancy` `TestOrgCache`, `TestApplyOrgRefusesMalformedEntries` and
+    `TestParseQuotas`; `sso` `TestNativeOutboundHoldsANotServedOrg`; `app`
+    `TestReceivingOrgStorageQuotas`.
+  - **Proof that the gates bite:** each of these mutations fails its test:
+    - the session check, the sign-in check and the gate's staleness;
+    - the outbox hold;
+    - session revocation and the staff exemption;
+    - the revision fence;
+    - the org send cap, the mailboxes cap and each storage cap;
+    - the gate itself, on PostgreSQL.
+- **Not built, by phase.**
+  - **Import and export, one per org at a time** (Abuse limits). It is not a `quotas_json` key,
+    and today's slots are per process. PR 7, with the receiving tier's per-mailbox leases.
+  - **Masked-address quotas** (M D7): PR 7.
+  - **`receiving bind` refusing by org status:** RX PR 5.
+  - **The org gate in the daemon's outbox worker and out-of-office replies:** PR 7. Until then
+    they hold, never send.
+  - **The admin UI's org selector:** still not built. No screen changed, so there are no
+    screenshots.
+  - Whether `/api/suite/orgs` lists the staff org is still unverified. The staff exemption makes
+    the answer irrelevant here.
+- **Owner questions, each with the default now in code:**
+  1. `enabled: false` is treated like `suspended` for sign-in, sending and receiving. The data
+     is kept.
+  2. A malformed or negative quota reads as 0: nothing new is accepted.
+  3. A stale cache drops sessions, not only refuses them.
+  4. `mailboxes` counts extra mailboxes only.
+  5. Storage quotas apply to received mail only.
+  6. A held scheduled send returns to Drafts after the one-hour retry window, not at resume.
 
 ## Residual risks
 

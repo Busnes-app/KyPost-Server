@@ -121,7 +121,7 @@ func (s *Server) deviceOrg(userID string) (string, bool) {
 		return "", true
 	}
 	u, err := s.users.Get(userID)
-	return u.OrgID, err == nil && u.OrgID != ""
+	return u.OrgID, err == nil && u.OrgID != "" && s.orgServed(context.Background(), u)
 }
 
 var errQuarantineOtherOrg = fmt.Errorf("%w: the address has been held in another org", sso.ErrQuarantineRelease)

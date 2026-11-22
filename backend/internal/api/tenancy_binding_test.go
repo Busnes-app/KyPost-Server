@@ -35,6 +35,9 @@ func makeMultiTenant(t *testing.T, srv *Server) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	srv.tenancy, srv.staffOrg, srv.users.StaffOrg = db, staffOrg, staffOrg
+	// The fixtures' customer orgs are served unless a test changes them (PR 5).
+	setOrg(t, db, orgA, "active", true, `{}`)
+	setOrg(t, db, orgB, "active", true, `{}`)
 	return db
 }
 

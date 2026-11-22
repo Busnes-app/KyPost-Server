@@ -80,6 +80,65 @@ func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignme
 	if !u.Fits(a.Limits, size) {
 		return &receivingCommandError{err: errMailboxFull, code: 9}
 	}
+	return r.orgRoom(ctx, a, u.Bytes, size)
+}
+
+// orgRoom applies a multi-tenant owner's org quotas (tenancy design "Abuse limits per
+// org"): mailboxBytes on this mailbox and storageBytes over every mailbox of the org,
+// both counting mail held for import. A full answer is the mailbox-full exit 9; a lower
+// quota refuses new mail only. It runs inside the users fence, so the owner's org and
+// the members come from tenancy.db (subject_orgs, user_orgs), never the users store.
+// ponytail: the org sum reads each org mailbox per message and is not fenced across
+// mailboxes, so concurrent deliveries can pass it together; a per-org lease is the upgrade.
+func (r *receivingRuntime) orgRoom(ctx context.Context, a sso.NativeAssignment, used, size int64) error {
+	if r.tenancy == nil {
+		return nil
+	}
+	full := &receivingCommandError{err: errMailboxFull, code: 9}
+	org, err := tenancy.SubjectOrg(ctx, r.tenancy, a.Owner.Issuer, a.Owner.Subject)
+	if err != nil {
+		return err
+	}
+	if org == "" {
+		return full
+	}
+	o, err := tenancy.LookupOrg(ctx, r.tenancy, org)
+	if err != nil {
+		return err
+	}
+	if q := o.Quotas.MailboxBytes; q != nil && used+size > *q {
+		return full
+	}
+	q := o.Quotas.StorageBytes
+	if q == nil {
+		return nil
+	}
+	ids, err := tenancy.OrgUsers(ctx, r.tenancy, org)
+	if err != nil {
+		return err
+	}
+	mailboxes, err := r.life.NativeMailboxesWithoutAddresses()
+	if err != nil {
+		return err
+	}
+	total := size
+	for _, m := range mailboxes {
+		if !slices.Contains(ids, m.User) || m.Dir == "" {
+			continue
+		}
+		u, err := mailbox.ReadUsage(filepath.Join(m.Dir, "mailbox"))
+		if err != nil {
+			return err
+		}
+		held, err := r.holding.HeldBytes(ctx, m.ID)
+		if err != nil {
+			return err
+		}
+		total += u.Bytes + held
+	}
+	if total > *q {
+		return full
+	}
 	return nil
 }
 

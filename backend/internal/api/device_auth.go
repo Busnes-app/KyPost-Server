@@ -158,7 +158,7 @@ func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device stat
 	// telling its user to re-pair.
 	// Multi mode refuses an account with no org like a deactivated one (tenancy K5).
 	u, err := s.users.Get(ownerID)
-	if err != nil || !u.Active || s.multiTenant() && u.OrgID == "" {
+	if err != nil || !u.Active || s.multiTenant() && u.OrgID == "" || !s.orgServed(r.Context(), u) {
 		s.deviceLockout.cancelAttempt(strike)
 		return "", state.NativeDevice{}, 0, false, 0
 	}

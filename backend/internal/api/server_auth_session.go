@@ -24,6 +24,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mfa"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -1322,7 +1323,16 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool, error) {
 	}
 	u, err := s.users.Get(sess.UserID)
 	ssoStale := sess.SSO.Subject != "" && (u.SSOLinkRevoked() || u.SSOSub != sess.SSO.Subject || sess.SSOEpoch != epoch)
-	if err != nil || !u.Active || ssoStale || s.requireAccountRestoreReleased(u) != nil || s.multiTenant() && u.OrgID == "" {
+	// Multi mode: the account's org must be served now (tenancy design "Org status"). A
+	// cache that cannot be read answers 503 and keeps the session.
+	orgErr := error(nil)
+	if err == nil {
+		orgErr = s.orgServe(r.Context(), u.OrgID)
+	}
+	if orgErr != nil && !errors.Is(orgErr, tenancy.ErrNotServed) {
+		return AuthContext{}, false, orgErr
+	}
+	if err != nil || !u.Active || ssoStale || s.requireAccountRestoreReleased(u) != nil || s.multiTenant() && u.OrgID == "" || orgErr != nil {
 		if derr := s.dropSession(r.Context(), cookie.Value); derr != nil {
 			return AuthContext{}, false, derr
 		}

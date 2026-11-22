@@ -17,7 +17,7 @@ import (
 )
 
 func (s *Server) nativeOutbound() sso.NativeOutbound {
-	return sso.NativeOutbound{ConfigDir: s.configDir, StateRoot: s.stateDir, SecretDir: config.SecretDir(), Accounts: s.users, Domains: s.nativeDomains, Settings: s.ssoStore, Logger: s.logger}
+	return sso.NativeOutbound{ConfigDir: s.configDir, StateRoot: s.stateDir, SecretDir: config.SecretDir(), Accounts: s.users, Domains: s.nativeDomains, Settings: s.ssoStore, Logger: s.logger, Orgs: s.orgGate()}
 }
 
 // The existing OK response still means confirmed primary SMTP acceptance. A
