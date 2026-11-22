@@ -4167,10 +4167,12 @@ pre {
 }
 
 /* Base UI Combobox's positioner, portalled into the field (inside the compose
-   <dialog>'s top layer) and anchored under it at its width. */
+   <dialog>'s top layer) and anchored under it. Width, sideOffset 3 and
+   alignOffset 1 put it inside the field's 1px border, where it sat when it
+   was absolutely positioned in the field. */
 .recipient-autocomplete-positioner {
   z-index: 20;
-  width: var(--anchor-width);
+  width: calc(var(--anchor-width) - 2px);
   outline: 0;
 }
 

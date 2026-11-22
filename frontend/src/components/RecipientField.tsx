@@ -190,7 +190,7 @@ export function RecipientField({ label, state, onDraftChange, onAddToken, onRemo
           />
         </Combobox.Chips>
         <Combobox.Portal container={wrapRef}>
-          <Combobox.Positioner className="recipient-autocomplete-positioner" anchor={fieldRef} side="bottom" align="start" sideOffset={4}>
+          <Combobox.Positioner className="recipient-autocomplete-positioner" anchor={fieldRef} side="bottom" align="start" sideOffset={3} alignOffset={1}>
             <Combobox.Popup className="recipient-autocomplete">
               <RecipientAutocomplete query={state.draft} results={results} loading={loading} searched={searched} />
             </Combobox.Popup>
