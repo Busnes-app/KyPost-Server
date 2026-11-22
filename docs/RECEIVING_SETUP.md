@@ -521,7 +521,41 @@ enrolled again. A revocation applies to the next connection.
 Org storage quotas: an org's `mailboxBytes` (per mailbox) and `storageBytes` (all of the org's
 mailboxes) from KyIdentity's entitlements are checked with the mailbox's own quota, mail waiting
 in the buffer counted. Past either, the recipient gets the same `452 4.2.2 Mailbox full` (exit 9).
-Refusing by org status (suspended, deleted) is not wired into `bind` yet.
+
+Org status at `RCPT`, from the replicas' org cache whatever its age: a suspended or disabled org,
+or one not in the cache, gets `451 4.2.1` (exit 12), so senders retry. `deletion_scheduled` and
+`deleted` get the unknown-address `550 5.1.1` (exit 3), and that mail is lost. The staff org
+always receives.
+
+Probe budget on the relay domain (the install's masked-address domains, which hosted mode keeps
+apart from the primary domains). The hosted profile passes each `RCPT`'s peer IP to `bind`.
+After 50 unknown-address refusals on the relay domain from one IPv4 address or IPv6 /64 within
+10 minutes, every relay-domain `RCPT` from it gets `450 4.7.1` (exit 13) for 10 minutes, live
+addresses included. Primary domains are never budgeted. A large provider's shared IP can trip the
+budget, which delays its relay-domain mail for everyone behind it until the block ends; senders
+retry, so nothing is lost.
+
+### Compose profile
+
+Two files, both rendered by `scripts/check-replicas-compose.py` and neither startable until
+multi mode is (the tenancy design's PR 7):
+
+- **Replica host:** add `docker-compose.hosted.yml` after `docker-compose.yml` and
+  `docker-compose.replicas.yml`. It runs two receiving servers (`receiving-a`, `receiving-b`),
+  each `receiving serve --tls` on the shared volumes and database, with its own Rspamd in its
+  network namespace. Set `KYPOST_STAFF_ORG_ID`, `KYPOST_RECEIVING_SUBNET`,
+  `KYPOST_RECEIVING_A_IP` and `KYPOST_RECEIVING_B_IP` (inside that subnet), and
+  `KYPOST_RECEIVING_PUBLISH_IP`, this host's private-network address. The servers are published
+  there on ports 2601 and 2602, so the MX hosts' remote files list `<publish-IP>:2601` and
+  `<publish-IP>:2602`. Never publish them on a public address. To add a server, copy a
+  `receiving`/`rspamd` pair with the next address and port.
+- **MX host:** `docker-compose.mx.yml`, alone, on each MX host. Set `KYPOST_STAFF_ORG_ID`,
+  `KYPOST_RECEIVING_HOSTNAME`, `KYPOST_SMTP_BIND` (and `KYPOST_SMTP_PORT`, default 25),
+  `KYPOST_MADDY_BINARY`, `KYPOST_RECEIVING_TLS_DIR` and `KYPOST_MX_DIR`. `KYPOST_MX_DIR` holds
+  `mx.key` (step 2) and `remote.json` naming `/kypost/mx/mx.key`, both `0600` and owned by uid
+  1000. The host keeps Maddy's state and its profile in memory only. `start-receiving.sh`
+  fetches the profile from a replica at start and every 5 minutes, and restarts Maddy only when
+  it changed. A failed fetch keeps the running profile. If Maddy exits, the container restarts.
 
 ## Verify and roll back
 

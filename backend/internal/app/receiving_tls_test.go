@@ -472,8 +472,11 @@ func TestReceivingTLSExitCodesAndHostedProfile(t *testing.T) {
 	if !strings.Contains(hosted.String(), "code 12 reject 451 4.2.1") || !strings.Contains(hosted.String(), "code 13 reject 450 4.7.1") {
 		t.Fatal("hosted profile lacks exit codes 12 and 13")
 	}
-	if got := strings.Replace(hosted.String(), hostedBindCodes, "", 1); got != single.String() {
-		t.Fatalf("hosted profile differs beyond codes 12 and 13:\n%s\n---\n%s", got, single.String())
+	// Beyond codes 12 and 13, only bind's peer IP (RX PR 5) differs.
+	got := strings.Replace(hosted.String(), hostedBindCodes, "", 1)
+	got = strings.Replace(got, `"{address}" "{source_ip}" {`, `"{address}" {`, 1)
+	if got != single.String() {
+		t.Fatalf("hosted profile differs beyond codes 12 and 13 and bind's peer IP:\n%s\n---\n%s", got, single.String())
 	}
 	if !strings.Contains(hosted.String(), "destination example.test {") {
 		t.Fatal("hosted profile lacks the replica's domain")

@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 )
 
@@ -18,6 +20,18 @@ const (
 	receivingOrgA = "1a2b3c4d-0000-4000-8000-00000000000a"
 	receivingOrgB = "1a2b3c4d-0000-4000-8000-00000000000b"
 )
+
+// multiRuntime gives r the multi-mode stores openReceivingRuntime opens: tenancy.db and
+// state.db.
+func multiRuntime(t *testing.T, r *receivingRuntime, db *sql.DB) {
+	t.Helper()
+	st, err := state.New(r.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	r.tenancy, r.state = db, st
+}
 
 // The org storage quotas at RCPT (tenancy design "Abuse limits per org"): mailboxBytes
 // on the mailbox, storageBytes summed over the org's mailboxes only, and a subject with no
@@ -38,9 +52,11 @@ func TestReceivingOrgStorageQuotas(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cache.Close()
-	r.tenancy = cache
-	// A subject with no recorded org gets no room.
-	full("unbound subject", bind("unbound"))
+	multiRuntime(t, r, cache)
+	// A subject with no recorded org: K's org check answers first, temporarily (exit 12).
+	if err := bind("unbound"); receivingExit(err) != 12 {
+		t.Fatalf("unbound subject: %v, want exit 12", err)
+	}
 	for i, org := range []string{receivingOrgA, receivingOrgB} {
 		u := created[i]
 		if err := tenancy.BindSubject(ctx, cache, u.NativeMailboxIssuer, u.SSOSub, org); err != nil {
@@ -109,7 +125,7 @@ func TestReceivingOrgStorageCountsEveryCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cache.Close()
-	r.tenancy = cache
+	multiRuntime(t, r, cache)
 	for _, u := range created {
 		if err := tenancy.BindSubject(ctx, cache, u.NativeMailboxIssuer, u.SSOSub, receivingOrgA); err != nil {
 			t.Fatal(err)

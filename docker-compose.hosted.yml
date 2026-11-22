@@ -1,0 +1,120 @@
+# Hosted receiving profile, replica side (multi-tenant only): add LAST, after
+# docker-compose.yml and docker-compose.replicas.yml. The MX hosts run docker-compose.mx.yml.
+# Design: docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md (RX); operator
+# guide: docs/RECEIVING_SETUP.md, "Hosted receiving tier".
+#
+# NOT STARTABLE YET: every kypost-server process refuses KYPOST_TENANCY=multi until the
+# tenancy design's PR 7. The file ships so the profile can be reviewed and rendered
+# (`docker compose config`).
+#
+# Two receiving servers, each `receiving serve --tls` on the shared volumes and database,
+# each with its own Rspamd sharing its network namespace, so accept's fixed
+# 127.0.0.1:11333 is that server's own scanner (RX R6). MX hosts reach them only over the
+# pinned TLS channel on KYPOST_RECEIVING_PUBLISH_IP, a private interface of this host. Add
+# servers by copying a receiving/rspamd pair with the next address and port.
+x-receiving: &receiving
+  image: ${KYPOST_IMAGE:-ghcr.io/busnes-app/kypost-server}:${KYPOST_VERSION:-stable}
+  # The image's kypost user; the replicas' entrypoint already owns the data roots.
+  user: "1000:1000"
+  entrypoint: ["/usr/local/bin/kypost-server", "receiving", "serve", "--tls"]
+  environment: &receiving-env
+    KYPOST_TENANCY: multi
+    KYPOST_STAFF_ORG_ID: ${KYPOST_STAFF_ORG_ID:?Set KYPOST_STAFF_ORG_ID, the staff org's id}
+    KYPOST_DATABASE_URL: ${KYPOST_DATABASE_URL:?Set KYPOST_DATABASE_URL in .env}
+    KYPOST_NATIVE_MAIL: "true"
+    KYPOST_NATIVE_RECEIVING: "true"
+    KYPOST_RECEIVING_RSPAMD: "true"
+  volumes:
+    - kypost_config:/kypost/config
+    - kypost_private:/kypost/private
+    - kypost_state:/kypost/state
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=32m,uid=1000,gid=1000,mode=0700
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 128
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+x-rspamd: &rspamd
+  # Must equal docker-compose.rspamd.yml's pin (scripts/check-replicas-compose.py).
+  image: rspamd/rspamd:4.3.0@sha256:0d89891908f93ab1ce53c17fa90430130b48ad720216192ec44e646997c0a8e1
+  user: "11333:11333"
+  entrypoint: ["rspamd"]
+  command: ["-f", "-c", "/etc/rspamd/rspamd.conf"]
+  volumes:
+    - type: bind
+      source: ./scripts/rspamd/rspamd.conf
+      target: /etc/rspamd/rspamd.conf
+      read_only: true
+      bind:
+        create_host_path: false
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=32m,uid=11333,gid=11333,mode=0700
+    - /var/lib/rspamd:rw,noexec,nosuid,size=32m,uid=11333,gid=11333,mode=0700
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  mem_limit: 512m
+  cpus: 1.0
+  pids_limit: 64
+  healthcheck:
+    test: ["CMD", "rspamc", "-h", "127.0.0.1:11333", "-t", "2", "-E"]
+    interval: 30s
+    timeout: 3s
+    retries: 3
+    start_period: 20s
+  restart: unless-stopped
+  stop_grace_period: 15s
+
+services:
+  # Every replica imports (per-mailbox leases) and answers in multi mode.
+  kypost-server:
+    environment:
+      KYPOST_TENANCY: multi
+      KYPOST_STAFF_ORG_ID: ${KYPOST_STAFF_ORG_ID:?Set KYPOST_STAFF_ORG_ID, the staff org's id}
+      KYPOST_NATIVE_MAIL: "true"
+      KYPOST_NATIVE_RECEIVING: "true"
+
+  receiving-a:
+    <<: *receiving
+    command: ["${KYPOST_RECEIVING_A_IP:?Set KYPOST_RECEIVING_A_IP inside KYPOST_RECEIVING_SUBNET}:2600"]
+    ports:
+      - "${KYPOST_RECEIVING_PUBLISH_IP:?Set KYPOST_RECEIVING_PUBLISH_IP to this host's private-network address, never a public one}:2601:2600"
+    networks:
+      database: {}
+      receiving:
+        ipv4_address: ${KYPOST_RECEIVING_A_IP:?Set KYPOST_RECEIVING_A_IP inside KYPOST_RECEIVING_SUBNET}
+  rspamd-a:
+    <<: *rspamd
+    network_mode: service:receiving-a
+    depends_on:
+      receiving-a:
+        condition: service_started
+        restart: true
+
+  receiving-b:
+    <<: *receiving
+    command: ["${KYPOST_RECEIVING_B_IP:?Set KYPOST_RECEIVING_B_IP inside KYPOST_RECEIVING_SUBNET}:2600"]
+    ports:
+      - "${KYPOST_RECEIVING_PUBLISH_IP:?Set KYPOST_RECEIVING_PUBLISH_IP to this host's private-network address, never a public one}:2602:2600"
+    networks:
+      database: {}
+      receiving:
+        ipv4_address: ${KYPOST_RECEIVING_B_IP:?Set KYPOST_RECEIVING_B_IP inside KYPOST_RECEIVING_SUBNET}
+  rspamd-b:
+    <<: *rspamd
+    network_mode: service:receiving-b
+    depends_on:
+      receiving-b:
+        condition: service_started
+        restart: true
+
+networks:
+  receiving:
+    ipam:
+      config:
+        - subnet: ${KYPOST_RECEIVING_SUBNET:?Set KYPOST_RECEIVING_SUBNET, e.g. 10.89.2.0/24, outside Docker's default address pools}

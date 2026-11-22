@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/mail"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -189,12 +191,18 @@ type receivingRuntime struct {
 	// multi mode (receiving tier R7). tenancy is that store, nil in single mode.
 	senders ingress.SenderStore
 	tenancy *sql.DB
+	// state is the install's state.db in multi mode only: the relay domain setting and
+	// the probe budget's windows (receiving_probe.go).
+	state *state.Store
 }
 
 func (r *receivingRuntime) close() error {
 	err := r.holding.Close()
 	if r.tenancy != nil {
 		err = errors.Join(err, r.tenancy.Close())
+	}
+	if r.state != nil {
+		err = errors.Join(err, r.state.Close())
 	}
 	return err
 }
@@ -245,8 +253,11 @@ func runReceivingCommand(args []string, input io.Reader) error {
 
 // checkReceivingArgs validates a receiving command line before any state opens.
 func checkReceivingArgs(args []string) error {
+	// The hosted profile's bind carries the peer IP (RX "The masked relay domain");
+	// a single-tenant bind never does.
+	hostedBind := len(args) == 5 && args[0] == "bind" && receivingMultiEnv() == nil
 	if len(args) == 0 || (args[0] != "init" && args[0] != "bind" && args[0] != "accept") ||
-		(args[0] == "init" && len(args) != 1) || (args[0] == "bind" && len(args) != 4) || (args[0] == "accept" && len(args) != 3 && len(args) != 5) {
+		(args[0] == "init" && len(args) != 1) || (args[0] == "bind" && len(args) != 4 && !hostedBind) || (args[0] == "accept" && len(args) != 3 && len(args) != 5) {
 		return errors.New("usage: receiving init | receiving bind <receiver-id> <sender> <recipient> | receiving accept <receiver-id> <sender> [<peer-ip> <helo>]")
 	}
 	if len(args) > 1 {
@@ -269,6 +280,11 @@ func checkReceivingArgs(args []string) error {
 				return &receivingCommandError{err: ingress.ErrRoute, code: 3}
 			}
 		}
+		if hostedBind {
+			if ip, err := netip.ParseAddr(args[4]); err != nil || ip.Zone() != "" {
+				return errors.New("invalid receiving source IP")
+			}
+		}
 	}
 	return nil
 }
@@ -285,7 +301,7 @@ func (r *receivingRuntime) run(ctx context.Context, args []string, input io.Read
 	}
 	switch args[0] {
 	case "bind":
-		err = r.bind(ctx, args[1], args[2], args[3])
+		err = r.bindFrom(ctx, args[1], args[2], args[3], strings.Join(args[4:], ""))
 	case "accept":
 		err = r.accept(ctx, args[1], args[2], input, args[3:]...)
 	}
@@ -471,8 +487,11 @@ func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRunti
 		if err == nil {
 			r.tenancy, err = receivingMultiStore()
 		}
+		if err == nil {
+			r.state, err = state.New(r.stateDir)
+		}
 		if err != nil {
-			_ = r.holding.Close()
+			_ = r.close()
 			return nil, err
 		}
 		r.senders = ingress.TableSenders(r.tenancy)
@@ -546,12 +565,26 @@ func (r *receivingRuntime) withAuthority(ctx context.Context, shared bool, ids, 
 // errInvalidSender is a sender shape neither profile accepts.
 var errInvalidSender = errors.New("invalid envelope sender")
 
-// bind is the Maddy RCPT check, before any DNS proof or storage: a sender
-// the Worker would refuse exits 7 (550), so every accepted sender can be
-// blocked in both profiles; an unreadable block list exits 8 (451, mail
-// retried); a blocked sender exits 6 (550). Hosted pickup binds mail the
-// gateway already accepted and never checks either.
-func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient string) error {
+// bindFrom is the Maddy RCPT check. In multi mode the relay domain's probe budget comes
+// first, on source, the hosted profile's peer IP, so an IP past it learns nothing about
+// any address (exit 13); single mode has no source and no budget.
+func (r *receivingRuntime) bindFrom(ctx context.Context, id, sender, recipient, source string) error {
+	budget, err := r.probeBudget(ctx, recipient, source)
+	if err != nil {
+		return err
+	}
+	err = r.bindChecked(ctx, id, sender, recipient)
+	if budget != nil && receivingExit(err) == 3 {
+		err = cmp.Or(budget(ctx), err)
+	}
+	return err
+}
+
+// bindChecked runs before any DNS proof or storage: a sender the Worker would refuse
+// exits 7 (550), so every accepted sender can be blocked in both profiles; an unreadable
+// block list exits 8 (451, mail retried); a blocked sender exits 6 (550). Hosted pickup
+// binds mail the gateway already accepted and never checks either.
+func (r *receivingRuntime) bindChecked(ctx context.Context, id, sender, recipient string) error {
 	if !cfreceiving.ValidSender(sender) {
 		return &receivingCommandError{err: errInvalidSender, code: 7}
 	}
@@ -593,6 +626,9 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	}
 	if !found {
 		return ingress.ErrRoute
+	}
+	if err := r.orgReceives(ctx, a); err != nil {
+		return err
 	}
 	// A disabled or reserved address is an unknown recipient (550), decided
 	// before admission: a disabled extra mailbox otherwise fails admission as

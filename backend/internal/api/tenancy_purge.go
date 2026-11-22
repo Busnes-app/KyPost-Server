@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -219,38 +221,60 @@ func (s *Server) purgeReceiving(ctx context.Context, snap tenancy.PurgeSnapshot)
 	if err != nil {
 		return err
 	}
+	err = PurgeReceiving(ctx, h, s.tenancy, snap.Mailboxes)
 	if h != nil {
-		err = errors.Join(h.PurgeMailboxes(ctx, snap.Mailboxes), h.Close())
-		if err != nil {
+		err = errors.Join(err, h.Close())
+	}
+	return err
+}
+
+// PurgeReceiving is purge step 2 over the ingress store h (nil when receiving was never
+// initialized). A delivery left with only other, finished bindings is archived by the
+// receiving daemon's Completion sweep (RX R8).
+func PurgeReceiving(ctx context.Context, h *ingress.Store, db *sql.DB, mailboxes []string) error {
+	if h != nil {
+		if err := h.PurgeMailboxes(ctx, mailboxes); err != nil {
 			return err
 		}
 	}
-	return tenancy.PurgeImports(ctx, s.tenancy, snap.Mailboxes)
+	return tenancy.PurgeImports(ctx, db, mailboxes)
 }
 
-// purgeDirs is every directory of the snapshot: each user's under CONFIG_DIR and
-// STATE_DIR, and each mailbox's (a primary one is its user's directory).
-func (s *Server) purgeDirs(snap tenancy.PurgeSnapshot) ([]string, error) {
+// purgeDirs is every directory of users and mailboxes: each user's under configDir and
+// stateDir, and each mailbox's (a primary one is its user's directory).
+func purgeDirs(configDir, stateDir string, users, mailboxes []string) ([]string, error) {
 	var dirs []string
-	for _, id := range append(slices.Clone(snap.Users), snap.Mailboxes...) {
+	for _, id := range append(slices.Clone(users), mailboxes...) {
 		if id == "" || !fsutil.SafePathComponent(id) {
 			return nil, errors.New("the purge snapshot holds an unsafe ID")
 		}
-		dirs = append(dirs, config.UserDir(s.configDir, id), config.UserDir(s.stateDir, id), filepath.Join(s.stateDir, "mailboxes", id))
+		dirs = append(dirs, config.UserDir(configDir, id), config.UserDir(stateDir, id), filepath.Join(stateDir, "mailboxes", id))
 	}
 	slices.Sort(dirs)
 	return slices.Compact(dirs), nil
 }
 
-// Step 3: each mailbox's storage under its receiving quota lock, which fences an import
-// write; then the users' directories (paired devices, CardDAV passwords, sealed IMAP and
-// CardDAV client credentials, every per-user file) and pickup records.
+// Step 3: storage, then the users' pickup records.
 func (s *Server) purgeStorage(ctx context.Context, snap tenancy.PurgeSnapshot) error {
-	dirs, err := s.purgeDirs(snap)
+	if err := PurgeStorage(ctx, s.configDir, s.stateDir, snap.Users, snap.Mailboxes); err != nil {
+		return err
+	}
+	if s.pickupStore != nil {
+		_, err := s.pickupStore.SenderRecords(snap.Users, true)
+		return err
+	}
+	return nil
+}
+
+// PurgeStorage is purge step 3's storage: each mailbox's under its receiving quota lock,
+// which fences an import write; then the users' directories (paired devices, CardDAV
+// passwords, sealed IMAP and CardDAV client credentials, every per-user file).
+func PurgeStorage(ctx context.Context, configDir, stateDir string, users, mailboxes []string) error {
+	dirs, err := purgeDirs(configDir, stateDir, users, mailboxes)
 	if err != nil {
 		return err
 	}
-	receiving := filepath.Join(s.stateDir, "receiving")
+	receiving := filepath.Join(stateDir, "receiving")
 	_, noReceiving := os.Lstat(receiving)
 	locks := map[string]func(){}
 	defer func() {
@@ -259,7 +283,7 @@ func (s *Server) purgeStorage(ctx context.Context, snap tenancy.PurgeSnapshot) e
 		}
 	}()
 	if noReceiving == nil {
-		for _, id := range snap.Mailboxes {
+		for _, id := range mailboxes {
 			release, err := fsutil.LockFileContext(ctx, filepath.Join(receiving, "quota-"+id))
 			if err != nil {
 				return err
@@ -284,10 +308,7 @@ func (s *Server) purgeStorage(ctx context.Context, snap tenancy.PurgeSnapshot) e
 			return err
 		}
 	}
-	if s.pickupStore != nil {
-		_, err = s.pickupStore.SenderRecords(snap.Users, true)
-	}
-	return err
+	return nil
 }
 
 // Step 4: tombstone every address, then scrub the ledger under the named trigger
@@ -354,7 +375,7 @@ func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone
 	note("documents", n, err)
 	n, err = s.globalStore.UserRows(ctx, snap.Users)
 	note("root-state", n, err)
-	dirs, err := s.purgeDirs(snap)
+	dirs, err := purgeDirs(s.configDir, s.stateDir, snap.Users, snap.Mailboxes)
 	note("directories", 0, err)
 	for _, id := range snap.Mailboxes {
 		dirs = append(dirs, filepath.Join(s.stateDir, "receiving", "quota-"+id+".lock"))
