@@ -180,15 +180,15 @@ func TestHostedBindProbeBudget(t *testing.T) {
 func TestHostedBindProbeBlockEnds(t *testing.T) {
 	r, _ := importFixture(t, receivingOrgA, receivingOrgB)
 	setRelay(t, r, "example.test")
-	defer func(w, b time.Duration) { probeWindow, probeBlock = w, b }(probeWindow, probeBlock)
-	probeWindow, probeBlock = 300*time.Millisecond, 300*time.Millisecond
+	defer func(b time.Duration) { probeBlock = b }(probeBlock)
+	probeBlock = 2 * time.Second
 	for i := range probeLimit {
 		_ = bindExit(r, fmt.Sprint("p", i), fmt.Sprintf("guess%d@example.test", i), probeSource)
 	}
 	if code := bindExit(r, "blocked", "one@example.test", probeSource); code != 13 {
 		t.Fatalf("blocked: exit %d", code)
 	}
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(probeBlock + 500*time.Millisecond)
 	if code := bindExit(r, "after", "one@example.test", probeSource); code != 0 {
 		t.Fatalf("after the block: exit %d", code)
 	}
