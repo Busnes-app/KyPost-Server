@@ -137,10 +137,10 @@ func TestTenancyCredentialsCarryTheOrg(t *testing.T) {
 			t.Errorf("%s as an org-less account: %d, want 401", path, w.Code)
 		}
 	}
-	if org, ok := fx.srv.deviceOrg(orgless.ID); ok || org != "" {
+	if org, ok, _ := fx.srv.deviceOrg(orgless.ID); ok || org != "" {
 		t.Fatal("deviceOrg admitted an org-less account")
 	}
-	if org, ok := fx.srv.deviceOrg(fx.a.ID); !ok || org != orgA {
+	if org, ok, _ := fx.srv.deviceOrg(fx.a.ID); !ok || org != orgA {
 		t.Fatalf("deviceOrg(member) = %q %v", org, ok)
 	}
 }

@@ -67,7 +67,7 @@ func (r *receivingRuntime) quotaFence(ctx context.Context, current map[string]ss
 	return action()
 }
 
-func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignment, size int64) error {
+func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignment, size, copies int64) error {
 	u, err := mailbox.ReadUsage(filepath.Join(a.Dir(r.stateDir), "mailbox"))
 	if err != nil {
 		return err
@@ -80,7 +80,101 @@ func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignme
 	if !u.Fits(a.Limits, size) {
 		return &receivingCommandError{err: errMailboxFull, code: 9}
 	}
+	return r.orgRoom(ctx, a, u.Bytes, size, copies)
+}
+
+// orgRoom applies a multi-tenant owner's org quotas (tenancy design "Abuse limits per
+// org"): mailboxBytes on this mailbox and storageBytes over every mailbox of the org,
+// both counting mail held for import. copies is how many of the delivery's mailboxes are
+// in the org, each storing its own copy (sameOrgCopies). A full answer is the mailbox-full exit 9; a lower
+// quota refuses new mail only. It runs inside the users fence, so the owner's org and
+// the members come from tenancy.db (subject_orgs, user_orgs), never the users store.
+// ponytail: the org sum costs one usage read per org mailbox and one held-bytes scan per
+// message, and is not fenced across mailboxes, so concurrent deliveries can pass it
+// together. A cached per-org sum under a per-org lease is the upgrade, when RX's capacity
+// measurement (K open question 8) shows the cost.
+func (r *receivingRuntime) orgRoom(ctx context.Context, a sso.NativeAssignment, used, size, copies int64) error {
+	if r.tenancy == nil {
+		return nil
+	}
+	full := &receivingCommandError{err: errMailboxFull, code: 9}
+	org, err := tenancy.SubjectOrg(ctx, r.tenancy, a.Owner.Issuer, a.Owner.Subject)
+	if err != nil {
+		return err
+	}
+	if org == "" {
+		return full
+	}
+	o, err := tenancy.LookupOrg(ctx, r.tenancy, org)
+	if err != nil {
+		return err
+	}
+	if q := o.Quotas.MailboxBytes; q != nil && used+size > *q {
+		return full
+	}
+	q := o.Quotas.StorageBytes
+	if q == nil {
+		return nil
+	}
+	ids, err := tenancy.OrgUsers(ctx, r.tenancy, org)
+	if err != nil {
+		return err
+	}
+	members := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		members[id] = true
+	}
+	mailboxes, err := r.life.NativeMailboxesWithoutAddresses()
+	if err != nil {
+		return err
+	}
+	held, err := r.holding.HeldBytesByMailbox(ctx)
+	if err != nil {
+		return err
+	}
+	total := size * copies
+	for _, m := range mailboxes {
+		if !members[m.User] || m.Dir == "" {
+			continue
+		}
+		u, err := mailbox.ReadUsage(filepath.Join(m.Dir, "mailbox"))
+		if err != nil {
+			return err
+		}
+		total += u.Bytes + held[m.ID]
+	}
+	if total > *q {
+		return full
+	}
 	return nil
+}
+
+// sameOrgCopies counts, for each destination mailbox, the delivery's mailboxes whose owner
+// is in the same org: one copy is stored per mailbox, so the org quota must hold them all.
+// Single mode (no tenancy.db) counts 1 each.
+func (r *receivingRuntime) sameOrgCopies(ctx context.Context, current map[string]sso.NativeAssignment) (map[string]int64, error) {
+	copies, orgOf := map[string]int64{}, map[string]string{}
+	for id, a := range current {
+		copies[id] = 1
+		if r.tenancy == nil {
+			continue
+		}
+		org, err := tenancy.SubjectOrg(ctx, r.tenancy, a.Owner.Issuer, a.Owner.Subject)
+		if err != nil {
+			return nil, err
+		}
+		orgOf[id] = org
+	}
+	for id, org := range orgOf {
+		n := int64(0)
+		for _, other := range orgOf {
+			if org != "" && other == org {
+				n++
+			}
+		}
+		copies[id] = max(n, 1)
+	}
+	return copies, nil
 }
 
 type receivingRuntime struct {
@@ -509,7 +603,7 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 		// RCPT carries no size, and a DATA refusal refuses every recipient:
 		// a mailbox without room for one more largest message refuses here,
 		// alone, so a retry delivers to the others.
-		if err := r.mailboxRoom(ctx, admitted, admitted.Limits.MessageBytes); err != nil {
+		if err := r.mailboxRoom(ctx, admitted, admitted.Limits.MessageBytes, 1); err != nil {
 			return err
 		}
 		if err := r.refreshRoute(ctx, admitted, x, false); err != nil {
@@ -685,14 +779,18 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery, sender string, raw []byte, proofs []sso.NativeDomain) error {
 	return r.frozenAuthority(ctx, true, d, proofs, func(current map[string]sso.NativeAssignment) error {
 		return r.quotaFence(ctx, current, func() error {
-			for _, a := range current {
+			copies, err := r.sameOrgCopies(ctx, current)
+			if err != nil {
+				return err
+			}
+			for id, a := range current {
 				if int64(len(raw)) > a.Limits.MessageBytes {
 					return errMailboxMessageLimit
 				}
 				if mailbox.ImportValid(raw, a.Limits.MessageBytes) != nil {
 					return errUnimportable
 				}
-				if err := r.mailboxRoom(ctx, a, int64(len(raw))); err != nil {
+				if err := r.mailboxRoom(ctx, a, int64(len(raw)), copies[id]); err != nil {
 					return err
 				}
 			}

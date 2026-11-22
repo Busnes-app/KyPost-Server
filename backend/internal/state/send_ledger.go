@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
@@ -119,4 +120,28 @@ func (s *Store) ClaimSend(ctx context.Context, id, userID string, now int64) (bo
 func (s *Store) ReleaseSend(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM send_ledger WHERE id=?`, id)
 	return err
+}
+
+// OrgSendUsage sums the charges of an org's members, as AdmitSend counts one user's:
+// messages in the last hour and recipients in the last day (tenancy design, "Abuse
+// limits per org"). It reads the shared ledger, so it holds across replicas.
+func (s *Store) OrgSendUsage(ctx context.Context, members []string, now int64) (messages, recipients int, err error) {
+	if len(members) == 0 {
+		return 0, 0, nil
+	}
+	args := []any{now - sendHour, now - sendDay}
+	in := "?" + strings.Repeat(",?", len(members)-1)
+	for _, m := range members {
+		args = append(args, m)
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT coalesce(sum(CASE WHEN at > ? THEN 1 ELSE 0 END),0), coalesce(sum(recipients),0)
+		FROM send_ledger WHERE at > ? AND user_id IN (`+in+`)`, args...).Scan(&messages, &recipients)
+	return messages, recipients, err
+}
+
+// SendCharged reports whether id is already in the ledger.
+func (s *Store) SendCharged(ctx context.Context, id string) (bool, error) {
+	var charged bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM send_ledger WHERE id=?)`, id).Scan(&charged)
+	return charged, err
 }

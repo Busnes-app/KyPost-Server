@@ -197,6 +197,15 @@ func (s *Server) handleNativeMailboxes(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, users.ErrNotFound) || err == nil && u.NativeMailboxSource == "":
 		err = sso.ErrNativeAddressUnknown
 	}
+	if err == nil {
+		err = s.orgMailboxRoom(r.Context(), u)
+	}
+	if errors.Is(err, errOrgMailboxQuota) {
+		ac, _ := authFromContext(r)
+		s.logger.Info("native mailbox change", "actor", ac.UserID, "action", "create_mailbox", "target", "", "result", "refused")
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "code": "mailbox_quota"})
+		return
+	}
 	m := sso.NativeMailbox{}
 	if err == nil {
 		err = s.withIncomingEncryptionOff(u.ID, func() (err error) {

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,17 +25,12 @@ import (
 
 const staffToken = "staff-session-token"
 
-// staffFixture is newOrgFixture plus a staff administrator, an audit log, and orgs A and B
-// in the entitlement cache.
+// staffFixture is newOrgFixture plus a staff administrator and an audit log; makeMultiTenant
+// puts orgs A and B in the entitlement cache.
 func staffFixture(t *testing.T) (*orgFixture, *syncBuffer, users.User) {
 	t.Helper()
 	fx, logs := newOrgFixture(t)
 	withAuditLog(t, fx.srv)
-	for _, org := range []string{orgA, orgB} {
-		if _, err := fx.srv.tenancy.Exec(`INSERT INTO orgs(id, status, revision, enabled, quotas_json, polled_at) VALUES(?, 'active', 1, 1, '{}', 0)`, org); err != nil {
-			t.Fatal(err)
-		}
-	}
 	directoryStatus(t, postDirectory(t, fx.srv, testSyncKey, "user.created", "ev-staff", 1, orgUser("staff-1", staffOrg, true, "kypost.admin")))
 	staff, err := fx.srv.users.GetBySSOSub("staff-1")
 	if err != nil || staff.Role != users.RoleAdmin {
@@ -388,6 +384,8 @@ func TestIsStaff(t *testing.T) {
 	}
 }
 
+var updatedAt = regexp.MustCompile(`"updatedAt":"[^"]*"`)
+
 // Single mode: X-Ky-Org is ignored and no staff audit row is written.
 func TestSingleTenantIgnoresTheOrgHeader(t *testing.T) {
 	srv, admin, member := adminAndMember(t)
@@ -403,7 +401,8 @@ func TestSingleTenantIgnoresTheOrgHeader(t *testing.T) {
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), member.ID) {
 			t.Fatalf("GET /api/users with %q: %d %s", header, w.Code, w.Body)
 		}
-		return normalized(w, "\x00")
+		// authRequestAs moves updatedAt; a slow run can cross a second between calls.
+		return updatedAt.ReplaceAllString(normalized(w, "\x00"), "")
 	}
 	if want := get(""); get(orgA) != want || get("not-an-org") != want {
 		t.Error("X-Ky-Org changed a single-tenant answer")

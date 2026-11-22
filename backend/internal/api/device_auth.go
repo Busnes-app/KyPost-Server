@@ -158,7 +158,16 @@ func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device stat
 	// telling its user to re-pair.
 	// Multi mode refuses an account with no org like a deactivated one (tenancy K5).
 	u, err := s.users.Get(ownerID)
-	if err != nil || !u.Active || s.multiTenant() && u.OrgID == "" {
+	served := true
+	if err == nil {
+		var orgErr error
+		if served, orgErr = s.orgServed(r.Context(), u); orgErr != nil {
+			// An unreadable org cache is "come back later", not a dead credential.
+			s.deviceLockout.cancelAttempt(strike)
+			return "", state.NativeDevice{}, 0, false, retryAfterKDFBusy
+		}
+	}
+	if err != nil || !u.Active || s.multiTenant() && u.OrgID == "" || !served {
 		s.deviceLockout.cancelAttempt(strike)
 		return "", state.NativeDevice{}, 0, false, 0
 	}

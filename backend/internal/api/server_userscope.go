@@ -626,7 +626,10 @@ func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 		}
 		return AuthContext{}, errMailUnauthorized
 	}
-	org, ok := s.deviceOrg(userID)
+	org, ok, err := s.deviceOrg(userID)
+	if err != nil {
+		return AuthContext{}, &mailLockedOutError{retryAfter: kdfMaxQueueWait(), kdfBusy: true}
+	}
 	if !ok {
 		return AuthContext{}, errMailUnauthorized
 	}
