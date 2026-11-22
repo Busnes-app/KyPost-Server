@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Combobox } from "@base-ui/react/combobox";
 import { statusOf, statusText, type Presence } from "../api/kymessage";
 import type { Suggestion } from "../hooks/useContactAutocomplete";
 
@@ -7,9 +8,6 @@ type RecipientAutocompleteProps = {
   results: Suggestion[];
   loading: boolean;
   searched: boolean;
-  activeIndex: number;
-  onHoverIndex: (i: number) => void;
-  onSelect: (suggestion: Suggestion) => void;
 };
 
 function highlightMatch(text: string, query: string): ReactNode {
@@ -28,15 +26,12 @@ function highlightMatch(text: string, query: string): ReactNode {
   );
 }
 
-export function RecipientAutocomplete({
-  query,
-  results,
-  loading,
-  searched,
-  activeIndex,
-  onHoverIndex,
-  onSelect
-}: RecipientAutocompleteProps) {
+/**
+ * The suggestion list inside RecipientField's Combobox popup: the user's
+ * contacts as options, then organisation people as options in one group
+ * labelled "Organisation". Combobox owns highlight, pointer and keyboard.
+ */
+export function RecipientAutocomplete({ query, results, loading, searched }: RecipientAutocompleteProps) {
   // Organisation people's status from KyMessages, asked once per result list.
   const org = results.filter((r) => r.organisation).map((r) => r.email.toLowerCase()).join(",");
   const [status, setStatus] = useState<Record<string, Presence>>({});
@@ -49,40 +44,38 @@ export function RecipientAutocomplete({
     };
   }, [org]);
 
-  if (!searched && !loading) {
-    return null;
-  }
-
   const showEmpty = searched && !loading && results.length === 0;
 
+  const row = (item: Suggestion) => {
+    const presence = item.organisation ? status[item.email.toLowerCase()] : undefined;
+    return (
+      <Combobox.Item key={item.key} value={item} className="recipient-autocomplete-row">
+        <span className="recipient-autocomplete-name">{highlightMatch(item.name || item.email, query)}</span>
+        {item.name ? <span className="recipient-autocomplete-email">{highlightMatch(item.email, query)}</span> : null}
+        {presence ? (
+          <span className="recipient-status" data-state={presence.state}>
+            <span className="recipient-status-dot" aria-hidden="true" />
+            {statusText(presence)}
+          </span>
+        ) : null}
+      </Combobox.Item>
+    );
+  };
+  const own = results.filter((r) => !r.organisation);
+  const people = results.filter((r) => r.organisation);
+
   return (
-    <div className="recipient-autocomplete">
-      {showEmpty ? (
-        <div className="recipient-autocomplete-empty">No matches</div>
-      ) : (
-        results.map((item, index) => (
-          <div key={item.key} role="presentation">
-            {item.organisation && !results[index - 1]?.organisation ? (
-              <div className="recipient-autocomplete-group">Organisation</div>
-            ) : null}
-            <div
-              className={`recipient-autocomplete-row${index === activeIndex ? " active" : ""}`}
-              onMouseEnter={() => onHoverIndex(index)}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onSelect(item)}
-            >
-              <span className="recipient-autocomplete-name">{highlightMatch(item.name || item.email, query)}</span>
-              {item.name ? <span className="recipient-autocomplete-email">{highlightMatch(item.email, query)}</span> : null}
-              {item.organisation && status[item.email.toLowerCase()] ? (
-                <span className="recipient-status" data-state={status[item.email.toLowerCase()].state}>
-                  <span className="recipient-status-dot" aria-hidden="true" />
-                  {statusText(status[item.email.toLowerCase()])}
-                </span>
-              ) : null}
-            </div>
-          </div>
-        ))
-      )}
-    </div>
+    <>
+      <Combobox.Empty>{showEmpty ? <div className="recipient-autocomplete-empty">No matches</div> : null}</Combobox.Empty>
+      <Combobox.List className="recipient-autocomplete-list">
+        {own.map(row)}
+        {people.length > 0 ? (
+          <Combobox.Group className="recipient-autocomplete-people">
+            <Combobox.GroupLabel className="recipient-autocomplete-group">Organisation</Combobox.GroupLabel>
+            {people.map(row)}
+          </Combobox.Group>
+        ) : null}
+      </Combobox.List>
+    </>
   );
 }

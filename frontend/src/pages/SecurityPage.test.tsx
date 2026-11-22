@@ -596,6 +596,11 @@ describe("CardDAV password blocks tab switches", () => {
     expect(screen.getByRole("alert").textContent).toContain("before switching tabs");
     expect(screen.getByRole("tab", { name: "CardDAV" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("generated-app-password")).toBeTruthy();
+
+    // The keyboard is held to the same rule: arrows move focus, Enter is refused.
+    await user.keyboard("{ArrowRight}{Enter}");
+    expect(screen.getByRole("tab", { name: "CardDAV" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("generated-app-password")).toBeTruthy();
   });
 });
 
@@ -858,5 +863,24 @@ describe("complete keyring recovery UI gates", () => {
     await screen.findByText(/Recovery copy saved on the server/);
     expect(storePGPKeyringRecovery).toHaveBeenCalledWith(ringBackup,"SECRET-ABCD-1234","account-password",7,expect.any(Function));
     expect(putJSON).not.toHaveBeenCalled();
+  });
+});
+
+describe("Security tabs", () => {
+  it("move with the arrows, open on Enter, and label their panel", async () => {
+    const user = userEvent.setup();
+    renderPage("signin");
+    const tab = (name: string) => screen.getByRole("tab", { name });
+    expect(screen.getByRole("tablist", { name: "Security sections" })).toBeTruthy();
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(tab("Sign-in").id);
+    tab("Sign-in").focus();
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(tab("Devices"));
+    expect(tab("Sign-in").getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("{Enter}");
+    expect(tab("Devices").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel", { name: "Devices" })).toBeTruthy();
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(document.activeElement).toBe(tab("Export Mail"));
   });
 });

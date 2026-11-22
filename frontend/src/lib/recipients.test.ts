@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickupFallbackFlag } from "./recipients";
+import { pickupFallbackFlag, serializeRecipientField, splitAddressList } from "./recipients";
 
 describe("pickupFallbackFlag", () => {
   it("is false when not encrypting, whatever the checkbox says", () => {
@@ -12,5 +12,12 @@ describe("pickupFallbackFlag", () => {
 
   it("is true only when encrypting and opted in", () => {
     expect(pickupFallbackFlag(true, true)).toBe(true);
+  });
+});
+
+describe("a pasted list left in the draft", () => {
+  it("is sent as separate addresses, split on commas and semicolons", () => {
+    const field = { tokens: [{ email: "a@b.test", isCustom: false }], draft: " c@d.test, e@f.test; g@h.test " };
+    expect(splitAddressList(serializeRecipientField(field))).toEqual(["a@b.test", "c@d.test", "e@f.test", "g@h.test"]);
   });
 });

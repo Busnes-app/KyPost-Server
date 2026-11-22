@@ -88,7 +88,7 @@ export function LabelRules() {
   }
 
   return (
-    <div className="config-card" role="tabpanel">
+    <div className="config-card">
       <h3>Default labels for new accounts</h3>
       <p className="config-muted">
         One label per line. This is the house list a NEW account's own labels are copied from — it is not what

@@ -99,7 +99,7 @@ export function WkdDomains() {
   }
 
   return (
-    <div className="config-card" role="tabpanel">
+    <div className="config-card">
       <h3>WKD key publishing (domains)</h3>
       <p className="config-muted">
         Web Key Directory (WKD) lets other mail clients look up a user's PGP key automatically, without it
