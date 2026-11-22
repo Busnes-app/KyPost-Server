@@ -808,10 +808,12 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      under the shared authority fences an owner or address that no longer matches is retired, as
      `frozenAuthority` reads it; any other refusal is retired only if `bindingsRetired`'s
      directory-locked read proves it, as `quarantineRetired` does. Otherwise the mailbox's copy
-     is written under its quota lock (`writeMailbox`, `:212`), after re-reading the org there:
-     `deleted` writes nothing (the purge fence). The write is `ingress.Store.ImportMailbox`
+     is written under its quota lock (`writeMailbox`, `:214`), after re-reading the org there:
+     `deleted` writes nothing (the purge fence). The lease is renewed there too, so a worker
+     whose lease ran out while it waited for the fences or the lock writes nothing and cannot
+     overtake the mailbox's new holder. The write is `ingress.Store.ImportMailbox`
      (`ingress/obligations.go:92`), one receipt for all the mailbox's bindings, with no claim.
-   - **Completion** (`complete`, `app/receiving_imports.go:292`; `ingress.Store.Complete`,
+   - **Completion** (`complete`, `app/receiving_imports.go:297`; `ingress.Store.Complete`,
      `ingress/obligations.go:133`). Reading: the done-state (`mailbox.Store.HasReceipt`, or a
      `retired_bindings` row) is read after the caller's own write commits and before the
      `kypost_ingress` writer transaction, which re-reads the bindings. Of two workers, the later
@@ -820,7 +822,7 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      the imported bindings are deleted and the delivery is quarantined with only the retired
      ones (lease cleared, so a discard says `discarded`). A delivery under a live single-mode
      claim is left alone.
-   - **Backstop sweep** (`sweepCompletions`, `app/receiving_imports.go:310`). Every minute on
+   - **Backstop sweep** (`sweepCompletions`, `app/receiving_imports.go:315`). Every minute on
      the elected `daemon` role (`app/receiving.go:346`), which in multi mode runs only the sweep.
      Reading: not on `api-sweepers` as R8 says, because only the daemon process opens the
      receiving runtime. It walks `PendingGateways` (`ingress/obligations.go:29`), every gateway
@@ -833,8 +835,8 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      retired ID refused, over TLS; the store rules are PR 2's `TestGatewayPins`),
      `TestLeasedImportTwoReplicasKeepOrder`, `TestLeasedImportDeletedOrgWaitsForItsPurge`,
      `TestLeasedImportSuspendedOrgImports`, `TestLeasedImportUncachedOrgWaits`,
-     `TestLeasedImportPurgeFence` (the re-read alone, a worker waiting on the purge's lock, and
-     write first), `TestLeasedImportCrashBeforeCompletion`,
+     `TestLeasedImportPurgeFence` (the re-read alone, a worker waiting on the purge's lock, a
+     lease lost while waiting, and write first), `TestLeasedImportCrashBeforeCompletion`,
      `TestLeasedImportConcurrentCompletion`, `TestLeasedImportRetiredBinding` (active plus
      retired, and a purge leaving only retired), `TestLeasedImportLeases` (killed holder, and the
      100 bound with its skipped pass), and `TestSingleModeKeepsTheDaemonImporter`. Also
@@ -842,7 +844,8 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      `TestImportLease`, `TestRetiredBindingsAndOrgImport`; and
      `TestSingleTenantUpgradeIsByteForByte` unchanged. Each of these mutations fails its test:
      no re-read under the quota lock, a retired binding counted as imported, the skip ignored,
-     `deleted` importing, a lease taken while live, and an uncached org importing.
+     `deleted` importing, a lease taken while live, an uncached org importing, and no lease
+     check under the quota lock.
    - **K PR 6 stand-in.** The deleted-org and retired-purge tests use `purgeStandIn`, written
      against K "Purge" steps 2–3: delete the org's bindings and `retired_bindings` rows, delete a
      delivery left with none, run Completion, then remove storage under each quota lock. Switch

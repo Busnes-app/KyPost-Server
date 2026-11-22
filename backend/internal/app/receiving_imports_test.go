@@ -146,6 +146,14 @@ func pass(t *testing.T, r *receivingRuntime, holder string) {
 	r.importPass(context.Background(), holder, nil, testLogger(t))
 }
 
+// lease takes mailbox m's import lease for holder, as a worker does before writing.
+func lease(t *testing.T, r *receivingRuntime, m, holder string, at time.Time) {
+	t.Helper()
+	if ok, err := tenancy.TakeImportLease(context.Background(), r.tenancy, m, holder, at); err != nil || !ok {
+		t.Fatalf("lease %s for %s: %v %v", m, holder, ok, err)
+	}
+}
+
 func obligation(t *testing.T, r *receivingRuntime, m, id string) ingress.Obligation {
 	t.Helper()
 	page, err := r.holding.Obligations(context.Background(), m, 0, 100)
@@ -361,7 +369,8 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 		}
 		setOrg(t, r.tenancy, receivingOrgA, suitedir.OrgDeleted)
 		// writeMailbox is the step after the first check: only the re-read can stop it.
-		if err := r.writeMailbox(ctx, d, a.Owner, d.Bindings); !errors.Is(err, tenancy.ErrImportDeleted) {
+		lease(t, r, a.Owner.Mailbox, "w", time.Now())
+		if err := r.writeMailbox(ctx, "w", d, a.Owner, d.Bindings); !errors.Is(err, tenancy.ErrImportDeleted) {
 			t.Fatalf("write for a deleted org: %v", err)
 		}
 		if got := inbox(t, r, created[0]); len(got) != 0 {
@@ -383,7 +392,8 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 			t.Fatal(err)
 		}
 		done := make(chan error, 1)
-		go func() { _, err := r.importObligation(ctx, o, a.Owner.Mailbox); done <- err }()
+		lease(t, r, a.Owner.Mailbox, "w", time.Now())
+		go func() { _, err := r.importObligation(ctx, "w", o, a.Owner.Mailbox); done <- err }()
 		time.Sleep(300 * time.Millisecond) // the worker has passed its first check and waits for the lock
 		setOrg(t, r.tenancy, receivingOrgA, suitedir.OrgDeleted)
 		if err := removeStorage(a.Dir(r.stateDir)); err != nil {
@@ -395,6 +405,35 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 		}
 		purgeStandIn(t, r, created[0])
 		purgedClean(t, r, created[0])
+	})
+	t.Run("lease lost while waiting", func(t *testing.T) {
+		// A worker whose lease ran out while it waited for the quota lock writes nothing,
+		// so it cannot overtake the mailbox's new holder.
+		r, created := importFixture(t, receivingOrgA, receivingOrgB)
+		deliver(t, r, "stalled", "one@example.test")
+		a := assignment(t, r, created[0])
+		m := a.Owner.Mailbox
+		o := obligation(t, r, m, "stalled")
+		release, err := fsutil.LockFileContext(ctx, filepath.Join(r.stateDir, "receiving", "quota-"+m))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease(t, r, m, "slow", time.Now())
+		done := make(chan error, 1)
+		go func() { _, err := r.importObligation(ctx, "slow", o, m); done <- err }()
+		time.Sleep(300 * time.Millisecond)
+		lease(t, r, m, "slow", time.Now().Add(-2*tenancy.ImportLease)) // expired
+		lease(t, r, m, "new", time.Now())
+		release()
+		if err := <-done; !errors.Is(err, errLeaseLost) {
+			t.Fatalf("stalled worker: %v", err)
+		}
+		if got := inbox(t, r, created[0]); len(got) != 0 {
+			t.Fatalf("written after the lease was lost: %v", got)
+		}
+		if ok, err := tenancy.Retired(ctx, r.tenancy, receivingGateway, "stalled", m); err != nil || ok {
+			t.Fatalf("lost lease recorded as retired: %v %v", ok, err)
+		}
 	})
 	t.Run("write first", func(t *testing.T) {
 		r, created := importFixture(t, receivingOrgA, receivingOrgB)
@@ -420,9 +459,13 @@ func TestLeasedImportCrashBeforeCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, u := range created {
-		if err := r.writeObligation(ctx, d, assignment(t, r, u).Owner.Mailbox); err != nil {
+		m := assignment(t, r, u).Owner.Mailbox
+		lease(t, r, m, "crashed", time.Now())
+		if err := r.writeObligation(ctx, "crashed", d, m); err != nil {
 			t.Fatal(err)
 		}
+		// Its lease runs out.
+		lease(t, r, m, "crashed", time.Now().Add(-2*tenancy.ImportLease))
 	}
 	pass(t, r, "retry")
 	for _, u := range created {
@@ -452,15 +495,21 @@ func TestLeasedImportConcurrentCompletion(t *testing.T) {
 		for _, u := range created {
 			m := assignment(t, r, u).Owner.Mailbox
 			o := obligation(t, r, m, id)
+			lease(t, r, m, "w", time.Now())
 			wg.Go(func() {
 				<-start
-				if _, err := r.importObligation(ctx, o, m); err != nil {
+				if _, err := r.importObligation(ctx, "w", o, m); err != nil {
 					t.Error(err)
 				}
 			})
 		}
 		close(start)
 		wg.Wait()
+		for _, u := range created {
+			if err := tenancy.ReleaseImportLease(ctx, r.tenancy, assignment(t, r, u).Owner.Mailbox, "w"); err != nil {
+				t.Fatal(err)
+			}
+		}
 		d, err := r.holding.Get(ctx, receivingGateway, id)
 		if err != nil || d.State != "archived" || d.Disposition != "imported" {
 			t.Fatalf("%s: %+v %v", id, d, err)
@@ -546,7 +595,7 @@ func TestLeasedImportLeases(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := r.writeObligation(ctx, d, m); err != nil { // killed before Completion
+		if err := r.writeObligation(ctx, "dead", d, m); err != nil { // killed before Completion
 			t.Fatal(err)
 		}
 		pass(t, r, "live")

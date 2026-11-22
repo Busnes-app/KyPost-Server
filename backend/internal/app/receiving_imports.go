@@ -138,7 +138,7 @@ func (r *receivingRuntime) importMailbox(ctx context.Context, holder, m string, 
 			if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, m, holder, time.Now()); err != nil || !ok {
 				return false, errors.Join(errLeaseLost, err)
 			}
-			tried, err := r.importObligation(ctx, o, m)
+			tried, err := r.importObligation(ctx, holder, o, m)
 			if tried {
 				attempted++
 			}
@@ -154,7 +154,7 @@ func (r *receivingRuntime) importMailbox(ctx context.Context, holder, m string, 
 
 // importObligation imports delivery o into mailbox m unless m's obligation is done, then
 // runs Completion. tried reports an attempt, as opposed to a done obligation skipped.
-func (r *receivingRuntime) importObligation(ctx context.Context, o ingress.Obligation, m string) (tried bool, err error) {
+func (r *receivingRuntime) importObligation(ctx context.Context, holder string, o ingress.Obligation, m string) (tried bool, err error) {
 	bindings, err := r.holding.Bindings(ctx, o.Gateway, o.ID)
 	if err != nil {
 		return false, err
@@ -171,7 +171,7 @@ func (r *receivingRuntime) importObligation(ctx context.Context, o ingress.Oblig
 	if mailbox.ImportValid(d.Raw, receivingLimits.MessageBytes) != nil {
 		return true, r.holding.QuarantinePending(ctx, d.Gateway, d.ID)
 	}
-	if err := r.writeObligation(ctx, d, m); err != nil {
+	if err := r.writeObligation(ctx, holder, d, m); err != nil {
 		return true, err
 	}
 	return true, r.complete(ctx, d.Gateway, d.ID, d.Bindings)
@@ -179,7 +179,7 @@ func (r *receivingRuntime) importObligation(ctx context.Context, o ingress.Oblig
 
 // writeObligation is one obligation's steps 1 and 2: check the org, then record a durably
 // retired binding, or write the message into m under its quota lock.
-func (r *receivingRuntime) writeObligation(ctx context.Context, d ingress.Delivery, m string) error {
+func (r *receivingRuntime) writeObligation(ctx context.Context, holder string, d ingress.Delivery, m string) error {
 	var mine []ingress.Binding
 	for _, b := range d.Bindings {
 		if b.Mailbox == m {
@@ -198,8 +198,8 @@ func (r *receivingRuntime) writeObligation(ctx context.Context, d ingress.Delive
 	case imp == tenancy.ImportNever:
 		return tenancy.ErrImportDeleted
 	}
-	err := r.writeMailbox(ctx, d, owner, mine)
-	if errors.Is(err, errBindingRetired) || err != nil && !errors.Is(err, sso.ErrNativeRestoreHold) && !errors.Is(err, tenancy.ErrImportDeleted) && r.bindingsRetired(ctx, mine) {
+	err := r.writeMailbox(ctx, holder, d, owner, mine)
+	if errors.Is(err, errBindingRetired) || err != nil && !errors.Is(err, sso.ErrNativeRestoreHold) && !errors.Is(err, tenancy.ErrImportDeleted) && !errors.Is(err, errLeaseLost) && r.bindingsRetired(ctx, mine) {
 		return tenancy.RecordRetired(ctx, r.tenancy, d.Gateway, d.ID, m, time.Now())
 	}
 	return err
@@ -208,8 +208,10 @@ func (r *receivingRuntime) writeObligation(ctx context.Context, d ingress.Delive
 // writeMailbox writes d's one copy into owner's mailbox under the authority fences, as
 // importFrozen does for every mailbox. Under the quota lock it re-reads the org: the purge
 // marks the org deleted before it takes the same lock to remove the storage, so a write
-// either lands before the removal or sees deleted and writes nothing.
-func (r *receivingRuntime) writeMailbox(ctx context.Context, d ingress.Delivery, owner mailbox.Owner, mine []ingress.Binding) error {
+// either lands before the removal or sees deleted and writes nothing. It also renews
+// holder's lease there, so a worker whose lease ran out while it waited for the locks
+// writes nothing and cannot overtake the mailbox's new holder.
+func (r *receivingRuntime) writeMailbox(ctx context.Context, holder string, d ingress.Delivery, owner mailbox.Owner, mine []ingress.Binding) error {
 	a, found, err := r.life.NativeMailboxAssignment(owner.Mailbox)
 	if err != nil || !found || a.Owner != owner || int64(len(d.Raw)) > a.Limits.MessageBytes {
 		return sso.ErrNativeProvisioning
@@ -252,6 +254,9 @@ func (r *receivingRuntime) writeMailbox(ctx context.Context, d ingress.Delivery,
 			}
 			if imp == tenancy.ImportNever {
 				return tenancy.ErrImportDeleted
+			}
+			if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, owner.Mailbox, holder, time.Now()); err != nil || !ok {
+				return errors.Join(errLeaseLost, err)
 			}
 			return r.holding.ImportMailbox(ctx, d, "INBOX", store)
 		})
