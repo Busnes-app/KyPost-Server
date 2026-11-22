@@ -257,6 +257,9 @@ func (f nativeAssignments) mailboxStorage(id string) (NativeAssignment, nativeLe
 	if m.Kind == "primary" {
 		return a, m, true
 	}
+	if !filepath.IsLocal(id) { // id names the extra mailbox's directory
+		return NativeAssignment{}, m, false
+	}
 	a.user = a.Owner.Mailbox
 	a.Owner.Mailbox, a.StateRoot, a.Limits, a.Source, a.extra = id, m.StateRoot, m.Limits, m.Source, true
 	a.Address = ""
