@@ -90,3 +90,41 @@ test('To: Escape closes the list, then the dialog; comma commits; Backspace remo
   await page.keyboard.press('Escape');
   await expect(compose).toBeHidden();
 });
+
+test('Cc: arrows stop at both ends, Enter chooses; a pasted list lands as pasted; Backspace and x remove chips', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const compose = await openCompose(page);
+  const cc = compose.getByRole('combobox', { name: 'Cc recipients', exact: true });
+  const ccChips = compose.locator('.compose-token-field').nth(1).locator('.compose-token-pill-label');
+  await cc.pressSequentially('al');
+  const options = compose.getByRole('option');
+  await expect(options).toHaveCount(3);
+  const ids = await options.evaluateAll((els) => els.map((el) => el.id));
+  await expect(cc).toHaveAttribute('aria-activedescendant', ids[0]);
+  await page.keyboard.press('ArrowUp');
+  await expect(cc).toHaveAttribute('aria-activedescendant', ids[0]);
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowDown');
+  await expect(cc).toHaveAttribute('aria-activedescendant', ids[2]);
+  await page.keyboard.press('ArrowUp');
+  await expect(cc).toHaveAttribute('aria-activedescendant', ids[1]);
+  await page.keyboard.press('Enter');
+  await expect(ccChips).toHaveText(['Alan Ames <alan@example.test>']);
+  await expect(cc).toBeFocused();
+
+  // A real clipboard paste is typing (input-change): it reaches the box
+  // unchanged and makes no chips; send splits it (serializeRecipientField).
+  const pasted = 'a@b.test, c@d.test; e@f.test';
+  await page.evaluate((text) => navigator.clipboard.writeText(text), pasted);
+  await page.keyboard.press('ControlOrMeta+V');
+  await expect(cc).toHaveValue(pasted);
+  await expect(ccChips).toHaveCount(1);
+
+  await cc.fill('');
+  await page.keyboard.press('Backspace');
+  await expect(ccChips).toHaveCount(0);
+  await expect(cc).toBeFocused();
+  await cc.pressSequentially('g@h.test,');
+  await compose.getByRole('button', { name: 'Remove g@h.test' }).click();
+  await expect(ccChips).toHaveCount(0);
+  await expect(compose.locator('.compose-token-field').first().locator('.compose-token-pill')).toHaveCount(0);
+});

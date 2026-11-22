@@ -37,11 +37,21 @@ test('Security tabs: arrows and Space, behind the page password', async ({ page 
   await expect(list.getByRole('tab', { name: 'Export Mail' })).toBeFocused();
   await page.keyboard.press('ArrowRight');
   await expect(signIn).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(signIn).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(list.getByRole('tab', { name: 'Export Mail' })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(signIn).toBeFocused();
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('Space');
   const devices = list.getByRole('tab', { name: 'Devices' });
   await expect(devices).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', await devices.getAttribute('id'));
+  // The strip is one Tab stop: only the selected tab is in the tab order.
+  await expect(list.getByRole('tab').and(page.locator('[tabindex="0"]'))).toHaveCount(1);
+  await page.keyboard.press('Shift+Tab');
+  await expect(list.locator(':focus')).toHaveCount(0);
 });
 
 test('Contact page buttons are pagination: a nav with the current page marked', async ({ page }) => {
