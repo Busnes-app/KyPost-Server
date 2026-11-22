@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { Tabs } from "@base-ui/react/tabs";
 import { useSearchParams } from "react-router";
 
 export type PanelTab = {
@@ -33,29 +34,23 @@ export function PanelTabs({ tabs, ariaLabel }: { tabs: ReadonlyArray<PanelTab>; 
     setSearchParams(next, { replace: true });
   }
 
+  // Base UI Tabs owns the keyboard: arrows move focus along the strip,
+  // Enter or Space opens a tab (manual activation), and each panel is
+  // labelled by its tab. Only the open panel is mounted, as before.
   return (
-    <>
-      <div className="config-tabs" role="tablist" aria-label={ariaLabel}>
+    <Tabs.Root value={active} onValueChange={(id) => select(String(id))}>
+      <Tabs.List className="config-tabs" aria-label={ariaLabel}>
         {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={active === tab.id}
-            className={`config-tab${active === tab.id ? " active" : ""}`}
-            onClick={() => select(tab.id)}
-          >
+          <Tabs.Tab key={tab.id} value={tab.id} className={`config-tab${active === tab.id ? " active" : ""}`}>
             {tab.label}
-          </button>
+          </Tabs.Tab>
         ))}
-      </div>
-      {tabs.map((tab) =>
-        active === tab.id ? (
-          <div key={tab.id} id={tab.id} role="tabpanel">
-            {tab.body}
-          </div>
-        ) : null
-      )}
-    </>
+      </Tabs.List>
+      {tabs.map((tab) => (
+        <Tabs.Panel key={tab.id} value={tab.id}>
+          {tab.body}
+        </Tabs.Panel>
+      ))}
+    </Tabs.Root>
   );
 }
