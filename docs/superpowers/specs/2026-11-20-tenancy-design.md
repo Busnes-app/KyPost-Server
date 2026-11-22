@@ -1090,7 +1090,7 @@ build the multi paths as PR 2's do (`makeMultiTenant`).
   - **The non-HTTP inputs:**
     - The sync event is PR 2's tests.
     - The inbound peer bodies are `TestTenancyInboundPeersNeedTheAccountOrg`.
-    - SMTP `RCPT` waits for PR 7's receiving tier (unbuilt).
+    - SMTP `RCPT` is `TestCrossOrgMatrixSMTPRcpt` (`app/receiving_hosted_test.go`), on RX PR 5's hosted profile over TLS.
   - **Proof that the gates bite:** replacing `orgAdmit` with `return true` fails
     `TestOrgAdmit` and the mailbox, inbound-peer, people-search and address-move tests. It
     does not fail the matrix, because the per-user stores and the ledger already separate
@@ -1289,7 +1289,7 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - unknown (`550`, exit 3) for `deletion_scheduled` and `deleted`.
 
   Wiring it into `receiving bind` is RX PR 5's exit 12 (the brief keeps exit codes 12 and 13
-  out of this PR). A suspended org's mail therefore still binds today, on the RX profile only.
+  out of this PR). RX PR 5 built it (`orgReceives`, RX "PR 5 as built").
 - **Quotas** (`tenancy.Quotas`; masked quotas are M change 3, PR 7):
   - **Parsing.** A missing key keeps today's default. A known key that is not a whole
     non-negative number reads as 0, and a body that does not decode zeroes every key. 0 refuses
@@ -1344,7 +1344,7 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
   - **Import and export, one per org at a time** (Abuse limits). It is not a `quotas_json` key,
     and today's slots are per process. PR 7, with the receiving tier's per-mailbox leases.
   - **Masked-address quotas** (M D7): PR 7.
-  - **`receiving bind` refusing by org status:** RX PR 5.
+  - **`receiving bind` refusing by org status:** RX PR 5 (built).
   - **The org gate in the daemon's outbox worker and out-of-office replies:** PR 7. Until then
     they hold, never send.
   - **The admin UI's org selector:** still not built. No screen changed, so there are no

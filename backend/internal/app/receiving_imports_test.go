@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
+	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
@@ -47,7 +48,7 @@ func importFixture(t *testing.T, cached ...string) (*receivingRuntime, []users.U
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	bindOrgs(t, db, created)
-	r.tenancy = db
+	multiRuntime(t, r, db)
 	for _, org := range cached {
 		setOrg(t, r.tenancy, org, suitedir.OrgActive)
 	}
@@ -169,63 +170,24 @@ func obligation(t *testing.T, r *receivingRuntime, m, id string) ingress.Obligat
 	return ingress.Obligation{}
 }
 
-// purgeStandIn is K PR 6's purge, receiving part only, written against its contract (K
-// "Purge" steps 2 and 3, RX R8 "Purge"): the org is already deleted in the cache; delete
-// its mailboxes' ingress bindings and their retired_bindings rows, delete a delivery left
-// with none, run Completion on the rest, then remove each mailbox's storage under its
-// quota lock. Switch the tests that call it to the real purge once K PR 6 merges.
-func purgeStandIn(t *testing.T, r *receivingRuntime, members ...users.User) {
+// purge runs K PR 6's purge steps 2 and 3 (api.PurgeReceiving, api.PurgeStorage) for
+// members, whose org the test has marked deleted, then the daemon's Completion sweep,
+// which archives a delivery the purge left with only finished bindings.
+func purge(t *testing.T, r *receivingRuntime, members ...users.User) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := dbbackend.OpenFile(filepath.Join(r.stateDir, "receiving", "ingress.db"), "")
-	if err != nil {
+	var ids, mailboxes []string
+	for _, u := range members {
+		ids = append(ids, u.ID)
+		mailboxes = append(mailboxes, assignment(t, r, u).Owner.Mailbox)
+	}
+	if err := api.PurgeReceiving(ctx, r.holding, r.tenancy, mailboxes); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	type key struct{ gateway, id string }
-	touched := map[key]bool{}
-	for _, u := range members {
-		m := assignment(t, r, u).Owner.Mailbox
-		rows, err := db.QueryContext(ctx, "SELECT gateway,id FROM bindings WHERE mailbox=?", m)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for rows.Next() {
-			var k key
-			if err := rows.Scan(&k.gateway, &k.id); err != nil {
-				t.Fatal(err)
-			}
-			touched[k] = true
-		}
-		rows.Close()
-		if _, err := db.ExecContext(ctx, "DELETE FROM bindings WHERE mailbox=?", m); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := r.tenancy.ExecContext(ctx, "DELETE FROM retired_bindings WHERE mailbox=?", m); err != nil {
-			t.Fatal(err)
-		}
+	if err := api.PurgeStorage(ctx, r.configDir, r.stateDir, ids, mailboxes); err != nil {
+		t.Fatal(err)
 	}
-	for k := range touched {
-		bindings, err := r.holding.Bindings(ctx, k.gateway, k.id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(bindings) == 0 {
-			if _, err := db.ExecContext(ctx, "DELETE FROM deliveries WHERE gateway=? AND id=?", k.gateway, k.id); err != nil {
-				t.Fatal(err)
-			}
-			continue
-		}
-		if err := r.complete(ctx, k.gateway, k.id, bindings); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, u := range members {
-		a := assignment(t, r, u)
-		if err := r.quotaFence(ctx, map[string]sso.NativeAssignment{a.Owner.Mailbox: a}, func() error { return removeStorage(a.Dir(r.stateDir)) }); err != nil {
-			t.Fatal(err)
-		}
-	}
+	r.sweepCompletions(ctx, testLogger(t))
 }
 
 func removeStorage(dir string) error {
@@ -301,7 +263,7 @@ func TestLeasedImportDeletedOrgWaitsForItsPurge(t *testing.T) {
 	if got := inbox(t, r, created[1]); len(got) != 0 {
 		t.Fatalf("deleted org imported: %v", got)
 	}
-	purgeStandIn(t, r, created[1])
+	purge(t, r, created[1])
 	if s := stateOf(t, r, receivingGateway, "shared"); s != "archived" {
 		t.Fatalf("shared is %s after the purge", s)
 	}
@@ -335,11 +297,16 @@ func TestLeasedImportSuspendedOrgImports(t *testing.T) {
 }
 
 // An org missing from the cache: its mailbox waits, the other mailbox imports, and the
-// first good poll releases it.
+// first good poll releases it. Bind refuses an uncached org (exit 12), so the mail was
+// accepted before a restore emptied the cache (tenancy.ForgetRestored).
 func TestLeasedImportUncachedOrgWaits(t *testing.T) {
-	r, created := importFixture(t, receivingOrgA)
+	r, created := importFixture(t, receivingOrgA, receivingOrgB)
 	deliver(t, r, "to-a", "one@example.test")
 	deliver(t, r, "to-b", "two@example.test")
+	if err := tenancy.ForgetRestored(context.Background(), r.tenancy); err != nil {
+		t.Fatal(err)
+	}
+	setOrg(t, r.tenancy, receivingOrgA, suitedir.OrgActive)
 	pass(t, r, "w")
 	if s := stateOf(t, r, receivingGateway, "to-a"); s != "archived" {
 		t.Fatalf("to-a is %s", s)
@@ -376,9 +343,9 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 		if got := inbox(t, r, created[0]); len(got) != 0 {
 			t.Fatalf("written: %v", got)
 		}
-		purgeStandIn(t, r, created[0])
-		if s := stateOf(t, r, receivingGateway, "late"); s != "gone" {
-			t.Fatalf("late is %s", s)
+		purge(t, r, created[0])
+		if d, err := r.holding.Get(ctx, receivingGateway, "late"); err != nil || d.State != "archived" || d.Disposition != "discarded" {
+			t.Fatalf("late: %+v %v", d, err)
 		}
 		purgedClean(t, r, created[0])
 	})
@@ -403,7 +370,7 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 		if err := <-done; !errors.Is(err, tenancy.ErrImportDeleted) && !errors.Is(err, errImportWait) {
 			t.Fatalf("worker after the purge's lock: %v", err)
 		}
-		purgeStandIn(t, r, created[0])
+		purge(t, r, created[0])
 		purgedClean(t, r, created[0])
 	})
 	t.Run("lease lost while waiting", func(t *testing.T) {
@@ -443,7 +410,7 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 			t.Fatalf("early: %v", got)
 		}
 		setOrg(t, r.tenancy, receivingOrgA, suitedir.OrgDeleted)
-		purgeStandIn(t, r, created[0])
+		purge(t, r, created[0])
 		purgedClean(t, r, created[0])
 	})
 }
@@ -570,7 +537,7 @@ func TestLeasedImportRetiredBinding(t *testing.T) {
 		if s := stateOf(t, r, receivingGateway, "mixed"); s != "pending" {
 			t.Fatalf("mixed is %s before the purge", s)
 		}
-		purgeStandIn(t, r, created[1])
+		purge(t, r, created[1])
 		if s := stateOf(t, r, receivingGateway, "mixed"); s != "quarantined" {
 			t.Fatalf("mixed is %s after the purge", s)
 		}
@@ -699,7 +666,7 @@ func TestLeasedImportOutlivesItsGatewayPin(t *testing.T) {
 		}
 		setOrg(t, f.db, org, suitedir.OrgActive)
 	}
-	f.r.tenancy = f.db
+	multiRuntime(t, f.r, f.db)
 	addr, _ := f.serve(t)
 	send := func(key, id string) error {
 		t.Helper()

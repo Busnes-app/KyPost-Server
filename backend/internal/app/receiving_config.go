@@ -158,6 +158,11 @@ func writeReceivingConfig(ctx context.Context, executable, stateDir, address, ho
 	if err != nil {
 		return err
 	}
+	// The hosted profile's bind carries the peer IP for the relay domain's probe budget.
+	bindSource := ""
+	if bindCodes != "" {
+		bindSource = ` "{source_ip}"`
+	}
 	config := fmt.Sprintf(`hostname %s
 state_dir "%s"
 runtime_dir "%s"
@@ -183,7 +188,7 @@ smtp tcp://%s {
     }
     check {
         require_tls
-        command "%s" receiving bind "{msg_id}" "{sender}" "{address}" {
+        command "%s" receiving bind "{msg_id}" "{sender}" "{address}"%s {
             run_on rcpt
             code 1 reject 451 4.3.0 "Receiving storage unavailable"
             code 3 reject 550 5.1.1 "Recipient unavailable"
@@ -207,7 +212,7 @@ smtp tcp://%s {
     destination %s { deliver_to dummy }
     default_destination { reject }
 }
-`, host, stateDir, stateDir, certPath, keyPath, address, concurrency, ipConcurrency, rate, ipRate, executable, bindCodes, executable, spamArgs, strings.Join(domains, " "))
+`, host, stateDir, stateDir, certPath, keyPath, address, concurrency, ipConcurrency, rate, ipRate, executable, bindSource, bindCodes, executable, spamArgs, strings.Join(domains, " "))
 	_, err = io.WriteString(output, config)
 	return err
 }

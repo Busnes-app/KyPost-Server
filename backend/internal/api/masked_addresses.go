@@ -26,7 +26,7 @@ import (
 
 // maskedDomainsSetting is the administrator's list of domains users may make
 // masked addresses on, comma-separated in root state.db meta. Empty is off.
-const maskedDomainsSetting = "masked_address_domains"
+const maskedDomainsSetting = state.MaskedDomainsSetting
 
 const (
 	// maskedLimit caps a user's masked addresses that are not deleted.

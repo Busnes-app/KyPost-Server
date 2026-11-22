@@ -20,6 +20,10 @@ import (
 // set to "" is present. The backup adapter maps this onto the library's.
 var ErrNotFound = errors.New("state: setting not found")
 
+// MaskedDomainsSetting is the meta key of the administrator's masked-address domains,
+// comma-separated. In hosted mode they are the relay domain (masked-address design D2).
+const MaskedDomainsSetting = "masked_address_domains"
+
 // Setting reads one install-wide key from meta.
 func (s *Store) Setting(key string) (string, error) {
 	var v string

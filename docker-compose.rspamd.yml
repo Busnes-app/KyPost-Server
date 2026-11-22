@@ -3,7 +3,7 @@
 # No scanner/admin port is published.
 # Refused together with docker-compose.replicas.yml, whose KYPOST_PROXY_IP is then set, so
 # replicas have no Cloudflare profile either (docs/RUNNING.md, Replicas on one host).
-x-single-container: ${KYPOST_PROXY_IP:+${KYPOST_RSPAMD_WITH_REPLICAS:?docker-compose.rspamd.yml shares one container's network and runs only in the single-container profile; remove docker-compose.replicas.yml or this overlay; replicas have no native receiving, so use an external IMAP account (docs/RUNNING.md, Replicas on one host)}}
+x-single-container: ${KYPOST_PROXY_IP:+${KYPOST_RSPAMD_WITH_REPLICAS:?docker-compose.rspamd.yml shares one container's network and runs only in the single-container profile; remove docker-compose.replicas.yml or this overlay; replicas have no native receiving, so use an external IMAP account (docs/RUNNING.md, Replicas on one host); a multi-tenant install's hosted profile has its own Rspamd (docker-compose.hosted.yml)}}
 services:
   kypost-server:
     environment:

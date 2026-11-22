@@ -1,0 +1,62 @@
+# Hosted receiving profile, MX host side (multi-tenant only). Its own project, alone on a
+# small host that holds no mail: no data volume, no database, no Rspamd (which runs beside
+# each receiving server, docker-compose.hosted.yml). Pinned Maddy answers SMTP and forwards
+# each bind and accept over pinned TLS to the replicas; it answers 250 only after a replica
+# committed the message. Operator guide: docs/RECEIVING_SETUP.md, "Hosted receiving tier".
+#
+# NOT STARTABLE YET: the replicas refuse KYPOST_TENANCY=multi until the tenancy design's
+# PR 7, so every bind is answered 451 until then.
+#
+# KYPOST_MX_DIR holds, owner-only (0600, owned by uid 1000): mx.key from
+# `kypost-server receiving gateway keygen`, and remote.json naming it as
+# /kypost/mx/mx.key with the replicas' servers and server_pins (RX "Keys").
+name: kypost-mx
+
+services:
+  mx:
+    image: ${KYPOST_IMAGE:-ghcr.io/busnes-app/kypost-server}:${KYPOST_VERSION:-stable}
+    user: "1000:1000"
+    # A real PID 1 forwards SIGTERM to the start script, which stops Maddy.
+    init: true
+    entrypoint: ["/bin/sh", "/opt/kypost/scripts/start-receiving.sh"]
+    environment:
+      KYPOST_TENANCY: multi
+      KYPOST_STAFF_ORG_ID: ${KYPOST_STAFF_ORG_ID:?Set KYPOST_STAFF_ORG_ID, the staff org's id}
+      KYPOST_NATIVE_RECEIVER: "true"
+      KYPOST_RECEIVING_REMOTE: /kypost/mx/remote.json
+      KYPOST_RECEIVING_HOSTNAME: ${KYPOST_RECEIVING_HOSTNAME:?set this MX host's certificate hostname}
+      CONFIG_DIR: /kypost/config
+      STATE_DIR: /kypost/state
+    ports:
+      - "${KYPOST_SMTP_BIND:?set the receiving publish address}:${KYPOST_SMTP_PORT:-25}:2525"
+    volumes:
+      - type: bind
+        source: ${KYPOST_MADDY_BINARY:?set the qualified executable absolute path}
+        target: /opt/kypost/receiving/maddy
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KYPOST_RECEIVING_TLS_DIR:?set the protected TLS directory absolute path}
+        target: /opt/kypost/receiving/tls
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KYPOST_MX_DIR:?set the directory holding mx.key and remote.json}
+        target: /kypost/mx
+        read_only: true
+        bind:
+          create_host_path: false
+    # Maddy's state and the generated profile live only in memory: an MX host holds nothing.
+    read_only: true
+    tmpfs:
+      - /kypost/config:rw,noexec,nosuid,size=4m,uid=1000,gid=1000,mode=0700
+      - /kypost/state:rw,noexec,nosuid,size=64m,uid=1000,gid=1000,mode=0700
+      - /tmp:rw,noexec,nosuid,size=8m,uid=1000,gid=1000,mode=0700
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    restart: unless-stopped
+    # Maddy's read and write timeouts are 30s each.
+    stop_grace_period: 45s

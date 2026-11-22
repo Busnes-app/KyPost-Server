@@ -481,6 +481,13 @@ recorded as `address_conflict`.
   when none is the user's own it leaves From empty and refuses to send until
   the user picks one, never defaulting to the primary. Mail from masked
   addresses counts toward the owner's sending quota.
+- **Hosted relay domain** (multi-tenant only, hosted receiving profile): the
+  masked-address domains are the relay domain. After 50 unknown-address
+  refusals there from one IPv4 address or IPv6 /64 in 10 minutes, every
+  relay-domain `RCPT` from it gets `450 4.7.1` for 10 minutes, live addresses
+  included, so probing past the budget learns nothing
+  ([receiving setup](RECEIVING_SETUP.md#hosted-receiving-tier-multi-tenant-only)).
+  Self-hosted installs have no budget.
 
 ## Extra mailboxes
 

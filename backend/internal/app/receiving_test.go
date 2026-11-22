@@ -25,6 +25,11 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
+// bind is bindFrom without a peer IP, as every single-tenant bind is.
+func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient string) error {
+	return r.bindFrom(ctx, id, sender, recipient, "")
+}
+
 func receivingFixture(t *testing.T) (*receivingRuntime, []users.User) {
 	t.Helper()
 	return receivingFixtureIn(t, "", "")

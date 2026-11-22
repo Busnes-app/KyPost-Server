@@ -1,7 +1,8 @@
 # KyPost hosted receiving tier, design
 
 Date: 2026-11-21. Status: proposed design; PR 1 (#686), PR 2 (TLS transport, #689), PR 3
-(sender blocks and evidence in PostgreSQL, #691) and PR 4 (import leases) built.
+(sender blocks and evidence in PostgreSQL, #691), PR 4 (import leases, #694) and PR 5 (hosted
+profile) built.
 
 This is the receiving tier's own spec, which the owner asked for on 2026-11-21 (answer to open
 question 3 of KyPost's tenancy design, `docs/superpowers/specs/2026-11-20-tenancy-design.md`,
@@ -846,7 +847,7 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      no re-read under the quota lock, a retired binding counted as imported, the skip ignored,
      `deleted` importing, a lease taken while live, an uncached org importing, and no lease
      check under the quota lock.
-   - **K PR 6 stand-in.** The deleted-org and retired-purge tests use `purgeStandIn`, written
+   - **K PR 6 stand-in** (replaced in PR 5 by the real purge, below). The deleted-org and retired-purge tests used `purgeStandIn`, written
      against K "Purge" steps 2–3: delete the org's bindings and `retired_bindings` rows, delete a
      delivery left with none, run Completion, then remove storage under each quota lock. Switch
      `TestLeasedImportDeletedOrgWaitsForItsPurge`, `TestLeasedImportPurgeFence` and
@@ -864,6 +865,104 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    answering `451 4.2.1` and a deleted one answering `550 5.1.1`, probing beyond the budget
    answering `450` for live and unknown relay addresses alike, primary domains never budgeted, and
    M's hosted verification list.
+   *PR 5 as built:* paths under `backend/internal/` at the PR's head. Startup still refuses
+   `multi` (K PR 7), so the tests build the multi runtime directly, as K's do
+   (`multiRuntime`, `app/receiving_org_test.go:26`, sets `tenancy.db` and `state.db`).
+   - **Org check** (`orgReceives`, `app/receiving_probe.go:38`, called after the assignment at
+     `app/receiving.go:630`). It applies K PR 5's `tenancy.Org.Receiving` to the owner's
+     `subject_orgs` org. Suspended, disabled or not cached is exit 12. `deletion_scheduled` and
+     `deleted` are `ingress.ErrRoute`, so they answer byte for byte as an unknown address does.
+     Readings:
+     - A subject with no `subject_orgs` row is exit 12: a binding gap that repair fixes, so
+       temporary.
+     - The staff org always receives (K8), as `tenancy.Gate` treats it.
+   - **The relay domain** is the install's masked-address domains (`state.MaskedDomainsSetting`,
+     `state/backup.go:25`, moved there from `api` unchanged). Reading: no new setting. M D2 puts
+     hosted masked addresses on the relay domain and keeps it apart from the primaries, so the
+     masked list is the relay list. A primary domain that staff also listed as masked would be
+     budgeted; D2 rules that out. The relay domain is already a `destination`, because every
+     configured domain is one (`destinations`, `app/receiving_config.go`).
+   - **`{source_ip}` on `bind`.** Only the hosted profile renders it (`bindSource`,
+     `app/receiving_config.go:162`). `checkReceivingArgs` (`app/receiving.go:258`) accepts the
+     fifth argument only when `KYPOST_TENANCY=multi`, and only as one literal IP with no zone.
+     - A single-tenant five-argument `bind` stays a usage error.
+     - A four-argument `bind` in multi mode still works for primary domains, so the callers from
+       PRs 2–4 are unchanged.
+     - A relay-domain `bind` without the IP is exit 1 (`errProbeSource`). It is never let through
+       unbudgeted.
+   - **Budget** (`probeBudget`, `app/receiving_probe.go:69`; defaults at `:24`).
+     - It runs before the sender checks, so past the budget nothing else is consulted.
+     - Only exit 3 refusals count (M's "N unknowns"). Paused, expired and deleted masked
+       addresses and deleted orgs count, because they answer as unknown. Exits 6–12 do not.
+     - The windows are R's `security_windows` in `state.db` (`TakeAttempt`), keyed
+       `receiving-probe:<prefix>`. The source is unmapped from IPv4-in-IPv6 and masked to /32 or
+       /64.
+     - The 50th refusal is still answered `550`, and writes `receiving-probe-block:<prefix>` for
+       10 minutes. While that row lives, every relay-domain `RCPT` from the prefix is exit 13.
+     - Reading: a refusal after the block ends, but inside the same 10-minute count window,
+       blocks again at once.
+     - A window that cannot be read or written is exit 1. Primary domains never read or write
+       one.
+   - **Compose.** One profile in two files. `scripts/check-replicas-compose.py` validates both
+     with `docker compose config`. Neither can start until K PR 7.
+     - `docker-compose.hosted.yml` goes after the replica chain. It adds `receiving-a` and
+       `receiving-b`: `receiving serve --tls` on the shared volumes and database, read-only,
+       unprivileged and with no capabilities, published only on `KYPOST_RECEIVING_PUBLISH_IP`.
+     - Each server has its own Rspamd (`rspamd-a`, `rspamd-b`) in its network namespace. The
+       image is pinned as in `docker-compose.rspamd.yml`, and the check fails if the two drift.
+     - The file also sets the replicas to multi mode with native receiving, so every replica's
+       daemon imports.
+     - `docker-compose.mx.yml` is the MX host alone: Maddy through `start-receiving.sh`,
+       read-only binds, Maddy's state in memory, and no volume, database or scanner.
+     - Reading: the receiving servers are their own containers, not sidecars of the replicas,
+       because `deploy.replicas` cannot give each copy its own Rspamd. Two are defined; add more
+       by copying a pair.
+     - `start-receiving.sh`'s MX branch re-renders every 5 minutes, restarts Maddy only when the
+       profile changed, and exits when Maddy dies. `scripts/check-receiver-launch.py` runs it
+       with a stand-in engine.
+     - MH7's parts are left for MH7 to add to these same files: separate volumes per host, a
+       read-only `SECRET_DIR`, `sslmode=verify-full`, keepalives and pooling.
+   - **Purge, switched from the stand-in.** `TestLeasedImportDeletedOrgWaitsForItsPurge`,
+     `TestLeasedImportPurgeFence` and `TestLeasedImportRetiredBinding` now run K PR 6's own steps
+     2 and 3, then the Completion sweep. The steps are exported for them (`api.PurgeReceiving`,
+     `api/tenancy_purge.go:234`; `api.PurgeStorage`, `:272`).
+     - Reading: the purge does not call `ingress.Store.Complete`, as PR 4's note proposed.
+       Completion's done-state needs the receiving runtime's mailbox reads, which only the daemon
+       opens. The backstop sweep archives a delivery the purge left with only finished bindings,
+       within a minute.
+     - A delivery bound only to the purged mailboxes is now archived `discarded` (the real step
+       2). The stand-in deleted it.
+   - **Tests** (`app/receiving_hosted_test.go`):
+     - `TestHostedBindOrgStatus`: active, suspended, disabled, uncached, `deletion_scheduled`,
+       `deleted`, staff.
+     - `TestHostedBindProbeBudget`: 50 refusals, then exit 13 for live, plus-tagged, masked and
+       unknown addresses alike. A paused masked address is counted like an unknown one, and
+       sender refusals are not counted. It also covers an IPv4 /32, an IPv4-mapped address, an
+       IPv6 /64 and a missing peer IP.
+     - `TestHostedBindProbeBlockEnds` and `TestHostedBindPrimaryDomainsNeverBudgeted`.
+     - `TestCrossOrgMatrixSMTPRcpt`, K's SMTP `RCPT` row. A bind and accept with the peer IP, over
+       TLS, deliver to B's address into B and never A. Probing over the same path then ends in
+       exit 13.
+     - `TestHostedBindArguments`.
+     - Changed tests:
+       - `TestReceivingTLSExitCodesAndHostedProfile` now allows `{source_ip}` as the hosted
+         profile's one other difference.
+       - Exit 12 at `bind` refuses uncached orgs, so `TestLeasedImportUncachedOrgWaits` now
+         empties the cache after acceptance, as a restore does (`tenancy.ForgetRestored`).
+       - `TestReceivingOrgStorageQuotas` expects exit 12 for an unbound subject.
+     - Unchanged and passing: `TestSingleTenantUpgradeIsByteForByte` and the single-tenant
+       `receiving.conf` golden.
+     - Each of these mutations fails a test: no org check, no budget, the budget after the other
+       checks, IPv6 per /128, the staff org gated, and every refusal counted.
+   - **M's hosted verification list.**
+     - Built here: unknown, paused and deleted masked addresses are refused alike on the relay
+       domain, and counted alike.
+     - Not here, because they are M changes 1–3 and 5 in K PR 7: the cross-org matrix for masked
+       routes, the per-org masked quota test, and the native-mail harness run with KyIdentity in
+       multi mode (which needs a startable multi mode).
+     - Tombstone survival across org deletion is K PR 6's (`TestOrgPurgeRunsAgainAfterARestore`).
+   - **Not run in PR 5:** a real Maddy run of the hosted profile, Maddy restarting under load
+     in the MX image, and a container start of either file.
 6. **Capacity measurement**, recorded in this spec.
 
 Past one host (R's follow-up, PostgreSQL as its own service) is outside this plan, as in K.
