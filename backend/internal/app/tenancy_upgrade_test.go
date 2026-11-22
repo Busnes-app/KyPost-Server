@@ -207,7 +207,7 @@ func diffSnapshots(a, b map[string]string) []string {
 // TestSingleTenantUpgradeIsByteForByte (tenancy design K1/K3, build plan PR 1): a fixture
 // install, restarted under this binary with KYPOST_TENANCY unset and then set to single,
 // keeps users.json, every other file and every database's schema and rows exactly as they
-// were, sender-blocks.json and sender-evidence.json among them. On the PostgreSQL job the fixture is a replica install, so the fingerprint record
+// were, sender-blocks.json and sender-evidence.json among them, and no documents table (MH1). On the PostgreSQL job the fixture is a replica install, so the fingerprint record
 // is among the rows compared. SQLite's -shm index is rebuilt by every open and is skipped.
 // The children cannot reach GitHub, so the release check never records a version.
 func TestSingleTenantUpgradeIsByteForByte(t *testing.T) {
@@ -273,7 +273,9 @@ func TestSingleTenantUpgradeIsByteForByte(t *testing.T) {
 			t.Errorf("KYPOST_TENANCY %s changed the install: %v", v.name, diff)
 		}
 		for k, val := range got {
-			if strings.Contains(k, "tenancy") || strings.Contains(val, "tenancy_mode") || strings.Contains(val, "staff_org_id") {
+			// No volume documents either (MH1): single mode keeps every file on its volume.
+			if strings.Contains(k, "tenancy") || strings.Contains(val, "tenancy_mode") || strings.Contains(val, "staff_org_id") ||
+				strings.HasSuffix(k, " documents") || strings.Contains(k, "documents.") {
 				t.Errorf("KYPOST_TENANCY %s left a tenancy trace in %s", v.name, k)
 			}
 		}

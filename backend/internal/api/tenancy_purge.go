@@ -349,7 +349,7 @@ func (s *Server) purgeRoot(ctx context.Context, snap tenancy.PurgeSnapshot) erro
 
 // purgeChecks names the final check's parts; tenancy.PurgeCoverage maps every org-owned and
 // derived store of the classification to one of them.
-var purgeChecks = []string{"users.json", "user_orgs", "root-state", "directories", "schemas", "pickup", "ingress", "ledger"}
+var purgeChecks = []string{"users.json", "user_orgs", "root-state", "directories", "schemas", "pickup", "ingress", "ledger", "documents"}
 
 // purgeLeft is the final check: what of the snapshot each part still finds.
 func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone func(string) (bool, error)) (map[string]int, error) {
@@ -371,6 +371,8 @@ func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone
 	}
 	n, err := tenancy.UserOrgRows(ctx, s.tenancy, snap.Users)
 	note("user_orgs", n, err)
+	n, err = tenancy.DocumentRows(ctx, s.tenancy, snap.Users)
+	note("documents", n, err)
 	n, err = s.globalStore.UserRows(ctx, snap.Users)
 	note("root-state", n, err)
 	dirs, err := purgeDirs(s.configDir, s.stateDir, snap.Users, snap.Mailboxes)
