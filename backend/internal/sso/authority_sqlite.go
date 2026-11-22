@@ -802,11 +802,12 @@ func (t *sqliteTx) Account(issuer, subject string) (NativeAssignment, bool, erro
 
 // Mailbox is nativeAssignments.mailbox on rows.
 func (t *sqliteTx) Mailbox(id string) (NativeAssignment, nativeLedgerMailbox, bool, error) {
-	row, ok, err := t.row("SELECT issuer, subject, kind, state, state_root, message_bytes, payload_bytes, records, source FROM mailboxes WHERE id = ?", id)
+	row, ok, err := t.row("SELECT issuer, subject, kind, state, state_root, message_bytes, payload_bytes, records, source, id FROM mailboxes WHERE id = ?", id)
 	if err != nil || !ok {
 		return NativeAssignment{}, nativeLedgerMailbox{}, false, err
 	}
 	d := &rowDecoder{}
+	id = d.str(row[9]) // the stored id names the directory, not the caller's string
 	m := nativeLedgerMailbox{Kind: d.str(row[2]), State: d.str(row[3]), StateRoot: d.str(row[4]), Limits: mailbox.Limits{MessageBytes: d.int(row[5]), PayloadBytes: d.int(row[6]), Records: int(d.int(row[7]))}, Source: d.str(row[8])}
 	m.Owner.Issuer, m.Owner.Subject = d.str(row[0]), d.str(row[1])
 	if d.err != nil {

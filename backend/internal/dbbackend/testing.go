@@ -135,26 +135,30 @@ func ReloadForTest(t testing.TB) {
 }
 
 func dropStaleTestSchemas(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SELECT nspname, COALESCE(obj_description(oid, 'pg_namespace'), '') FROM pg_namespace WHERE nspname LIKE 'kt\_%'`)
+	rows, err := db.QueryContext(ctx, `SELECT schema, path FROM kypost_catalog.stores WHERE schema LIKE 'kt\_%'`)
 	if err != nil {
 		return err
 	}
 	var stale []string
 	for rows.Next() {
-		var name, note string
-		if err := rows.Scan(&name, &note); err != nil {
+		var name, path string
+		if err := rows.Scan(&name, &path); err != nil {
 			rows.Close()
 			return err
 		}
-		if p, ok := strings.CutPrefix(note, "path:"); ok && filepath.IsAbs(p) {
-			if _, err := os.Stat(filepath.Dir(p)); os.IsNotExist(err) {
-				stale = append(stale, name)
-			}
+		if _, err := os.Stat(filepath.Dir(path)); filepath.IsAbs(path) && os.IsNotExist(err) {
+			stale = append(stale, name)
 		}
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	for _, name := range stale {
-		if _, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+QuoteIdent(name)+` CASCADE; DELETE FROM kypost_catalog.stores WHERE schema='`+name+`'`); err != nil {
+		if _, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+QuoteIdent(name)+` CASCADE`); err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `DELETE FROM kypost_catalog.stores WHERE schema=?`, name); err != nil {
 			return err
 		}
 	}
@@ -195,7 +199,10 @@ func RemoveFileForTest(path string) error {
 	if err != nil {
 		return err
 	}
-	_, err = cat.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+QuoteIdent(schema)+` CASCADE; DELETE FROM kypost_catalog.stores WHERE path='`+strings.ReplaceAll(rel, "'", "''")+`'`)
+	if _, err = cat.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+QuoteIdent(schema)+` CASCADE`); err != nil {
+		return err
+	}
+	_, err = cat.ExecContext(ctx, `DELETE FROM kypost_catalog.stores WHERE path=?`, rel)
 	return err
 }
 
