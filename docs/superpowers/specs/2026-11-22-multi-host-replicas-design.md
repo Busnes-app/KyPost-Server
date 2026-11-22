@@ -209,7 +209,7 @@ runs them with N > 1.
 ### The `documents` table
 
 ```
-documents(root TEXT, path TEXT, revision BIGINT, body BYTEA, updated_at BIGINT,
+documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated_at BIGINT,
           PRIMARY KEY (root, path))      -- multi-only, in tenancy.db (SQLite DDL too, K "PR 1 as built")
 ```
 
@@ -236,9 +236,24 @@ documents(root TEXT, path TEXT, revision BIGINT, body BYTEA, updated_at BIGINT,
 - **Size.** Each document has a cap of 16 MiB, refused at the write. That is about twice the
   largest store's own bound. MH2 measures the bounds per store, and the stores keep their own,
   smaller caps.
-- **Class.** `documents` is D or P per row, by its `path` prefix (`users/<id>/…` or
-  `mailboxes/<id>/…` is D; anything else is P). `TestEveryStoreIsClassified` gains a per-prefix
-  rule. K PR 6's purge deletes an org's rows by the snapshot's user and mailbox IDs.
+- **Class and owner.** `owner` is the owning user's ID for a D row and NULL for a P row. The
+  seam sets it on every write and never takes it from the request:
+  - from the path for `users/<id>/…`;
+  - from the ledger's owner for `mailboxes/<id>/…`;
+  - for a D store outside those prefixes, from the record's own owner (today only
+    `pickup/<id>.json`, whose record names its owner user, K inventory).
+
+  A D store with no owner mapping fails `TestEveryStoreIsClassified`, which gains the per-store
+  owner rule. K PR 6's purge deletes an org's rows `WHERE owner IN` the snapshot's user IDs, so
+  pickup links go with the org.
+- **Tombstone cleanup.** The elected `api-sweepers` worker hard-deletes tombstones older than 24
+  hours. It also hard-deletes expired pickup rows, which it already sweeps today
+  (`docs/RUNNING.md:277`, "pickup and contact sweeps"). The ABA guard needs a tombstone only while
+  a writer could still hold the old revision. Every write runs inside a request or job with a
+  deadline far shorter than 24 hours (`docs/RUNNING.md:471`, "Request deadline and proxy
+  timeouts"; the longest is the 16-minute backup drain). A path re-created after cleanup restarts
+  its revision, so a stale writer could match it only by holding its read for over 24 hours, which
+  no deadline allows.
 - **Backups.** `tenancy.db` joins the backup set in K PR 6 (K "PR 1 as built"). A multi install's
   documents and accounts are then in every capsule's database export. A restore loads them with the
   rest of `tenancy.db`, so it writes no files. That PR is therefore a hard dependency of MH2.
@@ -426,9 +441,14 @@ in tests, as K's do (`makeMultiTenant`).
    - each store's existing tests on both implementations;
    - a restore of a capsule that carries documents;
    - the root `config.yaml` change seen by a second replica within 5 s;
-   - K PR 6's purge removing every document of the org, checked against the classification;
+   - K PR 6's purge removing every document of the org by `owner`, pickup links included,
+     checked against the classification;
+   - tombstone and expired-pickup cleanup;
    - a cross-org case in `TestCrossOrgMatrix` per new document kind.
-3. **MH3: accounts.** The `accounts` table, per-row invariants and the `REPEATABLE READ` snapshot.
+3. **MH3: accounts.** The `accounts` table, per-row invariants, the `REPEATABLE READ` read-only
+   snapshot, and `SERIALIZABLE` with a bounded `40001` retry for every write that checks a
+   whole-set invariant (the last-administrator rule and the demotions checked against it) and for
+   the purge snapshot (The `accounts` table).
    Tests:
    - every users-store test on both implementations;
    - two concurrent demotions of the last two administrators on two replicas: exactly one commits;
