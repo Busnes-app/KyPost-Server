@@ -40,9 +40,7 @@ func (s *Server) useTenancy(db *sql.DB, staffOrg string) {
 			}
 			return tenancy.Tombstoned(context.Background(), db, tenancy.Tombstone(key, address))
 		}
-		s.ssoLifecycle.Purged = func(mailbox string) (bool, error) {
-			return tenancy.MailboxPurged(context.Background(), db, mailbox)
-		}
+		s.ssoLifecycle.Purged = s.mailboxPurged // tests may replace ssoLifecycle after NewServer
 	}
 }
 

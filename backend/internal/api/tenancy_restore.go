@@ -139,6 +139,14 @@ func (s *Server) restoreReads(ctx context.Context, epoch string, now time.Time) 
 	return tenancy.RecordRestoreRead(ctx, s.tenancy, epoch, now)
 }
 
+// mailboxPurged is LifecycleStore.Purged. A single install has no purges.
+func (s *Server) mailboxPurged(id string) (bool, error) {
+	if s.tenancy == nil {
+		return false, nil
+	}
+	return tenancy.MailboxPurged(context.Background(), s.tenancy, id)
+}
+
 // heldEpoch is the restore hold's epoch, "" when no hold stands. An unreadable hold is
 // still a hold: its reads cannot be recorded, so it is never released this way.
 func (s *Server) heldEpoch() (epoch string, held bool) {
