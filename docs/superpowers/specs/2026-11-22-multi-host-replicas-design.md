@@ -334,7 +334,9 @@ mode every org's contacts would sit in one database, so the seam seals what it s
 - **Creating a key is owner-guarded.** A data key is created only inside the D write's own
   transaction, after the owner guard (No write after the owner is gone) has locked the owner's
   `accounts` row and found it. A writer paused across the purge therefore finds no account and
-  creates no key, as it writes no document. Between MH2 and MH3 only the final check guards this,
+  creates no key, as it writes no document. The one exception is the offline
+  `migrate-volumes-to-postgres` (step 4), which inserts the install's key while no instance is
+  live, so no purge can run. Between MH2 and MH3 only the final check guards this,
   as for documents.
 - **The purge.** The purge deletes the org's `doc_keys` row after its documents, and its final
   check lists `doc_keys` for the org with the documents: a row left there fails the purge. Capsules made
@@ -672,22 +674,25 @@ anything):
    addressing v3 (run the native migrations first), not multi, with a KyRecovery pin (table mode
    refuses local capsule copies, open question 11), and no instance is live
    (`LiveInstances`). It runs on one host with the three shared volumes mounted. It also refuses
-   unless table mode's transport rules already hold, so the migrated install can start: the
-   database URL uses `sslmode=verify-full` or a loopback host, and the operator passes the
-   replicas' TLS certificate and key (`TLS_CERT_FILE`), which it loads and checks. Today's
+   unless table mode's transport rules already hold, so the migrated install can start. It runs
+   the same check MH7's start runs, one shared function, so the two cannot drift, over every row
+   of "Encryption in transit": the database URL uses `sslmode=verify-full` or a loopback host; the
+   operator passes the replicas' TLS certificate and key (`TLS_CERT_FILE`), which it loads and
+   checks; and KyIdentity, peer, KyRecovery, push-relay and Ollama URLs are HTTPS or loopback, and
+   the outbound SMTP relay uses TLS. Today's
    documented R setup has neither (`docs/RUNNING.md:257-258,313`), so the guide reconfigures
    both first, while the install still runs on its files.
 2. Creates every missing key of the `SECRET_DIR` inventory once, on this host, as the lazy path
-   would have, plus `documents.key`, which no file-mode path creates, and the install's
-   empty-`org_id` `doc_keys` row (Per-org encryption at rest). It then records MH5's key-set
-   digest. From here on every host loads keys and never
+   would have, plus `documents.key`, which no file-mode path creates (Per-org encryption at
+   rest). It then records MH5's key-set digest. It writes nothing to `volumes.db`. From here on every host loads keys and never
    creates them.
 3. Handles an existing `volumes.db` that has no `volume_stores` row. One with no completion mark
    (step 5) is a dead earlier run, so it is dropped and recreated. One **with** the mark holds a
    finished migration whose record is missing (deleted by hand, or a crash between steps 5 and
    6), and may hold every write made since. The command refuses it and names
    `migrate-volumes-to-files`, which writes that data back.
-4. Copies each classified file into `documents` or `accounts`, one transaction per store, and
+4. Inserts the install's empty-`org_id` `doc_keys` row into the `volumes.db` that step 3 left,
+   then copies each classified file into `documents` or `accounts`, one transaction per store, and
    compares each row's SHA-256 with the file's. A D row's body is sealed, so its digest is taken
    after opening it.
 5. Writes a completion mark inside `volumes.db`.
@@ -743,7 +748,11 @@ migration. So the one invariant is: an install without the record has no complet
 - `TestUnmigratedInstallOpensOnlyFiles`: with no record, the seam resolves every store to the file
   implementation, the converse of the volume-free assertion, from the same list.
 - `TestMigrateVolumesRefuses`: SQLite, v2, multi, a live instance, no KyRecovery pin,
-  `sslmode=disable` on a non-loopback host, and a missing or unreadable TLS certificate.
+  `sslmode=disable` on a non-loopback host, a missing or unreadable TLS certificate, and each
+  non-loopback plain URL: KyIdentity, a peer, KyRecovery, a push relay, Ollama, and a non-TLS
+  SMTP relay. Each refusal leaves no `volumes.db` and no new key.
+- `TestMigrateVolumesKeyAfterStaleStore`: a dead earlier run's `volumes.db` is dropped by step 3,
+  and the install's `doc_keys` row exists before the first sealed row.
 - `TestMigrateVolumesDiesAtEachStore`: a run killed after each store leaves no record, the files
   unchanged, and a second run that succeeds.
 - `TestOrphanedVolumesStoreRefuses`: with the record deleted by hand after writes in table mode,
