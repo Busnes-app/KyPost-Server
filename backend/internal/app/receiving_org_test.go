@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
+	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -221,6 +222,28 @@ func TestReceivingOrgStoragePool(t *testing.T) {
 	if g, _ := tenancy.StorageGrant(ctx, r.tenancy, receivingOrgA); g.FirstOver.IsZero() {
 		t.Fatal("KyPost's first sighting was not recorded")
 	}
+	// 10 MiB of overage left: a delivery of 30 MiB (several copies) is refused for now
+	// without ending grace, and a smaller one is accepted (security review of #707).
+	ledger, err := r.life.NativeMailboxesWithoutAddresses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	used, err := api.OrgStorageUsed(ctx, r.tenancy, r.stateDir, receivingOrgA, ledger, func(string) (int64, error) { return 0, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	nearly := exhausted
+	nearly.Used, nearly.OrgUsed, nearly.OverSince = used, pool+tenancy.PoolOverage(pool)-10<<20, time.Now().Add(-day)
+	setPool(t, r.tenancy, receivingOrgA, nearly)
+	if err := r.poolRoom(ctx, receivingOrgA, 30<<20); receivingExit(err) != 9 {
+		t.Fatalf("a delivery past the overage left: %v, want exit 9", err)
+	}
+	if g, _ := tenancy.StorageGrant(ctx, r.tenancy, receivingOrgA); !g.GraceEnd.IsZero() {
+		t.Fatal("a refused delivery ended grace")
+	}
+	if err := r.poolRoom(ctx, receivingOrgA, 5<<20); err != nil {
+		t.Fatalf("a smaller delivery during grace: %v", err)
+	}
 	over := exhausted
 	over.OverSince = time.Now().Add(-8 * day)
 	setPool(t, r.tenancy, receivingOrgA, over)
@@ -229,7 +252,7 @@ func TestReceivingOrgStoragePool(t *testing.T) {
 	}
 	over.OverSince = time.Now().Add(-11 * day)
 	setPool(t, r.tenancy, receivingOrgA, over)
-	err := r.bind(ctx, "refused", "sender@outside.test", "one@example.test")
+	err = r.bind(ctx, "refused", "sender@outside.test", "one@example.test")
 	if receivingExit(err) != 14 || !errors.Is(err, errPoolRefused) {
 		t.Fatalf("day 11: %v, want exit 14", err)
 	}

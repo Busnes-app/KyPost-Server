@@ -142,7 +142,8 @@ const (
 
 // Mail answers a delivery of add bytes when KyPost stores used bytes for the org now. It
 // fits the grant like any write, or else falls under the overrun rule, which starts at
-// the earlier of KyIdentity's OverSince and KyPost's FirstOver. firstOver and graceEnd
+// the earlier of KyIdentity's OverSince and KyPost's FirstOver. Grace ends at 7 days or
+// once stored usage reaches the overage. firstOver and graceEnd
 // are the dates the caller must record (MarkOverrun), zero when there is nothing new. An
 // org with no pool (KyIdentity has not reported one) gets the temporary answer and no
 // grace (K open question 15).
@@ -167,8 +168,14 @@ func (g Grant) Mail(used, add int64, now time.Time) (answer PoolMail, firstOver,
 	if now.Before(end) {
 		// Every other app's last reported usage, plus KyPost's now.
 		total := max(g.OrgUsed-g.Reported, 0) + used
-		if add >= 0 && total+add <= g.PoolBytes+PoolOverage(g.PoolBytes) {
+		ceiling := g.PoolBytes + PoolOverage(g.PoolBytes)
+		if add >= 0 && total+add <= ceiling {
 			return PoolMailAccept, firstOver, time.Time{}
+		}
+		// Only stored usage reaching the overage ends grace. A delivery too large for what
+		// is left is refused for now, so no sender can end grace without storing anything.
+		if total < ceiling {
+			return PoolMailTemporary, firstOver, time.Time{}
 		}
 		end, graceEnd = now, now
 	}

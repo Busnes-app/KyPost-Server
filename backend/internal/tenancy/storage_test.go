@@ -259,6 +259,10 @@ func TestPoolMail(t *testing.T) {
 		{name: "KyIdentity's date, day 6", g: at(over, func(g *Grant) { g.OverSince = now.Add(-6 * day) }), used: 18 * gb, add: gb, at: now, want: PoolMailAccept},
 		// The overage is 2 GB: 3 GB over the pool already plus 1 byte passes it.
 		{name: "overage spent", g: at(over, func(g *Grant) { g.OrgUsed = 23 * gb; g.OverSince = now.Add(-day) }), used: 18 * gb, add: 1, at: now, want: PoolMailTemporary, graceEnd: true},
+		// 1 GB of overage left: a 3 GB delivery (three copies, say) is refused for now, but
+		// grace goes on, and a smaller one is accepted.
+		{name: "too large for the overage left", g: at(over, func(g *Grant) { g.OverSince = now.Add(-day) }), used: 18 * gb, add: 3 * gb, at: now, want: PoolMailTemporary},
+		{name: "smaller, after it", g: at(over, func(g *Grant) { g.OverSince = now.Add(-day) }), used: 18 * gb, add: gb, at: now, want: PoolMailAccept},
 		{name: "exactly at the overage", g: at(over, func(g *Grant) { g.OrgUsed = 21 * gb; g.OverSince = now.Add(-day) }), used: 18 * gb, add: gb, at: now, want: PoolMailAccept},
 		{name: "day 8: grace over", g: at(over, func(g *Grant) { g.OverSince = now.Add(-8 * day) }), used: 18 * gb, add: 1, at: now, want: PoolMailTemporary},
 		{name: "day 10: refused", g: at(over, func(g *Grant) { g.OverSince = now.Add(-10 * day) }), used: 18 * gb, add: 1, at: now, want: PoolMailRefuse},
