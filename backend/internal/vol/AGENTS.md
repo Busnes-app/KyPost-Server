@@ -11,7 +11,7 @@ File and PostgreSQL document I/O for the multi-host design. Store packages retai
 ## Local Contracts
 
 - Ordinary installs resolve to files. Preserve each caller's directory modes, atomic file bytes and inter-process locks. Table mode is multi, or the explicit `volume_stores=postgres` state record; only startup installs mounts.
-- A `Document` keeps its observed revision; its store mutex or attempt-local owner serializes its use. A mutation retries its complete read/check/change/write through `Update` or `Retry`, never just its final write. Callbacks may run five times and must not perform external side effects. `ErrBusy`/`ErrStale` are HTTP 503 at the API boundary.
+- A `Document` keeps its observed revision; its store mutex or attempt-local owner serializes its use. A mutation retries its complete read/check/change/write through `Update` or `Retry`, never just its final write. Callbacks may run five times and must not perform external side effects. `ErrBusy`/`ErrStale` are HTTP 503 at the API boundary; `ErrTooLarge` is HTTP 413 without retry.
 - A missing table row clears cached content. Authentication, decode and storage failures propagate; they never mean an empty document.
 - Every derived body is sealed with its org key and root/path/user/org associated data. Resolve mailbox and pickup owners from retained ledger/record data. Platform rows are plaintext. Keys are wrapped under provisioned `documents.key`; the seam never creates that master file.
 - Table writes accept at most 64 MiB of plaintext (owner, 2026-11-23); file writes retain existing limits. MH8 must refuse oversized source files before publishing a migration. Ciphertext overhead is additional.

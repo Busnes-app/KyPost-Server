@@ -196,13 +196,19 @@ func TestTablePickupConsumeIsOnceAcrossReplicas(t *testing.T) {
 	}
 }
 
-type contendedDocuments struct{ writes int }
+type contendedDocuments struct {
+	writes  int
+	failure error
+}
 
 func (*contendedDocuments) Read(context.Context, string) ([]byte, int64, error) {
 	return []byte(`{}`), 1, nil
 }
 func (v *contendedDocuments) Write(context.Context, string, []byte, int64) (int64, error) {
 	v.writes++
+	if v.failure != nil {
+		return 0, v.failure
+	}
 	return 0, vol.ErrStale
 }
 func (*contendedDocuments) Remove(context.Context, string, int64) error    { return vol.ErrStale }
@@ -225,5 +231,25 @@ func TestDocumentContentionAnswers503WithoutCreatingContact(t *testing.T) {
 	}
 	if fake.writes != 5 {
 		t.Fatal("unbounded or missing CAS retry", fake.writes)
+	}
+}
+
+func TestDocumentTooLargeAnswers413WithoutCreatingContact(t *testing.T) {
+	fx, _ := newOrgFixture(t)
+	fake := &contendedDocuments{failure: vol.ErrTooLarge}
+	release, err := vol.Mount(fx.srv.userStateDir(fx.a.ID), fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	fx.srv.userMu.Lock()
+	delete(fx.srv.userContacts, fx.a.ID)
+	fx.srv.userMu.Unlock()
+	w := fx.call(fx.a, http.MethodPost, "/api/contacts", `{"fn":"must-not-be-created"}`, nil)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatal(w.Code, w.Body)
+	}
+	if fake.writes != 1 {
+		t.Fatal("retried a permanent size refusal", fake.writes)
 	}
 }

@@ -146,7 +146,8 @@ func (t *Table) write(ctx context.Context, path string, body []byte, rev, limit 
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	// Rollback is cleanup on early return; after Commit it reports ErrTxDone.
+	defer func() { _ = tx.Rollback() }()
 	var current int64
 	var heldOwner sql.NullString
 	err = tx.QueryRowContext(ctx, `SELECT revision, owner FROM documents WHERE root = ? AND path = ?`, t.root, path).Scan(&current, &heldOwner)

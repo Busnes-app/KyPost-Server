@@ -55,7 +55,8 @@ func (d *Document) MoveTo(path string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	// Rollback is cleanup on early return; after Commit it reports ErrTxDone.
+	defer func() { _ = tx.Rollback() }()
 	var body []byte
 	err = tx.QueryRowContext(ctx, `DELETE FROM documents WHERE root=? AND path=? AND revision=? AND owner IS NULL RETURNING body`, source.root, d.path, d.revision).Scan(&body)
 	if err != nil {

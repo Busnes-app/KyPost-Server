@@ -13,5 +13,8 @@ func documentStatus(err error, fallback int) int {
 	if errors.Is(err, vol.ErrBusy) || errors.Is(err, vol.ErrStale) {
 		return http.StatusServiceUnavailable
 	}
+	if errors.Is(err, vol.ErrTooLarge) {
+		return http.StatusRequestEntityTooLarge
+	}
 	return fallback
 }

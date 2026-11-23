@@ -21,7 +21,8 @@ func PurgeDocuments(ctx context.Context, stateDir string, owners []string) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	// Rollback is cleanup on early return; after Commit it reports ErrTxDone.
+	defer func() { _ = tx.Rollback() }()
 	for _, own := range owners {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM documents WHERE owner = ?`, own); err != nil {
 			return err
