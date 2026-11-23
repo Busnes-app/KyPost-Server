@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -145,8 +146,7 @@ func TestOrgStoragePool(t *testing.T) {
 	if _, staff := idp.report(staffOrg); staff || !okA || !okB {
 		t.Fatalf("reported A %v, B %v, staff %v", okA, okB, staff)
 	}
-	usedA, err := srv.orgUsage(ctx, orgA, nil)
-	check(fx, err)
+	usedA := orgUsageNow(t, srv, orgA)
 	if repA.UsedBytes != usedA || usedA < 2*int64(len(poolDraft)) {
 		t.Fatalf("org A reported %d, holds %d", repA.UsedBytes, usedA)
 	}
@@ -168,8 +168,7 @@ func TestOrgStoragePool(t *testing.T) {
 	if _, err := srv.storeContactPhoto(fx.other.ID, testPNG(t, 2)); err != nil {
 		t.Fatal(err)
 	}
-	withPhoto, err := srv.orgUsage(ctx, orgA, nil)
-	check(fx, err)
+	withPhoto := orgUsageNow(t, srv, orgA)
 	if photos, _ := srv.contactPhotoBytesUsed(fx.other.ID); photos == 0 || withPhoto != usedA+int64(len(poolDraft))+photos {
 		t.Fatalf("usage %d after a draft and %d photo bytes, from %d", withPhoto, photos, usedA)
 	}
@@ -185,15 +184,14 @@ func TestOrgStoragePool(t *testing.T) {
 	})
 	check(fx, srv.reportStorage(ctx))
 	check(fx, draft(boxA))
-	full, err := srv.orgUsage(ctx, orgA, nil)
-	check(fx, err)
+	full := orgUsageNow(t, srv, orgA)
 	if err := draft(boxA); !errors.Is(err, mailbox.ErrPoolFull) || !errors.Is(err, mailbox.ErrCapacity) {
 		t.Fatalf("one draft past the grant: %v", err)
 	}
 	if _, err := srv.storeContactPhoto(fx.a.ID, testPNG(t, 3)); !errors.Is(err, mailbox.ErrPoolFull) {
 		t.Fatalf("a photo past the grant: %v", err)
 	}
-	if now, _ := srv.orgUsage(ctx, orgA, nil); now != full {
+	if now := orgUsageNow(t, srv, orgA); now != full {
 		t.Fatalf("refused writes stored %d bytes", now-full)
 	}
 	// Org B has its own grant.
@@ -258,6 +256,20 @@ func TestOrgStoragePool(t *testing.T) {
 	}
 }
 
+// orgUsageNow is org's usage as the write check computes it.
+func orgUsageNow(t *testing.T, srv *Server, org string) int64 {
+	t.Helper()
+	ledger, err := srv.ssoLifecycle.NativeMailboxesWithoutAddresses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := srv.orgUsage(context.Background(), org, ledger, func(string) (int64, error) { return 0, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 func mustInboxID(t *testing.T, box *mailbox.Store) int64 {
 	t.Helper()
 	ids, err := box.List(context.Background(), "INBOX", 0, 10)
@@ -292,5 +304,50 @@ func TestSingleTenantHasNoStoragePool(t *testing.T) {
 	}
 	if _, err := srv.storeContactPhoto(u, testPNG(t, 4)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Mail held for import counts in the report and in the write check, for the org whose
+// mailbox it is bound to only.
+func TestOrgStoragePoolCountsHeldMail(t *testing.T) {
+	fx, _ := newOrgFixture(t)
+	srv, db, ctx := fx.srv, fx.srv.tenancy, context.Background()
+	holding, err := ingress.Open(filepath.Join(srv.stateDir, "receiving"), ingress.ReceivingLimits)
+	check(fx, err)
+	defer holding.Close()
+	for _, r := range []struct{ address, subject, mailbox string }{
+		{"member-a@example.test", "member-a", fx.a.ID}, {"member-b@example.test", "member-b", fx.b.ID},
+	} {
+		check(fx, holding.SetRoute(ctx, ingress.Route{Address: r.address, Issuer: srv.ssoStore.Load().IssuerURL, Subject: r.subject, Mailbox: r.mailbox, Generation: 1, Active: true, ValidUntil: time.Now().Add(time.Hour)}))
+	}
+	raw := mailmsg.Message{From: "sender@outside.test", To: []string{"member-a@example.test"}, Subject: "held", Body: strings.Repeat("held ", 200)}.Build()
+	check(fx, holding.Bind(ctx, purgeGateway, "held-a", "sender@outside.test", "member-a@example.test"))
+	check(fx, holding.Accept(ctx, purgeGateway, "held-a", "sender@outside.test", bytes.NewReader(raw)))
+	held, err := holding.HeldBytes(ctx, fx.a.ID)
+	check(fx, err)
+	if held == 0 {
+		t.Fatal("nothing held")
+	}
+
+	idp := newStorageIdP(t)
+	check(fx, srv.ssoStore.Save(sso.SSOSettings{Enabled: true, IssuerURL: idp.URL, ClientID: "kypost", ClientSecret: "suite-secret"}))
+	check(fx, srv.reportStorage(ctx))
+	stored := orgUsageNow(t, srv, orgA) // without the spool
+	if a, _ := idp.report(orgA); a.UsedBytes != stored+held {
+		t.Fatalf("org A reported %d, want %d stored + %d held", a.UsedBytes, stored, held)
+	}
+	if b, _ := idp.report(orgB); b.UsedBytes != 0 {
+		t.Fatalf("org B reported org A's held mail: %d", b.UsedBytes)
+	}
+	// A ceiling with room for the write only if held mail were not counted.
+	_, err = db.ExecContext(ctx, `UPDATE org_storage SET ceiling_bytes = ? WHERE org_id = ?`, stored+int64(len(poolDraft)), orgA)
+	check(fx, err)
+	if err := srv.orgPoolRoom(ctx, orgA, int64(len(poolDraft))); !errors.Is(err, mailbox.ErrPoolFull) {
+		t.Fatalf("the write check ignored held mail: %v", err)
+	}
+	_, err = db.ExecContext(ctx, `UPDATE org_storage SET ceiling_bytes = ? WHERE org_id = ?`, stored+held+int64(len(poolDraft)), orgA)
+	check(fx, err)
+	if err := srv.orgPoolRoom(ctx, orgA, int64(len(poolDraft))); err != nil {
+		t.Fatalf("a write that fits with held mail counted: %v", err)
 	}
 }

@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 )
 
@@ -18,12 +20,13 @@ import (
 // minStorageWant is the least headroom asked for; more when the org grew faster.
 const minStorageWant = 256 << 20
 
-// orgUsage is the bytes KyPost stores for org now. held is the receiving spool's bytes
-// per mailbox (nil without one).
-// ponytail: one usage read per org mailbox and one photo directory read per member on
-// every check; a per-org counter kept by the usage triggers is the upgrade when the
-// capacity measurement (K open question 8) shows the cost.
-func (s *Server) orgUsage(ctx context.Context, org string, held map[string]int64) (int64, error) {
+// orgUsage is the bytes KyPost stores for org now. ledger is the native mailboxes, read
+// once by the caller; held answers a mailbox's bytes waiting in the receiving spool.
+// ponytail: one usage read and one held-bytes query per org mailbox and one photo
+// directory read per member, per check, as receiving's orgRoom does per delivery; a
+// per-org counter kept by the usage triggers is the upgrade when the capacity
+// measurement (K open question 8) shows the cost.
+func (s *Server) orgUsage(ctx context.Context, org string, ledger []sso.NativeMailbox, held func(mailbox string) (int64, error)) (int64, error) {
 	ids, err := tenancy.OrgUsers(ctx, s.tenancy, org)
 	if err != nil {
 		return 0, err
@@ -38,11 +41,7 @@ func (s *Server) orgUsage(ctx context.Context, org string, held map[string]int64
 		}
 		total += photos
 	}
-	mailboxes, err := s.ssoLifecycle.NativeMailboxesWithoutAddresses()
-	if err != nil {
-		return 0, err
-	}
-	for _, m := range mailboxes {
+	for _, m := range ledger {
 		if !members[m.User] || m.Dir == "" {
 			continue
 		}
@@ -50,19 +49,25 @@ func (s *Server) orgUsage(ctx context.Context, org string, held map[string]int64
 		if err != nil {
 			return 0, err
 		}
-		total += u.Bytes + held[m.ID]
+		h, err := held(m.ID)
+		if err != nil {
+			return 0, err
+		}
+		total += u.Bytes + h
 	}
 	return total, nil
 }
 
-// heldBytes is the receiving spool's bytes per mailbox, nil when receiving was never set up.
-func (s *Server) heldBytes(ctx context.Context) (map[string]int64, error) {
+// withHolding runs f with the receiving spool, or nil when receiving was never set up.
+func (s *Server) withHolding(f func(h *ingress.Store) error) error {
 	h, err := s.openHolding()
-	if err != nil || h == nil {
-		return nil, err
+	if err != nil {
+		return err
 	}
-	defer h.Close()
-	return h.HeldBytesByMailbox(ctx)
+	if h != nil {
+		defer h.Close()
+	}
+	return f(h)
 }
 
 // orgPoolRoom is nil when org may store add more bytes now. The staff org is exempt; an
@@ -82,18 +87,26 @@ func (s *Server) orgPoolRoom(ctx context.Context, org string, add int64) error {
 	if !g.Fits(0, add, now) {
 		return mailbox.ErrPoolFull
 	}
-	held, err := s.heldBytes(ctx)
+	ledger, err := s.ssoLifecycle.NativeMailboxesWithoutAddresses()
 	if err != nil {
 		return err
 	}
-	used, err := s.orgUsage(ctx, org, held)
-	if err != nil {
-		return err
-	}
-	if !g.Fits(used, add, now) {
-		return mailbox.ErrPoolFull
-	}
-	return nil
+	return s.withHolding(func(h *ingress.Store) error {
+		// Only this org's mailboxes are asked, never the whole spool.
+		used, err := s.orgUsage(ctx, org, ledger, func(id string) (int64, error) {
+			if h == nil {
+				return 0, nil
+			}
+			return h.HeldBytes(ctx, id)
+		})
+		if err != nil {
+			return err
+		}
+		if !g.Fits(used, add, now) {
+			return mailbox.ErrPoolFull
+		}
+		return nil
+	})
 }
 
 // StoragePoolCheck is the mailbox.PoolCheck for this server's tenancy.db: the owner's org
@@ -122,10 +135,21 @@ func (s *Server) reportStorage(ctx context.Context) error {
 	if !ok {
 		return errNoSuiteDirectory
 	}
-	held, err := s.heldBytes(ctx)
+	// One ledger read and one spool scan per report, shared by every org.
+	ledger, err := s.ssoLifecycle.NativeMailboxesWithoutAddresses()
 	if err != nil {
 		return err
 	}
+	var held map[string]int64
+	if err := s.withHolding(func(h *ingress.Store) error {
+		if h != nil {
+			held, err = h.HeldBytesByMailbox(ctx)
+		}
+		return err
+	}); err != nil {
+		return err
+	}
+	heldOf := func(id string) (int64, error) { return held[id], nil }
 	var batch []tenancy.StorageReport
 	used := map[string]int64{}
 	flush := func() error {
@@ -158,7 +182,7 @@ func (s *Server) reportStorage(ctx context.Context) error {
 		if org == s.staffOrg {
 			continue
 		}
-		n, err := s.orgUsage(ctx, org, held)
+		n, err := s.orgUsage(ctx, org, ledger, heldOf)
 		if err != nil {
 			return err
 		}
