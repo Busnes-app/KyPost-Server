@@ -430,10 +430,15 @@ through one body loader.
   deletes the `bodies` row and, in the same transaction, writes
   `body_tombstones(object TEXT PRIMARY KEY, at BIGINT)`. The elected sweeper deletes:
   - an object whose tombstone is older than the capsule retention (K open question 7);
-  - an object that no `bodies` row and no tombstone names, once it too is older than the capsule
-    retention. That is a write whose row never committed, or, after a restore, a row newer than
-    the capsule. A shorter wait would break a second restore: restoring an older capsule and
-    then a newer one, both within retention, needs the newer one's objects to survive.
+  - an object that no `bodies` row and no tombstone names, once the capsule retention has passed
+    since the sweeper **first saw it unnamed**. That is a write whose row never committed, or,
+    after a restore, a row newer than the capsule. The sweeper records the first sighting in
+    `body_orphans(object TEXT PRIMARY KEY, seen_at BIGINT)` and drops the record if a row names
+    the object again. The clock is not the object's age: an object written before a newer
+    capsule, and orphaned by restoring an older one, must outlive that newer capsule. Any
+    capsule naming it is younger than the first sighting, so it ages out of retention first.
+    A restore replaces `body_orphans` with the capsule's copy, so every clock restarts no
+    earlier than the restore.
 
   So any capsule within retention, restored in any order, names only objects that still exist.
   The cost is that an uncommitted write's object lingers for the retention period. It is rare,
@@ -1125,7 +1130,8 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
     missing or other-org object fails the read, never returns empty; a body copied to another
     mailbox's key fails to open; the purge leaves an empty prefix; an orphan is swept; a capsule taken
     before an expunge and older than several sweep cycles restores with every body readable; restoring an older capsule
-    and then a newer one leaves every body the newer one names;
+    and then a newer one leaves every body the newer one names, with objects older than the
+    retention period;
     incoming encryption of a moved body leaves a new object and tombstones the old one; no
     credential reaches a log; with object storage not configured every body stays in `raw`; and
     the single-tenant upgrade test is unchanged.
