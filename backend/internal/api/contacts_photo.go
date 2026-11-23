@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -183,12 +185,31 @@ func (s *Server) storeContactPhoto(userID string, body []byte) (string, error) {
 			if used+int64(len(body)) > maxContactPhotoBytesPerUser {
 				return errors.New("contact photo storage is full for this account; remove some photos and try again")
 			}
+			if err := s.photoPoolRoom(userID, int64(len(body))); err != nil {
+				return err
+			}
 		}
 		return fsutil.AtomicWriteFile(path, body, 0o600)
 	}); err != nil {
 		return "", err
 	}
 	return ref, nil
+}
+
+// photoPoolRoom applies the org storage pool to a new photo (tenancy design "Quotas").
+// ponytail: the vCard paths carry no request context, so the check gets its own bound;
+// threading the caller's context through contactFromVCardForUser is the upgrade.
+func (s *Server) photoPoolRoom(userID string, n int64) error {
+	if !s.multiTenant() {
+		return nil
+	}
+	u, err := s.users.Get(userID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.orgPoolRoom(ctx, u.OrgID, n)
 }
 
 // contactPhotoBytesUsed totals the bytes in a user's photo directory. A missing

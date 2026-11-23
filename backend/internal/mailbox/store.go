@@ -434,6 +434,9 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 	if err := s.checkReserve(int64(len(raw)), gateway != ""); err != nil {
 		return 0, err
 	}
+	if err := s.checkPool(ctx, int64(len(raw)), gateway != ""); err != nil {
+		return 0, err
+	}
 	headers, at, err := rawMetadata(raw)
 	if err != nil {
 		return 0, err

@@ -65,6 +65,7 @@ const (
 	reasonSender   = "sending authority for this address changed (address, domain or relay); review it and send again"
 	reasonMail     = "the mail account settings changed"
 	reasonFull     = "the mailbox is full"
+	reasonPoolFull = "your organisation's storage is full"
 	reasonLate     = "it could not be sent within an hour of its send time"
 	reasonLost     = "the scheduled message could not be opened; nothing was sent"
 	reasonGone     = "the account was removed; nothing was sent"
@@ -514,6 +515,8 @@ func (s *Server) dispatchScheduled(ctx context.Context, j scheduledJob, now func
 			return state.ScheduledReturning, reasonSender
 		case errors.Is(err, state.ErrNativeSendDevice):
 			return state.ScheduledReturning, reasonDevice
+		case errors.Is(err, mailbox.ErrPoolFull):
+			return state.ScheduledReturning, reasonPoolFull
 		case errors.Is(err, mailbox.ErrCapacity):
 			return state.ScheduledReturning, reasonFull
 		}
