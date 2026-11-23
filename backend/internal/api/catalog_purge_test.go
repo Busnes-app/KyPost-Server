@@ -3,14 +3,14 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend/pgdialect"
-	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
-	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend/pgdialect"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 )
 
 func TestTablePurgeStorageRefusesRecreatedSchema(t *testing.T) {

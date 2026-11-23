@@ -1324,6 +1324,7 @@ coverage. Importer expiry fixtures now age database rows rather than supply an
 older host time. This is only the clock boundary: mailbox publication, cross-store
 fences, catalog tombstones, elected-job coverage and backup restrictions remain
 MH4 prerequisites. Startup `multi` refusal and all later launch gates remain.
+
 ## MH4 catalog deletion boundary implementation (2026-11-23)
 
 Table-mode `PurgeStorage` now uses a directory tombstone in the existing
@@ -1362,6 +1363,6 @@ restoring over a live source or carrying an old worker across restoration.
 
 This is only the catalog deletion part of MH4. Mailbox preparation/publication,
 the remaining cross-store/elected-job fences and table-mode backup restrictions
-remain prerequisites. The lease-clock substep is a separate PR. Startup `multi`
+remain prerequisites. The lease-clock substep merged separately in #712. Startup `multi`
 refusal, MH5/MH7/MH8, regions, mandatory object storage and all release gates stay.
 No SaaS-readiness claim is made.
