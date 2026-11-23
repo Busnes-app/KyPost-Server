@@ -161,11 +161,8 @@ func TestDeviceAuthFromRequest_CrossUserIsolation(t *testing.T) {
 	}
 }
 
-// TestDeviceAuthFromRequest_LocksOutAfterMaxFailures proves the brute-force
-// guard on the expensive-scrypt device-secret check: once a given deviceID
-// has racked up deviceMaxFailures wrong-secret attempts, the very next
-// attempt is rejected as locked out (retryAfter > 0) even with the correct
-// secret, until the lockout expires.
+// A source with deviceMaxFailures failed requests is refused until expiry,
+// including when its next request presents the correct credential.
 func TestDeviceAuthFromRequest_LocksOutAfterMaxFailures(t *testing.T) {
 	srv := newTestServer(t)
 	all, err := srv.users.List()
@@ -187,8 +184,7 @@ func TestDeviceAuthFromRequest_LocksOutAfterMaxFailures(t *testing.T) {
 		}
 	}
 
-	// The deviceID is now locked out: even the CORRECT secret must be
-	// rejected without being checked, distinctly from a bad-credentials 401.
+	// The source is now locked out, including correct-credential requests.
 	req := httptest.NewRequest(http.MethodGet, "/api/notifications/native/pull", nil)
 	setDeviceHeaders(req, deviceID, deviceSecret)
 	_, _, ok, retryAfter := srv.deviceAuthFromRequest(req)
@@ -200,39 +196,27 @@ func TestDeviceAuthFromRequest_LocksOutAfterMaxFailures(t *testing.T) {
 	}
 }
 
-// TestDeviceAuthFromRequest_LockoutIsPerDevice proves the lockout is scoped
-// to the individual deviceID, not shared globally or by client IP: driving
-// one device into lockout must not affect a different, well-behaved device
-// (including one belonging to the same account, since deviceID — not
-// clientIP or userID — is the lockout key).
-func TestDeviceAuthFromRequest_LockoutIsPerDevice(t *testing.T) {
+// The source budget includes failures against different IDs, and successful
+// authentication refunds only its own strike rather than the source's history.
+func TestDeviceAuthFromRequest_LockoutIsPerSource(t *testing.T) {
 	srv := newTestServer(t)
-	all, err := srv.users.List()
-	if err != nil || len(all) == 0 {
-		t.Fatalf("no test user available: %v", err)
-	}
-	userID := all[0].ID
-	lockedDeviceID, _ := pairNativeDevice(t, srv, userID, "device-locked")
-	otherDeviceID, otherSecret := pairNativeDevice(t, srv, userID, "device-fine")
-
+	userID := srv.mustBootstrapUserID(t)
+	id, secret := pairNativeDevice(t, srv, userID, "device-fine")
 	for i := 0; i < deviceMaxFailures; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/api/notifications/native/pull", nil)
-		setDeviceHeaders(req, lockedDeviceID, "wrong-secret")
-		srv.deviceAuthFromRequest(req)
+		if i == deviceMaxFailures-1 {
+			if _, _, ok, _ := srv.deviceAuthFromRequest(deviceRequest(id, secret)); !ok {
+				t.Fatal("valid request before source limit refused")
+			}
+		}
+		srv.deviceAuthFromRequest(deviceRequest("missing-"+strconv.Itoa(i), "wrong"))
 	}
-	if _, _, ok, retryAfter := srv.deviceAuthFromRequest(deviceRequest(lockedDeviceID, "wrong-secret")); ok || retryAfter <= 0 {
-		t.Fatalf("expected device-locked to be locked out: ok=%v retryAfter=%v", ok, retryAfter)
+	if _, _, ok, wait := srv.deviceAuthFromRequest(deviceRequest(id, secret)); ok || wait <= 0 {
+		t.Fatalf("source limit: ok=%v wait=%v", ok, wait)
 	}
-
-	// The other device, never having failed, must authenticate normally.
-	otherReq := httptest.NewRequest(http.MethodGet, "/api/notifications/native/pull", nil)
-	setDeviceHeaders(otherReq, otherDeviceID, otherSecret)
-	gotUserID, _, ok, retryAfter := srv.deviceAuthFromRequest(otherReq)
-	if !ok || retryAfter != 0 {
-		t.Fatalf("unrelated device must not be affected by another device's lockout: ok=%v retryAfter=%v", ok, retryAfter)
-	}
-	if gotUserID != userID {
-		t.Fatalf("userID = %q, want %q", gotUserID, userID)
+	other := deviceRequest(id, secret)
+	other.RemoteAddr = "198.51.100.99:1234"
+	if _, _, ok, wait := srv.deviceAuthFromRequest(other); !ok || wait != 0 {
+		t.Fatalf("unrelated source: ok=%v wait=%v", ok, wait)
 	}
 }
 
@@ -259,8 +243,8 @@ func TestDeviceAuthFromRequest_LockoutClearsAfterExpiry(t *testing.T) {
 
 	// Simulate deviceLockoutFor having elapsed by rewinding the entry's
 	// lockedUntil into the past, exactly as if real time had passed.
-	// The lockout is keyed on (deviceID, clientIP) — see deviceLockoutKey.
-	lockKey := srv.deviceLockoutKey(deviceID, deviceRequest(deviceID, deviceSecret))
+	// The lockout is keyed on the source — see deviceLockoutKey.
+	lockKey := srv.deviceLockoutKey(deviceRequest(deviceID, deviceSecret))
 	srv.deviceLockout.mu.Lock()
 	entry, exists := srv.deviceLockout.entries[lockKey]
 	if !exists {
@@ -348,52 +332,22 @@ func TestResolveMailAuthContext_LockoutIs429(t *testing.T) {
 	}
 }
 
-// TestUnknownDeviceIdsNeverEnterTheLockoutTable is run-8 finding F2 (HIGH).
-//
-// deviceAuthFromRequest used to spend a lockout strike on the caller-supplied
-// X-Kypost-Device-Id BEFORE resolving whether any such device exists.
-// tryAttempt inserts unknown keys, and at loginLockoutHardCap it sheds the NEW
-// key rather than evicting an old one — deliberately, because for the login
-// table a genuine caller already holds a resident entry. On the device path
-// that premise does not hold: recordSuccess DELETES the entry on every
-// success, so a healthy paired device is always a new key. 50,000 anonymous
-// requests with invented device ids (245 ms, no credential of any kind) filled
-// the table, and every real device then got 429 on mail sync, contacts sync
-// and push-MFA approval — presenting the correct secret, from an unrelated
-// address.
-//
-// Resolving the device first means only a real, currently-paired id can
-// occupy a slot.
-func TestUnknownDeviceIdsNeverEnterTheLockoutTable(t *testing.T) {
+// Rotating IDs retains one source entry and leaves another source usable.
+func TestUnknownDeviceIDsShareOneSourceBudget(t *testing.T) {
 	srv := newTestServer(t)
-	all, err := srv.users.List()
-	if err != nil || len(all) == 0 {
-		t.Fatalf("no test user available: %v", err)
-	}
-	userID := all[0].ID
-	deviceID, deviceSecret := pairNativeDevice(t, srv, userID, "device-flood-victim")
-
+	id, secret := pairNativeDevice(t, srv, srv.mustBootstrapUserID(t), "device-flood-control")
 	for i := 0; i < 200; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/api/notifications/native/pull", nil)
-		setDeviceHeaders(req, "flood-"+strconv.Itoa(i), "x")
-		if _, _, ok, _ := srv.deviceAuthFromRequest(req); ok {
-			t.Fatalf("flood request %d authenticated", i)
+		if _, _, ok, _ := srv.deviceAuthFromRequest(deviceRequest("flood-"+strconv.Itoa(i), "x")); ok {
+			t.Fatal("unknown device authenticated")
 		}
 	}
-
-	srv.deviceLockout.mu.Lock()
-	resident := len(srv.deviceLockout.entries)
-	srv.deviceLockout.mu.Unlock()
-	if resident != 0 {
-		t.Fatalf("%d lockout entries after 200 invented device ids; an unauthenticated "+
-			"caller can size this table, and at loginLockoutHardCap it sheds every real device", resident)
+	if resident := len(srv.deviceLockout.entries); resident != 1 {
+		t.Fatalf("source entries = %d, want 1", resident)
 	}
-
-	// And the genuine device is unaffected, which is the harm the flood caused.
-	req := httptest.NewRequest(http.MethodGet, "/api/notifications/native/pull", nil)
-	setDeviceHeaders(req, deviceID, deviceSecret)
-	if _, _, ok, retryAfter := srv.deviceAuthFromRequest(req); !ok || retryAfter > 0 {
-		t.Fatalf("genuine device: ok=%v retryAfter=%v, want ok=true retryAfter=0", ok, retryAfter)
+	r := deviceRequest(id, secret)
+	r.RemoteAddr = "198.51.100.99:1234"
+	if _, _, ok, wait := srv.deviceAuthFromRequest(r); !ok || wait != 0 {
+		t.Fatalf("unrelated source: ok=%v wait=%v", ok, wait)
 	}
 }
 
@@ -508,7 +462,7 @@ func TestDeviceAuthKDFBusyIsBusyNotBadCredentials(t *testing.T) {
 		t.Error("expected a Retry-After header on the 503, so a client knows when to come back")
 	}
 
-	lockKey := srv.deviceLockoutKey(deviceID, deviceRequest(deviceID, deviceSecret))
+	lockKey := srv.deviceLockoutKey(deviceRequest(deviceID, deviceSecret))
 	srv.deviceLockout.mu.Lock()
 	entry, tracked := srv.deviceLockout.entries[lockKey]
 	failures := 0

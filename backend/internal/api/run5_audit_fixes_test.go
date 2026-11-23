@@ -174,7 +174,7 @@ func TestDeactivatedAccountDeviceAuthRefundsTheStrike(t *testing.T) {
 
 	// And the entry must not have accumulated at all.
 	srv.deviceLockout.mu.Lock()
-	entry, exists := srv.deviceLockout.entries[srv.deviceLockoutKey("dev-1", newReq())]
+	entry, exists := srv.deviceLockout.entries[srv.deviceLockoutKey(newReq())]
 	srv.deviceLockout.mu.Unlock()
 	if exists && len(entry.strikes) > 0 {
 		t.Fatalf("strike count is %d, want 0", len(entry.strikes))
