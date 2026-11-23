@@ -487,7 +487,7 @@ billing service sets them. When a quota is missing, KyPost uses today's default.
 
 In multi mode the KyPost admin UI is a **staff console**. A route is admitted only for K7 staff,
 with today's step-up (`withAdminStepUp`, `api/server_users.go:30`; `withActionDigest`,
-`api/sso_stepup.go:55`). Every admin route declares one class. A route with no class fails the
+`api/sso_stepup.go:56`). Every admin route declares one class. A route with no class fails the
 build, which extends `TestEveryRouteDeclaresItsAuthModel`.
 
 | Class | Routes (`api/server.go`) | Multi-mode behaviour |
