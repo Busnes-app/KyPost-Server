@@ -789,7 +789,7 @@ check the mailbox quota:
   (`mailbox/store.go:428`). **Not** the held-mail importer's move of a delivery receiving
   already accepted (a gateway receipt, `gateway != ""`). Receiving charged it while it was held,
   and refusing the move would only strand mail that got `250`. This is the rule `checkReserve`
-  already follows (`mailbox/store.go:430-433`), so open question 16's grace mail always reaches
+  already follows (`mailbox/store.go:431-434`), so open question 16's grace mail always reaches
   the mailbox;
 - a send's enqueue, which reserves its Sent copy (`mailbox/outbox.go:216`);
 - a contact photo upload (`storeContactPhoto`, `api/contacts_photo.go:141`).
