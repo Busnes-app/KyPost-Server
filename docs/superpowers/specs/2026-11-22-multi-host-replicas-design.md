@@ -1324,3 +1324,44 @@ coverage. Importer expiry fixtures now age database rows rather than supply an
 older host time. This is only the clock boundary: mailbox publication, cross-store
 fences, catalog tombstones, elected-job coverage and backup restrictions remain
 MH4 prerequisites. Startup `multi` refusal and all later launch gates remain.
+## MH4 catalog deletion boundary implementation (2026-11-23)
+
+Table-mode `PurgeStorage` now uses a directory tombstone in the existing
+`kypost_catalog.stores`, in the transaction that drops every schema below it.
+The marker has `kind=purged`, a slash-terminated catalog directory path and no
+physical namespace. It changes no catalog DDL or ordinary single-mode removal.
+A directory marker rather than only retained database rows also blocks stores
+whose preparation had not been published when the purge ran. This is required
+for the same no-resurrection contract, not a new storage backend.
+
+`Open`, `CreateSchemaTx`, `Stage` and `Settle` check the candidate path's indexed
+ancestors. They refuse an existing tombstone with the missing-store error class;
+normal cleanup cannot erase a marker. Markers are excluded from `Stores` and
+`RowCounts`, as they are not databases. The purge's final `schemas` check also
+requires each data-directory marker, even when no live schema remains.
+
+An already-open pool needs a second boundary: with `search_path=schema,public`,
+DDL could otherwise create tables in public after the original schema vanished.
+Schema-writer connectors therefore keep their required namespace separately and
+check it after acquiring the existing writer key. The purge acquires those same
+keys before `DROP SCHEMA`. An earlier writer finishes before deletion; a queued
+stale writer resumes after deletion and refuses before running its statement.
+The key derivation/search_path and explicit accounts isolation remain unchanged.
+
+Negative API tests reproduced both pre-fix cases: a fresh create reopened a
+purged schema, and a retained pool created a table in public. Fixed tests cover
+both, plus a mailbox import retained across complete org purge, marker removal
+failing the final check, indexed sibling boundaries, unpublished/staged paths,
+deterministic writer overlap, cancellation and an injected marker-insert failure
+that rolls back all schema drops before a successful retry. A sealed table
+capsule/restore remains valid beside a catalog marker and does not turn the
+marker into a backup member. Whole PostgreSQL backups retain the catalog; sealed
+restore remains stopped/held under K6's source fencing, durable erased identities
+and mandatory authoritative refresh/purge. This boundary does not authorize
+restoring over a live source or carrying an old worker across restoration.
+
+This is only the catalog deletion part of MH4. Mailbox preparation/publication,
+the remaining cross-store/elected-job fences and table-mode backup restrictions
+remain prerequisites. The lease-clock substep is a separate PR. Startup `multi`
+refusal, MH5/MH7/MH8, regions, mandatory object storage and all release gates stay.
+No SaaS-readiness claim is made.

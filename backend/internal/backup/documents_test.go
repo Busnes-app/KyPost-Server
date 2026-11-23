@@ -120,7 +120,7 @@ func TestSealedDocumentsSurviveBackupAndRestore(t *testing.T) {
 }
 
 func TestTableDocumentsBackupRestore(t *testing.T) {
-	dbbackend.RequirePostgres(t)
+	dbbackend.FreshDatabaseForTest(t)
 	s, u := nativeService(t)
 	master, err := cryptutil.LoadOrCreateKey(filepath.Join(s.dirs.Secret, "documents.key"))
 	if err != nil {
@@ -221,12 +221,22 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 	if err := vol.OpenDocument(photoPath).Replace([]byte("private-photo")); err != nil {
 		t.Fatal(err)
 	}
+	// Cell catalog deletion markers are not stores or capsule members. Keep
+	// this fixture in its own database so another test process cannot sweep
+	// the deliberately absent directory as stale test storage.
+	purgedDir := filepath.Join(s.dirs.State, "users", "purged-backup-only")
+	if err := dbbackend.TombstoneDir(t.Context(), purgedDir); err != nil {
+		t.Fatal(err)
+	}
 	key := pinTestKey(t, s)
 	p, err := s.Collect()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range p.Files {
+		if strings.HasPrefix(f.Path, "state/users/purged-backup-only/") {
+			t.Fatal("catalog marker became a capsule member", f.Path)
+		}
 		if f.Path == "config/config.yaml" || f.Path == "config/users.json" || strings.Contains(f.Path, "native-domains.json") {
 			t.Fatal("sealed stale file beside table", f.Path)
 		}
@@ -234,6 +244,9 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 	result, err := s.Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if held, err := dbbackend.DirectoryTombstoned(t.Context(), purgedDir); err != nil || !held {
+		t.Fatal("backup changed catalog tombstone", held, err)
 	}
 	raw, err := os.ReadFile(result.LocalPath)
 	if err != nil {

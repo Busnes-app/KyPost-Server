@@ -188,3 +188,12 @@ and is not implemented by this startup check. Never remove `users.json` to bypas
 the refusal: an empty table would discard the retained identities and administrator
 access. A migrated single install also refuses empty, administrator-less or corrupt
 table accounts. Ordinary un-migrated single installs continue using their files.
+
+Table-mode org purge retains a directory deletion marker in the PostgreSQL store
+catalog while dropping its schemas. New opens and staged publication refuse the
+marker; an already-open writer refuses the missing namespace after its writer
+lock, so it cannot fall through to `public`. Markers are control metadata rather
+than capsule database members, and ordinary single-mode removal is unchanged.
+Sealed recovery continues to require stopped/fenced sources and fresh erasure
+reconciliation before any release; a runtime worker cannot carry its old handle
+across a restore. Hosted startup remains refused.

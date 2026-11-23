@@ -19,6 +19,7 @@ non-prerelease version.
 ## Unreleased
 
 - Base hosted receiving import leases on database time so a replica clock cannot steal a live mailbox lease; keep multi startup gated.
+- Fence table-mode directory deletion with atomic catalog tombstones and stale schema-writer refusal; keep normal single-mode removal and hosted startup gates.
 
 - Preserve the staff-org customer-cache exemption behind org fences, scope table recovery identities by issuer, and refuse historical file accounts before a table authority switch until explicit offline migration.
 

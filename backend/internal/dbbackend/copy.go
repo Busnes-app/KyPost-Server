@@ -737,7 +737,7 @@ func Stores(ctx context.Context) ([]Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := cat.QueryContext(ctx, `SELECT path, schema, kind FROM kypost_catalog.stores ORDER BY path`)
+	rows, err := cat.QueryContext(ctx, `SELECT path, schema, kind FROM kypost_catalog.stores WHERE kind<>'purged' ORDER BY path`)
 	if err != nil {
 		return nil, err
 	}
@@ -766,7 +766,7 @@ func RowCounts(ctx context.Context) (map[string]map[string]int64, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT path, schema FROM kypost_catalog.stores ORDER BY path`)
+	rows, err := tx.QueryContext(ctx, `SELECT path, schema FROM kypost_catalog.stores WHERE kind<>'purged' ORDER BY path`)
 	if err != nil {
 		return nil, err
 	}

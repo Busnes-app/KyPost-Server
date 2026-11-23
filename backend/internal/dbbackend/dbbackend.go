@@ -126,7 +126,7 @@ func root(ctx context.Context) (*sql.DB, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if catalog == nil {
-		c, err := pgdialect.NewConnector(s.url, false)
+		c, err := pgdialect.NewConnector(s.url, false, "")
 		if err != nil {
 			return nil, err
 		}
@@ -280,6 +280,9 @@ func Open(path string, o Options) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := refusePurged(cat.QueryRowContext(ctx, tombstoneQuery, directoryAncestors(rel))); err != nil {
+		return nil, err
+	}
 	digest := ddlDigest(o.DDL)
 	var kind, stored, held string
 	err = cat.QueryRowContext(ctx, `SELECT kind, ddl, schema FROM kypost_catalog.stores WHERE path=?`, rel).Scan(&kind, &stored, &held)
@@ -314,7 +317,7 @@ func pool(schema string, readOnly, rowWrites bool) (*sql.DB, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
-	c, err := pgdialect.NewConnector(WithSearchPath(s.url, schema), readOnly)
+	c, err := pgdialect.NewConnector(WithSearchPath(s.url, schema), readOnly, schema)
 	if rowWrites {
 		c, err = pgdialect.NewRowWriterConnector(WithSearchPath(s.url, schema))
 	}
@@ -367,6 +370,9 @@ func ensureSchema(ctx context.Context, cat *sql.DB, schema, rel string, o Option
 // CreateSchemaTx is ensureSchema inside the caller's transaction (migration, restore,
 // mailbox preparation). It leaves search_path on the schema for the rest of tx.
 func CreateSchemaTx(ctx context.Context, tx *sql.Tx, schema, rel, kind, ddl string) error {
+	if err := refusePurged(tx.QueryRowContext(ctx, tombstoneQuery, directoryAncestors(rel))); err != nil {
+		return err
+	}
 	var existing string
 	err := tx.QueryRowContext(ctx, `SELECT kind FROM kypost_catalog.stores WHERE path=?`, rel).Scan(&existing)
 	if err == nil && existing != kind {
@@ -423,7 +429,7 @@ func Remove(path string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT schema FROM kypost_catalog.stores WHERE left(path, length(?))=?`, prefix, prefix)
+	rows, err := tx.QueryContext(ctx, `SELECT schema FROM kypost_catalog.stores WHERE left(path, length(?))=? AND kind<>?`, prefix, prefix, purgedKind)
 	if err != nil {
 		return err
 	}
@@ -445,7 +451,7 @@ func Remove(path string) error {
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM kypost_catalog.stores WHERE left(path, length(?))=?`, prefix, prefix); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM kypost_catalog.stores WHERE left(path, length(?))=? AND kind<>?`, prefix, prefix, purgedKind); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -501,6 +507,9 @@ func Stage(ctx context.Context, moves map[string]string, beforeCommit func() err
 		if err != nil {
 			return err
 		}
+		if err := refusePurged(tx.QueryRowContext(ctx, tombstoneQuery, directoryAncestors(newRel))); err != nil {
+			return err
+		}
 		var kind string
 		switch err := tx.QueryRowContext(ctx, `SELECT kind FROM kypost_catalog.stores WHERE path=?`, newRel).Scan(&kind); {
 		case err == nil && !strings.HasPrefix(kind, pendingPrefix):
@@ -546,6 +555,9 @@ func Settle(ctx context.Context, paths ...string) error {
 	for _, p := range paths {
 		_, rel, err := SchemaName(p)
 		if err != nil {
+			return err
+		}
+		if err := refusePurged(tx.QueryRowContext(ctx, tombstoneQuery, directoryAncestors(rel))); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE kypost_catalog.stores SET kind=substr(kind, ?) WHERE path=? AND left(kind, ?)=?`, len(pendingPrefix)+1, rel, len(pendingPrefix), pendingPrefix); err != nil {
