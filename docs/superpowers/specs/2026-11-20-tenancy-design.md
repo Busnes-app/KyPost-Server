@@ -835,6 +835,11 @@ limits"), and names the pool, not the mailbox, as what is full.
   says (`app/receiving.go:94-97`). The overshoot is bounded by the writes in flight. The pool is
   a billing limit, not a security boundary, and the per-mailbox ceiling still holds.
 
+*The staff org* (`KYPOST_STAFF_ORG_ID`) is exempt from the pool, as it is from the cache (K8).
+Its mailboxes, which include abuse and complaint handling on the platform domains, are bounded
+only by the per-mailbox limits. Whether `/api/suite/orgs` lists the staff org with a pool is
+unverified, and the exemption makes the answer irrelevant.
+
 *Single-tenant* (self-hosted and Enterprise) has no pool: there is no `tenancy.db`, so every check
 above is skipped, as `orgRoom` skips today (`app/receiving.go:99-101`). Enterprise's custom size
 is the install's `KYPOST_MAILBOX_QUOTA_BYTES`, a per-mailbox limit. An Enterprise contract
@@ -1928,7 +1933,11 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
       reaches **110 % of the pool**, whichever comes first. Every other write is blocked from the
       first byte over (approved rule). The start is KyIdentity's over-quota-since timestamp in
       the org entry (proposed; T's name for it is unverified, board `kyidentity-business-orgs`),
-      so every app agrees on one date even when another app caused the overrun.
+      so every app agrees on one date even when another app caused the overrun. When KyPost's
+      own writes take the org over before KyIdentity has published a date, grace starts at
+      KyPost's first observation. That date is written once to the org's `orgs` row, so every
+      replica agrees on it, and the earlier of the two dates wins once KyIdentity's arrives.
+      Grace is never open-ended: the 110 % bound applies from the first byte over.
     - **After grace,** `452 4.2.2` "Mailbox full" (exit 9) to every sender, for as long as the
       org stays over. Sending MTAs retry for about five days and then send their own bounce
       naming a full mailbox (unverified: senders' retry periods vary). A `552 5.2.2` is not
