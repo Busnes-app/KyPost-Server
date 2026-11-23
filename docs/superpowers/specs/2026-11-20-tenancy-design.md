@@ -786,7 +786,11 @@ minus KyPost's own usage now. Every write that adds bytes checks it, at the poin
 check the mailbox quota:
 - receiving acceptance, after the mailbox's own check (`orgRoom`, `app/receiving.go:85`);
 - every new message, which covers drafts, Sent copies, client uploads and imports
-  (`mailbox/store.go:428`);
+  (`mailbox/store.go:428`). **Not** the held-mail importer's move of a delivery receiving
+  already accepted (a gateway receipt, `gateway != ""`). Receiving charged it while it was held,
+  and refusing the move would only strand mail that got `250`. This is the rule `checkReserve`
+  already follows (`mailbox/store.go:430-433`), so open question 16's grace mail always reaches
+  the mailbox;
 - a send's enqueue, which reserves its Sent copy (`mailbox/outbox.go:216`);
 - a contact photo upload (`storeContactPhoto`, `api/contacts_photo.go:141`).
 
@@ -833,7 +837,7 @@ single-tenant install, which is not designed.
 *Negative tests the build must carry:* wrong org (a report or a check never counts another org's
 mailbox), a wrong client (KyIdentity refuses a report signed by another app), a replayed or older
 `as_of` (KyIdentity keeps the newer figure), a stale cache, a missing or malformed pool, an
-oversize or negative usage figure, an org at exactly the limit, a deletion that frees room, and
+oversize or negative usage figure, an org at exactly the limit, mail accepted during grace that imports while the org is over, a deletion that frees room, and
 single-tenant mode, where the pool is never read and the upgrade test is unchanged.
 
 ## Replicas (PR #677)
