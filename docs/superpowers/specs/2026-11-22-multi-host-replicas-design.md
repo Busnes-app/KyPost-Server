@@ -351,9 +351,10 @@ mode every org's contacts would sit in one database, so the seam seals what it s
 
 **Owner decision:** on the hosted install, primary content goes in S3-compatible object storage
 (about $0.014/GB/month with a backup copy, against about $0.07 for volumes; the owner's figures,
-not checked here). At minimum, attachments and large message bodies go there. Launch runs without
-it if it is not ready, so the PostgreSQL path must keep working behind the same seam.
-Single-tenant installs keep their storage unchanged. This overturns open question 2 for message
+not checked here). At minimum, attachments and large message bodies go there. **Owner decision of
+2026-11-23 (ky-launch#4), replacing "launch may run on volumes":** object storage is multi-tenant
+only and has no fallback, so a hosted install refuses to start without it (a K2 start check,
+built with MH11). Single-tenant installs keep their storage unchanged. This overturns open question 2 for message
 bodies only. Line references in this section were checked at `origin/main` `e46f01c2`.
 
 **What a body is.** KyPost stores each message whole: one RFC 5322 `raw` per row, with its
@@ -398,9 +399,10 @@ test that fails on any `UPDATE` setting `raw` to a value. The contract needed:
   (`mailmsg/limits.go:38`) plus sealing overhead, not `vol.MaxBody` (`vol/vol.go:30`), which
   bounds documents.
 
-The choice is made once, at open, as for `Table`. With object storage not configured, every body
-stays in `messages.raw`, which is the launch fallback and today's behaviour, and no code path
-branches anywhere else.
+The choice is made once, at open, as for `Table`. Bodies below the threshold stay in
+`messages.raw`. A single-tenant install never configures object storage, so every body stays
+there, as today. A multi install without object storage does not start (owner decision above),
+and no code path branches anywhere else.
 
 **Where the reference lives.** No shared table changes shape (K3), and `raw IS NULL` already
 means an expunged tombstone (`mailbox/store.go:677`; the indexes skip it,
@@ -1133,7 +1135,8 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
     and then a newer one leaves every body the newer one names, with objects older than the
     retention period;
     incoming encryption of a moved body leaves a new object and tombstones the old one; no
-    credential reaches a log; with object storage not configured every body stays in `raw`; and
+    credential reaches a log; a multi start without object storage is refused, and a single install keeps every body in
+    `raw`; and
     the single-tenant upgrade test is unchanged.
 
 **Against K and RX.**

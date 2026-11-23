@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -31,6 +32,22 @@ func multiRuntime(t *testing.T, r *receivingRuntime, db *sql.DB) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	r.tenancy, r.state = db, st
+	grantPool(t, db, receivingOrgA, 1<<40, time.Hour)
+	grantPool(t, db, receivingOrgB, 1<<40, time.Hour)
+}
+
+// grantPool gives org a pool and a grant of the same size, valid for ttl, as a report
+// would.
+func grantPool(t *testing.T, db *sql.DB, org string, bytes int64, ttl time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	seq, _, err := tenancy.NextStorageSeq(ctx, db, org)
+	if err == nil {
+		err = tenancy.SetGrant(ctx, db, org, seq, tenancy.Grant{Ceiling: bytes, Expires: time.Now().Add(ttl), PoolBytes: bytes})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 // The org storage quotas at RCPT (tenancy design "Abuse limits per org"): mailboxBytes
@@ -163,5 +180,77 @@ func TestReceivingOrgStorageCountsEveryCopy(t *testing.T) {
 	quota(`{"storageBytes":7340032}`)
 	if err := deliver("two-copies-fit"); err != nil {
 		t.Fatalf("two copies within storageBytes: %v", err)
+	}
+}
+
+// setPool writes org's grant and pool as a report would.
+func setPool(t *testing.T, db *sql.DB, org string, g tenancy.Grant) {
+	t.Helper()
+	ctx := context.Background()
+	seq, _, err := tenancy.NextStorageSeq(ctx, db, org)
+	if err == nil {
+		err = tenancy.SetGrant(ctx, db, org, seq, g)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Incoming mail over the org pool at RCPT (owner decision of 2026-11-23): past the grant,
+// grace accepts and records KyPost's first sighting; after grace 452 (exit 9); 3 days
+// later 552 (exit 14); no pool is 452 at once. Org B is unaffected, an org status answer
+// wins, and the staff org is exempt.
+func TestReceivingOrgStoragePool(t *testing.T) {
+	r, _ := importFixture(t, receivingOrgA, receivingOrgB)
+	ctx := context.Background()
+	exit := func(id, to string) int {
+		t.Helper()
+		if err := r.bind(ctx, id, "sender@outside.test", to); err != nil {
+			return receivingExit(err)
+		}
+		return 0
+	}
+	const pool = 100 << 30
+	day := 24 * time.Hour
+	exhausted := tenancy.Grant{Expires: time.Now().Add(time.Hour), PoolBytes: pool, OrgUsed: pool}
+
+	setPool(t, r.tenancy, receivingOrgA, exhausted)
+	if got := exit("grace", "one@example.test"); got != 0 {
+		t.Fatalf("first sighting: exit %d, want grace", got)
+	}
+	if g, _ := tenancy.StorageGrant(ctx, r.tenancy, receivingOrgA); g.FirstOver.IsZero() {
+		t.Fatal("KyPost's first sighting was not recorded")
+	}
+	over := exhausted
+	over.OverSince = time.Now().Add(-8 * day)
+	setPool(t, r.tenancy, receivingOrgA, over)
+	if got := exit("after-grace", "one@example.test"); got != 9 {
+		t.Fatalf("day 8: exit %d, want 9", got)
+	}
+	over.OverSince = time.Now().Add(-11 * day)
+	setPool(t, r.tenancy, receivingOrgA, over)
+	err := r.bind(ctx, "refused", "sender@outside.test", "one@example.test")
+	if receivingExit(err) != 14 || !errors.Is(err, errPoolRefused) {
+		t.Fatalf("day 11: %v, want exit 14", err)
+	}
+	if got := exit("org-b", "two@example.test"); got != 0 {
+		t.Fatalf("org B while A is refused: exit %d", got)
+	}
+	// A suspended org answers 12, whatever its storage.
+	setOrg(t, r.tenancy, receivingOrgA, suitedir.OrgSuspended)
+	if got := exit("suspended", "one@example.test"); got != 12 {
+		t.Fatalf("suspended and over the pool: exit %d, want 12", got)
+	}
+	setOrg(t, r.tenancy, receivingOrgA, suitedir.OrgActive)
+	// No pool reported: 452 at once, no grace.
+	setPool(t, r.tenancy, receivingOrgA, tenancy.Grant{})
+	if got := exit("no-pool", "one@example.test"); got != 9 {
+		t.Fatalf("no pool: exit %d, want 9", got)
+	}
+	// The staff org is exempt.
+	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	t.Setenv("KYPOST_STAFF_ORG_ID", receivingOrgA)
+	if got := exit("staff", "one@example.test"); got != 0 {
+		t.Fatalf("staff org: exit %d", got)
 	}
 }

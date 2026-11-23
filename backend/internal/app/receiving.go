@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -42,6 +43,10 @@ var errMailboxMessageLimit = fmt.Errorf("%w: the message exceeds a recipient mai
 // (exit 9, 452 4.2.2), so the sender retries once its owner frees space. It
 // is not ErrCapacity: hosted pickup leaves only this message waiting in R2.
 var errMailboxFull = errors.New("recipient mailbox is full")
+
+// errPoolRefused is a recipient org past its pool's grace and the 3 days of temporary
+// refusals after it: exit 14, 552 5.2.2, hosted profile only.
+var errPoolRefused = errors.New("recipient organisation's storage is full")
 
 // errUnimportable is a message permanent storage would refuse on every import
 // (for example a header field over its metadata limit): exit 11, 554 5.6.0,
@@ -114,10 +119,52 @@ func (r *receivingRuntime) orgRoom(ctx context.Context, a sso.NativeAssignment, 
 	if q := o.Quotas.MailboxBytes; q != nil && used+size > *q {
 		return full
 	}
-	q := o.Quotas.StorageBytes
-	if q == nil {
-		return nil
+	if q := o.Quotas.StorageBytes; q != nil {
+		if err := r.orgStorageBytes(ctx, org, *q, size*copies); err != nil {
+			return err
+		}
 	}
+	return r.poolRoom(ctx, org, size*copies)
+}
+
+// poolRoom applies the org storage pool to incoming mail (tenancy design "Org storage
+// pool as built"; K open question 16, owner decision of 2026-11-23): within the grant it
+// is accepted; past it, 7 days' grace up to tenancy.PoolOverage, then 452 for 3 days, then
+// 552 (exit 14). An org with no reported pool gets 452 at once. The staff org is exempt.
+// Org status answers come first: bind checks them before any room (orgReceives).
+func (r *receivingRuntime) poolRoom(ctx context.Context, org string, add int64) error {
+	if _, staff, err := config.Tenancy(); err != nil || org == staff {
+		return err
+	}
+	g, err := tenancy.StorageGrant(ctx, r.tenancy, org)
+	if err != nil {
+		return err
+	}
+	ledger, err := r.life.NativeMailboxesWithoutAddresses()
+	if err != nil {
+		return err
+	}
+	used, err := api.OrgStorageUsed(ctx, r.tenancy, r.stateDir, org, ledger, func(id string) (int64, error) { return r.holding.HeldBytes(ctx, id) })
+	if err != nil {
+		return err
+	}
+	answer, firstOver, graceEnd := g.Mail(used, add, time.Now())
+	if err := tenancy.MarkOverrun(ctx, r.tenancy, org, firstOver, graceEnd); err != nil {
+		return err
+	}
+	switch answer {
+	case tenancy.PoolMailTemporary:
+		return &receivingCommandError{err: errMailboxFull, code: 9}
+	case tenancy.PoolMailRefuse:
+		return &receivingCommandError{err: errPoolRefused, code: 14}
+	}
+	return nil
+}
+
+// orgStorageBytes is the storageBytes safety key: KyPost's mail and held mail across the
+// org, against q.
+func (r *receivingRuntime) orgStorageBytes(ctx context.Context, org string, q, add int64) error {
+	full := &receivingCommandError{err: errMailboxFull, code: 9}
 	ids, err := tenancy.OrgUsers(ctx, r.tenancy, org)
 	if err != nil {
 		return err
@@ -134,7 +181,7 @@ func (r *receivingRuntime) orgRoom(ctx context.Context, a sso.NativeAssignment, 
 	if err != nil {
 		return err
 	}
-	total := size * copies
+	total := add
 	for _, m := range mailboxes {
 		if !members[m.User] || m.Dir == "" {
 			continue
@@ -145,7 +192,7 @@ func (r *receivingRuntime) orgRoom(ctx context.Context, a sso.NativeAssignment, 
 		}
 		total += u.Bytes + held[m.ID]
 	}
-	if total > *q {
+	if total > q {
 		return full
 	}
 	return nil

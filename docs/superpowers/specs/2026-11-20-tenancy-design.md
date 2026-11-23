@@ -127,6 +127,21 @@ KyPost is in every one.
 - **Rules that said "household"** now mean any org with more than one member: Couple, Family or
   Business. Delete everything's paths (Lifecycle) depend only on whether the account holder has
   other live members, which KyIdentity decides (T "Delete everything", `liveHolder`).
+- **Owner decisions of 2026-11-23, later the same day (ky-launch#4):**
+  1. Incoming mail while an org is over its pool: open question 16, now answered.
+  2. A Business pool counts **paid** seats (`max_seats`), and seats are capped at 1000 per
+     org. Both are KyIdentity's. KyPost sees neither.
+  3. Delete everything and shared data: shared content passes to the longest-standing
+     admin, then an editor, then any member. A person's messages in shared rooms become
+     tombstones, and nothing other members wrote is deleted. KyPost holds no shared content
+     between members (each mailbox has one owner), so its Delete everything paths are
+     unchanged.
+  4. No automatic version pruning at launch. KyPost keeps no versions.
+  5. Object storage is multi-tenant only, with no volume fallback: a hosted install refuses
+     to start without it (MH "Object storage for message bodies", MH11). Single-tenant
+     installs keep their storage.
+  6. KyCalendar keeps attendee display names readable, KyMessages does not count message
+     text in the pool, and staff audit keeps usernames. None of these is KyPost's.
 - **KyIdentity changes this needs** (T, not built; unverified how T will name them):
   - T's `orgs.kind` allows only `default`, `person`, `household` and `staff` (T "Data model"), and
     the `org_erasures_holder` trigger admits only `person` and `household` (T "Delete
@@ -443,8 +458,8 @@ account to its `org_id`. No receiving path takes an org from the message.
   is reserved at bind (`app/receiving.go:458-479`). Hosted mode applies the install-wide
   `KYPOST_MAILBOX_QUOTA_BYTES` and the optional `mailboxBytes` and `storageBytes` keys as hard
   limits (Abuse limits per org), then the org's storage pool ("Quotas"). The pool alone has
-  open question 16's grace window: a valid pool keeps accepting mail for up to 14 days or 110 %
-  before `452`. A lower quota refuses
+  open question 16's grace window (decided): a valid pool keeps accepting mail for 7 days or up
+  to 10 % over (at least 2 GB), whichever ends first, then `452` for 3 days, then `552 5.2.2`. A lower quota refuses
   only new mail, never locks a mailbox (today's rule, root `AGENTS.md` "Mailbox limits").
 
 ### Recommended hosted receiving tier (open question 3)
@@ -808,12 +823,13 @@ PR 5's statement that imports, drafts and Sent copies are bounded by the install
 *What over-pool does.* The owner approved the rule on 2026-11-23 (ky-launch#4): new uploads and
 new stored content are blocked until the org is back under the pool, no data is ever deleted, and
 the holder is warned before a seat change that would leave the org over. The warning is
-KyIdentity's and billing's, because the seat change happens there. Receiving is open question 16.
+KyIdentity's and billing's, because the seat change happens there. Receiving follows open
+question 16, decided by the owner on 2026-11-23.
 Each surface takes the safest default:
 
 | Surface | Over the pool |
 |---|---|
-| Receiving | Open question 16. *Default:* a grace window keeps accepting mail, and then comes `452 4.2.2` "Mailbox full", today's temporary exit 9 (`app/receiving_config.go:198`). Senders retry, so freeing space in any app lets the mail in. It is lost only if a sender gives up first, as with a full mailbox today. |
+| Receiving | Open question 16, decided 2026-11-23: 7 days' grace with up to 10 % of the pool over (at least 2 GB), whichever ends first; then `452 4.2.2` "Mailbox full" (exit 9) for 3 days; then `552 5.2.2` (exit 14, hosted profile only). Org status answers win. |
 | Sending | A new send is refused at enqueue with today's capacity answer and a message naming storage, before anything is sent. A send already queued goes out, because its Sent copy was reserved at enqueue. Sending without a Sent copy is not offered: it would lose the copy silently. |
 | Drafts, copies, client uploads, imports | A write that adds bytes is refused with the capacity answer. An import stops at the first refused message and reports how far it got. The existing draft is kept. |
 | Sync, read, search, export | Unchanged, always allowed. |
@@ -1980,7 +1996,7 @@ so only tests run any of this.
     - letting a stale or late answer overwrite;
     - checking in single mode.
 - **Not built:**
-  - Receiving over the pool and its grace (open question 16, owner-only). Receiving is
+  - Receiving grace is supplied by the stacked #707. Receiving is
     unchanged.
   - The UI's pool usage and its 80 % and 95 % warnings. No screen changed, so there are no
     screenshots.
@@ -1997,6 +2013,25 @@ so only tests run any of this.
   2. `want_bytes` is at least 256 MiB per org per report, which reserves that much of an idle
      org's pool for KyPost. The alternative is to release it with `0` when idle.
   3. The staff org is exempt from the check and never reported.
+
+### Incoming mail over the pool (#707)
+
+The owner's 2026-11-23 rule replaces open question 16: incoming mail has 7 days of
+receiving grace, limited to max(10% of the pool, 2 GB) over; then 452 4.2.2 for 3 days;
+then 552 5.2.2 (hosted exit 14). Only stored usage exhausting overage ends grace early.
+`first_over` and `grace_end` are write-once per overrun; a fresh report confirming the org
+back within its pool clears them. Missing pools fail closed with 452; staff is exempt.
+`pool_bytes`, `org_used_bytes`, `over_since`, `first_over`, `grace_end` extend the new,
+unreleased `org_storage` table: multi startup is still refused, so there is no prior shape.
+
+RCPT uses the cached grant as a probe. DATA reserves bytes once per org (all distinct
+mailbox copies), in one shared tenancy writer transaction before holding acceptance.
+Mailbox/photo writes use the same counter. A failed acceptance can overcount until the
+next report. `reported_bytes` remains fixed when `used_bytes` grows, preserving other
+apps' contribution to the grace ceiling. Exact accepted replay never reserves twice.
+The report-overlap bound above also includes incoming writes: at most one message per
+mailbox quota fence in flight at the watermark, each within the mailbox message limit.
+No per-message full-org or install-wide pool usage scan runs.
 
 ## Residual risks
 
@@ -2084,35 +2119,22 @@ so only tests run any of this.
     `multi` before KyIdentity publishes the pool, so this happens only through a KyIdentity fault.
     The alternative, no pool cap, lets an org grow without limit during that fault.
 16. **Incoming mail while an org is over its pool (new, 2026-11-23; KyPost owns this rule).**
-    Refusing mail at once bounces it to outside senders, often because another app (a Drive
-    upload) filled the pool. *Recommend* a grace window, then a temporary refusal, and never a
-    permanent one for quota:
-    - **Grace** (only for a valid pool; a missing or malformed one is open question 15). Mail
-      is still accepted for **14 days** after the org went over, or until usage
-      reaches **110 % of the pool**, whichever comes first. Every other write is blocked from the
-      first byte over (approved rule). The start is KyIdentity's over-quota-since timestamp in
-      the org entry (proposed; T's name for it is unverified, board `kyidentity-business-orgs`),
-      so every app agrees on one date even when another app caused the overrun. When KyPost's
-      own writes take the org over before KyIdentity has published a date, grace starts at
-      KyPost's first observation. That date is written once per overrun to the org's `orgs` row,
-      so every replica agrees on it. Within one overrun the earlier of the two dates wins once
-      KyIdentity's arrives. The date is cleared when KyPost sees the org back under its pool, so
-      a later overrun gets a fresh window.
-      Grace is never open-ended: the 110 % bound applies from the first byte over.
-    - **After grace,** `452 4.2.2` "Mailbox full" (exit 9) to every sender, for as long as the
-      org stays over. Sending MTAs retry for about five days and then send their own bounce
-      naming a full mailbox (unverified: senders' retry periods vary). A `552 5.2.2` is not
-      used: it would bounce mail at once for a state a deletion can end at any moment. If the
-      owner prefers a firm end, the alternative is `452` for 7 days and then `552 5.2.2`, which
-      needs a new exit code in the receiving profile and in RX's code table.
-    - **What people see.** Every member sees a banner in KyPost: "Storage full: new mail is
-      still accepted until <date> (or <N> GB more)", and after grace, "Mail to this org is being
-      refused until you free space". The holder also gets billing's notice. KyPost sends no mail
-      about this into the full mailbox.
-    - **What senders see.** Nothing during grace. After it, a temporary refusal and eventually
-      their own server's bounce. They never get a permanent rejection from KyPost for quota.
-    - **Fit with receiving.** The answer is made where it is today, at `accept` after the
-      mailbox's own check (RX; `orgRoom`, `app/receiving.go:85`), and `250` still follows the
-      PostgreSQL commit. MX hosts stay stateless. Org status answers must come first: a suspended org's
-      answer and `deletion_scheduled`'s `550` (open question 11) win over the quota answer (the order in code is unverified). Grace
-      never passes the per-mailbox install ceiling, the 25 MiB cap or a `mailboxBytes` safety key.
+    *Answered (owner, 2026-11-23, ky-launch#4):*
+    - **Grace:** 7 days' grace and up to 10 % of the pool over it (at least 2 GB), whichever
+      ends first.
+    - **Then:** `452 4.2.2` for 3 days, then `552 5.2.2`.
+    - **Org status answers win:** `550` during scheduled deletion.
+
+    This replaces the recommendation of 14 days or 110 % and never a permanent refusal. As
+    built ("Org storage pool as built"):
+    - The overrun starts at the earlier of KyIdentity's `over_since` and KyPost's own first
+      sighting, which is written once per overrun.
+    - The 3 days run from the end of grace, whichever bound ended it.
+    - An answer back within the pool clears both dates, so the next overrun gets a fresh
+      window.
+    - `552 5.2.2` is exit 14, rendered only in the hosted profile.
+    - A missing pool is open question 15: `452` at once, no grace.
+    - Grace never passes the per-mailbox install ceiling, the 25 MiB cap or a `mailboxBytes`
+      key, which receiving checks first.
+    - **Not built:** the banner ("Storage full: new mail is still accepted until <date>"),
+      with the other UI.
