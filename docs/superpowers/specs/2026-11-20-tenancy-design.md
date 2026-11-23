@@ -1876,14 +1876,19 @@ so only tests run any of this.
     answer to an older report changes nothing.
 - **The report** runs about every 60 s on the `api-sweepers` owner, in `StartOrgPoller` after
   the poll, whether or not the poll succeeded (`api/tenancy_lifecycle.go:75`, `reportStorage`,
-  `api/tenancy_storage.go:129`).
+  `api/tenancy_storage.go:130`).
   - It covers every cached org that is not `deleted` and not the staff org. `want_bytes` is
     the larger of 256 MiB and twice the growth since the last report.
   - The expiry is the time the request was sent plus `min(ttl_seconds, 15 min)`.
   - `stale` keeps the current grant. `unknown_org` zeroes it.
   - A failed batch logs one line naming no org and is retried at the next poll. The grant
     stands until it expires.
-- **What KyPost counts** (`orgUsage`, `api/tenancy_storage.go:29`), over every `user_orgs`
+  - An org whose usage or sequence cannot be read (an unreadable mailbox or photo
+    directory, say) is skipped. Its sequence does not advance and its grant is left to
+    expire, so it alone fails closed. Every other org is still reported, and one line logs
+    only the number skipped. A failure that touches every org still stops the report: the
+    org list, the suite directory, the ledger, the spool scan, a batch or a grant write.
+- **What KyPost counts** (`orgUsage`, `api/tenancy_storage.go:30`), over every `user_orgs`
   member of the org:
   - `usage.payload_bytes` of every mailbox the member owns in the ledger (primary and extra).
     That covers stored mail in every folder, queued sends and their reserved Sent copies.
@@ -1892,7 +1897,7 @@ so only tests run any of this.
     org's own mailboxes only.
   - Contact photos (`contactPhotoBytesUsed`).
   - Exports, import uploads and backups are not counted, as above.
-- **The check** is `orgPoolRoom` (`api/tenancy_storage.go:75`). A write of `n` bytes fits only
+- **The check** is `orgPoolRoom` (`api/tenancy_storage.go:76`). A write of `n` bytes fits only
   while the grant is unexpired and usage plus `n` is at most the ceiling (`Grant.Fits`,
   `tenancy/storage.go:45`). Its edge cases:
   - A missing grant fits nothing. That covers an org never reported, an unknown org, or
@@ -1911,7 +1916,7 @@ so only tests run any of this.
     - **Not receiving.** Open question 16 is the owner's, so `orgRoom` and `receiving bind` are
       unchanged.
   - The mailbox checks run through one process-wide hook, `mailbox.SetPoolCheck`
-    (`mailbox/pool.go:30`), which `Server.StoragePoolCheck` (`api/tenancy_storage.go:114`)
+    (`mailbox/pool.go:30`), which `Server.StoragePoolCheck` (`api/tenancy_storage.go:115`)
     implements. Nothing installs it outside tests, so `backend/deadcode.allow` lists it. PR 7
     must install it wherever it sets `Server.tenancy`, in every process that writes mail, and
     drop that entry. That joins the multi start gate.
@@ -1943,6 +1948,9 @@ so only tests run any of this.
       `unknown_org`, a zero grant, and the staff exemption.
   - `api` `TestOrgStoragePoolCountsHeldMail`: held mail counts in the report and in the write
     check, for its own org only.
+  - `api` `TestOrgStorageReportSkipsAFailingOrg`: the first org's usage read fails; the second
+    is still reported and granted; the first keeps its grant and sequence; the log names no
+    org, user or path.
   - `api` `TestSingleTenantHasNoStoragePool`: no report, no check.
   - The single-tenant upgrade test is unchanged.
   - **Proof that the gates bite:** each of these mutations fails its test:
@@ -1952,6 +1960,7 @@ so only tests run any of this.
     - ignoring expiry;
     - counting other orgs' mailboxes;
     - not counting held mail, in the report or in the check;
+    - stopping the report at one org's failure, or logging its raw error;
     - not counting photos;
     - reporting the staff org;
     - dropping the staff exemption;

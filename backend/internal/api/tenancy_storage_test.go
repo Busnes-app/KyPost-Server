@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -349,5 +350,53 @@ func TestOrgStoragePoolCountsHeldMail(t *testing.T) {
 	check(fx, err)
 	if err := srv.orgPoolRoom(ctx, orgA, int64(len(poolDraft))); err != nil {
 		t.Fatalf("a write that fits with held mail counted: %v", err)
+	}
+}
+
+// One org whose usage cannot be read is skipped: the orgs after it are still reported and
+// granted, its own grant and sequence stay as they were, and the log names no org.
+func TestOrgStorageReportSkipsAFailingOrg(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 directory")
+	}
+	fx, logs := newOrgFixture(t)
+	srv, db, ctx := fx.srv, fx.srv.tenancy, context.Background()
+	idp := newStorageIdP(t)
+	check(fx, srv.ssoStore.Save(sso.SSOSettings{Enabled: true, IssuerURL: idp.URL, ClientID: "kypost", ClientSecret: "suite-secret"}))
+	check(fx, srv.reportStorage(ctx))
+	seqOf := func(org string) (seq int64) {
+		check(fx, db.QueryRowContext(ctx, `SELECT seq FROM org_storage WHERE org_id = ?`, org).Scan(&seq))
+		return seq
+	}
+	seqA, seqB := seqOf(orgA), seqOf(orgB)
+	grantA, err := tenancy.StorageGrant(ctx, db, orgA)
+	check(fx, err)
+
+	// Org A sorts first; its member's photo directory answers EACCES.
+	photos := srv.userContactPhotosDir(fx.a.ID)
+	check(fx, os.MkdirAll(photos, 0o700))
+	check(fx, os.Chmod(photos, 0))
+	t.Cleanup(func() { _ = os.Chmod(photos, 0o700) })
+	idp.set(func(idp *storageIdP) { idp.reports = map[string]tenancy.StorageReport{} })
+
+	check(fx, srv.reportStorage(ctx))
+	if _, reported := idp.report(orgA); reported {
+		t.Fatal("org A was reported with an unreadable usage")
+	}
+	if b, ok := idp.report(orgB); !ok || b.Seq != seqB+1 {
+		t.Fatalf("org B after org A failed: %+v %v", b, ok)
+	}
+	if g, _ := tenancy.StorageGrant(ctx, db, orgB); !g.Expires.After(time.Now()) {
+		t.Fatalf("org B has no fresh grant: %+v", g)
+	}
+	if got, _ := tenancy.StorageGrant(ctx, db, orgA); got != grantA || seqOf(orgA) != seqA {
+		t.Fatalf("org A's grant or seq moved: %+v seq %d, was %+v seq %d", got, seqOf(orgA), grantA, seqA)
+	}
+	out := logs.take()
+	if !strings.Contains(out, "storage report: skipped") || !strings.Contains(out, `"skipped":"1"`) {
+		t.Fatalf("no skip line: %s", out)
+	}
+	if strings.Contains(out, orgA) || strings.Contains(out, fx.a.ID) || strings.Contains(out, photos) {
+		t.Fatalf("the log names the org, the user or the path: %s", out)
 	}
 }

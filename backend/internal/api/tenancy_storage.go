@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
@@ -178,17 +179,22 @@ func (s *Server) reportStorage(ctx context.Context) error {
 		batch = batch[:0]
 		return nil
 	}
+	// One org whose usage or sequence cannot be read is skipped, so it alone fails closed
+	// when its grant expires; the others are still reported.
+	skipped := 0
 	for _, org := range orgs {
 		if org == s.staffOrg {
 			continue
 		}
 		n, err := s.orgUsage(ctx, org, ledger, heldOf)
 		if err != nil {
-			return err
+			skipped++
+			continue
 		}
 		seq, last, err := tenancy.NextStorageSeq(ctx, s.tenancy, org)
 		if err != nil {
-			return err
+			skipped++
+			continue
 		}
 		used[org] = n
 		batch = append(batch, tenancy.StorageReport{OrgID: org, UsedBytes: n, Seq: seq, WantBytes: max(minStorageWant, 2*(n-last.Used))})
@@ -197,6 +203,10 @@ func (s *Server) reportStorage(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	if skipped > 0 {
+		// The errors carry paths and IDs; the line carries only the count.
+		s.logger.Error("storage report: skipped orgs whose usage or sequence could not be read; their grants expire", "skipped", strconv.Itoa(skipped))
 	}
 	return flush()
 }
