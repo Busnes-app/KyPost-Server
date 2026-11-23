@@ -52,6 +52,15 @@ func makeMultiTenant(t *testing.T, srv *Server) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	srv.useTenancy(db, staffOrg)
+	if srv.nativeMail {
+		settings := srv.ssoStore.Load()
+		settings.ClientSecret = testSyncKey
+		previous := sso.SetTransport(ssotest.SuiteEmailDomains(t, settings.IssuerURL, settings.ClientID, settings.ClientSecret, "example.test"))
+		t.Cleanup(func() { sso.SetTransport(previous) })
+		if err := srv.ssoStore.Save(settings); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// The fixtures' customer orgs are served unless a test changes them (PR 5).
 	setOrg(t, db, orgA, "active", true, `{}`)
 	setOrg(t, db, orgB, "active", true, `{}`)
@@ -69,6 +78,10 @@ func multiSSOServer(t *testing.T) (*Server, *ssotest.IdP, *sql.DB) {
 
 func orgUser(sub, org string, active bool, roles ...any) map[string]any {
 	u := scimUser(sub, "u_"+sub, active, roles...)
+	u["emails"] = []map[string]any{
+		{"value": sub + "@signin.test", "type": "work", "primary": true},
+		{"value": sub + "@example.test", "type": "mailbox", "primary": false},
+	}
 	if org != "" {
 		u["org_id"] = org
 	}
@@ -553,7 +566,6 @@ func TestTenancyNativeMemberProvisioning(t *testing.T) {
 	db := makeMultiTenant(t, srv)
 	event := func(sub string, revision int, roles ...any) map[string]any {
 		u := orgUser(sub, orgA, true, roles...)
-		u["emails"] = []map[string]any{{"value": sub + "@example.test", "primary": true}}
 		u["meta"] = map[string]any{"version": fmt.Sprintf(`W/"%d"`, revision)}
 		return u
 	}
@@ -561,8 +573,12 @@ func TestTenancyNativeMemberProvisioning(t *testing.T) {
 	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "n-2", 1, event("two", 1, "kypost.admin")))
 	for _, sub := range []string{"one", "two"} {
 		u, err := srv.users.GetBySSOSub(sub)
-		if err != nil || u.NativeMailboxSource == "" || u.Role != users.RoleUser || u.OrgID != orgA || userOrgRow(t, db, u.ID) != orgA {
+		if err != nil || u.NativeMailboxSource == "" || u.SSOEmail != sub+"@signin.test" || u.Role != users.RoleUser || u.OrgID != orgA || userOrgRow(t, db, u.ID) != orgA {
 			t.Fatalf("%s: %+v %v, user_orgs %q", sub, u, err, userOrgRow(t, db, u.ID))
+		}
+		a, _, err := srv.ssoLifecycle.NativeAssignment(u.SSOIssuer, sub)
+		if err != nil || a.Address != sub+"@example.test" {
+			t.Fatalf("%s: mailbox address %q, error %v", sub, a.Address, err)
 		}
 	}
 	one, _ := srv.users.GetBySSOSub("one")

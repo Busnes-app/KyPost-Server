@@ -202,14 +202,12 @@ func (px *purgeFixture) assertPurged(t *testing.T) {
 	}
 	// The purged subject is never provisioned again.
 	u := orgUser("member-a", orgA, true)
-	u["emails"] = []map[string]any{{"value": "member-a@example.test", "primary": true}}
 	postDirectory(t, srv, testSyncKey, "user.updated", "ev-again", 9, u)
 	if _, err := srv.users.GetBySSOSub("member-a"); !errors.Is(err, users.ErrNotFound) {
 		t.Fatal("a purged subject was provisioned again", err)
 	}
 	// Nor does a new subject of the deleted org get an account.
 	fresh := orgUser("member-a3", orgA, true)
-	fresh["emails"] = []map[string]any{{"value": "member-a3@example.test", "primary": true}}
 	postDirectory(t, srv, testSyncKey, "user.created", "ev-fresh", 1, fresh)
 	if _, err := srv.users.GetBySSOSub("member-a3"); !errors.Is(err, users.ErrNotFound) {
 		t.Fatal("a deleted org's new subject was provisioned", err)
@@ -217,7 +215,6 @@ func (px *purgeFixture) assertPurged(t *testing.T) {
 	// An event that leaves "active" out is malformed before any org rule runs.
 	silent := orgUser("member-a4", orgA, true)
 	delete(silent, "active")
-	silent["emails"] = []map[string]any{{"value": "member-a4@example.test", "primary": true}}
 	if w := postDirectory(t, srv, testSyncKey, "user.created", "ev-silent", 1, silent); w.Code != http.StatusBadRequest {
 		t.Fatal("an event without active", w.Code, w.Body)
 	}

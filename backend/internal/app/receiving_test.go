@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -50,7 +52,13 @@ func receivingFixtureIn(t *testing.T, orgs ...string) (*receivingRuntime, []user
 		t.Fatal(err)
 	}
 	const issuer = "https://identity.example.test"
-	if err := sso.NewStore(configDir).Save(sso.SSOSettings{Enabled: true, IssuerURL: issuer, ClientID: "kypost"}); err != nil {
+	settings := sso.SSOSettings{Enabled: true, IssuerURL: issuer, ClientID: "kypost"}
+	if slices.ContainsFunc(orgs, func(org string) bool { return org != "" }) {
+		settings.ClientSecret = "receiving-suite-secret-32-bytes!!"
+		previous := sso.SetTransport(ssotest.SuiteEmailDomains(t, issuer, settings.ClientID, settings.ClientSecret, "example.test"))
+		t.Cleanup(func() { sso.SetTransport(previous) })
+	}
+	if err := sso.NewStore(configDir).Save(settings); err != nil {
 		t.Fatal(err)
 	}
 	r := &receivingRuntime{configDir: configDir, stateDir: stateDir, accounts: accounts, life: sso.NewLifecycleStore(configDir), domains: sso.NewNativeDomainStore(configDir), senders: ingress.FileSenders(filepath.Join(stateDir, "receiving"))}
@@ -63,7 +71,11 @@ func receivingFixtureIn(t *testing.T, orgs ...string) (*receivingRuntime, []user
 	})
 	var created []users.User
 	for i, subject := range []string{"one", "two"} {
-		raw := []byte(fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":%q,"externalId":%q,"userName":%q,"active":true,"emails":[{"value":%q,"primary":true}],"meta":{"version":"W/\"1\""}}`, subject, subject, subject, subject+"@example.test"))
+		emails := fmt.Sprintf(`[{"value":%q,"primary":true}]`, subject+"@example.test")
+		if orgs[i] != "" {
+			emails = fmt.Sprintf(`[{"value":%q,"type":"work","primary":true},{"value":%q,"type":"mailbox","primary":false}]`, subject+"@signin.test", subject+"@example.test")
+		}
+		raw := []byte(fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":%q,"externalId":%q,"userName":%q,"active":true,"emails":%s,"meta":{"version":"W/\"1\""}}`, subject, subject, subject, emails))
 		var resource sso.DirectoryUser
 		if err := json.Unmarshal(raw, &resource); err != nil {
 			t.Fatal(err)
