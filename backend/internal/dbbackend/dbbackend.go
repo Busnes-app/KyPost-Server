@@ -257,10 +257,11 @@ var rootSchemas = map[string]string{
 
 // Options say how Open treats a store's schema.
 type Options struct {
-	Kind     string // the store kind recorded in the catalog; a mismatch is refused ("" opens any)
-	DDL      string // Postgres DDL, run when the schema is created or the DDL changed
-	Create   bool   // create a missing schema; otherwise a missing one is ErrNotFound
-	ReadOnly bool   // a read-only pool: REPEATABLE READ snapshots, no writer lock
+	Kind      string // the store kind recorded in the catalog; a mismatch is refused ("" opens any)
+	DDL       string // Postgres DDL, run when the schema is created or the DDL changed
+	Create    bool   // create a missing schema; otherwise a missing one is ErrNotFound
+	ReadOnly  bool   // a read-only pool: REPEATABLE READ snapshots, no writer lock
+	RowWrites bool   // volumes accounts only: explicit row locks and SERIALIZABLE invariants
 }
 
 // Open returns a pool on the schema for path. Each schema has its own writer lock, which
@@ -298,16 +299,25 @@ func Open(path string, o Options) (*sql.DB, error) {
 	case o.Kind != "" && kind != o.Kind:
 		return nil, fmt.Errorf("%s is a %s store, not %s", rel, kind, o.Kind)
 	}
-	return Pool(schema, o.ReadOnly)
+	if o.RowWrites && (o.Kind != "volumes" || o.ReadOnly) {
+		return nil, errors.New("row writers are restricted to volume accounts")
+	}
+	return pool(schema, o.ReadOnly, o.RowWrites)
 }
 
 // Pool opens a pool on an existing schema without consulting the catalog.
 func Pool(schema string, readOnly bool) (*sql.DB, error) {
+	return pool(schema, readOnly, false)
+}
+func pool(schema string, readOnly, rowWrites bool) (*sql.DB, error) {
 	s := current()
 	if s.err != nil {
 		return nil, s.err
 	}
 	c, err := pgdialect.NewConnector(WithSearchPath(s.url, schema), readOnly)
+	if rowWrites {
+		c, err = pgdialect.NewRowWriterConnector(WithSearchPath(s.url, schema))
+	}
 	if err != nil {
 		return nil, err
 	}

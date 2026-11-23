@@ -54,24 +54,8 @@ func StartPurge(ctx context.Context, db *sql.DB, scope PurgeScope, snap PurgeSna
 	if n, err := res.RowsAffected(); err != nil || n == 0 {
 		return false, err
 	}
-	add := func(kind, issuer, id string) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO org_purge_members(org_id, subject, kind, issuer, id) VALUES(?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, scope.Org, scope.Subject, kind, issuer, id)
-		return err
-	}
-	for _, id := range snap.Users {
-		if err := add("user", "", id); err != nil {
-			return false, err
-		}
-	}
-	for _, id := range snap.Mailboxes {
-		if err := add("mailbox", "", id); err != nil {
-			return false, err
-		}
-	}
-	for _, s := range snap.Subjects {
-		if err := add("subject", s.Issuer, s.Subject); err != nil {
-			return false, err
-		}
+	if err := addPurgeMembers(ctx, tx, scope, snap); err != nil {
+		return false, err
 	}
 	return true, tx.Commit()
 }
@@ -420,7 +404,7 @@ var PurgeCoverage = map[string]string{
 	"mailbox.usage": "directories", "mailbox.changes": "directories", "mailbox.outbox": "directories",
 	"mailbox.outbox_deliveries": "directories", "mailbox.outbox_independent": "directories",
 	"ingress.routes": "ingress", "ingress.bindings": "ingress",
-	"tenancy.import_leases": "ingress", "tenancy.retired_bindings": "ingress", "volumes.documents": "documents", "volumes.doc_keys": "doc_keys",
+	"tenancy.import_leases": "ingress", "tenancy.retired_bindings": "ingress", "volumes.documents": "documents", "volumes.doc_keys": "doc_keys", "volumes.accounts": "users.json",
 	"native-authority.directory": "ledger", "native-authority.directory_primary_emails": "ledger",
 	"native-authority.accounts": "ledger", "native-authority.mailboxes": "ledger", "native-authority.addresses": "ledger",
 	"native-authority.address_history": "ledger", "native-authority.routes_pending": "ledger",
@@ -435,4 +419,51 @@ var PurgeCoverage = map[string]string{
 	// An upload lives only while its job runs; the purge cancels the job, whose own exit
 	// removes the file, and deletes the import_jobs row.
 	"imports": "root-state", "contact-photos": "directories",
+}
+
+func addPurgeMembers(ctx context.Context, tx *sql.Tx, scope PurgeScope, snap PurgeSnapshot) error {
+	add := func(kind, issuer, id string) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO org_purge_members(org_id, subject, kind, issuer, id) VALUES(?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, scope.Org, scope.Subject, kind, issuer, id)
+		return err
+	}
+	for _, id := range snap.Users {
+		if err := add("user", "", id); err != nil {
+			return err
+		}
+	}
+	for _, id := range snap.Mailboxes {
+		if err := add("mailbox", "", id); err != nil {
+			return err
+		}
+	}
+	for _, s := range snap.Subjects {
+		if err := add("subject", s.Issuer, s.Subject); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExtendPurge durably adds late members before repeating their purge steps.
+// It refuses a completed scope, so a lost fence cannot silently amend history.
+func ExtendPurge(ctx context.Context, db *sql.DB, scope PurgeScope, snap PurgeSnapshot) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var n int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM org_purges WHERE org_id=? AND subject=? AND done_at IS NULL`, scope.Org, scope.Subject).Scan(&n); err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrNoLivePurge
+	}
+	if err = addPurgeMembers(ctx, tx, scope, snap); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE org_purges SET step=0 WHERE org_id=? AND subject=?`, scope.Org, scope.Subject); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

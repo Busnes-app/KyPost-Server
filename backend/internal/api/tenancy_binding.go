@@ -54,6 +54,9 @@ func (s *Server) checkAccountOrg(ctx context.Context, u users.User, org string) 
 	if subject != org {
 		return tenancy.ErrOrgMismatch
 	}
+	if users.TableMode(s.configDir) {
+		return tenancy.BindUserAccount(ctx, s.tenancy, s.stateDir, u.ID, org, s.staffOrg)
+	}
 	return tenancy.BindUser(ctx, s.tenancy, u.ID, org)
 }
 
@@ -80,6 +83,9 @@ func (s *Server) subjectOrg(ctx context.Context, issuer, subject string) (string
 func (s *Server) bindNewAccount(ctx context.Context, u users.User) error {
 	if !s.multiTenant() {
 		return nil
+	}
+	if users.TableMode(s.configDir) {
+		return tenancy.BindUserAccount(ctx, s.tenancy, s.stateDir, u.ID, u.OrgID, s.staffOrg)
 	}
 	return tenancy.BindUser(ctx, s.tenancy, u.ID, u.OrgID)
 }

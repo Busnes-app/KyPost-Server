@@ -5,8 +5,6 @@ import (
 	"errors"
 	"slices"
 	"time"
-
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // NativeAccountRepair changes only access on an already published native owner.
@@ -32,78 +30,79 @@ func (s *Store) RepairNativeAccounts(ctx context.Context, issuer string, repairs
 		return err
 	}
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFileGated(ctx, s.path)
-	if err != nil {
-		return err
-	}
-	defer release()
-	f, err := s.readFileUnlocked()
-	if err != nil {
-		return err
-	}
-	if f.Version != 1 {
-		return errors.New("unsupported account authority version")
-	}
-	current := append([]User(nil), f.Users...)
-	byID := make(map[string]int, len(f.Users))
-	bySubject := make(map[string]int, len(f.Users))
-	for i, u := range f.Users {
-		if _, exists := byID[u.ID]; exists || u.ID == "" {
-			return ErrNativeAccountConflict
+	return s.withWriteLock(ctx, func() error {
+		f, err := s.readFileUnlocked()
+		if err != nil {
+			return err
 		}
-		byID[u.ID] = i
-		if u.SSOSub != "" {
-			if _, exists := bySubject[u.SSOSub]; exists {
+		if f.Version != 1 {
+			return errors.New("unsupported account authority version")
+		}
+		current := append([]User(nil), f.Users...)
+		byID := make(map[string]int, len(f.Users))
+		bySubject := make(map[string]int, len(f.Users))
+		for i, u := range f.Users {
+			if _, exists := byID[u.ID]; exists || u.ID == "" {
 				return ErrNativeAccountConflict
 			}
-			bySubject[u.SSOSub] = i
-		}
-	}
-	seen := make(map[string]bool, len(repairs))
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, repair := range repairs {
-		i, exists := byID[repair.ID]
-		if !exists || seen[repair.ID] || repair.Subject == "" || repair.Source == "" || (repair.Role != RoleAdmin && repair.Role != RoleUser) {
-			return ErrNativeAccountConflict
-		}
-		seen[repair.ID] = true
-		u := &f.Users[i]
-		if u.NativeMailboxIssuer != issuer || u.NativeMailboxSource != repair.Source || u.SSOSub != repair.Subject {
-			return ErrNativeAccountConflict
-		}
-		if u.Active == repair.Active && u.Role == repair.Role {
-			continue
-		}
-		if u.Active != repair.Active {
-			u.DeactivatedAt = ""
-			if !repair.Active {
-				u.DeactivatedAt = now
+			byID[u.ID] = i
+			if u.SSOSub != "" {
+				if _, exists := bySubject[u.SSOSub]; exists {
+					return ErrNativeAccountConflict
+				}
+				bySubject[u.SSOSub] = i
 			}
 		}
-		u.Active, u.Role, u.UpdatedAt = repair.Active, repair.Role, now
-	}
-	// Never leave a repaired instance without an active administrator. The API
-	// separately requires a usable legacy recovery administrator while held.
-	if FirstAdminFrom(f.Users).ID == "" {
-		return ErrLastActiveAdmin
-	}
-	if err = s.advanceNativeSendEpochs(&f); err != nil {
-		return err
-	}
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	releaseCommit, err := beforeWrite(current, f.Users)
-	if releaseCommit != nil {
-		defer releaseCommit()
-	}
-	if err != nil {
-		return err
-	}
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	return s.writeFileUnlocked(f)
+		seen := make(map[string]bool, len(repairs))
+		now := time.Now().UTC().Format(time.RFC3339)
+		for _, repair := range repairs {
+			i, exists := byID[repair.ID]
+			if !exists || seen[repair.ID] || repair.Subject == "" || repair.Source == "" || (repair.Role != RoleAdmin && repair.Role != RoleUser) {
+				return ErrNativeAccountConflict
+			}
+			seen[repair.ID] = true
+			u := &f.Users[i]
+			if u.NativeMailboxIssuer != issuer || u.NativeMailboxSource != repair.Source || u.SSOSub != repair.Subject {
+				return ErrNativeAccountConflict
+			}
+			if u.Active == repair.Active && u.Role == repair.Role {
+				continue
+			}
+			if u.Active != repair.Active {
+				u.DeactivatedAt = ""
+				if !repair.Active {
+					u.DeactivatedAt = now
+				}
+			}
+			u.Active, u.Role, u.UpdatedAt = repair.Active, repair.Role, now
+		}
+		// Never leave a repaired instance without an active administrator. The API
+		// separately requires a usable legacy recovery administrator while held.
+		if FirstAdminFrom(f.Users).ID == "" {
+			return ErrLastActiveAdmin
+		}
+		if err = s.advanceNativeSendEpochs(&f); err != nil {
+			return err
+		}
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		releaseCommit, err := beforeWrite(current, f.Users)
+		if releaseCommit != nil {
+			if s.activeAccounts != nil {
+				s.accountsReleases = append(s.accountsReleases, releaseCommit)
+			} else {
+				defer releaseCommit()
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		return s.writeFileUnlocked(f)
+	})
 }
 
 // DeactivateForRestoreRelease runs one native restore release under the users
@@ -117,54 +116,51 @@ func (s *Store) DeactivateForRestoreRelease(ctx context.Context, prepare func(cu
 		return err
 	}
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFileGated(ctx, s.path)
-	if err != nil {
-		return err
-	}
-	defer release()
-	f, err := s.readFileUnlocked()
-	if err != nil {
-		return err
-	}
-	if f.Version != 1 {
-		return errors.New("unsupported account authority version")
-	}
-	deactivate, demote, releaseCommit, err := prepare(append([]User(nil), f.Users...))
-	if releaseCommit != nil {
-		defer releaseCommit()
-	}
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	change := func(id string, apply func(*User) bool) error {
-		i := slices.IndexFunc(f.Users, func(u User) bool { return u.ID == id })
-		if i < 0 || !f.Users[i].Active || f.Users[i].NativeMailboxIssuer != "" || f.Users[i].NativeMailboxSource != "" || !apply(&f.Users[i]) {
-			return ErrNativeAccountConflict
+	return s.withWriteLockAndCommit(ctx, func() error {
+		f, err := s.readFileUnlocked()
+		if err != nil {
+			return err
 		}
-		f.Users[i].UpdatedAt = now
+		if f.Version != 1 {
+			return errors.New("unsupported account authority version")
+		}
+		deactivate, demote, releaseCommit, err := prepare(append([]User(nil), f.Users...))
+		if releaseCommit != nil {
+			s.accountsReleases = append(s.accountsReleases, releaseCommit)
+		}
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		change := func(id string, apply func(*User) bool) error {
+			i := slices.IndexFunc(f.Users, func(u User) bool { return u.ID == id })
+			if i < 0 || !f.Users[i].Active || f.Users[i].NativeMailboxIssuer != "" || f.Users[i].NativeMailboxSource != "" || !apply(&f.Users[i]) {
+				return ErrNativeAccountConflict
+			}
+			f.Users[i].UpdatedAt = now
+			return nil
+		}
+		for _, id := range deactivate {
+			if err = change(id, func(u *User) bool { u.Active, u.DeactivatedAt = false, now; return true }); err != nil {
+				return err
+			}
+		}
+		for _, id := range demote {
+			if err = change(id, func(u *User) bool { ok := u.Role == RoleAdmin; u.Role = RoleUser; return ok }); err != nil {
+				return err
+			}
+		}
+		if FirstAdminFrom(f.Users).ID == "" {
+			return ErrLastActiveAdmin
+		}
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		if len(deactivate)+len(demote) != 0 {
+			if err = s.writeFileUnlocked(f); err != nil {
+				return err
+			}
+		}
 		return nil
-	}
-	for _, id := range deactivate {
-		if err = change(id, func(u *User) bool { u.Active, u.DeactivatedAt = false, now; return true }); err != nil {
-			return err
-		}
-	}
-	for _, id := range demote {
-		if err = change(id, func(u *User) bool { ok := u.Role == RoleAdmin; u.Role = RoleUser; return ok }); err != nil {
-			return err
-		}
-	}
-	if FirstAdminFrom(f.Users).ID == "" {
-		return ErrLastActiveAdmin
-	}
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	if len(deactivate)+len(demote) != 0 {
-		if err = s.writeFileUnlocked(f); err != nil {
-			return err
-		}
-	}
-	return commit()
+	}, commit)
 }

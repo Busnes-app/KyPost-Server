@@ -91,6 +91,17 @@ func Describe(rawURL string) string {
 // READ ONLY at REPEATABLE READ, a snapshot as a SQLite read transaction is, and never
 // takes the writer lock.
 func NewConnector(rawURL string, readOnly bool) (driver.Connector, error) {
+	return newConnector(rawURL, readOnly, false)
+}
+
+// NewRowWriterConnector is for volumes.db accounts only. Account transactions
+// lock changed rows and use SERIALIZABLE for set invariants; they must not hold
+// the document writer lock while preparing a mailbox or recording a journal.
+func NewRowWriterConnector(rawURL string) (driver.Connector, error) {
+	return newConnector(rawURL, false, true)
+}
+
+func newConnector(rawURL string, readOnly, rowWrites bool) (driver.Connector, error) {
 	cfg, err := Config(rawURL)
 	if err != nil {
 		return nil, err
@@ -108,7 +119,7 @@ func NewConnector(rawURL string, readOnly bool) (driver.Connector, error) {
 		c.TypeMap().RegisterType(&pgtype.Type{Name: "timestamptz", OID: pgtype.TimestamptzOID, Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC}})
 		return nil
 	}))
-	return &connector{base: base, readOnly: readOnly, lockKey: writer}, nil
+	return &connector{base: base, readOnly: readOnly, lockKey: writer, rowWrites: rowWrites}, nil
 }
 
 // LockKeys returns the writer lock key and the migration lock key for a search_path: the
@@ -124,9 +135,10 @@ func LockKeys(schema string) (writer, migration int64) {
 }
 
 type connector struct {
-	base     driver.Connector
-	readOnly bool
-	lockKey  int64
+	base      driver.Connector
+	readOnly  bool
+	lockKey   int64
+	rowWrites bool
 }
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -134,16 +146,25 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &conn{inner: inner.(*stdlib.Conn), readOnly: c.readOnly, lockKey: c.lockKey}, nil
+	return &conn{inner: inner.(*stdlib.Conn), readOnly: c.readOnly, lockKey: c.lockKey, rowWrites: c.rowWrites}, nil
 }
 
-func (c *connector) Driver() driver.Driver { return Driver{} }
+// A row-writer handle must not pass vol.NewTable's schema-writer driver check.
+type rowDriver struct{ Driver }
+
+func (c *connector) Driver() driver.Driver {
+	if c.rowWrites {
+		return rowDriver{}
+	}
+	return Driver{}
+}
 
 type conn struct {
-	inner    *stdlib.Conn
-	readOnly bool
-	lockKey  int64
-	inTx     bool
+	inner     *stdlib.Conn
+	readOnly  bool
+	lockKey   int64
+	inTx      bool
+	rowWrites bool
 }
 
 func (c *conn) lock(ctx context.Context) error {
@@ -178,7 +199,7 @@ func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 	if err != nil {
 		return nil, err
 	}
-	if !opts.ReadOnly {
+	if !opts.ReadOnly && !c.rowWrites {
 		if err := c.lock(ctx); err != nil {
 			_ = tx.Rollback()
 			return nil, err
@@ -206,7 +227,7 @@ func (t *txn) Rollback() error {
 // autoWrap reports whether a statement must run in its own locked transaction: a write
 // outside a transaction on a read-write pool.
 func (c *conn) autoWrap(query string) bool {
-	return !c.inTx && !c.readOnly && !IsRead(query)
+	return !c.inTx && !c.readOnly && !c.rowWrites && !IsRead(query)
 }
 
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {

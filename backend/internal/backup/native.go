@@ -53,7 +53,7 @@ func nativeSnapshot(dir string) (bool, error) {
 	var doc struct {
 		Users []users.User `json:"users"`
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "config/users.json"))
+	raw, err := snapshotAccountBytes(dir)
 	usersErr := err
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return true, err
@@ -288,7 +288,7 @@ func fenceRestoredNativeAccounts(dir string) error {
 		Users []users.User `json:"users"`
 	}
 	// A missing users.json publishes nobody; the ledger still drives the fences.
-	raw, err := os.ReadFile(filepath.Join(dir, "config/users.json"))
+	raw, err := snapshotAccountBytes(dir)
 	if err == nil {
 		err = json.Unmarshal(raw, &doc)
 	}

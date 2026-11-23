@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Multi-host accounts (MH3): table-mode account rows, issuer-scoped uniqueness, fresh snapshot reads, bounded serializable mutations, document owner-row guards and late-member purge rechecks. Account backup/restore stays in `volumes.db`; ordinary single-tenant files and hosted startup refusal remain unchanged.
+
 - Multi-host document groundwork (MH2): catalogued `volumes.db`, per-org sealed per-user documents/photos, CAS store adapters, owner-based purge and authenticated sealed restore. Table-mode documents have the owner's 64 MiB cap; oversized files will refuse the later migration. Ordinary single-tenant files remain unchanged, and hosted startup remains refused while the remaining multi-host/region/object-storage gates are built.
 
 - Hosted incoming mail: reserve every organisation's DATA copies atomically against its cached pool/grace budget, including concurrent deliveries to different mailboxes. RCPT and accepted replays do not spend storage headroom.

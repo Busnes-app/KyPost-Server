@@ -2,6 +2,7 @@ package volumes_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
@@ -35,6 +36,13 @@ func TestDocumentStoresShareChangesAcrossPrivateRoots(t *testing.T) {
 				}
 				return "org-" + owner, nil
 			}}
+			for _, id := range []string{"member-a", "member-b"} {
+				org, _ := options.Org(context.Background(), id)
+				raw, _ := json.Marshal(map[string]string{"id": id, "username": id, "orgId": org})
+				if _, err := db.Exec(`INSERT INTO accounts(id,username,record) VALUES(?,?,?)`, id, id, raw); err != nil {
+					t.Fatal(err)
+				}
+			}
 			roots := []string{filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "state")}
 			dirs := make([]string, 2)
 			for i, root := range roots {
@@ -167,6 +175,9 @@ func TestSmallDocumentAdaptersOnBothVolumes(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer db.Close()
+				if _, err := db.Exec(`INSERT INTO accounts(id,username,record) VALUES('member','member',?)`, []byte(`{"id":"member","username":"member"}`)); err != nil {
+					t.Fatal(err)
+				}
 				for i := range 2 {
 					root := filepath.Join(t.TempDir(), "state")
 					table, err := vol.NewTable(db, "state", vol.TableOptions{MasterKey: make([]byte, 32), Org: func(context.Context, string) (string, error) { return "", nil }})

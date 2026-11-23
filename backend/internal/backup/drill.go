@@ -86,7 +86,7 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 			requiredSet[path] = true
 		}
 	}
-	for _, name := range requiredFiles(requiredSet["state/"+volumes.File] && !requiredSet["config/config.yaml"]) {
+	for _, name := range requiredFiles(requiredSet["state/"+volumes.File] && !requiredSet["config/config.yaml"], requiredSet["state/"+volumes.File] && !requiredSet["config/users.json"]) {
 		check("recipe requires:"+name, requiredSet[name])
 		_, err := os.Stat(filepath.Join(dir, name))
 		check("present:"+name, err == nil)
@@ -129,7 +129,7 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 			Active bool   `json:"active"`
 		} `json:"users"`
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "config/users.json"))
+	raw, err := snapshotAccountBytes(dir)
 	admin := false
 	if err == nil && json.Unmarshal(raw, &doc) == nil {
 		for _, u := range doc.Users {

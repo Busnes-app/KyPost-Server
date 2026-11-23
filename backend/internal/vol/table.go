@@ -123,7 +123,7 @@ var errOwner = errors.New("vol: document ownership mismatch")
 var errSealed = errors.New("vol: document authentication failed")
 
 // Write compares the revision before creating a key. The data key and sealed document
-// commit together. MH3 adds the accounts-row guard before either insert.
+// commit together, after locking the retained owner account.
 func (t *Table) Write(ctx context.Context, path string, body []byte, rev int64) (int64, error) {
 	return t.write(ctx, path, body, rev, 0)
 }
@@ -175,6 +175,22 @@ func (t *Table) write(ctx context.Context, path string, body []byte, rev, limit 
 		org, err := t.orgFor(ctx, own)
 		if err != nil {
 			return 0, err
+		}
+		if !t.snapshot {
+			var record []byte
+			if err := tx.QueryRowContext(ctx, `SELECT record FROM accounts WHERE id=? FOR KEY SHARE`, own).Scan(&record); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return 0, errOwner
+				}
+				return 0, err
+			}
+			var account struct {
+				ID  string `json:"id"`
+				Org string `json:"orgId"`
+			}
+			if json.Unmarshal(record, &account) != nil || account.ID != own || account.Org != org {
+				return 0, errOwner
+			}
 		}
 		key, err := t.dataKey(ctx, tx, org, true)
 		if err != nil {

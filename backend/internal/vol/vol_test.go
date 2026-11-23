@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -40,6 +41,21 @@ func twoTablesWithOptions(t *testing.T, root string, options vol.TableOptions) (
 		}
 		if i == 0 {
 			first = db
+			// These are fixture identities, created before any document writer starts.
+			owners := []string{"u", "u-a", "u-b", "u-other", "u-9", "owner-a", "a", "ab", "a_", "a%"}
+			for n := range 20 {
+				owners = append(owners, fmt.Sprintf("u%d", n))
+			}
+			for _, id := range owners {
+				org, err := options.Org(ctx, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, _ := json.Marshal(map[string]string{"id": id, "username": id, "orgId": org})
+				if _, err = db.Exec(`INSERT INTO accounts(id,username,record) VALUES(?,?,?)`, id, id, raw); err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
 	}
 	return tables[0], tables[1], first

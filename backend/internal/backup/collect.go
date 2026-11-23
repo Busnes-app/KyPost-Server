@@ -26,6 +26,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 	"gopkg.in/yaml.v3"
@@ -36,10 +37,13 @@ const scratchDirName = dbbackend.ScratchDir
 
 var required = []string{"config/config.yaml", "config/users.json", "private/totp-secret.key", "state/state.db"}
 
-func requiredFiles(table bool) []string {
+func requiredFiles(table, accounts bool) []string {
 	names := append([]string(nil), required...)
 	if table {
 		names[0] = "state/" + volumes.File
+	}
+	if accounts {
+		names = append(names[:1], names[2:]...)
 	}
 	return names
 }
@@ -62,7 +66,8 @@ func (s *Service) Collect() (recoveryclient.Payload, error) { return s.collect(c
 func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	var empty recoveryclient.Payload
 	tableDocuments := vol.OpenDocument(filepath.Join(s.dirs.Config, "config.yaml")).IsTable()
-	requiredNames := requiredFiles(tableDocuments)
+	tableAccounts := users.TableMode(s.dirs.Config)
+	requiredNames := requiredFiles(tableDocuments, tableAccounts)
 	// Individual secret overrides must remain at their canonical location. A
 	// capsule cannot reproduce an arbitrary host mount on a different machine.
 	for env, name := range map[string]string{"IMAP_CONFIG_KEY_FILE": "imap-config.key", "TOTP_SECRET_KEY_FILE": "totp-secret.key", "PGP_PRIVATE_KEY_FILE": "pgp-private-key.key", "PICKUP_STORE_KEY_FILE": "pickup-store.key", "PAIRING_SECRET_FILE": "pairing.key", "POW_SECRET_FILE": "pow.key", "RELAY_IDENTITY_KEY_FILE": "relay-identity.key", "PUSH_RELAY_KEY_FILE": "push_relay_key", "APNS_RELAY_KEY_FILE": "apns_relay_key"} {
@@ -202,6 +207,9 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 				}
 				// A migrated install may retain stale source files. Only the exported
 				// document store is authoritative; never seal a second, obsolete copy.
+				if tableAccounts && r.prefix == "config" && d.Name() == "users.json" {
+					return nil
+				}
 				if tableDocuments && r.prefix != "private" && !snapshotDatabase(d.Name()) && d.Name() != "users.json" && d.Name() != "recovery.pub" {
 					return nil
 				}
@@ -305,7 +313,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 			return empty, fmt.Errorf("%s is outside the supported backup layout or missing; place it inside CONFIG_DIR or SECRET_DIR", label)
 		}
 	}
-	if err := validateDependencies(files); err != nil {
+	if err := validateDependencies(files, scratch); err != nil {
 		return empty, err
 	}
 	recipe := map[string]any{"version": 1, "mail": ErrMailExcluded, "required": requiredNames, "sqlite": "all-state-databases", "imap": "all-stored-credentials", "relay": "domain-credentials-and-authority", "outbox": "encrypted-jobs-claims-and-sent"}
@@ -357,7 +365,7 @@ func tombstoneKeyCollected(ctx context.Context, stateDir string, have map[string
 
 // validateDependencies refuses a capsule whose stored identities cannot be
 // opened after restore. Client-wrapped PGP keys stay opaque throughout.
-func validateDependencies(files []recoveryclient.File) error {
+func validateDependencies(files []recoveryclient.File, scratch string) error {
 	byPath := map[string][]byte{}
 	for _, f := range files {
 		byPath[f.Path] = f.Data
@@ -368,7 +376,25 @@ func validateDependencies(files []recoveryclient.File) error {
 			PGP  string `json:"pgpPrivateKeyEnc"`
 		} `json:"users"`
 	}
-	if err := json.Unmarshal(byPath["config/users.json"], &accounts); err != nil {
+	rawAccounts := byPath["config/users.json"]
+	if rawAccounts == nil {
+		dir, err := os.MkdirTemp(scratch, "account-dependencies-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir)
+		if err = os.MkdirAll(filepath.Join(dir, "state"), 0700); err != nil {
+			return err
+		}
+		if err = os.WriteFile(filepath.Join(dir, "state", volumes.File), byPath["state/"+volumes.File], 0600); err != nil {
+			return err
+		}
+		rawAccounts, err = snapshotAccountBytes(dir)
+		if err != nil {
+			return err
+		}
+	}
+	if err := json.Unmarshal(rawAccounts, &accounts); err != nil {
 		return fmt.Errorf("invalid users.json: %w", err)
 	}
 	requireKey := func(name string) error {

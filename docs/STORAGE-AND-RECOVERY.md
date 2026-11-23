@@ -176,4 +176,6 @@ MH2 adds `volumes.db` for table-mode settings, contacts, photos and other docume
 
 The owner approved a 64 MiB plaintext cap per table document on 2026-11-23. The later opt-in migration must refuse a larger file explicitly. Existing file-backed single-tenant installs keep their current limits and bytes. The capsule library still imposes its own per-file and total limits; a large `volumes.db` can refuse a capsule rather than silently omit data.
 
-Hosted startup is still refused. Accounts/owner-row guards (MH3), preparation and cross-store fences (MH4), key provisioning, volume-free startup, regions and object storage remain separate gates. No migration command or SaaS readiness is introduced by this groundwork.
+MH3 adds table-mode account rows, fresh account reads, serializable mutations and the same-transaction account guard before a derived body or org key can be created. Account capsules carry those rows in `volumes.db` and omit stale `users.json`; restore checks routing columns and required secret keys without expanding an account file. A purge removes account rows first and rechecks late members before completion.
+
+Hosted startup is still refused. Preparation and remaining cross-store fences (MH4), key provisioning, volume-free startup, regions and object storage remain separate gates. No migration command or SaaS readiness is introduced by this groundwork.
