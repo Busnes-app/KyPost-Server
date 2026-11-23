@@ -409,8 +409,13 @@ mailbox's schema, `bodies(message_id BIGINT PRIMARY KEY REFERENCES messages(id),
 NULL UNIQUE, size BIGINT NOT NULL, sha256 BYTEA NOT NULL)`, and `raw` holds the empty string. Its
 own triggers add and remove `size` in `usage.payload_bytes`, so usage stays exact, and the
 mailbox quota, the org pool (K "Quotas") and receiving read the same count they read today.
-Whether any reader treats an empty, non-NULL `raw` specially is unverified. MH11 checks every
-`raw` read, and each goes through one body loader.
+The empty `raw` is safe for the duplicate check and the partial indexes. They key on the
+`digest` column, which `append` computes from the real body before storing it
+(`mailbox/store.go:391-392`, checked at `:414`). The indexes filter only `raw IS NOT NULL`
+(`mailbox/pg_schema.go:23-24`), and no `messages` constraint covers `raw` or `digest`. So two
+moved bodies never compare equal unless their content does. Whether any other reader treats an
+empty, non-NULL `raw` specially is unverified. MH11 checks every `raw` read, and each goes
+through one body loader.
 
 **The rules.**
 - **Sealed before upload** with the org's data key ("Per-org encryption at rest"), with
