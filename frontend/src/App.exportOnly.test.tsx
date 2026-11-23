@@ -46,6 +46,8 @@ describe("App for an export-only session", () => {
     expect(await screen.findByRole("button", { name: "Export mail" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
     expect(screen.queryByRole("navigation")).toBeNull();
+    // The form renders before the mailbox-dependent folders effect settles.
+    expect(await screen.findByRole("option", { name: "INBOX" })).toBeTruthy();
     const asked = new Set(getJSON.mock.calls.map(([u]) => u as string));
     expect([...asked].sort()).toEqual(["/api/auth/me", "/api/export/folders", "/api/mailboxes"]);
   });
