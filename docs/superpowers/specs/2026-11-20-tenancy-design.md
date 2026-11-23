@@ -4,6 +4,9 @@ Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PRs 6a and 
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
+Revised 2026-11-22 with the owner's answers to PR 3's and PR 4's defaults ("PR 3 as built", "PR 4
+as built") and to MH's open questions: self-hosted multi-host as an opt-in migration, and
+multi-region as one cell per region (MH, `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`).
 
 KyIdentity's tenancy spec (`KyIdentity-server` `docs/superpowers/specs/2026-11-19-tenancy-design.md`,
 cited as **T**) makes every hosted customer, a person or a household, an *organisation* (org) under
@@ -719,10 +722,15 @@ Tenancy fits on top:
   and the other volume files into PostgreSQL, is therefore a hard requirement of multi mode, not a
   launch prerequisite outside the plan. It is specified in
   `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md` (**MH**): the volume inventory
-  with a target per file, every `flock` and host check and what replaces each, and PRs MH1–MH7.
-  In multi mode only, R's boot-ID check (`replica.ErrHost`) and volume IDs give way to MH's
-  volume-free assertion. Single-tenant installs keep them. The isolation phases (PRs 1–6) do not
-  depend on MH.
+  with a target per file, every `flock` and host check and what replaces each, and PRs MH1–MH10
+  (MH1–MH7 multi-host, MH8 the self-hosted opt-in, MH9 and MH10 regions).
+  In multi mode, R's boot-ID check (`replica.ErrHost`) and volume IDs give way to MH's
+  volume-free assertion. Single-tenant installs keep them unless an operator migrates the install
+  with `migrate-volumes-to-postgres` (MH "Self-hosted multi-host", owner decision 2026-11-22). The
+  isolation phases (PRs 1–6) do not depend on MH.
+- **Several regions (owner decision, 2026-11-22).** Multi mode runs as one cell per region, each a
+  complete install with its own PostgreSQL, and each org lives in one home region (MH "Regions").
+  K's design holds per cell. A cell caches and serves only its own region's orgs.
 - **Receiving.** R refuses Maddy on PostgreSQL (Mail, open question 3). The receiving tier spec
   (`docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) replaces it in multi mode.
 
@@ -767,7 +775,8 @@ wait, each on a KyIdentity change listed under the plan:
 - PR 7 needs the mailbox address field, and also the receiving tier (open question 3, specified in
   `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Its per-mailbox import leases are part of that tier. PR 7 also
   needs multi-host replicas, PRs MH1–MH7 of
-  `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md` (amendment, 2026-11-22, below).
+  `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md` (amendment, 2026-11-22, below),
+  and MH9, the cell record (second amendment, below).
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
    the multi-only side tables (`orgs`, `user_orgs`, `subject_orgs`; PR 6 adds the purge tables), `users.User.OrgID`
@@ -816,6 +825,26 @@ PRs 1–5 have merged. Where it accepts `multi`, PR 7 adds MH's prerequisites to
 - PR 6's purge must also cover `contact-photos/`, which `TestEveryStoreIsClassified` does not list
   yet (MH inventory).
 
+**Second amendment, 2026-11-22 (owner answers to MH's open questions).**
+- **Multi-region is required.** PR 7 accepts `multi` only after MH9 as well: `KYPOST_REGION`
+  recorded with K1's `meta` record from the first multi start, the `orgs` poller caching only
+  the cell's own orgs, and sync events for another region's org refused without a write (an
+  org not cached yet gets a temporary refusal until the next poll). PR 7
+  builds M's D3 relay local part with MH9's region character, so every hosted masked address
+  carries its region from the first one. MH10 (cross-region relay routing on the MX hosts) must
+  merge before a second region opens, not before PR 7.
+- **Self-hosted multi-host is opt-in.** MH8 (`migrate-volumes-to-postgres` and its reverse) is not
+  a gate for PR 7. Every MH PR from MH2 on selects its tables by table mode (multi, or a migrated
+  single install), and the single-tenant upgrade test asserts that an un-migrated install has no
+  `volumes.db` and no `volume_stores` row. MH2 first moves `documents` from `tenancy.db` into
+  `volumes.db`, so `tenancy.db` keeps meaning multi mode.
+- **Encryption on every hop.** PR 7's K2 checks also include every refusal in MH's "Encryption in
+  transit" table, which is the authoritative list. Today that is: a plain HTTP listener off
+  loopback; `sslmode=verify-full` on the database, PgBouncer and replication connections; and TLS
+  to KyIdentity, the peers, KyRecovery, the push relays, Ollama and the outbound SMTP relay,
+  each unless on loopback.
+- **Staff step-up per org** (PR 4 owner answer 5) has merged (#703).
+
 Launch prerequisites outside this plan: a measured capacity target (open question 8), PostgreSQL
 as its own replicated service with a synchronous standby (RX R5, RX "Past one host" step 3), and
 these KyIdentity changes:
@@ -824,7 +853,10 @@ these KyIdentity changes:
   export window that `resume` refuses, with a notice to each member), `user.erased`, and the list
   of erased subjects (Delete everything);
 - the `export_only` claim during `deletion_scheduled` (open question 4 (a), approved), which the
-  household path needs.
+  household path needs;
+- for MH9: a home `region` on each org in `/api/suite/orgs`, sync events sent only to the org's
+  home cell, a home region on each suite email domain, and mailbox addresses given only on the
+  org's own region's domains (MH "Regions").
 
 ## PR 1 as built (2026-11-21)
 
@@ -1095,6 +1127,15 @@ build the multi paths as PR 2's do (`makeMultiTenant`).
     `TestOrgAdmit` and the mailbox, inbound-peer, people-search and address-move tests. It
     does not fail the matrix, because the per-user stores and the ledger already separate
     users.
+- **Owner answers to PR 3's defaults (2026-11-22).** The defaults, numbered as in #687's hand-off:
+  1. **KyMessages off in multi mode.** KyMessages is being rebuilt as KyMessages-Native, which
+     will define `org_id` in its own spec. Multi mode keeps answering `409 kymessage_off` until
+     that spec exists and KyPost is built against it.
+  2. **KyPulse requires `org_id`.** KyPulse gets a multi-tenant, multi-region replacement. That is
+     outside KyPost's scope; this is a note only. KyPost keeps refusing alerts without the
+     account's `org_id` in multi mode until the replacement defines its contract.
+  3. **HR reservation refused in multi mode now:** approved.
+  4. **People search filtered by `subject_orgs`:** approved.
 
 ## PR 4 as built (2026-11-21)
 
@@ -1214,6 +1255,15 @@ with a staff administrator provisioned from a signed staff-org event.
   - **Staff reading the audit across orgs by actor** (T "Audit"). KyPost's audit log is
     whole-install, and no route reads it by org yet.
   - The org status effects on staff routes (a suspended org's accounts) are PR 5's.
+- **Owner answers to PR 4's defaults (2026-11-22).** The defaults, numbered as in #688's hand-off:
+  1. **Unknown org answers `404 org_unknown`**, any cached status counting as known: approved.
+  2. **Write audit through the paired `staff.write` row**, existing log lines unchanged: approved.
+  3. **Mailbox storage summary over the selected org only:** approved.
+  4. **`autoProvision: true` answers `404`, `false` saves:** approved.
+  5. **The step-up digest not covering `X-Ky-Org`:** *overturned.* Staff step-up is per org: a
+     grant obtained with one org selected must not authorise a request under another. Built in
+     #703 ("Step-up is per org", above). In a multi-region install it is also per cell (MH
+     "Regions").
 
 ## PR 5 as built (2026-11-21)
 
@@ -1614,8 +1664,9 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
 
 ## Residual risks
 
-- **One install, one database, one host until MH7 ships.** Every org shares one PostgreSQL, and a
-  restore rolls every org back (R, T). Until MH7
+- **One install, one database, one host until MH7 ships.** Every org of a cell shares one
+  PostgreSQL, and a restore rolls every org of that cell back (R, T). With several regions there
+  is one cell per region (MH "Regions"). Until MH7
   (`docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`), R's replicas also share one
   host, and multi mode cannot start before then (Phased build plan, amendment 2026-11-22).
 - **Backups outlive a purge.** A deleted org's mail stays in older capsules until they expire.
@@ -1665,7 +1716,8 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
 7. **Backup retention after a purge.** *Recommend* a fixed capsule retention stated in the hosted
    privacy terms, and no per-org backup surgery.
 8. **Capacity target.** *Recommend* measuring orgs, mailboxes, schemas and messages per minute on
-   R's single host before launch, as T owner answer 8 does for KyIdentity.
+   R's single host before launch, as T owner answer 8 does for KyIdentity. With several regions
+   the target is per cell (MH "Regions").
 9. **The purge versus the never-delete triggers.** *Answered:* yes. K10 as written: scrub to
    tombstones, with one named trigger exception keyed on a live `org_purges` row, plus HMAC address
    tombstones. The owner also asked for a Delete everything button that sticks (Lifecycle).
