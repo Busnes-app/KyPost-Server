@@ -45,11 +45,6 @@ type Grant struct {
 	Expires  time.Time
 }
 
-// Fits reports whether used+add stays within the ceiling of an unexpired grant.
-func (g Grant) Fits(used, add int64, now time.Time) bool {
-	return now.Before(g.Expires) && used >= 0 && add >= 0 && used <= g.Ceiling && add <= g.Ceiling-used
-}
-
 // StorageGrant reads org's grant.
 func StorageGrant(ctx context.Context, db *sql.DB, org string) (Grant, error) {
 	var g Grant

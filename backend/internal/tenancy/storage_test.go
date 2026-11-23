@@ -18,30 +18,12 @@ import (
 
 const orgTwo = "1a2b3c4d-0000-4000-8000-00000000000b"
 
-// The grant fits at exactly its ceiling and not one byte past it, never once expired, and
-// a zero grant fits nothing. Sequence numbers come from the database and only the answer
-// to the latest one is recorded.
+// Sequence numbers come from the shared database, and only the answer to the latest
+// report is recorded. Reservations and expiry are exercised against the real row below.
 func TestStorageGrant(t *testing.T) {
 	ctx := context.Background()
 	db := openCache(t).DB
 	now := time.Now()
-	g := Grant{Ceiling: 100, Expires: now.Add(time.Minute)}
-	for _, c := range []struct {
-		used, add int64
-		at        time.Time
-		fits      bool
-	}{
-		{60, 40, now, true}, {60, 41, now, false}, {100, 0, now, true}, {101, 0, now, false},
-		{0, 1, now.Add(time.Minute), false}, {-1, 1, now, false}, {0, -1, now, false},
-		{0, 1 << 62, now, false},
-	} {
-		if g.Fits(c.used, c.add, c.at) != c.fits {
-			t.Errorf("Fits(%d, %d) = %v", c.used, c.add, !c.fits)
-		}
-	}
-	if (Grant{}).Fits(0, 1, now) {
-		t.Fatal("no grant fits a write")
-	}
 
 	if got, err := StorageGrant(ctx, db, orgOne); err != nil || got != (Grant{}) {
 		t.Fatalf("an org never reported has a grant: %+v %v", got, err)

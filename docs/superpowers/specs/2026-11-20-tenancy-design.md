@@ -1896,8 +1896,7 @@ so only tests run any of this.
   - Contact photos (`contactPhotoBytesUsed`).
   - Exports, import uploads and backups are not counted, as above.
 - **The check** is `orgPoolRoom` (`api/tenancy_storage.go:76`). A write of `n` bytes fits only
-  while the grant is unexpired and usage plus `n` is at most the ceiling (`Grant.Fits`,
-  `tenancy/storage.go:45`). Its edge cases:
+  while the grant is unexpired and usage plus `n` is at most the ceiling (`tenancy.ReserveStorage`). Its edge cases:
   - A missing grant fits nothing. That covers an org never reported, an unknown org, or
     KyIdentity unreachable past the grant's life. This is open question 15's default.
   - An account with no org is refused.
