@@ -331,7 +331,13 @@ mode every org's contacts would sit in one database, so the seam seals what it s
 - **What it protects.** A copy of the database, a dump or a capsule's `volumes.db` without
   `SECRET_DIR`. It does not protect against a compromised replica, which holds the keys (threat
   model).
-- **The purge.** The purge deletes the org's `doc_keys` row after its documents. Capsules made
+- **Creating a key is owner-guarded.** A data key is created only inside the D write's own
+  transaction, after the owner guard (No write after the owner is gone) has locked the owner's
+  `accounts` row and found it. A writer paused across the purge therefore finds no account and
+  creates no key, as it writes no document. Between MH2 and MH3 only the final check guards this,
+  as for documents.
+- **The purge.** The purge deletes the org's `doc_keys` row after its documents, and its final
+  check lists `doc_keys` for the org with the documents: a row left there fails the purge. Capsules made
   earlier still carry the wrapped key, so this is not a cryptographic erase of backups. K's restore
   release keeps governing those.
 - **File mode is unchanged.** An un-migrated single-tenant install keeps plaintext files, byte for
@@ -880,7 +886,9 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
      plaintext (a test address and name are absent from a dump); a body moved to another path,
      owner or org fails to open; two replicas creating one org's data key at once agree on one
      key; a missing `documents.key` refuses the start; an unopenable body fails the read; the
-     purge removes the org's `doc_keys` row; P rows stay readable.
+     purge removes the org's `doc_keys` row; a writer paused before creating the org's key and
+     resumed after the purge creates none (MH3, with the owner guard); the purge's final check
+     failing while the org's `doc_keys` row remains; P rows stay readable.
 3. **MH3: accounts.** The `accounts` table, in `volumes.db`, per-row invariants, the `REPEATABLE READ` read-only
    snapshot, and `SERIALIZABLE` with a bounded `40001` retry for every write that checks a
    whole-set invariant (the last-administrator rule and the demotions checked against it), plus
@@ -958,15 +966,17 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
    can start, so this harness does not wait for K PR 7.
 9. **MH9: cells.** `KYPOST_REGION` recorded in `meta` with K1's record and refused in single
    mode; the `orgs` poller caching only the cell's own orgs; sync events for another region's org
-   refused without a write; the masked relay local part's region character (with K PR 7, which
-   builds D3); and the disaster-recovery runbook. Needs T's `region` field on orgs and on suite
+   refused without a write; the region code table that names each cell's masked relay character;
+   and the disaster-recovery runbook. MH9 does not allocate masked addresses: K PR 7 builds D3
+   and uses this table, so MH9 merges before K PR 7 with no circular dependency. Needs T's `region` field on orgs and on suite
    email domains.
    Tests:
    - a replica with another region, or none, refused; single mode refusing `KYPOST_REGION`;
    - an org of another region refused at sign-in, device sign-on, a sync event and `bind`, as an
      uncached org is, with nothing written;
    - a sync event for a not-yet-cached org refused as temporary, then accepted after the poll;
-   - masked allocation only under the cell's code, and the code outside the 6 random characters;
+   - the code table: one code per region, each a single base32 character, no two regions sharing
+     one (masked allocation under the cell's code is K PR 7's test);
    - the upgrade test unchanged.
 10. **MH10: cross-region relay routing.** The MX helper's endpoint list per region code, gateway
     enrolment per cell, and an unknown code sent to the MX host's own cell. Needed before a second
