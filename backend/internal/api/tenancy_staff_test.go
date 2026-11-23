@@ -466,11 +466,34 @@ func TestStaffStepUpIsPerOrg(t *testing.T) {
 	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "expired, spent or for a different action") || !active(fx.a) {
 		t.Fatalf("expired grant for A: %d %s", w.Code, w.Body)
 	}
-	// A customer member holding a live grant for its own org is still not an administrator.
+	// A customer member on a KySignOn session, holding a live grant for this exact action and
+	// its own org, is still not an administrator: refused before the step-up, grant unspent.
+	const memberToken = "member-kysignon-token"
+	msess := Session{UserID: fx.a.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), CSRFToken: "member-csrf", SSOKySignOn: true}
+	if fx.srv.shared != nil {
+		check(fx, fx.srv.putSharedSession(context.Background(), memberToken, msess))
+	} else {
+		fx.srv.sessMu.Lock()
+		fx.srv.sessions[memberToken] = msess
+		fx.srv.sessMu.Unlock()
+	}
+	path := "/api/users/" + fx.a.ID + "/deactivate"
+	digest := sha256.Sum256([]byte(http.MethodPost + "\x00" + path + "\x00\x00"))
 	id := "rea_member-" + newID(fx)
-	check(fx, fx.srv.putStepUp(id, ssoStepUp{Session: sessionHash(staffToken), Action: "x", Org: orgA, Verified: true, Created: time.Now(), Expires: time.Now().Add(time.Minute)}))
-	if w := fx.call(fx.a, http.MethodPost, "/api/users/"+fx.a.ID+"/deactivate", "", map[string]string{orgHeader: orgA, stepUpHeader: id}); w.Code != http.StatusForbidden || strings.TrimSpace(w.Body.String()) != `{"error":"admin access required"}` || !active(fx.a) {
+	check(fx, fx.srv.putStepUp(id, ssoStepUp{Session: sessionHash(memberToken), Action: hex.EncodeToString(digest[:]), Org: orgA, Verified: true, Created: time.Now(), Expires: time.Now().Add(time.Minute)}))
+	req := httptest.NewRequest(http.MethodPost, path, nil)
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: memberToken})
+	req.Header.Set("X-CSRF-Token", "member-csrf")
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(orgHeader, orgA)
+	req.Header.Set(stepUpHeader, id)
+	w = httptest.NewRecorder()
+	fx.srv.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden || strings.TrimSpace(w.Body.String()) != `{"error":"admin access required"}` || !active(fx.a) {
 		t.Fatalf("a customer member with a grant: %d %s", w.Code, w.Body)
+	}
+	if !fx.srv.editStepUp(id, func(_ *ssoStepUp, found bool) (rowEdit, bool) { return rowKeep, found }) {
+		t.Fatal("a customer member's refused call spent its grant")
 	}
 }
 

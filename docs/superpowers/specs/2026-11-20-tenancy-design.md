@@ -1184,7 +1184,8 @@ with a staff administrator provisioned from a signed staff-org event.
   keeps out of the stored row: their bytes and behaviour are unchanged. A password session
   re-proves on every request, so it has nothing to bind. Tests: `TestStaffStepUpIsPerOrg`
   (A on A allowed; A on B and none on A refused with a fresh challenge for the selected org;
-  an expired grant keeps today's answer; a customer member with a live grant gets `403`) and
+  an expired grant keeps today's answer; a customer member on a KySignOn session, holding a
+  live grant for the exact action and its own org, gets `403` and the grant stays unspent) and
   `TestStepUpGrantWithoutOrgKeepsItsBytes`.
 - **Tests** (`api/tenancy_staff_test.go`, in every `internal/api` job, SQLite and PostgreSQL):
   - **The staff variant:** `TestCrossOrgMatrixStaff`. Every `withOrgAdmin` route needs a case in
