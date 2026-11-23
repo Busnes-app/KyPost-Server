@@ -148,10 +148,18 @@ func pass(t *testing.T, r *receivingRuntime, holder string) {
 }
 
 // lease takes mailbox m's import lease for holder, as a worker does before writing.
-func lease(t *testing.T, r *receivingRuntime, m, holder string, at time.Time) {
+func lease(t *testing.T, r *receivingRuntime, m, holder string) {
 	t.Helper()
-	if ok, err := tenancy.TakeImportLease(context.Background(), r.tenancy, m, holder, at); err != nil || !ok {
+	if ok, err := tenancy.TakeImportLease(context.Background(), r.tenancy, m, holder); err != nil || !ok {
 		t.Fatalf("lease %s for %s: %v %v", m, holder, ok, err)
+	}
+}
+
+// Expire the database row without sleeping or supplying a replica's clock.
+func expireImportLease(t *testing.T, r *receivingRuntime, m string) {
+	t.Helper()
+	if _, err := r.tenancy.Exec(`UPDATE import_leases SET lease_until=unixepoch()-1 WHERE mailbox=?`, m); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -336,7 +344,7 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 		}
 		setOrg(t, r.tenancy, receivingOrgA, suitedir.OrgDeleted)
 		// writeMailbox is the step after the first check: only the re-read can stop it.
-		lease(t, r, a.Owner.Mailbox, "w", time.Now())
+		lease(t, r, a.Owner.Mailbox, "w")
 		if err := r.writeMailbox(ctx, "w", d, a.Owner, d.Bindings); !errors.Is(err, tenancy.ErrImportDeleted) {
 			t.Fatalf("write for a deleted org: %v", err)
 		}
@@ -359,7 +367,7 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 			t.Fatal(err)
 		}
 		done := make(chan error, 1)
-		lease(t, r, a.Owner.Mailbox, "w", time.Now())
+		lease(t, r, a.Owner.Mailbox, "w")
 		go func() { _, err := r.importObligation(ctx, "w", o, a.Owner.Mailbox); done <- err }()
 		time.Sleep(300 * time.Millisecond) // the worker has passed its first check and waits for the lock
 		setOrg(t, r.tenancy, receivingOrgA, suitedir.OrgDeleted)
@@ -385,12 +393,12 @@ func TestLeasedImportPurgeFence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		lease(t, r, m, "slow", time.Now())
+		lease(t, r, m, "slow")
 		done := make(chan error, 1)
 		go func() { _, err := r.importObligation(ctx, "slow", o, m); done <- err }()
 		time.Sleep(300 * time.Millisecond)
-		lease(t, r, m, "slow", time.Now().Add(-2*tenancy.ImportLease)) // expired
-		lease(t, r, m, "new", time.Now())
+		expireImportLease(t, r, m)
+		lease(t, r, m, "new")
 		release()
 		if err := <-done; !errors.Is(err, errLeaseLost) {
 			t.Fatalf("stalled worker: %v", err)
@@ -427,12 +435,12 @@ func TestLeasedImportCrashBeforeCompletion(t *testing.T) {
 	}
 	for _, u := range created {
 		m := assignment(t, r, u).Owner.Mailbox
-		lease(t, r, m, "crashed", time.Now())
+		lease(t, r, m, "crashed")
 		if err := r.writeObligation(ctx, "crashed", d, m); err != nil {
 			t.Fatal(err)
 		}
 		// Its lease runs out.
-		lease(t, r, m, "crashed", time.Now().Add(-2*tenancy.ImportLease))
+		expireImportLease(t, r, m)
 	}
 	pass(t, r, "retry")
 	for _, u := range created {
@@ -462,7 +470,7 @@ func TestLeasedImportConcurrentCompletion(t *testing.T) {
 		for _, u := range created {
 			m := assignment(t, r, u).Owner.Mailbox
 			o := obligation(t, r, m, id)
-			lease(t, r, m, "w", time.Now())
+			lease(t, r, m, "w")
 			wg.Go(func() {
 				<-start
 				if _, err := r.importObligation(ctx, "w", o, m); err != nil {
@@ -555,7 +563,7 @@ func TestLeasedImportLeases(t *testing.T) {
 		for _, id := range []string{"k1", "k2", "k3"} {
 			deliver(t, r, id, "one@example.test")
 		}
-		if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, m, "dead", time.Now()); err != nil || !ok {
+		if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, m, "dead"); err != nil || !ok {
 			t.Fatal(ok, err)
 		}
 		d, err := r.holding.Get(ctx, receivingGateway, "k1")
@@ -570,9 +578,7 @@ func TestLeasedImportLeases(t *testing.T) {
 			t.Fatalf("imported under another holder's lease: %v", got)
 		}
 		// The dead holder's lease runs out.
-		if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, m, "dead", time.Now().Add(-2*tenancy.ImportLease)); err != nil || !ok {
-			t.Fatal(ok, err)
-		}
+		expireImportLease(t, r, m)
 		pass(t, r, "live")
 		r.sweepCompletions(ctx, testLogger(t))
 		if got := inbox(t, r, created[0]); !slices.Equal(got, []string{"k1", "k2", "k3"}) {

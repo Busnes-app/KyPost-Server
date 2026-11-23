@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Base hosted receiving import leases on database time so a replica clock cannot steal a live mailbox lease; keep multi startup gated.
+
 - Preserve the staff-org customer-cache exemption behind org fences, scope table recovery identities by issuer, and refuse historical file accounts before a table authority switch until explicit offline migration.
 
 - Keep signed directory subjects behind org admission before helper dispatch. Row-writer transactions retain requested/server isolation; deterministic overlapping-admin and foreign-org MFA/update regressions cover the boundaries.
