@@ -177,6 +177,12 @@ func TestDirectoryTombstoneRollsBackDropsAndRetries(t *testing.T) {
 }
 
 func TestDirectoryTombstoneOrdersWritersAndCancellation(t *testing.T) {
+	for _, level := range []sql.IsolationLevel{sql.LevelDefault, sql.LevelRepeatableRead, sql.LevelSerializable} {
+		t.Run(level.String(), func(t *testing.T) { testTombstoneWriterOrder(t, level) })
+	}
+}
+
+func testTombstoneWriterOrder(t *testing.T, isolation sql.IsolationLevel) {
 	FreshDatabaseForTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -187,6 +193,21 @@ func TestDirectoryTombstoneOrdersWritersAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	probe, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: isolation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual string
+	if err = probe.QueryRow(`SHOW transaction_isolation`).Scan(&actual); err != nil {
+		t.Fatal(err)
+	}
+	want := map[sql.IsolationLevel]string{sql.LevelDefault: "read committed", sql.LevelRepeatableRead: "repeatable read", sql.LevelSerializable: "serializable"}[isolation]
+	if actual != want {
+		t.Fatalf("writer isolation downgraded: got %q want %q", actual, want)
+	}
+	if err = probe.Rollback(); err != nil {
+		t.Fatal(err)
+	}
 	observer, err := sql.Open("pgx", current().url)
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +271,15 @@ func TestDirectoryTombstoneOrdersWritersAndCancellation(t *testing.T) {
 	waitFor(1)
 	stale := make(chan error, 1)
 	go func() {
-		_, err := db.ExecContext(ctx, `INSERT INTO retained VALUES(3,'must not survive')`)
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: isolation})
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `CREATE TABLE must_not_reappear(id BIGINT PRIMARY KEY)`)
+			if err == nil {
+				err = tx.Commit()
+			} else {
+				_ = tx.Rollback()
+			}
+		}
 		stale <- err
 	}()
 	waitFor(2)

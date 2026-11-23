@@ -179,7 +179,10 @@ func (c *conn) lock(ctx context.Context) error {
 	}
 	if c.requiredSchema != "" {
 		var present bool
-		if err := c.inner.Conn().QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname=$1)`, c.requiredSchema).Scan(&present); err != nil {
+		// Resolve the effective write namespace, not an MVCC catalog row:
+		// REPEATABLE READ/SERIALIZABLE may still see a dropped pg_namespace row.
+		// Keep this after the lock; a stale waiter must observe its new target.
+		if err := c.inner.Conn().QueryRow(ctx, `SELECT COALESCE(current_schema()=$1,false)`, c.requiredSchema).Scan(&present); err != nil {
 			return err
 		}
 		if !present {

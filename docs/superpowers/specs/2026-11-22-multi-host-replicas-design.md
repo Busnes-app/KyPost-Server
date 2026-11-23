@@ -1343,7 +1343,7 @@ requires each data-directory marker, even when no live schema remains.
 An already-open pool needs a second boundary: with `search_path=schema,public`,
 DDL could otherwise create tables in public after the original schema vanished.
 Schema-writer connectors therefore keep their required namespace separately and
-check it after acquiring the existing writer key. The purge acquires those same
+check the effective `current_schema()` after acquiring the existing writer key. A normal `pg_namespace` query is insufficient at REPEATABLE READ/SERIALIZABLE because it can still see the dropped row; the deterministic control allowed stale DDL under both. Effective namespace resolution refuses all three tested isolation levels without downgrading them. The purge acquires those same
 keys before `DROP SCHEMA`. An earlier writer finishes before deletion; a queued
 stale writer resumes after deletion and refuses before running its statement.
 The key derivation/search_path and explicit accounts isolation remain unchanged.
