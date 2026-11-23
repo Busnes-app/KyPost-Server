@@ -30,12 +30,14 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 			return err
 		}
 		return s.withAccountOrgFence(ctx, org, true, func(ctx context.Context) error {
-			o, err := tenancy.LookupOrg(ctx, s.tenancy, org)
-			if err != nil {
-				return err
-			}
-			if o.Status == "deleted" {
-				return tenancy.ErrNotServed
+			if org != s.staffOrg {
+				o, err := tenancy.LookupOrg(ctx, s.tenancy, org)
+				if err != nil {
+					return err
+				}
+				if o.Status == "deleted" {
+					return tenancy.ErrNotServed
+				}
 			}
 			return s.reconcileNativeSubjectHeld(ctx, issuer, subject)
 		})

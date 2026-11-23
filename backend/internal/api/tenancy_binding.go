@@ -134,7 +134,7 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 	// A deleted org's subject, or a purged one, never gets an account again (K "Nothing is
 	// reused"): an active event applies as inactive, so removals still succeed.
 	gone, err := tenancy.Purged(ctx, s.tenancy, ev.OrgID, u.ID)
-	if err == nil && !gone {
+	if err == nil && !gone && ev.OrgID != s.staffOrg {
 		var o tenancy.Org
 		o, err = tenancy.LookupOrg(ctx, s.tenancy, ev.OrgID)
 		gone = o.Status == suitedir.OrgDeleted

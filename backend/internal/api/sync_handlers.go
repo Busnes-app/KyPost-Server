@@ -93,8 +93,10 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		err := s.withAccountOrgFence(r.Context(), identity.Org, true, func(ctx context.Context) error {
 			// Re-read the cache under the fence before any provisioning write.
-			if _, err := tenancy.LookupOrg(ctx, s.tenancy, identity.Org); err != nil {
-				return err
+			if identity.Org != s.staffOrg {
+				if _, err := tenancy.LookupOrg(ctx, s.tenancy, identity.Org); err != nil {
+					return err
+				}
 			}
 			apply(ctx)
 			return nil
@@ -272,7 +274,7 @@ func (s *Server) provisionDirectoryUser(ctx context.Context, issuer string, u ss
 	if err != nil {
 		return errors.New("the subject's org is not bound")
 	}
-	if s.multiTenant() && users.TableMode(s.configDir) {
+	if s.multiTenant() && users.TableMode(s.configDir) && org != s.staffOrg {
 		o, err := tenancy.LookupOrg(ctx, s.tenancy, org)
 		if err != nil {
 			return err

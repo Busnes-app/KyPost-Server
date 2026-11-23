@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -263,5 +265,144 @@ func TestSyncRejectsForeignOrgBeforeAccountMutation(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestTableStaffCacheExemptionAtEveryProvisioningBoundary(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	for _, boundary := range []string{"webhook", "provision", "reconcile"} {
+		t.Run(boundary, func(t *testing.T) {
+			fx, _ := newOrgFixture(t)
+			s := fx.srv
+			issuer := s.ssoStore.Load().IssuerURL
+			const subject = "staff-without-cache"
+			if boundary == "reconcile" {
+				provisionMember(t, s, s.tenancy, subject, staffOrg, "kypost.admin")
+			}
+			mountServerDocuments(t, s)
+			if boundary == "reconcile" {
+				u, err := s.users.GetBySSOSubIssuer(issuer, subject)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = s.users.RemoveUsers([]string{u.ID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := s.tenancy.Exec(`ALTER TABLE orgs RENAME TO unavailable_orgs`); err != nil {
+				t.Fatal(err)
+			}
+			// Staff still uses the shared org fence; only customer-cache reads are exempt.
+			switch boundary {
+			case "webhook":
+				directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "cacheless-staff", 1, orgUser(subject, staffOrg, true, "kypost.admin")))
+			case "provision":
+				if err := tenancy.BindSubject(context.Background(), s.tenancy, issuer, subject, staffOrg); err != nil {
+					t.Fatal(err)
+				}
+				raw, _ := json.Marshal(orgUser(subject, staffOrg, true, "kypost.admin"))
+				var desired sso.DirectoryUser
+				if err := json.Unmarshal(raw, &desired); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.withAccountOrgFence(context.Background(), staffOrg, true, func(ctx context.Context) error {
+					return s.provisionDirectoryUser(ctx, issuer, desired, users.RoleAdmin)
+				}); err != nil {
+					t.Fatal(err)
+				}
+			case "reconcile":
+				if err := s.reconcileNativeSubject(context.Background(), issuer, subject); err != nil {
+					t.Fatal(err)
+				}
+			}
+			staff, err := s.users.GetBySSOSubIssuer(issuer, subject)
+			if err != nil || staff.Role != users.RoleAdmin || staff.OrgID != staffOrg || staff.NativeMailboxIssuer != "" || staff.NativeMailboxSource != "" {
+				t.Fatal("cacheless staff provisioning", staff, err)
+			}
+			if userOrgRow(t, s.tenancy, staff.ID) != staffOrg || subjectOrgRow(t, s, s.tenancy, subject) != staffOrg {
+				t.Fatal("staff bindings differ")
+			}
+			if _, exists, err := s.ssoLifecycle.NativeAssignment(issuer, subject); err != nil || exists {
+				t.Fatal("staff acquired a mailbox", exists, err)
+			}
+		})
+	}
+}
+
+func TestTableStaffWebhookKeepsOrgFenceWhenCacheIsUnavailable(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	fx, _ := newOrgFixture(t)
+	s := fx.srv
+	mountServerDocuments(t, s)
+	if _, err := s.tenancy.Exec(`ALTER TABLE orgs RENAME TO unavailable_orgs`); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	entered, resume := make(chan struct{}), make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- s.globalStore.WithFences(ctx, []state.Fence{{Name: state.FenceOrg + staffOrg}}, func(ctx context.Context) error {
+			close(entered)
+			select {
+			case <-resume:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}()
+	select {
+	case <-entered:
+	case err := <-holderDone:
+		t.Fatal(err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	schema, _, err := dbbackend.SchemaName(filepath.Join(s.stateDir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := dbbackend.Pool(schema, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	var holder int
+	if err = control.QueryRow(orgFencePIDQuery, state.FenceOrg+staffOrg).Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+	response := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		response <- postDirectory(t, s, testSyncKey, "user.created", "fenced-cacheless-staff", 1, orgUser("fenced-staff", staffOrg, true, "kypost.admin"))
+	}()
+	for {
+		select {
+		case got := <-response:
+			t.Fatalf("staff webhook bypassed org fence: %d %s", got.Code, got.Body)
+		default:
+		}
+		var waiting bool
+		if err = control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE NOT granted AND ?=ANY(pg_blocking_pids(pid)))`, holder).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	close(resume)
+	if err = <-holderDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-response:
+		directoryStatus(t, got)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
 	}
 }
