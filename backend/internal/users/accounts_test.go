@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -380,5 +381,66 @@ func TestTableAccountCannotPublishAfterDeletedOrg(t *testing.T) {
 	all, err := a.List()
 	if err != nil || len(all) != 0 {
 		t.Fatal(all, err)
+	}
+}
+
+func TestTableAccountCannotRepublishErasedMemberInActiveOrg(t *testing.T) {
+	a, _, db := accountStores(t)
+	purges := strings.TrimSuffix(a.orgTable, ".orgs") + ".org_purges"
+	if _, err := db.Exec(`INSERT INTO ` + purges + `(org_id,subject,step,started_at,done_at) VALUES('org-customer','erased',5,1,2)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.CreateSSOUserIssuer("https://issuer.example", "erased", RoleUser, "erased", "", "", "org-customer"); !errors.Is(err, ErrNativeAccountConflict) {
+		t.Fatal("erased member republished", err)
+	}
+	if _, err := a.CreateSSOUserIssuer("https://issuer.example", "survivor", RoleUser, "survivor", "", "", "org-customer"); err != nil {
+		t.Fatal("another member lost access", err)
+	}
+}
+
+func TestTableAccountStalledAcrossMemberPurgeRetriesAndRefuses(t *testing.T) {
+	a, _, db := accountStores(t)
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	done := make(chan error, 1)
+	go func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		done <- a.withWriteLock(context.Background(), func() error {
+			f, err := a.readFileUnlocked()
+			if err != nil {
+				return err
+			}
+			once.Do(func() { close(entered); <-resume })
+			f.Users = append(f.Users, User{ID: "stalled", Username: "stalled", Role: RoleUser, Active: true, SSOIssuer: "https://issuer.example", SSOSub: "stalled", OrgID: "org-customer"})
+			return a.writeFileUnlocked(f)
+		})
+	}()
+	<-entered
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		close(resume)
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.Exec(`UPDATE ` + a.orgTable + ` SET revision=revision WHERE id='org-customer'`); err != nil {
+		close(resume)
+		t.Fatal(err)
+	}
+	purges := strings.TrimSuffix(a.orgTable, ".orgs") + ".org_purges"
+	if _, err = tx.Exec(`INSERT INTO ` + purges + `(org_id,subject,step,started_at,done_at) VALUES('org-customer','stalled',5,1,2)`); err != nil {
+		close(resume)
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		close(resume)
+		t.Fatal(err)
+	}
+	close(resume)
+	if err = <-done; !errors.Is(err, ErrNativeAccountConflict) {
+		t.Fatal("stale publication crossed member purge", err)
+	}
+	if _, err = a.Get("stalled"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("erased account survived", err)
 	}
 }

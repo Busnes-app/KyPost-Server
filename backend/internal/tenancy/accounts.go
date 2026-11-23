@@ -72,6 +72,16 @@ func BindUserAccount(ctx context.Context, db *sql.DB, stateDir, userID, org, sta
 	if bound != org {
 		return ErrOrgMismatch
 	}
+	if org != staffOrg {
+		var purges int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM org_purges WHERE org_id=? AND (subject='' OR subject=?)`, org, u.Subject).Scan(&purges); err != nil {
+			return err
+		}
+		if purges != 0 {
+			return ErrNotServed
+		}
+	}
+
 	if _, err = tx.ExecContext(ctx, `INSERT INTO user_orgs(user_id,org_id) VALUES(?,?) ON CONFLICT DO NOTHING`, userID, org); err != nil {
 		return err
 	}

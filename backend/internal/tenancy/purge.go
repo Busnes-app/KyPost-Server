@@ -47,6 +47,12 @@ func StartPurge(ctx context.Context, db *sql.DB, scope PurgeScope, snap PurgeSna
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Publish a purge boundary on the existing org row. Account publishers
+	// hold this row shared; after the touch they retry stale snapshots and
+	// observe the durable whole-org/member purge record before committing.
+	if _, err = tx.ExecContext(ctx, `UPDATE orgs SET revision=revision WHERE id=?`, scope.Org); err != nil {
+		return false, err
+	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO org_purges(org_id, subject, step, started_at) VALUES(?, ?, 0, ?) ON CONFLICT DO NOTHING`, scope.Org, scope.Subject, now.Unix())
 	if err != nil {
 		return false, err

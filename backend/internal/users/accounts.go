@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
@@ -260,6 +261,15 @@ func (s *Store) writeAccounts(f usersFile) error {
 			if status == "deleted" {
 				return ErrNativeAccountConflict
 			}
+			var purges int
+			purgeTable := strings.TrimSuffix(s.orgTable, ".orgs") + ".org_purges"
+			if err = s.activeAccounts.QueryRowContext(s.accountsContext, `SELECT count(*) FROM `+purgeTable+` WHERE org_id=? AND (subject='' OR subject=?)`, u.OrgID, u.SSOSub).Scan(&purges); err != nil {
+				return err
+			}
+			if purges != 0 {
+				return ErrNativeAccountConflict
+			}
+
 		}
 		if exists {
 			var held string
