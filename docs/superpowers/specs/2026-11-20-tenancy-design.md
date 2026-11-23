@@ -1935,8 +1935,10 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
       the org entry (proposed; T's name for it is unverified, board `kyidentity-business-orgs`),
       so every app agrees on one date even when another app caused the overrun. When KyPost's
       own writes take the org over before KyIdentity has published a date, grace starts at
-      KyPost's first observation. That date is written once to the org's `orgs` row, so every
-      replica agrees on it, and the earlier of the two dates wins once KyIdentity's arrives.
+      KyPost's first observation. That date is written once per overrun to the org's `orgs` row,
+      so every replica agrees on it. Within one overrun the earlier of the two dates wins once
+      KyIdentity's arrives. The date is cleared when KyPost sees the org back under its pool, so
+      a later overrun gets a fresh window.
       Grace is never open-ended: the 110 % bound applies from the first byte over.
     - **After grace,** `452 4.2.2` "Mailbox full" (exit 9) to every sender, for as long as the
       org stays over. Sending MTAs retry for about five days and then send their own bounce

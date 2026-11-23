@@ -425,10 +425,14 @@ Whether any reader treats an empty, non-NULL `raw` specially is unverified. MH11
   deletes the `bodies` row and, in the same transaction, writes
   `body_tombstones(object TEXT PRIMARY KEY, at BIGINT)`. The elected sweeper deletes:
   - an object whose tombstone is older than the capsule retention (K open question 7);
-  - an object that no `bodies` row and no tombstone names, once it is older than a day. That is
-    a write whose row never committed, or, after a restore, a row newer than the capsule.
+  - an object that no `bodies` row and no tombstone names, once it too is older than the capsule
+    retention. That is a write whose row never committed, or, after a restore, a row newer than
+    the capsule. A shorter wait would break a second restore: restoring an older capsule and
+    then a newer one, both within retention, needs the newer one's objects to survive.
 
-  So a capsule restored at any age within retention names only objects that still exist. The
+  So any capsule within retention, restored in any order, names only objects that still exist.
+  The cost is that an uncommitted write's object lingers for the retention period. It is rare,
+  and counted in no usage. The
   restore runs offline (MH), so the sweeper is not running during it, and afterwards it works
   from the restored tables. The purge is the one immediate delete (below). A restored capsule
   older than a purge carries rows of a purged org, which K's restore release governs as for
@@ -1115,7 +1119,8 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
     `raw`; `usage` is equal either way; a conditional put that loses a race is refused; a tampered,
     missing or other-org object fails the read, never returns empty; a body copied to another
     mailbox's key fails to open; the purge leaves an empty prefix; an orphan is swept; a capsule taken
-    before an expunge and older than several sweep cycles restores with every body readable;
+    before an expunge and older than several sweep cycles restores with every body readable; restoring an older capsule
+    and then a newer one leaves every body the newer one names;
     incoming encryption of a moved body leaves a new object and tombstones the old one; no
     credential reaches a log; with object storage not configured every body stays in `raw`; and
     the single-tenant upgrade test is unchanged.
