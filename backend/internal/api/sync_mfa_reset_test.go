@@ -66,6 +66,19 @@ func TestDirectoryMFAResetRevokesCredentialsAndOrdersReplay(t *testing.T) {
 				if _, ok := store.GetNativeDevice(deviceID); !ok {
 					t.Fatal("wrong org removed device")
 				}
+				if _, err := os.Stat(srv.userCardDAVAuthPath(u.ID)); err != nil {
+					t.Fatal("wrong org removed app password", err)
+				}
+				if tokens, err := srv.globalStore.AgentTokens(context.Background(), u.ID); err != nil || len(tokens) != 1 {
+					t.Fatal("wrong org removed agent token", tokens, err)
+				}
+				if subscriber, err := store.GetOrCreateSubscriberID(); err != nil || subscriber != before {
+					t.Fatal("wrong org changed pairing authority", err)
+				}
+				fence, _, err := srv.ssoLifecycle.Directory(srv.ssoStore.Load().IssuerURL, "member")
+				if err != nil || fence.Revision != 1 || fence.RevokedBefore != 0 {
+					t.Fatal("wrong org changed the directory fence", fence, err)
+				}
 			}
 			reset := scimUser("member", "member", true)
 			if multi {

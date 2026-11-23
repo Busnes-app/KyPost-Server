@@ -87,6 +87,9 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return false, errors.New("failed to look up user")
 		}
+		if !s.peerOrgAdmit(body, existing) {
+			return false, &syncRefusal{http.StatusUnprocessableEntity, errors.New("directory event refused: the subject is bound to another org")}
+		}
 		// Reset transport credentials; the directory identity remains a sign-in path.
 		return true, s.revokeUserCredentials(existing, "", true)
 	})
