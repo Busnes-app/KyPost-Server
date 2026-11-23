@@ -40,17 +40,21 @@ func (s *Store) RepairNativeAccounts(ctx context.Context, issuer string, repairs
 		}
 		current := append([]User(nil), f.Users...)
 		byID := make(map[string]int, len(f.Users))
-		bySubject := make(map[string]int, len(f.Users))
+		bySubject := make(map[[2]string]int, len(f.Users))
 		for i, u := range f.Users {
 			if _, exists := byID[u.ID]; exists || u.ID == "" {
 				return ErrNativeAccountConflict
 			}
 			byID[u.ID] = i
 			if u.SSOSub != "" {
-				if _, exists := bySubject[u.SSOSub]; exists {
+				key := [2]string{"", u.SSOSub}
+				if s.accounts != nil {
+					key[0] = u.SSOIssuer
+				}
+				if _, exists := bySubject[key]; exists {
 					return ErrNativeAccountConflict
 				}
-				bySubject[u.SSOSub] = i
+				bySubject[key] = i
 			}
 		}
 		seen := make(map[string]bool, len(repairs))
@@ -62,7 +66,7 @@ func (s *Store) RepairNativeAccounts(ctx context.Context, issuer string, repairs
 			}
 			seen[repair.ID] = true
 			u := &f.Users[i]
-			if u.NativeMailboxIssuer != issuer || u.NativeMailboxSource != repair.Source || u.SSOSub != repair.Subject {
+			if u.NativeMailboxIssuer != issuer || u.NativeMailboxSource != repair.Source || u.SSOSub != repair.Subject || s.accounts != nil && u.SSOIssuer != issuer {
 				return ErrNativeAccountConflict
 			}
 			if u.Active == repair.Active && u.Role == repair.Role {

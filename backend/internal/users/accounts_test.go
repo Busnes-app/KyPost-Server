@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
@@ -605,5 +606,70 @@ func TestTableAccountOverlappingAdminDemotionsKeepOneAdministrator(t *testing.T)
 	}
 	if committed != 1 || refused != 1 || activeAdmins != 1 {
 		t.Fatal("last-admin invariant", committed, refused, activeAdmins)
+	}
+}
+
+func TestTableRecoveryTargetsIssuerScopedSubject(t *testing.T) {
+	a, b, _ := accountStores(t)
+	if _, err := a.CreateSSOUser("recovery-admin", RoleAdmin, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	var owners []User
+	for i, issuer := range []string{"https://one.example", "https://two.example"} {
+		id := fmt.Sprintf("recovery-owner-%d", i)
+		u, err := a.PublishPreparedSSOUser(context.Background(), id, id, RoleUser, issuer, "same-subject", "", "", "", func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		owners = append(owners, u)
+	}
+	called := false
+	target := owners[0]
+	err := a.RepairNativeAccounts(context.Background(), target.SSOIssuer, []NativeAccountRepair{{target.ID, target.SSOSub, target.NativeMailboxSource, false, RoleUser}}, func(current, repaired []User) (func(), error) { called = true; return nil, nil })
+	if err != nil || !called {
+		t.Fatal("issuer-scoped recovery refused", err)
+	}
+	repaired, err := b.Get(target.ID)
+	if err != nil || repaired.Active || repaired.NativeSendEpoch != target.NativeSendEpoch+1 {
+		t.Fatal("target was not repaired", repaired, err)
+	}
+	foreign, err := b.Get(owners[1].ID)
+	if err != nil || !reflect.DeepEqual(foreign, owners[1]) {
+		t.Fatal("other issuer changed", foreign, err)
+	}
+}
+
+func TestTableRecoveryRejectsDuplicateIssuerSubject(t *testing.T) {
+	a, _, db := accountStores(t)
+	if _, err := a.CreateSSOUser("recovery-admin", RoleAdmin, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	u, err := a.PublishPreparedSSOUser(context.Background(), "native-owner", "native-owner", RoleUser, "https://one.example", "same-subject", "", "", "", func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate corrupt authority with the routing columns still matching each JSON
+	// record. Repair must refuse before recording any recovery intent.
+	if _, err := db.Exec(`ALTER TABLE accounts DROP CONSTRAINT accounts_issuer_subject_key`); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := u
+	duplicate.ID = "duplicate-owner"
+	duplicate.Username = "duplicate-owner"
+	raw, _ := json.Marshal(duplicate)
+	if _, err := db.Exec(`INSERT INTO accounts(id,username,issuer,subject,record) VALUES(?,?,?,?,?)`, duplicate.ID, duplicate.Username, duplicate.SSOIssuer, duplicate.SSOSub, raw); err != nil {
+		t.Fatal(err)
+	}
+	before, err := a.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = a.RepairNativeAccounts(context.Background(), u.SSOIssuer, []NativeAccountRepair{{u.ID, u.SSOSub, u.NativeMailboxSource, false, RoleUser}}, func([]User, []User) (func(), error) { t.Fatal("intent accepted duplicate identity"); return nil, nil })
+	if !errors.Is(err, ErrNativeAccountConflict) {
+		t.Fatal("duplicate pair accepted", err)
+	}
+	after, err := a.List()
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("duplicate refusal changed accounts", err)
 	}
 }
