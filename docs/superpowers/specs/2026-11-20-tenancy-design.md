@@ -1174,8 +1174,8 @@ with a staff administrator provisioned from a signed staff-org event.
 - **Step-up is per org** (owner decision 2026-11-22, overturning this PR's first reading that
   one step-up covered any org). The action digest (`withActionDigest`) does not cover
   `X-Ky-Org`, so the grant itself records the org `withOrgAdmin` selected when it was minted
-  (`ssoStepUp.Org`, `api/sso_stepup.go:43`). `confirmSSOStepUp`, the one sink behind every
-  KySignOn step-up, spends a grant only when that org equals the org now selected (`:118`).
+  (`ssoStepUp.Org` in `api/sso_stepup.go`). `confirmSSOStepUp`, the one sink behind every
+  KySignOn step-up, spends a grant only when that org equals the org now selected.
   A grant made with org A, or with no org selected, presented with org B is not spent: the
   request gets the existing `403 sso_step_up_required` with a new challenge for B, and nothing
   runs. That covers every org-bound route with a step-up: the `/api/users/{id}` writes
