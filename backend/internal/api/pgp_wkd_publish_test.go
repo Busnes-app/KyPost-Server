@@ -438,7 +438,7 @@ func TestWKDServingRespectsPublishWKDOptOut(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	settings.PublishWKD = false
-	if err := pgpdiscovery.Save(srv.userStateDir(userID), settings); err != nil {
+	if _, err := pgpdiscovery.Update(srv.userStateDir(userID), func(pgpdiscovery.Settings) pgpdiscovery.Settings { return settings }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 

@@ -181,7 +181,7 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) {
 		if ac, ok := authFromContext(r); ok {
 			ids, gerr := s.sanitizeGroupIDsForUser(ac.UserID, payload.GroupIDs)
 			if gerr != nil {
-				http.Error(w, "failed to read groups", documentStatus(err, http.StatusInternalServerError))
+				http.Error(w, "failed to read groups", documentStatus(gerr, http.StatusInternalServerError))
 				return
 			}
 			payload.GroupIDs = ids
@@ -267,7 +267,7 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 		if ac, ok := authFromContext(r); ok {
 			ids, gerr := s.sanitizeGroupIDsForUser(ac.UserID, payload.GroupIDs)
 			if gerr != nil {
-				http.Error(w, "failed to read groups", documentStatus(err, http.StatusInternalServerError))
+				http.Error(w, "failed to read groups", documentStatus(gerr, http.StatusInternalServerError))
 				return
 			}
 			payload.GroupIDs = ids
@@ -684,7 +684,7 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 			}
 			ids, gerr := s.sanitizeGroupIDsForUser(userID, change.GroupIDs)
 			if gerr != nil {
-				http.Error(w, "failed to read groups", documentStatus(err, http.StatusInternalServerError))
+				http.Error(w, "failed to read groups", documentStatus(gerr, http.StatusInternalServerError))
 				return
 			}
 			change.GroupIDs = ids

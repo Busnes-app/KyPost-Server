@@ -142,6 +142,8 @@ func (t *Table) write(ctx context.Context, path string, body []byte, rev, limit 
 	if (strings.HasPrefix(path, "mailboxes/") || strings.HasPrefix(path, "pickup/")) && own == "" {
 		return 0, errOwner
 	}
+	// kypg BeginTx takes the schema writer lock before the first query. This
+	// serializes directory usage + insertion even when the org key already exists.
 	tx, err := t.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err

@@ -9,6 +9,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,5 +252,77 @@ func TestDocumentTooLargeAnswers413WithoutCreatingContact(t *testing.T) {
 	}
 	if fake.writes != 1 {
 		t.Fatal("retried a permanent size refusal", fake.writes)
+	}
+}
+
+type unreadableGroupDocuments struct {
+	contendedDocuments
+	failure  error
+	fallback vol.Vol
+}
+
+func (v *unreadableGroupDocuments) Read(ctx context.Context, path string) ([]byte, int64, error) {
+	if strings.HasSuffix(path, "groups.json") {
+		return nil, 0, v.failure
+	}
+	return v.fallback.Read(ctx, path)
+}
+
+func TestDocumentGroupReadErrorPreservesContactAndStatus(t *testing.T) {
+	for _, failure := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"busy", vol.ErrBusy, http.StatusServiceUnavailable},
+		{"too-large", vol.ErrTooLarge, http.StatusRequestEntityTooLarge},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut, "sync"} {
+			t.Run(failure.name+"/"+method, func(t *testing.T) {
+				fx, _ := newOrgFixture(t)
+				uid := fx.created(fx.a, "/api/contacts", `{"fn":"original"}`, "uid")
+				var deviceID, secret string
+				if method == "sync" {
+					deviceID, secret = pairNativeDevice(t, fx.srv, fx.a.ID, "group-read-error")
+				}
+				fake := &unreadableGroupDocuments{failure: failure.err, fallback: vol.File{Dir: fx.srv.userStateDir(fx.a.ID)}}
+				release, err := vol.Mount(fx.srv.userStateDir(fx.a.ID), fake)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer release()
+				fx.srv.userMu.Lock()
+				delete(fx.srv.userGroups, fx.a.ID)
+				fx.srv.userMu.Unlock()
+				payload := `{"fn":"changed","groupIDs":["unreadable"]}`
+				var w *httptest.ResponseRecorder
+				if method == "sync" {
+					req := httptest.NewRequest(http.MethodPost, "/api/contacts/sync", strings.NewReader(`{"changes":[{"uid":"`+uid+`","fn":"changed","groupIDs":["unreadable"]}]}`))
+					setDeviceHeaders(req, deviceID, secret)
+					w = httptest.NewRecorder()
+					fx.srv.routes().ServeHTTP(w, req)
+				} else {
+					path := "/api/contacts"
+					if method == http.MethodPut {
+						path += "/" + uid
+					}
+					w = fx.call(fx.a, method, path, payload, nil)
+				}
+				if w.Code != failure.status {
+					t.Fatal(w.Code, w.Body)
+				}
+				if fake.writes != 0 {
+					t.Fatal("group failure wrote a document", fake.writes)
+				}
+				contacts, err := fx.srv.userContactsStore(fx.a.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				all, err := contacts.List()
+				if err != nil || len(all) != 1 || all[0].FormattedName != "original" {
+					t.Fatal("contact mutated", all, err)
+				}
+			})
+		}
 	}
 }

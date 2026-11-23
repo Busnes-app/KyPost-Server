@@ -105,7 +105,7 @@ func TestUpdateRaceOneWinsTheOtherRetries(t *testing.T) {
 	var wg sync.WaitGroup
 	for i, v := range []vol.Vol{a, b, a, b} {
 		wg.Go(func() {
-			err := vol.Update(ctx, v, p, func(body []byte) ([]byte, error) { return append(body, byte('0'+i)), nil })
+			err := updateDocument(ctx, v, p, func(body []byte) ([]byte, error) { return append(body, byte('0'+i)), nil })
 			if err != nil && !errors.Is(err, vol.ErrBusy) {
 				t.Error(err)
 			}
@@ -192,7 +192,7 @@ func TestRetryBoundGivesBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	err := vol.Update(ctx, a, p, func(body []byte) ([]byte, error) {
+	err := updateDocument(ctx, a, p, func(body []byte) ([]byte, error) {
 		calls++
 		_, rev, _ := b.Read(ctx, p)
 		if _, err := b.Write(ctx, p, fmt.Appendf(nil, "b%d", calls), rev); err != nil {
@@ -340,4 +340,24 @@ func TestFileWritesWhatTheStoresWrite(t *testing.T) {
 	if _, err := os.Stat(full); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal(err)
 	}
+}
+
+// Update is a read-modify-write: change gets the current body (nil when absent) and returns
+// the new one; a stale write is retried, at most 5 times, then vol.ErrBusy. Nothing is
+// written partially.
+func updateDocument(ctx context.Context, v vol.Vol, path string, change func(body []byte) ([]byte, error)) error {
+	for range 5 {
+		body, rev, err := v.Read(ctx, path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		next, err := change(body)
+		if err != nil {
+			return err
+		}
+		if _, err := v.Write(ctx, path, next, rev); !errors.Is(err, vol.ErrStale) {
+			return err
+		}
+	}
+	return vol.ErrBusy
 }

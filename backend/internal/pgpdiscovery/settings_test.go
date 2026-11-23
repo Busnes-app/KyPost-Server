@@ -94,7 +94,7 @@ func TestDefaultsWhenAbsent(t *testing.T) {
 func TestSaveThenLoad(t *testing.T) {
 	dir := t.TempDir()
 	want := pgpdiscovery.Settings{AutoEncryptWhenKeyKnown: true, StoreDiscoveredKeys: false}
-	if err := pgpdiscovery.Save(dir, want); err != nil {
+	if _, err := pgpdiscovery.Update(dir, func(pgpdiscovery.Settings) pgpdiscovery.Settings { return want }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	got, err := pgpdiscovery.Load(dir)

@@ -314,7 +314,7 @@ func (s *PickupStore) CreateClientSealed(senderUserID, recipientEmail, sealed st
 
 func (s *PickupStore) save(record PickupRecord) error {
 	doc := vol.OpenDocument(s.recordPath(record.ID))
-	return doc.Update(func() error {
+	return vol.Retry(func() error {
 		if _, err := doc.Read(); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

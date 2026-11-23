@@ -292,7 +292,7 @@ func (s *Server) handleContactsCardDAVClientSync(w http.ResponseWriter, r *http.
 		return
 	}
 	if persistErr != nil {
-		http.Error(w, "contacts synchronized but sync state could not be saved", documentStatus(err, http.StatusInternalServerError))
+		http.Error(w, "contacts synchronized but sync state could not be saved", documentStatus(persistErr, http.StatusInternalServerError))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

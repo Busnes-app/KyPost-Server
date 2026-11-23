@@ -55,11 +55,3 @@ func loadSettingsDocument(doc *vol.Document) (Settings, error) {
 	}
 	return s, nil
 }
-
-func Save(dir string, s Settings) error {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	return vol.OpenDocument(path(dir)).Replace(b)
-}

@@ -6,7 +6,6 @@ package vol
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"strings"
 	"unicode/utf8"
 )
@@ -70,24 +69,4 @@ func checkWrite(path string, body []byte, rev int64) error {
 		return errNegative
 	}
 	return nil
-}
-
-// Update is a read-modify-write: change gets the current body (nil when absent) and returns
-// the new one; a stale write is retried, at most maxRetries times, then ErrBusy. Nothing is
-// written partially.
-func Update(ctx context.Context, v Vol, path string, change func(body []byte) ([]byte, error)) error {
-	for range maxRetries {
-		body, rev, err := v.Read(ctx, path)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		next, err := change(body)
-		if err != nil {
-			return err
-		}
-		if _, err := v.Write(ctx, path, next, rev); !errors.Is(err, ErrStale) {
-			return err
-		}
-	}
-	return ErrBusy
 }

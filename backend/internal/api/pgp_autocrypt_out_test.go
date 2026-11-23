@@ -80,7 +80,9 @@ func TestOutboundAutocryptHeaderAdvertisesWhenEnabled(t *testing.T) {
 	}
 	userID := all[0].ID
 	seedUserPGPKey(t, s, userID, "alice@example.com")
-	if err := pgpdiscovery.Save(s.userStateDir(userID), pgpdiscovery.Settings{AdvertiseAutocrypt: true}); err != nil {
+	if _, err := pgpdiscovery.Update(s.userStateDir(userID), func(pgpdiscovery.Settings) pgpdiscovery.Settings {
+		return pgpdiscovery.Settings{AdvertiseAutocrypt: true}
+	}); err != nil {
 		t.Fatalf("Save settings: %v", err)
 	}
 
@@ -98,7 +100,9 @@ func TestOutboundAutocryptHeaderEmptyWhenAdvertiseDisabled(t *testing.T) {
 	}
 	userID := all[0].ID
 	seedUserPGPKey(t, s, userID, "alice@example.com")
-	if err := pgpdiscovery.Save(s.userStateDir(userID), pgpdiscovery.Settings{AdvertiseAutocrypt: false}); err != nil {
+	if _, err := pgpdiscovery.Update(s.userStateDir(userID), func(pgpdiscovery.Settings) pgpdiscovery.Settings {
+		return pgpdiscovery.Settings{AdvertiseAutocrypt: false}
+	}); err != nil {
 		t.Fatalf("Save settings: %v", err)
 	}
 
@@ -135,7 +139,9 @@ func TestOutboundAutocryptHeaderUsesEnvelopeAddress(t *testing.T) {
 	}
 	userID := all[0].ID
 	seedUserPGPKey(t, s, userID, "alice@example.com")
-	if err := pgpdiscovery.Save(s.userStateDir(userID), pgpdiscovery.Settings{AdvertiseAutocrypt: true}); err != nil {
+	if _, err := pgpdiscovery.Update(s.userStateDir(userID), func(pgpdiscovery.Settings) pgpdiscovery.Settings {
+		return pgpdiscovery.Settings{AdvertiseAutocrypt: true}
+	}); err != nil {
 		t.Fatalf("Save settings: %v", err)
 	}
 

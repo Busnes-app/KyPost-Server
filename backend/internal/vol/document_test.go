@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
@@ -130,5 +131,58 @@ func TestDocumentCapLeavesThePreviousRevision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "large.json")
 	if err := vol.OpenDocument(path).Write(large); err != nil {
 		t.Fatal("file behavior changed", err)
+	}
+}
+
+// Admission must wait before reading usage, even with an existing org key.
+// The store driver's shared writer transaction is the serialization boundary.
+func TestDocumentDirectoryAdmissionWaitsForWriter(t *testing.T) {
+	a, b, db := twoTables(t, "state")
+	const prefix = "users/u/contact-photos/"
+	if _, err := a.Write(ctx, prefix+"seed", []byte{1}, 0); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "state")
+	release, err := vol.Mount(root, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	held, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Rollback() }()
+	done := make(chan error, 1)
+	go func() {
+		done <- vol.OpenDocument(filepath.Join(root, prefix+"next")).WriteWithDirectoryLimit([]byte{2}, 2)
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("admission crossed the held writer: %v", err)
+		default:
+		}
+		var waiting bool
+		if err := held.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE NOT granted AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("replica never waited on the shared writer")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := held.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if used, err := vol.DirectoryBytes(filepath.Join(root, "users/u/contact-photos")); err != nil || used != 2 {
+		t.Fatal(used, err)
 	}
 }

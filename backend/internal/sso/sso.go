@@ -124,7 +124,13 @@ func (s *Store) Save(cfg SSOSettings) error {
 		return err
 	}
 
-	return vol.OpenDocument(s.path).Replace(data)
+	doc := vol.OpenDocument(s.path)
+	release, err := doc.Lock()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return doc.Replace(data)
 }
 
 // maxOIDCResponseBytes bounds every body read from the identity provider.
