@@ -7,10 +7,16 @@ receiving tier for open question 3. Revised 2026-11-21 with the owner's answers 
 Revised 2026-11-22 with the owner's answers to PR 3's and PR 4's defaults ("PR 3 as built", "PR 4
 as built") and to MH's open questions: self-hosted multi-host as an opt-in migration, and
 multi-region as one cell per region (MH, `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`).
+Revised 2026-11-23 with the owner's plan decisions: every paid account is an org on the shared
+install, businesses included, and only Enterprise gets a dedicated install ("Plans and orgs").
+Revised again 2026-11-23 with the storage decisions: one storage pool per org across all apps,
+held by KyIdentity ("Quotas"), and message bodies in object storage on the hosted install (MH
+"Object storage for message bodies").
 
 KyIdentity's tenancy spec (`KyIdentity-server` `docs/superpowers/specs/2026-11-19-tenancy-design.md`,
-cited as **T**) makes every hosted customer, a person or a household, an *organisation* (org) under
-one issuer. Tokens carry an opaque `org_id`. This note is KyPost's half: how one KyPost binary runs
+cited as **T**) makes every hosted customer an *organisation* (org) under one issuer. Since the
+owner's 2026-11-23 decision that is every paid plan: Personal, Couple, Family and Business
+("Plans and orgs"). Tokens carry an opaque `org_id`. This note is KyPost's half: how one KyPost binary runs
 as today's self-hosted install or as one shared install that separates mail by org. It builds on
 the hosted masked-address note (`docs/superpowers/specs/2026-11-19-masked-addresses-hosted-design.md`,
 cited as **M**, #676) and does not contradict it.
@@ -23,9 +29,13 @@ Owner decisions (fixed, not reopened):
    downstream apps are shared multi-tenant installs. Per-customer realms were rejected.
 3. One org per account, with no org switcher.
 4. No administrators inside customer orgs. Only our staff are administrators; customers are
-   members. Single-tenant installs keep their own administrators.
-5. Businesses do not use the shared service. Each gets its own single-tenant install, set up by
-   hand (T decision 7).
+   members. Single-tenant installs (self-hosted and Enterprise) keep their own administrators.
+5. **Every paid account is an org on the shared install (2026-11-23, supersedes the earlier
+   decision 5 and T decision 7).** Personal is an org of 1 member, Couple 2, Family up to 6, and
+   Business N seats. All four run on the shared, multi-tenant, multi-server install. Only
+   **Enterprise** gets a dedicated install, in the cloud or on premises, which is a single-tenant
+   install (SQLite is fine there). The earlier rule, that businesses get their own single-tenant
+   install and the shared service holds only people and households, no longer applies.
 6. Stripe lives only in a separate billing service, built later. KyPost has no billing code.
 7. Hosted masked addresses come from one shared platform relay domain, unique across customers.
    Per-customer custom domains come later. Self-hosted keeps its own domain (M).
@@ -76,10 +86,54 @@ drive the design:
 | K4 | The org is recorded on two roots only: the user (`users.User.OrgID`, mirrored in `user_orgs`) and the KyIdentity subject (`subject_orgs`), both write-once. Every other store is **derived**: it inherits the org of the user, mailbox or subject that owns it. That includes the root-store aggregates (`send_ledger`, `agent_tokens`, `scheduled_sends`), which join `user_orgs` on `user_id` for per-org counts. The purge uses its own snapshot instead (Lifecycle). | Per-user data is already separated by user ID (above). Adding `org_id` to hundreds of per-user schemas would add a column nobody could set wrongly. The risk sits on the hops *between* users, so that is where the checks go (K5). |
 | K5 | `AuthContext.OrgID` is set by `currentUser` from the re-read user record, never from the request. Every **cross-user hop** goes through one function, `orgAdmit(ac, target)`: from the caller to another user, mailbox, address, device, delivery or peer subject. On a mismatch it gives the same answer as a missing target. The hops form a named list (Isolation). | One choke point, as KyIdentity's `OrgStore`. KyPost has no single SQL layer to bind, but it does have a single per-request identity. |
 | K6 | Off in multi-tenant v1, answering `404`: local password sign-in, local user creation, password reset, SSO link and unlink, `AutoProvision`, the external-IMAP mail source, administrator-assigned IMAP and CardDAV accounts, and HR mailbox reservation (`/api/sync/hr-mailbox`). The first-run bootstrap administrator (`app/bootstrap.go:41-42`) is not created. | Accounts come only from KyIdentity (T decision 5). Staff must never hold a customer's credentials. T switches HR off in multi mode (T "Per-org features"). |
-| K7 | **Staff = `kypost.admin` role *and* a token whose `org_id` equals `KYPOST_STAFF_ORG_ID`.** A customer account is never an administrator, whatever roles a token or sync event carries. | `HasAdminRole` (`sso/directory.go:24-31`) trusts the role alone. T's D8 refuses KyIdentity's *own* admin role outside the staff org, but app-role assignment is "per org, run by staff" (T "Per-org features"). So a staff mistake could give a customer `kypost.admin`. KyPost pins the org independently. |
+| K7 | **Staff = `kypost.admin` role *and* a token whose `org_id` equals `KYPOST_STAFF_ORG_ID`.** A customer account is never an administrator, whatever roles a token or sync event carries. That holds in every plan: in a Business org the person who manages its seats is a member too, and seat changes go through billing and KyIdentity, not KyPost ("Plans and orgs"). | `HasAdminRole` (`sso/directory.go:24-31`) trusts the role alone. T's D8 refuses KyIdentity's *own* admin role outside the staff org, but app-role assignment is "per org, run by staff" (T "Per-org features"). So a staff mistake could give a customer `kypost.admin`. KyPost pins the org independently. |
 | K8 | Entitlements are pulled from `GET /api/suite/orgs` (T D6) by one elected worker about every 60 s. They are cached in a platform table, `orgs(id, status, revision, enabled, quotas_json, polled_at)`, in the multi-only `tenancy.db`, so every replica reads the same answer. An org missing from the cache is not served. **The staff org (`KYPOST_STAFF_ORG_ID`) is exempt**: it is never gated by the cache, so staff keep the console during a poller or KyIdentity outage. | T's contract point 6. A shared table keeps replicas consistent (R `worker.Run` elects one runner per role). The staff exemption is safe: KyIdentity still decides whether a staff account signs in at all (T `active_principals`). It is unverified whether `/api/suite/orgs` lists the staff org. |
 | K9 | Hosted mail domains, the platform primary domain(s) and the relay domain (M D2) are **platform assets**: staff configure, prove, sign and retire them through today's admin routes. No customer configures a domain in v1. | No customer administrators (decision 4). Per-customer custom domains come later (M "Per-customer custom domains"). |
 | K10 | Org deletion **scrubs** rather than deletes in the authority database. Account and mailbox rows stay as tombstones with storage removed and no personal fields. Addresses become keyed hashes, as M open question 4 recommends. Everything else the org owns is deleted. | `authority_v3.go:89-99` forbids deletes, so that "never reuse" holds. M D5 needs the tombstone and the privacy rule needs the content gone. One named purge path with its own migration is the only exception to those triggers (open question 9, confirmed by the owner). |
+
+## Plans and orgs (owner decisions, 2026-11-23)
+
+| Plan | Org members | Pooled storage, all apps (owner decision of 2026-11-23 on storage) | Install |
+|---|---|---|---|
+| Personal | 1 | 20 GB | the shared multi-tenant install, run on several hosts (Replicas) |
+| Couple | 2 | 40 GB | the shared install |
+| Family | up to 6 | 100 GB | the shared install |
+| Business | N seats (small teams) | 30 GB per seat, pooled across the team | the shared install |
+| Enterprise | its own directory | no pool: a custom per-mailbox size (Quotas, single-tenant) | a dedicated single-tenant install, cloud or on premises; SQLite is fine |
+
+Every plan sells all seven apps (email, contacts, calendar, tasks, notes, drive, messages), so
+KyPost is in every one.
+
+- **KyPost is plan-blind.** The suite directory gives KyPost an org's `id`, `status`, `revision`,
+  `enabled` and its own opaque `quotas` only (ky-primitives `suitedir/client.go:185-191` at the
+  `backend/go.mod` pin). KyPost never sees a plan, an org kind or a seat count, and no rule in this
+  note branches on one. Each rule is about one account, one mailbox or the whole org. What a plan
+  allows reaches KyPost only as `quotas_json` (Abuse limits per org).
+- **Storage is one pool per org, held by KyIdentity** (owner decision, 2026-11-23, required for
+  launch). The number a customer buys is shared by every member and every app. KyPost checks the
+  pool before a write that adds bytes and reports its own usage ("Quotas"). It still sees no plan:
+  the pool reaches it as a number.
+- **Seats are KyIdentity's.** `max_seats` and the `seat_limit` refusal are enforced there (T
+  "Entitlements"). KyPost adds no seat check: an account appears only from a signed directory
+  event (Identity binding), and KyIdentity refuses the member add that would pass the seat count.
+- **No customer administrators, in any plan** (decision 4, K7). A Business org's extra mailboxes
+  and aliases are added by staff on request, bounded by its `mailboxes` quota (Mail). The business
+  features T switches off in multi mode (inbound SCIM, HR provisioning and HR mailbox reservation,
+  per-org federation: T "Per-org features"; K6 for HR) stay off. A business that needs them buys
+  Enterprise (open question 12).
+- **Enterprise is single-tenant.** Nothing in this note applies to it: K1 records nothing, K2's
+  PostgreSQL requirement is multi-only, and the single-tenant upgrade test covers it as it covers
+  self-hosted.
+- **Rules that said "household"** now mean any org with more than one member: Couple, Family or
+  Business. Delete everything's paths (Lifecycle) depend only on whether the account holder has
+  other live members, which KyIdentity decides (T "Delete everything", `liveHolder`).
+- **KyIdentity changes this needs** (T, not built; unverified how T will name them):
+  - T's `orgs.kind` allows only `default`, `person`, `household` and `staff` (T "Data model"), and
+    the `org_erasures_holder` trigger admits only `person` and `household` (T "Delete
+    everything"). Couple, Family and Business orgs need kinds T accepts on both. KyPost reads no
+    kind, so the naming does not touch KyPost.
+  - T decision 7, "Per-org features" and "Business platforms" still say businesses get their own
+    install. The 2026-11-23 decision supersedes them.
 
 ## Store inventory
 
@@ -386,10 +440,12 @@ account to its `org_id`. No receiving path takes an org from the message.
   apex-only catch-all (checked in the receiving tier spec, "Cloudflare Email Routing's real
   limits"). Raising it would not fix the disclosure.
 - **Size and quota.** The 25 MiB cap is unchanged (`mailmsg/limits.go:38`). The per-mailbox quota
-  is reserved at bind (`app/receiving.go:458-479`). Hosted mode takes each mailbox's limit from
-  the org's `mailboxBytes` quota, not from the install-wide `KYPOST_MAILBOX_QUOTA_BYTES`
-  (`config/native_mail.go:33-52`). A lower quota refuses only new mail, never locks a mailbox
-  (today's rule, root `AGENTS.md` "Mailbox limits").
+  is reserved at bind (`app/receiving.go:458-479`). Hosted mode applies the install-wide
+  `KYPOST_MAILBOX_QUOTA_BYTES` and the optional `mailboxBytes` and `storageBytes` keys as hard
+  limits (Abuse limits per org), then the org's storage pool ("Quotas"). The pool alone has
+  open question 16's grace window: a valid pool keeps accepting mail for up to 14 days or 110 %
+  before `452`. A lower quota refuses
+  only new mail, never locks a mailbox (today's rule, root `AGENTS.md` "Mailbox limits").
 
 ### Recommended hosted receiving tier (open question 3)
 
@@ -473,18 +529,34 @@ waits for.
 
 ### Abuse limits per org
 
-| Limit | Today's key | Hosted |
-|---|---|---|
-| Sending | Per user, 60 messages an hour and 1000 recipients a day (`api/send_quota.go:23-54`, `config/config.go:568`) | Per user as today, plus an org cap from `quotas_json` (`sendPerHour`, `recipientsPerDay`), summed from `send_ledger` through `user_orgs` |
-| Masked creation | Per user, 100 live and 20 a day (`api/masked_addresses.go:31-37`) | M D7: `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`, plus M's platform-wide circuit breaker |
-| Mailbox storage | Per mailbox, install default (`config/native_mail.go:33-52`) | `mailboxBytes` per mailbox, and `storageBytes` across the org, both from `quotas_json` |
-| Extra mailboxes | Administrator's choice | `mailboxes` from `quotas_json` |
-| Import and export | 2 at a time per server, 1 per user (`api/mail_import.go:33`, `api/mail_export.go:31`) | Unchanged, plus 1 per org at a time, so one household cannot hold both server slots |
-| Inbound connections | Maddy per IP and install-wide (`app/receiving_config.go:184-189`) | Unchanged. Recipients are per address, not per org, and M adds a refused-recipient budget per source. |
-| Sender blocks | Install-wide, manual and automatic (`ingress/blocks.go:22-23`, `ingress/autoblocks.go:36-57`) | Platform-wide, staff only. No per-org blocks in v1 (no customer administrators). |
+Every limit an org can be sold, except the storage pool (KyIdentity's, "Quotas"), is a key in
+that org's KyPost `quotas_json` (T `org_apps`), so a
+plan, or one org, can be given any value without a code change. Today's per-user and install-wide
+limits stay: they are the only limits in single-tenant mode (self-hosted and Enterprise), and in
+multi mode they remain the per-account and per-mailbox layer under the org caps and the default
+when a key is missing. Lines are at `origin/main` `e46f01c2`.
+
+| Limit | Today, and where it stays | Per-org keys in `quotas_json` | A missing key |
+|---|---|---|---|
+| Sending, per account | 60 messages an hour and 1000 recipients a day, install-wide (`config/config.go:573`), with an optional per-account override (`users.User.SendQuota`, `users/users.go:65-66`; `sendQuotaFor`, `api/send_quota.go:26`). Kept in both modes. | `memberSendPerHour`, `memberRecipientsPerDay`: the per-account limit for that org's members, in place of the install default. A per-account override set by staff still wins. Not built (PR 7). | The install default |
+| Sending, whole org | None | `sendPerHour`, `recipientsPerDay`, summed from `send_ledger` through `user_orgs` (built in PR 5, `chargeOrgSend`, `api/tenancy_lifecycle.go:173`) | No org cap (`:179-181`) |
+| Masked creation | Per user, 100 live and 20 a day (`api/masked_addresses.go:31-37`). Kept as the single-tenant limit and the hosted default. | M D7: `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`, plus M's platform-wide circuit breaker. PR 7. | 100 and 20 per user; no org cap |
+| Mailbox storage | Per mailbox, the install's `KYPOST_MAILBOX_QUOTA_BYTES`, 256 MiB to 1 TiB (`config/native_mail.go:33-52`). Kept, and in multi mode it is the **ceiling**: receiving checks the mailbox's own limit first (`a.Limits`, `app/receiving.go:82`), then the org's (`:85`). That `a.Limits` always carries the install quota, which `app/app.go:159-163` reads at start, is unverified. | **The org's storage pool, from KyIdentity** (owner decision of 2026-11-23 on storage, "Quotas"): the number the customer buys. Under it, two optional safety keys stay: `mailboxBytes` per mailbox and `storageBytes`, KyPost's own share across the org, counting mail held for import (built in PR 5, `orgRoom`, `app/receiving.go:98`). Billing does not set them for a plan. No org value can raise a mailbox past the install's. That ceiling bounds one mailbox, not the pool, so a hosted install sets `KYPOST_MAILBOX_QUOTA_BYTES` to the largest single mailbox it allows, at most 1 TiB. A larger pool (Business from about 35 seats at 30 GB each) stays usable across the team's mailboxes, but no one mailbox grows past the ceiling. That is a per-mailbox safety limit the plan terms must state. | The pool has its own default ("Quotas"). A missing safety key: the install quota only. |
+| Extra mailboxes | Administrator's choice | `mailboxes` (built in PR 5, `orgMailboxRoom`, `api/tenancy_lifecycle.go:220`) | No cap |
+| Import and export | 2 at a time per process and 1 per user (`api/mail_import.go:34-35`, `api/mail_export.go:30-31`). Kept. | `transfersPerOrg`: imports and exports one org may run at once. Not built (PR 7, with the receiving tier's per-mailbox leases). | 1 per org, so one org cannot hold a server's slots |
+| Seats | Not KyPost's | None: KyIdentity's `max_seats` (Plans and orgs) | — |
+| Inbound connections | Maddy per IP and install-wide (`app/receiving_config.go:184-189`) | None. Recipients are per address, not per org, and M adds a refused-recipient budget per source. | — |
+| Sender blocks | Install-wide, manual and automatic (`ingress/blocks.go:22-23`, `ingress/autoblocks.go:36-57`) | None. Platform-wide, staff only, no per-org blocks in v1 (no customer administrators). | — |
 
 The quota names are proposals for KyIdentity's opaque `quotas_json` (T "Entitlements"). The
-billing service sets them. When a quota is missing, KyPost uses today's default.
+billing service sets them per plan, and staff may set them for one org. Parsing is PR 5's
+(`parseQuotas`, `tenancy/orgs.go:111`): a known key that is not a whole non-negative number reads as
+0, which refuses new mail and creations, never existing data. PR 7 adds the new keys to
+`tenancy.Quotas` (`tenancy/orgs.go:33-38`) with the same rule.
+
+**Storage is pooled in every plan** (owner decision, 2026-11-23; this answers open question 13).
+The pool is KyIdentity's, not a KyPost `quotas_json` key ("Quotas"). A per-member allowance
+inside a pool is not sold. If it ever is, `mailboxBytes` already expresses it with no code change.
 
 ## Admin surface
 
@@ -617,15 +689,18 @@ a user's data: a disabled or deleted user only loses access (`api/sync_handlers.
 - **Where.** On KyIdentity's account page, because one click must reach every suite app. This is
   a T change.
 - **What it deletes.** The clicker's own stuff, never anyone else's without warning. For the
-  account holder, that is the whole org; a person org is just them. For any other member of a
-  household, it is only their own account.
+  account holder, that is the whole org; a Personal org is just them. For any other member of an
+  org with more members (Couple, Family or Business), it is only their own account. The rule is
+  the same in every plan, because KyPost sees no plan (Plans and orgs). For a Business org the
+  holder's click ends every seat's mailbox after the 7-day window (open question 14).
 - **Confirming.** Step-up (password and second factor) and typing the mailbox
   address. The dialog offers the export first (Export), because nothing can be got back.
 - **No undo.** Once confirmed, nobody can reverse it: billing, staff and the clicker cannot. A
   member's deletion sends a new signed `user.erased` event; today's `user.deleted` keeps meaning
   "disable", as now.
   - **A holder with no other live members:** the org goes straight to `deleted`.
-  - **A holder of a household with other members:** the holder's own access ends at once, and the
+  - **A holder with other live members** (the "household path" of the build plan and PR 6, which
+    covers every plan with more than one member): the holder's own access ends at once, and the
     org enters `deletion_scheduled` with a 7-day grace that `resume` refuses (T allows `resume`
     today). Each other member is mailed a notice and can export their own mail in that window
     through the `export_only` claim (open question 4 option (a), approved by the owner; a T change
@@ -657,10 +732,11 @@ a user's data: a disabled or deleted user only loses access (`api/sync_handlers.
   terms state that retention.
 - **Tests.**
   - Click, purge, restore a capsule taken before the click, release, and poll: the purge runs
-    again and the final check finds nothing. Do the same for one erased household member.
+    again and the final check finds nothing. Do the same for one erased member of an org with
+    other members.
   - Restore with KyIdentity unreachable: sign-in is refused, receiving answers `451`, and the
     hold cannot be released.
-  - A household holder's click: the members are notified, can export for 7 days, and `resume` is
+  - A click by a holder with other live members: the members are notified, can export for 7 days, and `resume` is
     refused.
 
 ### Export
@@ -673,9 +749,108 @@ only the export routes under it. Every other route answers as for a non-`active`
 
 ### Quotas
 
-These come from `quotas_json` in the cache (Abuse limits). A lower quota refuses new mail and new
-creations only, never existing data. That matches today's mailbox-quota rule and T's "over_limit,
-nobody is disabled".
+Every limit but storage comes from each org's `quotas_json` in the cache (Abuse limits per org,
+which lists every key and the per-user limit each sits on). A lower quota refuses new mail and
+new creations only, never existing data. That matches today's mailbox-quota rule and T's
+"over_limit, nobody is disabled".
+
+**Storage: the org pool (owner decision, 2026-11-23, required for launch).** One number per org,
+shared by every member and every app, is held by KyIdentity. Each app checks it before a write
+that adds bytes and reports its own usage. Nothing here is built. KyIdentity's half is T's
+amendment (board `kyidentity-business-orgs`). It has no PR yet, so the field and route names
+below are this note's proposals, and how T names them is unverified.
+
+*What KyPost needs from KyIdentity.*
+- **The pool.** Each org's limit in bytes and the usage the other apps last reported. It arrives
+  with the org entry in `GET /api/suite/orgs`, which KyPost already polls (K8), and is cached in
+  the `orgs` row, so no write waits on a network call.
+- **A usage report.** One authenticated call per poll, carrying `{org_id, used_bytes, as_of}`
+  for each org KyPost holds data for. KyIdentity binds the report to the calling client, so one
+  app can never report for another, and keeps only the newest `as_of` per app and org, so a
+  replayed or reordered report cannot lower a usage figure.
+
+*What KyPost counts* (exact, from PostgreSQL, summed over the org's mailboxes and members):
+
+| Counted | Source |
+|---|---|
+| Every stored message in every folder: Inbox, Sent, Drafts, Trash, archive, and incoming encryption's replacements. Attachments are inside the message. | `usage.payload_bytes` per mailbox, kept by the triggers (`mailbox/pg_schema.go:43-51`) |
+| Queued sends and the Sent copy reserved for each | The same counter (`mailbox/store.go:133-134`, `mailbox/pg_schema.go:34-39`) |
+| Mail held for import | `HeldBytes` (`app/receiving.go:77`), as `orgRoom` counts it today |
+| Contact photos | The per-user total `contactPhotoBytesUsed` reads (`api/contacts_photo.go:196`) |
+| A body moved to object storage | Counted at its size, as if it were in `raw` (MH "Object storage for message bodies") |
+
+Not counted: exports (streamed, nothing stored, `api/mail_export.go:22-26`), import uploads
+waiting to run (scratch, deleted with the job), settings and other small documents, indexes,
+logs and backups. Counting a backup would charge a customer for the platform's own safety copy.
+
+*Where KyPost checks.* The room is the pool limit, minus the other apps' last reported usage,
+minus KyPost's own usage now. Every write that adds bytes checks it, at the points that already
+check the mailbox quota:
+- receiving acceptance, after the mailbox's own check (`orgRoom`, `app/receiving.go:85`);
+- every new message, which covers drafts, Sent copies, client uploads and imports
+  (`mailbox/store.go:428`). **Not** the held-mail importer's move of a delivery receiving
+  already accepted (a gateway receipt, `gateway != ""`). Receiving charged it while it was held,
+  and refusing the move would only strand mail that got `250`. This is the rule `checkReserve`
+  already follows (`mailbox/store.go:431-434`), so open question 16's grace mail always reaches
+  the mailbox;
+- **Not** filing a Sent copy that its send's enqueue already reserved (`FileOutboundSent`,
+  `mailbox/outbox.go:456`). The reservation was charged against the pool at enqueue (the
+  enqueue check below), and today's code already never refuses this filing
+  (`mailbox/outbox.go:218-219`). So a send enqueued under the pool still files its Sent copy if
+  the org goes over before delivery;
+- a send's enqueue, which reserves its Sent copy (`mailbox/outbox.go:216`);
+- a contact photo upload (`storeContactPhoto`, `api/contacts_photo.go:141`).
+
+PR 5's statement that imports, drafts and Sent copies are bounded by the install quota only
+("PR 5 as built") is superseded for the pool.
+
+*What over-pool does.* The owner approved the rule on 2026-11-23 (ky-launch#4): new uploads and
+new stored content are blocked until the org is back under the pool, no data is ever deleted, and
+the holder is warned before a seat change that would leave the org over. The warning is
+KyIdentity's and billing's, because the seat change happens there. Receiving is open question 16.
+Each surface takes the safest default:
+
+| Surface | Over the pool |
+|---|---|
+| Receiving | Open question 16. *Default:* a grace window keeps accepting mail, and then comes `452 4.2.2` "Mailbox full", today's temporary exit 9 (`app/receiving_config.go:198`). Senders retry, so freeing space in any app lets the mail in. It is lost only if a sender gives up first, as with a full mailbox today. |
+| Sending | A new send is refused at enqueue with today's capacity answer and a message naming storage, before anything is sent. A send already queued goes out, because its Sent copy was reserved at enqueue. Sending without a Sent copy is not offered: it would lose the copy silently. |
+| Drafts, copies, client uploads, imports | A write that adds bytes is refused with the capacity answer. An import stops at the first refused message and reports how far it got. The existing draft is kept. |
+| Sync, read, search, export | Unchanged, always allowed. |
+| Delete, move, flag, empty Trash | Always allowed, so a user can always free space. The room KyPost frees counts at once in KyPost's own checks, and in other apps after the next report. |
+
+The UI shows the pool's usage with today's 80% and 95% warnings (root `AGENTS.md` "Mailbox
+limits"), and names the pool, not the mailbox, as what is full.
+
+*Failure defaults.*
+- **No pool in an org's entry** (KyIdentity not upgraded, or a malformed value): the pool reads
+  as 0, the same rule as a malformed key (`parseQuotas`). Nothing new is accepted, receiving
+  answers the temporary `452` at once with no grace, and no data is lost. The pool is a launch requirement, so K PR 7
+  must not accept `multi` until KyIdentity publishes it and KyPost's checks are built (open
+  question 15).
+- **A stale cache** keeps the last known pool and usage, as receiving keeps the last known
+  status (open question 5). Other apps' growth since their last report can then overshoot the
+  pool by at most one poll interval of writes. KyPost's own part is always exact.
+- **A report that fails** is retried on the next poll. KyIdentity keeps the last good one.
+- **Concurrent writes** in one org can pass the check together, as `orgRoom`'s ponytail note
+  says (`app/receiving.go:94-97`). The overshoot is bounded by the writes in flight. The pool is
+  a billing limit, not a security boundary, and the per-mailbox ceiling still holds.
+
+*The staff org* (`KYPOST_STAFF_ORG_ID`) is exempt from the pool, as it is from the cache (K8).
+Its mailboxes, which include abuse and complaint handling on the platform domains, are bounded
+only by the per-mailbox limits. Whether `/api/suite/orgs` lists the staff org with a pool is
+unverified, and the exemption makes the answer irrelevant.
+
+*Single-tenant* (self-hosted and Enterprise) has no pool: there is no `tenancy.db`, so every check
+above is skipped, as `orgRoom` skips today (`app/receiving.go:99-101`). Enterprise's custom size
+is the install's `KYPOST_MAILBOX_QUOTA_BYTES`, a per-mailbox limit. An Enterprise contract
+sold as a pooled figure cannot be enforced by KyPost as written: that would need the pool on a
+single-tenant install, which is not designed.
+
+*Negative tests the build must carry:* wrong org (a report or a check never counts another org's
+mailbox), a wrong client (KyIdentity refuses a report signed by another app), a replayed or older
+`as_of` (KyIdentity keeps the newer figure), a stale cache, a missing or malformed pool, an
+oversize or negative usage figure, an org at exactly the limit, mail accepted during grace that imports while the org is over, a send enqueued under the pool whose org goes over before delivery (its Sent copy still lands), a deletion that frees room, and
+single-tenant mode, where the pool is never read and the upgrade test is unchanged.
 
 ## Replicas (PR #677)
 
@@ -1702,7 +1877,7 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
 4. **Mail export while deletion is scheduled.** *Answered (2026-11-21): option (a) is approved.*
    KyIdentity issues an `export_only` claim during `deletion_scheduled`, and KyPost admits only the
    export routes under it. It needs a T change. Until that lands, there is no export in the window
-   (the former option (b)). Delete everything's household path depends on it (Delete
+   (the former option (b)). Delete everything's path for a holder with other members depends on it (Delete
    everything).
 5. **When a stale entitlement cache fails closed.** *Recommend* 15 minutes for sign-in and sending
    (the token lifetime). Receiving keeps answering from the last known status, which is the
@@ -1719,7 +1894,8 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
    privacy terms, and no per-org backup surgery.
 8. **Capacity target.** *Recommend* measuring orgs, mailboxes, schemas and messages per minute on
    R's single host before launch, as T owner answer 8 does for KyIdentity. With several regions
-   the target is per cell (MH "Regions").
+   the target is per cell (MH "Regions"). Business orgs (N seats, on the shared install since 2026-11-23)
+   belong in the measured mix.
 9. **The purge versus the never-delete triggers.** *Answered:* yes. K10 as written: scrub to
    tombstones, with one named trigger exception keyed on a live `org_purges` row, plus HMAC address
    tombstones. The owner also asked for a Delete everything button that sticks (Lifecycle).
@@ -1729,3 +1905,55 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
 11. **Receiving while deletion is scheduled.** *Answered:* keep the `550`. Mail sent during the
     grace period is lost if the org is resumed, and the owner accepts that. Billing's deletion
     notice tells the account holder that mail stops at once.
+12. **Business features on the shared install (new, 2026-11-23).** Business orgs now share the
+    install, but T keeps inbound SCIM, HR provisioning and per-org federation off in multi mode,
+    and there are no customer administrators (decision 4). *Default:* they stay off. A Business
+    org's people are added through billing and KyIdentity's member endpoints, and extra
+    mailboxes and aliases by staff on request. A business that needs a directory sync or its own
+    IdP buys Enterprise.
+13. **Family storage: pooled or per member (new, 2026-11-23).** *Answered (2026-11-23):* pooled,
+    in every plan, as one number per org across all apps, held by KyIdentity (Quotas).
+14. **A Business holder's Delete everything (new, 2026-11-23).** The holder's click deletes the
+    whole org, every seat included, after the 7-day member export window. *Default:* the same rule
+    in every plan, because KyPost sees no plan. If Business should differ (for example, the
+    button only removes the holder, or needs a second person), that is a T and billing change
+    that KyPost does not need to know about.
+15. **An org entry with no storage pool (new, 2026-11-23).** *Default:* the pool reads as 0, so
+    the org accepts nothing new and receiving answers a temporary `452` at once (Quotas). Open
+    question 16's grace does not apply: a missing or malformed pool has no over-quota-since
+    date and no meaningful 110 %. K PR 7 must not accept
+    `multi` before KyIdentity publishes the pool, so this happens only through a KyIdentity fault.
+    The alternative, no pool cap, lets an org grow without limit during that fault.
+16. **Incoming mail while an org is over its pool (new, 2026-11-23; KyPost owns this rule).**
+    Refusing mail at once bounces it to outside senders, often because another app (a Drive
+    upload) filled the pool. *Recommend* a grace window, then a temporary refusal, and never a
+    permanent one for quota:
+    - **Grace** (only for a valid pool; a missing or malformed one is open question 15). Mail
+      is still accepted for **14 days** after the org went over, or until usage
+      reaches **110 % of the pool**, whichever comes first. Every other write is blocked from the
+      first byte over (approved rule). The start is KyIdentity's over-quota-since timestamp in
+      the org entry (proposed; T's name for it is unverified, board `kyidentity-business-orgs`),
+      so every app agrees on one date even when another app caused the overrun. When KyPost's
+      own writes take the org over before KyIdentity has published a date, grace starts at
+      KyPost's first observation. That date is written once per overrun to the org's `orgs` row,
+      so every replica agrees on it. Within one overrun the earlier of the two dates wins once
+      KyIdentity's arrives. The date is cleared when KyPost sees the org back under its pool, so
+      a later overrun gets a fresh window.
+      Grace is never open-ended: the 110 % bound applies from the first byte over.
+    - **After grace,** `452 4.2.2` "Mailbox full" (exit 9) to every sender, for as long as the
+      org stays over. Sending MTAs retry for about five days and then send their own bounce
+      naming a full mailbox (unverified: senders' retry periods vary). A `552 5.2.2` is not
+      used: it would bounce mail at once for a state a deletion can end at any moment. If the
+      owner prefers a firm end, the alternative is `452` for 7 days and then `552 5.2.2`, which
+      needs a new exit code in the receiving profile and in RX's code table.
+    - **What people see.** Every member sees a banner in KyPost: "Storage full: new mail is
+      still accepted until <date> (or <N> GB more)", and after grace, "Mail to this org is being
+      refused until you free space". The holder also gets billing's notice. KyPost sends no mail
+      about this into the full mailbox.
+    - **What senders see.** Nothing during grace. After it, a temporary refusal and eventually
+      their own server's bounce. They never get a permanent rejection from KyPost for quota.
+    - **Fit with receiving.** The answer is made where it is today, at `accept` after the
+      mailbox's own check (RX; `orgRoom`, `app/receiving.go:85`), and `250` still follows the
+      PostgreSQL commit. MX hosts stay stateless. Org status answers must come first: a suspended org's
+      answer and `deletion_scheduled`'s `550` (open question 11) win over the quota answer (the order in code is unverified). Grace
+      never passes the per-mailbox install ceiling, the 25 MiB cap or a `mailboxBytes` safety key.

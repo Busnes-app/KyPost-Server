@@ -1,6 +1,11 @@
-# Masked and plus addresses: self-hosted, hosted SaaS and isolated platforms, design
+# Masked and plus addresses: self-hosted, hosted SaaS and Enterprise installs, design
 
 Date: 2026-11-19. Status: proposed design, nothing built. Docs only.
+
+Revised 2026-11-23 with the owner's plan decisions: every paid account (Personal, Couple,
+Family, Business) is an org on the shared hosted install, and only Enterprise gets a dedicated
+install. This supersedes the earlier "isolated platform" for businesses (T decision 7). KyPost's
+tenancy design (`docs/superpowers/specs/2026-11-20-tenancy-design.md`, "Plans and orgs") records it.
 
 Owner decision (fixed, not reopened here):
 
@@ -15,12 +20,12 @@ Line references are to KyPost `origin/main` at `28d91bc2`, and to KyIdentity
 
 ## Summary
 
-| | Self-hosted | Isolated platform (business) | Hosted SaaS (individuals, households) |
+| | Self-hosted | Enterprise (dedicated install) | Hosted SaaS (Personal, Couple, Family, Business) |
 |---|---|---|---|
-| KyIdentity mode | single-tenant | single-tenant, own install (T decision 7) | multi-tenant, tokens carry `org_id` (T D4) |
-| KyPost install | one per operator | one per business | one shared install, data separated by org (T decision 2) |
-| Masked domain | the operator's own, chosen by the administrator | the business's own, chosen by its administrator | one platform relay domain, chosen by staff; per-customer domains later |
-| Who may enable it | administrator (`PUT /api/admin/masked-domains`) | the business's administrator | staff only (T decision 6: no customer administrators) |
+| KyIdentity mode | single-tenant | single-tenant, own install, cloud or on premises | multi-tenant, tokens carry `org_id` (T D4) |
+| KyPost install | one per operator | one per Enterprise customer | one shared install on several hosts, data separated by org (T decision 2); every paid plan is an org |
+| Masked domain | the operator's own, chosen by the administrator | the customer's own, chosen by its administrator | one platform relay domain, chosen by staff; per-customer domains later |
+| Who may enable it | administrator (`PUT /api/admin/masked-domains`) | the customer's administrator | staff only (T decision 6: no customer administrators, Business included) |
 | Uniqueness scope | the install's ledger | the install's ledger | the shared install's ledger, which covers every customer |
 | Address format | today's `adjective.animal.NNNN` | today's | longer format on the relay domain (D3) |
 | Plus addressing | today's, on by default | today's | today's, on primaries and on masked addresses |
@@ -90,13 +95,13 @@ This is the baseline. **It stays unchanged in every mode.**
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | Self-hosted and isolated platforms keep today's behaviour, byte for byte. An isolated platform is a self-hosted install that staff set up for a business (T decision 7). | Owner decision. Both are single-tenant, so nothing in the code distinguishes them. |
+| D1 | Self-hosted and Enterprise installs keep today's behaviour, byte for byte. An Enterprise install is a single-tenant install run for one Enterprise customer, in the cloud or on premises. Business plans are not Enterprise: they are orgs on the hosted install (owner decision, 2026-11-23). | Owner decision. Both are single-tenant, so nothing in the code distinguishes them. |
 | D2 | Hosted masked addresses live on one **platform relay domain**, separate from the domain(s) that hold hosted primaries (for example `relay.<platform>` beside `<platform-mail>`). Staff are its only administrators. | A separate domain keeps masked and primary namespaces from colliding, gives masked mail its own reputation, and keeps primaries working if the relay domain is blocklisted. Owner decision fixes "one shared domain"; keeping it separate from primaries is this note's choice. |
-| D3 | On the relay domain only, the local part is `adjective.animal.` plus 6 random characters from the lowercase RFC 4648 base32 alphabet (`a`–`z`, `2`–`7`), for example `calm.raven.k7q2xm`. Lowercase, because KyPost lowercases addresses before lookup (`masked_addresses.go:219`, `:429`). 63 × 66 × 32⁶ ≈ 4.5 × 10¹² local parts. Self-hosted keeps four digits. Six decimal digits were considered and rejected: 63 × 66 × 900,000 ≈ 3.7 × 10⁹, only 100 times today's space. | 37 M per domain is fine for one household. Shared by every customer, it is not. With 2 M live addresses, a random guess hits a live one about 1 time in 19 today (2 × 10⁶ / 3.74 × 10⁷). With base32 that becomes about 1 in 2.2 million. The 5-draw collision retry (`masked_addresses.go:376`) also stops being a concern (see below). |
+| D3 | On the relay domain only, the local part is `adjective.animal.` plus 6 random characters from the lowercase RFC 4648 base32 alphabet (`a`–`z`, `2`–`7`), for example `calm.raven.k7q2xm`. Lowercase, because KyPost lowercases addresses before lookup (`masked_addresses.go:219`, `:429`). 63 × 66 × 32⁶ ≈ 4.5 × 10¹² local parts. Self-hosted keeps four digits. Six decimal digits were considered and rejected: 63 × 66 × 900,000 ≈ 3.7 × 10⁹, only 100 times today's space. | 37 M per domain is fine for one install. Shared by every customer, it is not. With 2 M live addresses, a random guess hits a live one about 1 time in 19 today (2 × 10⁶ / 3.74 × 10⁷). With base32 that becomes about 1 in 2.2 million. The 5-draw collision retry (`masked_addresses.go:376`) also stops being a concern (see below). |
 | D4 | Uniqueness across customers comes from the **one ledger of the one shared KyPost install**: today's `AddNativeAlias` conflict check plus the never-delete rule. No new allocator, as long as hosted is one install. | It already holds: one install, one ledger, global address keys. A second hosted install (sharding) would need a shared allocator (open question 1). |
 | D5 | A deleted address, and every address of a deleted org, stays as a ledger **tombstone** forever. When an org is deleted, the tombstone keeps the address (or a keyed hash of it, open question 4) and drops the mailbox, owner and note. | "Never reuse" must survive org deletion. Today's ledger keeps the full record, which would retain the deleted customer's data. |
 | D6 | Hosted masked addresses ship **only on top of KyPost's own multi-tenant work** (T "Downstream contract"). This note adds the masked-specific deltas; it does not design KyPost tenancy. | A shared install without org isolation is not safe for any feature. Masked addresses add no new isolation primitive. |
-| D7 | Hosted limits come from KyIdentity's per-app quotas (`org_apps.quotas_json`, T "Entitlements", read via `GET /api/suite/orgs`): `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`. Today's 100/20 stay the defaults and the self-hosted values. | T D6 assigns quota enforcement to apps. Today's limits are per user, so a household of 6 could make 120 a day; a per-org cap bounds that. |
+| D7 | Hosted limits come from KyIdentity's per-app quotas (`org_apps.quotas_json`, T "Entitlements", read via `GET /api/suite/orgs`): `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`. Today's 100/20 stay the defaults and the self-hosted values. | T D6 assigns quota enforcement to apps. Today's limits are per user, so a Family of 6 could make 120 a day, and a Business org of N seats 20 × N; a per-org cap bounds that. Every key is set per org, so a plan can be given its own values. |
 | D8 | Masked state moves from `config.yaml` into the ledger (or a per-account table beside it) in hosted mode, carrying `org_id`. | `maskedHeld` (`masked_addresses.go:218-233`) and the minute sweep (`:479-500`) read every user's `config.yaml`. The sweep is O(users) every minute, which does not scale to a shared install (unverified: no measurement). The ledger is also where the org boundary must be enforced. |
 
 ## Hosted SaaS
@@ -209,7 +214,7 @@ Masked-specific rules on top:
 
 - **Who can see a masked address.** Only its owner. Staff can see that one exists (for
   abuse handling) through the audited staff route. No other member of the same
-  household org sees it, because masked addresses are personal. T's per-org scoping
+  org sees it (a Couple, Family or Business org alike), because masked addresses are personal. T's per-org scoping
   is necessary but not sufficient here; the owner check stays.
 - **Admin routes.** `PUT /api/admin/masked-domains` becomes staff-only and accepts only
   platform-owned domains in hosted mode. Release and reassign keep their `409` for masked
@@ -263,8 +268,8 @@ repository yet (`docs/` has none; unverified whether one exists elsewhere).
   masked addresses.
 - **Tombstones grow forever.** The address list is permanent by design. With D3 the space
   is effectively unexhaustable, but storage grows with every address ever made.
-- **Masked plus hosted primary in one household.** Other household members never see
-  each other's masked addresses, but staff can.
+- **Masked plus hosted primary in one org.** Other members of the org (Couple, Family or
+  Business) never see each other's masked addresses, but staff can.
 - **Unverified scale.** The minute sweep and per-user file reads are not measured at
   hosted scale (D8 removes them).
 
@@ -290,10 +295,11 @@ repository yet (`docs/` has none; unverified whether one exists elsewhere).
 6. **Custom domains changing hands.** *Recommend:* refuse a new org's proof for a domain
    that still has tombstones from a deleted org, for a cooling-off period (for example 90
    days), then allow it with the old tombstones still refusing.
-7. **Isolated platforms on the shared relay domain.** Should a business be able to use
-   the platform relay domain instead of its own? *Recommend:* no in v1. It would need a
-   cross-install allocator (question 1) for a feature businesses can get on their own
-   domain.
+7. **Enterprise installs on the shared relay domain.** Should an Enterprise install be able
+   to use the platform relay domain instead of its own? *Recommend:* no in v1. It would need a
+   cross-install allocator (question 1) for a feature an Enterprise customer can get on its
+   own domain. Business orgs are on the hosted install since 2026-11-23, so they use the relay
+   domain like every other hosted org.
 8. **Provider feedback.** KyPost does not ingest provider bounces or complaints
    (unverified that nothing exists). *Recommend:* build a minimal complaint-feedback path
    for the relay domain before hosted masked addresses go live; it is the main reputation
