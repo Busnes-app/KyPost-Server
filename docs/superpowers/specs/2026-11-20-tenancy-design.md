@@ -440,9 +440,11 @@ account to its `org_id`. No receiving path takes an org from the message.
   apex-only catch-all (checked in the receiving tier spec, "Cloudflare Email Routing's real
   limits"). Raising it would not fix the disclosure.
 - **Size and quota.** The 25 MiB cap is unchanged (`mailmsg/limits.go:38`). The per-mailbox quota
-  is reserved at bind (`app/receiving.go:458-479`). Hosted mode applies the org's storage pool
-  ("Quotas") after the install-wide `KYPOST_MAILBOX_QUOTA_BYTES` and the optional `mailboxBytes`
-  and `storageBytes` keys, so the lowest limit wins (Abuse limits per org). A lower quota refuses
+  is reserved at bind (`app/receiving.go:458-479`). Hosted mode applies the install-wide
+  `KYPOST_MAILBOX_QUOTA_BYTES` and the optional `mailboxBytes` and `storageBytes` keys as hard
+  limits (Abuse limits per org), then the org's storage pool ("Quotas"). The pool alone has
+  open question 16's grace window: a valid pool keeps accepting mail for up to 14 days or 110 %
+  before `452`. A lower quota refuses
   only new mail, never locks a mailbox (today's rule, root `AGENTS.md` "Mailbox limits").
 
 ### Recommended hosted receiving tier (open question 3)
