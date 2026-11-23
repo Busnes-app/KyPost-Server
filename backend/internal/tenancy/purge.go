@@ -16,6 +16,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/suitedir"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
 // The purge's records (K "Purge (`deleted`)", "Delete everything"). One org_purges row per
@@ -211,9 +212,16 @@ func UserOrgRows(ctx context.Context, db *sql.DB, ids []string) (int, error) {
 	return total, nil
 }
 
-// DocumentRows counts the accounts' documents rows (the final check). Deleting them is
-// MH2's, with the first store that writes them.
-func DocumentRows(ctx context.Context, db *sql.DB, ids []string) (int, error) {
+// DocumentRows counts snapshot-owned rows in volumes.db, without creating a store.
+func DocumentRows(ctx context.Context, stateDir string, ids []string) (int, error) {
+	db, err := volumes.Open(stateDir, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
 	total := 0
 	for _, id := range ids {
 		var n int
@@ -412,7 +420,7 @@ var PurgeCoverage = map[string]string{
 	"mailbox.usage": "directories", "mailbox.changes": "directories", "mailbox.outbox": "directories",
 	"mailbox.outbox_deliveries": "directories", "mailbox.outbox_independent": "directories",
 	"ingress.routes": "ingress", "ingress.bindings": "ingress",
-	"tenancy.import_leases": "ingress", "tenancy.retired_bindings": "ingress", "tenancy.documents": "documents",
+	"tenancy.import_leases": "ingress", "tenancy.retired_bindings": "ingress", "volumes.documents": "documents", "volumes.doc_keys": "doc_keys",
 	"native-authority.directory": "ledger", "native-authority.directory_primary_emails": "ledger",
 	"native-authority.accounts": "ledger", "native-authority.mailboxes": "ledger", "native-authority.addresses": "ledger",
 	"native-authority.address_history": "ledger", "native-authority.routes_pending": "ledger",
@@ -426,5 +434,5 @@ var PurgeCoverage = map[string]string{
 	"outbox-idle": "directories", "mailbox.db": "directories", "pickup": "pickup",
 	// An upload lives only while its job runs; the purge cancels the job, whose own exit
 	// removes the file, and deletes the import_jobs row.
-	"imports": "root-state",
+	"imports": "root-state", "contact-photos": "directories",
 }

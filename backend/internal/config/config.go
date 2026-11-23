@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 
 	"gopkg.in/yaml.v3"
 )
@@ -447,7 +448,11 @@ func LoadUserLabelSettings(path string, house Config) (UserSettings, error) {
 // LoadUserSettings reads a per-user settings file, returning defaults if it
 // does not exist yet.
 func LoadUserSettings(path string) (UserSettings, error) {
-	b, err := os.ReadFile(path)
+	return loadUserSettings(vol.OpenDocument(path))
+}
+
+func loadUserSettings(doc *vol.Document) (UserSettings, error) {
+	b, err := doc.Read()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return DefaultUserSettings(), nil
@@ -484,7 +489,7 @@ func SaveUserSettings(path string, s UserSettings) error {
 	if err != nil {
 		return err
 	}
-	return fsutil.AtomicWriteFile(path, b, 0o600)
+	return vol.OpenDocument(path).Replace(b)
 }
 
 // UpdateUserSettings applies mutate to the settings at path as one
@@ -513,18 +518,28 @@ func SaveUserSettings(path string, s UserSettings) error {
 // opt-out, then overwrote the only copy of the document that would have shown
 // what they were.
 func UpdateUserSettings(path string, mutate func(*UserSettings) error) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	doc := vol.OpenDocument(path)
+	if err := doc.Mkdir(0o755); err != nil {
 		return fmt.Errorf("mkdir user settings dir: %w", err)
 	}
-	return fsutil.WithFileLock(path, func() error {
-		s, err := LoadUserSettings(path)
+	return vol.Retry(func() error {
+		release, err := doc.Lock()
+		if err != nil {
+			return err
+		}
+		defer release()
+		settings, err := loadUserSettings(doc)
 		if err != nil {
 			return fmt.Errorf("load user settings: %w", err)
 		}
-		if err := mutate(&s); err != nil {
+		if err := mutate(&settings); err != nil {
 			return err
 		}
-		return SaveUserSettings(path, s)
+		body, err := yaml.Marshal(settings)
+		if err != nil {
+			return err
+		}
+		return doc.Write(body)
 	})
 }
 
@@ -532,7 +547,7 @@ func UpdateUserSettings(path string, mutate func(*UserSettings) error) error {
 // fields from a legacy global config.yaml, for one-time migration into the
 // first admin user's settings file.
 func LoadLegacyNotificationPrefs(path string) (UserNotificationSettings, bool) {
-	b, err := os.ReadFile(path)
+	b, err := vol.OpenDocument(path).Read()
 	if err != nil {
 		return UserNotificationSettings{}, false
 	}
@@ -606,7 +621,7 @@ func LoadOrInit(path string) (Config, error) {
 	configDir := filepath.Dir(path)
 	// Same SECRET_DIR convention processor.relayKeyFilePathWithPrefix uses.
 	secretDir := SecretDir()
-	if _, err := os.Stat(path); err == nil {
+	if _, err := vol.OpenDocument(path).Read(); err == nil {
 		cfg, err := Load(path)
 		if err != nil {
 			return Config{}, err
@@ -628,8 +643,10 @@ func LoadOrInit(path string) (Config, error) {
 			}
 		}
 		return cfg, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Config{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := vol.OpenDocument(path).Mkdir(0o755); err != nil {
 		return Config{}, fmt.Errorf("mkdir config dir: %w", err)
 	}
 	cfg := Default()
@@ -666,7 +683,7 @@ var redactionDefaultsV01 = []Pattern{
 // misspelled setting cannot silently run on its default. Keys older versions
 // wrote are dropped first, so an upgrade still starts.
 func Load(path string) (Config, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := vol.OpenDocument(path).Read()
 	if err != nil {
 		return Config{}, err
 	}
@@ -743,7 +760,7 @@ func warnRetiredClassifier(raw []byte) {
 }
 
 func Save(path string, cfg Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := vol.OpenDocument(path).Mkdir(0o755); err != nil {
 		return fmt.Errorf("mkdir config dir: %w", err)
 	}
 	b, err := yaml.Marshal(cfg)
@@ -756,7 +773,7 @@ func Save(path string, cfg Config) error {
 	// unmarshals successfully into the zero value, so Load silently returns
 	// Default() rather than an error. That drops any operator-configured
 	// redaction pattern from what gets fed to the classifier, for a tick.
-	return fsutil.AtomicWriteFile(path, b, 0o600)
+	return vol.OpenDocument(path).Replace(b)
 }
 
 // ensureNotificationKeyMaterial fills in the VAPID identity, generating the

@@ -492,8 +492,12 @@ func newOrgFixture(t *testing.T) (*orgFixture, *syncBuffer) {
 }
 
 func TestCrossOrgMatrix(t *testing.T) {
-	routes := crossOrgRoutes(t)
 	fx, logs := newOrgFixture(t)
+	runCrossOrgMatrix(t, fx, logs)
+}
+
+func runCrossOrgMatrix(t *testing.T, fx *orgFixture, logs *syncBuffer) {
+	routes := crossOrgRoutes(t)
 	covered := 0
 	for _, r := range routes {
 		if !r.orgBound() {

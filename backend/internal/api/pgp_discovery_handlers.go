@@ -22,7 +22,7 @@ func (s *Server) handlePGPDiscoverySettings(w http.ResponseWriter, r *http.Reque
 	case http.MethodGet:
 		settings, err := pgpdiscovery.Load(dir)
 		if err != nil {
-			http.Error(w, "failed to read discovery settings", http.StatusInternalServerError)
+			http.Error(w, "failed to read discovery settings", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, settings)
@@ -63,7 +63,7 @@ func (s *Server) handlePGPDiscoverySettings(w http.ResponseWriter, r *http.Reque
 			return next
 		})
 		if err != nil {
-			http.Error(w, "failed to save discovery settings", http.StatusInternalServerError)
+			http.Error(w, "failed to save discovery settings", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, settings)
@@ -79,7 +79,7 @@ func (s *Server) handlePGPDiscoverySuppressions(w http.ResponseWriter, r *http.R
 	}
 	list, err := pgpdiscovery.LoadSuppressions(s.userStateDir(ac.UserID))
 	if err != nil {
-		http.Error(w, "failed to read discovery suppressions", http.StatusInternalServerError)
+		http.Error(w, "failed to read discovery suppressions", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	if list == nil {
@@ -104,7 +104,7 @@ func (s *Server) handlePGPDiscoverySuppressionByEmail(w http.ResponseWriter, r *
 	}
 	removed, err := pgpdiscovery.RemoveSuppression(s.userStateDir(ac.UserID), email)
 	if err != nil {
-		http.Error(w, "failed to update discovery suppressions", http.StatusInternalServerError)
+		http.Error(w, "failed to update discovery suppressions", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	if !removed {
@@ -138,12 +138,12 @@ func (s *Server) handlePGPDiscoverySuppressContact(w http.ResponseWriter, r *htt
 	}
 	store, err := s.userContactsStore(ac.UserID)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	c, found, err := store.Get(uid)
 	if err != nil {
-		http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+		http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	if !found || c.Deleted {
@@ -154,7 +154,7 @@ func (s *Server) handlePGPDiscoverySuppressContact(w http.ResponseWriter, r *htt
 	for _, e := range c.Emails {
 		if v := strings.TrimSpace(e.Value); v != "" {
 			if err := pgpdiscovery.AddSuppression(dir, v, pgpdiscovery.ReasonExplicit); err != nil {
-				http.Error(w, "failed to record discovery suppression", http.StatusInternalServerError)
+				http.Error(w, "failed to record discovery suppression", documentStatus(err, http.StatusInternalServerError))
 				return
 			}
 		}
@@ -165,7 +165,7 @@ func (s *Server) handlePGPDiscoverySuppressContact(w http.ResponseWriter, r *htt
 	c.PGPKeyVerified = false
 	updated, err := store.Upsert(c)
 	if err != nil {
-		http.Error(w, "failed to update contact", http.StatusInternalServerError)
+		http.Error(w, "failed to update contact", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)

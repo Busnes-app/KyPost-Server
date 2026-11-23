@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 
 	"net/http"
 	"net/http/httptest"
@@ -404,7 +405,7 @@ func TestIncomingLegacyUnsafeJobFinishesWithoutExecutingUnsafeActions(t *testing
 		t.Fatal(err)
 	}
 	job.Actions = []rules.Action{{Type: "keyword", Value: "bad flag"}}
-	if err := saveIncomingJob(p.incomingJobPath(uc.id), job); err != nil {
+	if err := saveIncomingJob(vol.OpenDocument(p.incomingJobPath(uc.id)), job); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.resumeIncomingEncryption(context.Background(), uc); err == nil {

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"net/http"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -154,14 +154,14 @@ func (s *Server) suppressDiscoveryOnDelete(userID string, emails []string) {
 func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) {
 	store, err := s.contactsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		list, err := store.List()
 		if err != nil {
-			http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+			http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if list == nil {
@@ -181,7 +181,7 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) {
 		if ac, ok := authFromContext(r); ok {
 			ids, gerr := s.sanitizeGroupIDsForUser(ac.UserID, payload.GroupIDs)
 			if gerr != nil {
-				http.Error(w, "failed to read groups", http.StatusInternalServerError)
+				http.Error(w, "failed to read groups", documentStatus(err, http.StatusInternalServerError))
 				return
 			}
 			payload.GroupIDs = ids
@@ -193,7 +193,7 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) {
 		}
 		created, err := store.Upsert(c)
 		if err != nil {
-			http.Error(w, "failed to create contact", http.StatusInternalServerError)
+			http.Error(w, "failed to create contact", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		s.invalidatePGPVerdictsOnKeyChange(r, contacts.Contact{}, created)
@@ -209,12 +209,12 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleContactsDedupe(w http.ResponseWriter, r *http.Request) {
 	store, err := s.contactsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	report, err := store.Dedupe()
 	if err != nil {
-		http.Error(w, "failed to dedupe contacts", http.StatusInternalServerError)
+		http.Error(w, "failed to dedupe contacts", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
@@ -225,7 +225,7 @@ func (s *Server) handleContactsDedupe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 	store, err := s.contactsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	uid := strings.TrimSpace(r.PathValue("id"))
@@ -237,7 +237,7 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		c, ok, err := store.Get(uid)
 		if err != nil {
-			http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+			http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if !ok || c.Deleted {
@@ -248,7 +248,7 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		existing, ok, err := store.Get(uid)
 		if err != nil {
-			http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+			http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if !ok || existing.Deleted {
@@ -267,7 +267,7 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 		if ac, ok := authFromContext(r); ok {
 			ids, gerr := s.sanitizeGroupIDsForUser(ac.UserID, payload.GroupIDs)
 			if gerr != nil {
-				http.Error(w, "failed to read groups", http.StatusInternalServerError)
+				http.Error(w, "failed to read groups", documentStatus(err, http.StatusInternalServerError))
 				return
 			}
 			payload.GroupIDs = ids
@@ -279,7 +279,7 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 		}
 		updated, err := store.Upsert(c)
 		if err != nil {
-			http.Error(w, "failed to update contact", http.StatusInternalServerError)
+			http.Error(w, "failed to update contact", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		s.invalidatePGPVerdictsOnKeyChange(r, existing, updated)
@@ -292,17 +292,17 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 		// ladder re-create the contact on the next encrypted send.
 		deleted, _, err := store.Get(uid)
 		if err != nil {
-			http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+			http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		emails, err := discoveryCreatedEmails(store, uid)
 		if err != nil {
-			http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+			http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		removed, err := store.Delete(uid)
 		if err != nil {
-			http.Error(w, "failed to delete contact", http.StatusInternalServerError)
+			http.Error(w, "failed to delete contact", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if removed && len(emails) > 0 {
@@ -341,7 +341,7 @@ func (s *Server) handleContactPGPKeyConfirm(w http.ResponseWriter, r *http.Reque
 	}
 	store, err := s.contactsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	c, found, err := store.ConfirmPGPKey(r.PathValue("id"), req.Fingerprint)
@@ -349,7 +349,7 @@ func (s *Server) handleContactPGPKeyConfirm(w http.ResponseWriter, r *http.Reque
 	case errors.Is(err, contacts.ErrPGPKeyMismatch):
 		http.Error(w, "the fingerprint does not match this contact's current key", http.StatusConflict)
 	case err != nil:
-		http.Error(w, "failed to update contact", http.StatusInternalServerError)
+		http.Error(w, "failed to update contact", documentStatus(err, http.StatusInternalServerError))
 	case !found:
 		http.Error(w, "contact not found", http.StatusNotFound)
 	default:
@@ -362,7 +362,7 @@ func (s *Server) handleContactPGPKeyConfirm(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleContactsBulkDelete(w http.ResponseWriter, r *http.Request) {
 	store, err := s.contactsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 
@@ -450,7 +450,11 @@ type davPasswordFile struct {
 }
 
 func (s *Server) readDAVPassword(userID string) (davPasswordFile, bool, error) {
-	b, err := os.ReadFile(s.userCardDAVAuthPath(userID))
+	return readDAVDocument(vol.OpenDocument(s.userCardDAVAuthPath(userID)))
+}
+
+func readDAVDocument(doc *vol.Document) (davPasswordFile, bool, error) {
+	b, err := doc.Read()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return davPasswordFile{}, false, nil
@@ -469,7 +473,13 @@ func (s *Server) writeDAVPassword(userID string, f davPasswordFile) error {
 	if err != nil {
 		return err
 	}
-	return fsutil.AtomicWriteFile(s.userCardDAVAuthPath(userID), b, 0o600)
+	doc := vol.OpenDocument(s.userCardDAVAuthPath(userID))
+	return doc.Update(func() error {
+		if _, err := doc.Read(); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return doc.Write(b)
+	})
 }
 
 // handleContactsDAVPassword manages the caller's app-specific CardDAV
@@ -485,7 +495,7 @@ func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Reques
 	case http.MethodGet:
 		f, exists, err := s.readDAVPassword(ac.UserID)
 		if err != nil {
-			http.Error(w, "failed to read carddav password state", http.StatusInternalServerError)
+			http.Error(w, "failed to read carddav password state", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		resp := map[string]any{"configured": exists}
@@ -509,7 +519,7 @@ func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Reques
 		}
 		raw, err := randomToken(24)
 		if err != nil {
-			http.Error(w, "failed to generate password", http.StatusInternalServerError)
+			http.Error(w, "failed to generate password", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		// Under the shared derivation slots, like every other KDF derivation
@@ -523,16 +533,14 @@ func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if err != nil {
-			http.Error(w, "failed to store password", http.StatusInternalServerError)
+			http.Error(w, "failed to store password", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		// Under the same file lock rehashDAVAppPassword takes, so an in-flight
 		// hash upgrade of the OLD password cannot land on top of this one.
-		if err := fsutil.WithFileLock(s.userCardDAVAuthPath(ac.UserID), func() error {
-			return s.writeDAVPassword(ac.UserID, davPasswordFile{Hash: hash, CreatedAt: now})
-		}); err != nil {
-			http.Error(w, "failed to persist carddav password", http.StatusInternalServerError)
+		if err := s.writeDAVPassword(ac.UserID, davPasswordFile{Hash: hash, CreatedAt: now}); err != nil {
+			http.Error(w, "failed to persist carddav password", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		s.davCredentials.invalidateUser(ac.Username)
@@ -540,13 +548,13 @@ func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Reques
 	case http.MethodDelete:
 		// Same lock: a revoke that lands between an in-flight rehash's re-read
 		// and its write was the resurrection bug — see rehashDAVAppPassword.
-		if err := fsutil.WithFileLock(s.userCardDAVAuthPath(ac.UserID), func() error {
-			if err := os.Remove(s.userCardDAVAuthPath(ac.UserID)); err != nil && !os.IsNotExist(err) {
+		if err := vol.OpenDocument(s.userCardDAVAuthPath(ac.UserID)).Update(func() error {
+			if err := vol.RemoveFile(s.userCardDAVAuthPath(ac.UserID)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 			return nil
 		}); err != nil {
-			http.Error(w, "failed to revoke carddav password", http.StatusInternalServerError)
+			http.Error(w, "failed to revoke carddav password", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		s.davCredentials.invalidateUser(ac.Username)
@@ -612,7 +620,7 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 	}
 	store, err := s.userContactsStore(userID)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 
@@ -654,7 +662,7 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 		// what makes the cursor returned below mean anything.
 		live, err := store.List()
 		if err != nil {
-			http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+			http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		storedKeys := make(map[string]string, len(live))
@@ -676,7 +684,7 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 			}
 			ids, gerr := s.sanitizeGroupIDsForUser(userID, change.GroupIDs)
 			if gerr != nil {
-				http.Error(w, "failed to read groups", http.StatusInternalServerError)
+				http.Error(w, "failed to read groups", documentStatus(err, http.StatusInternalServerError))
 				return
 			}
 			change.GroupIDs = ids
@@ -691,7 +699,7 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 			ops = append(ops, contacts.BatchOp{Contact: c})
 		}
 		if err := store.ApplyBatch(ops); err != nil {
-			http.Error(w, "failed to apply changes", http.StatusInternalServerError)
+			http.Error(w, "failed to apply changes", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		s.writeContactsSyncResponse(w, store, req.BaseCursor)
@@ -706,7 +714,7 @@ func (s *Server) writeContactsSyncResponse(w http.ResponseWriter, store *contact
 		// A delta computed from a stale in-memory copy hands the client a
 		// cursor that claims to cover changes this process could not read, and
 		// the client then never asks for them again.
-		http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+		http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	resp := map[string]any{"cursor": cursor, "tooOld": tooOld}

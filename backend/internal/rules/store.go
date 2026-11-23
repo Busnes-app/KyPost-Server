@@ -2,13 +2,13 @@ package rules
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // Store is one user's filter-rule list, persisted as rules.json in the
@@ -17,10 +17,11 @@ import (
 // mutation re-reads the file from disk first, since the API and daemon
 // processes share no memory.
 type Store struct {
-	mu      sync.Mutex
-	baseDir string
-	rules   []Rule
-	seq     int64
+	mu       sync.Mutex
+	baseDir  string
+	rules    []Rule
+	seq      int64
+	document *vol.Document
 }
 
 type rulesFile struct {
@@ -29,11 +30,12 @@ type rulesFile struct {
 }
 
 func New(baseDir string) (*Store, error) {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	s := &Store{baseDir: baseDir, rules: []Rule{}}
+	s.document = vol.OpenDocument(s.path())
+	if err := s.document.Mkdir(0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{baseDir: baseDir, rules: []Rule{}}
-	if err := s.load(); err != nil {
+	if err := vol.Retry(s.load); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -44,7 +46,7 @@ func (s *Store) path() string {
 }
 
 func (s *Store) load() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, s.persistLocked)
+	return vol.LoadJSON(s.document, s.applyFile, s.persistLocked)
 }
 
 func (s *Store) applyFile(rf rulesFile) {
@@ -53,11 +55,11 @@ func (s *Store) applyFile(rf rulesFile) {
 }
 
 func (s *Store) refreshFromDiskLocked() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, nil)
+	return vol.LoadJSON(s.document, s.applyFile, nil)
 }
 
 func (s *Store) persistLocked() error {
-	if err := fsutil.PersistJSONFile(s.path(), rulesFile{Rules: s.rules, Seq: s.seq}); err != nil {
+	if err := vol.PersistJSON(s.document, rulesFile{Rules: s.rules, Seq: s.seq}); err != nil {
 		return fmt.Errorf("write rules: %w", err)
 	}
 	return nil
@@ -102,9 +104,19 @@ func (s *Store) Get(id string) (Rule, bool, error) {
 // Rev/UpdatedAt (and CreatedAt/Order on create — Order defaults to the next
 // slot at the end of the list unless the caller already set one).
 func (s *Store) Upsert(r Rule) (Rule, error) {
+	var result0 Rule
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptUpsert(r)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptUpsert(r Rule) (Rule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return Rule{}, err
 	}
@@ -159,9 +171,19 @@ func (s *Store) Upsert(r Rule) (Rule, error) {
 // Delete removes a rule outright (rules aren't sync-tracked by any other
 // consumer, so no tombstone/GC machinery is needed).
 func (s *Store) Delete(id string) (bool, error) {
+	var result0 bool
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptDelete(id)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptDelete(id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return false, err
 	}
@@ -186,9 +208,13 @@ func (s *Store) Delete(id string) (bool, error) {
 // each), leaving any rule ID not present in ids untouched. Unknown IDs in
 // ids are ignored.
 func (s *Store) Reorder(ids []string) error {
+	return vol.Retry(func() error { return s.attemptReorder(ids) })
+}
+
+func (s *Store) attemptReorder(ids []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}

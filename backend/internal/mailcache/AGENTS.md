@@ -17,6 +17,8 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
 
 ## Local Contracts
 
+- Storage is selected through `vol.OpenDocument` at construction. File mode retains the file behavior below; table mode reloads the row and CAS-retries the complete mutation. Keep new writers on that seam, including key-generation and privacy updates. Shared contracts: [../vol/AGENTS.md](../vol/AGENTS.md).
+
 - `sourceIdentity` survives every cache write. API/daemon preflight and bind before consuming mail IDs; a different native namespace or mode is refused. Legacy windows cannot adopt native sources. This cache is not migration authority: state admission must also succeed. Native HTTP ignores unscoped cursors and returns fresh full snapshots until durable scoped deltas are qualified.
 
 - Native API/daemon admission also calls `BindMessageReferencePrefix` after source binding. Under the shared file lock, a changed prefix discards all rebuildable windows before use; persist the prefix across every write and preserve source/body-omission policy. Numeric mailbox/UID keys and Sent privacy rules stay unchanged. This prevents fresh wire IDs from laundering old cached bodies/PGP verdicts after rollback. Generation rotation requires stopped workers; older writers and mixed-root live rollback remain unsupported.

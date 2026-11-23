@@ -3,6 +3,7 @@ package sso
 import (
 	"context"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"os"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func (s *NativeDomainStore) persist(d NativeDomain) error {
 		return err
 	}
 	set.Domains[d.Domain] = d
-	return s.persistSet(set)
+	return s.persistSetDocument(set, vol.OpenDocument(s.path))
 }
 
 func TestNativeDomainProofAndFailure(t *testing.T) {

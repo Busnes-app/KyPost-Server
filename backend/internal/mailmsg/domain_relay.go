@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/smtp"
 	"net/textproto"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 var ErrDomainRelay = errors.New("domain relay configuration missing or invalid; preserve the configuration and master key, then restore or reconfigure through the admin API")
@@ -252,23 +252,30 @@ func SealDomainRelay(c DomainRelay, key []byte) ([]byte, error) {
 
 // ReadDomainRelayAnyVersion returns version 0 when the file is absent.
 func ReadDomainRelayAnyVersion(path, keyPath string) (DomainRelay, int, error) {
-	f, err := os.Open(path)
+	return readDomainRelayDocument(vol.OpenDocument(path), keyPath)
+}
+
+func readDomainRelayDocument(doc *vol.Document, keyPath string) (DomainRelay, int, error) {
+	raw, err := doc.Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return DomainRelay{}, 0, nil
 	}
-	if err != nil {
-		return DomainRelay{}, 0, ErrDomainRelay
-	}
-	defer f.Close()
-	raw, err := io.ReadAll(io.LimitReader(f, maxDomainRelayFile+1))
 	if err != nil || len(raw) > maxDomainRelayFile {
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
-	key, err := cryptutil.LoadKey(keyPath) // Never replace a missing decryption key.
+	key, err := cryptutil.LoadKey(keyPath)
 	if err != nil {
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
 	return DecodeDomainRelay(raw, key)
+}
+
+func currentDomainRelayDocument(doc *vol.Document, keyPath string) (DomainRelay, bool, error) {
+	c, version, err := readDomainRelayDocument(doc, keyPath)
+	if version != 0 && version != 2 {
+		return DomainRelay{}, false, ErrDomainRelay
+	}
+	return c, version != 0, err
 }
 
 // ReadDomainRelay is the runtime reader: version 2 only. A version-1 file
@@ -306,18 +313,28 @@ func ReconcileDKIMKeys(ctx context.Context, path, keyPath string) (bool, error) 
 		return false, err
 	}
 	defer release()
-	prior, exists, err := ReadDomainRelay(path, keyPath)
-	if err != nil || !exists || prior.Mode != "direct" {
-		return false, err
-	}
-	c := prior
-	if err := c.keepDKIMKeys(prior.DKIM, time.Now()); err != nil {
-		return false, err
-	}
-	if c.Equal(prior) {
-		return false, nil
-	}
-	return true, writeDomainRelay(ctx, path, keyPath, c)
+	doc := vol.OpenDocument(path)
+	var result bool
+	err = vol.Retry(func() error {
+		var attemptErr error
+		result, attemptErr = func() (bool, error) {
+			prior, exists, err := currentDomainRelayDocument(doc, keyPath)
+			if err != nil || !exists || prior.Mode != "direct" {
+				return false, err
+			}
+			c := prior
+			if err := c.keepDKIMKeys(prior.DKIM, time.Now()); err != nil {
+				return false, err
+			}
+			if c.Equal(prior) {
+				return false, nil
+			}
+			return true, writeDomainRelayDocument(ctx, doc, path, keyPath, c)
+
+		}()
+		return attemptErr
+	})
+	return result, err
 }
 
 // Domains leaving the set move to RetiredDomains; re-added ones leave it.
@@ -328,37 +345,47 @@ func saveDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay, t
 		return DomainRelay{}, err
 	}
 	defer release()
-	prior, exists, err := ReadDomainRelay(path, keyPath)
-	if err != nil || !exists && !transport || exists && transport && prior.Issuer != c.Issuer {
-		return DomainRelay{}, ErrDomainRelay
-	}
-	if transport {
-		if c.Generation, err = fsutil.NewUUIDv4(); err != nil {
-			return DomainRelay{}, ErrDomainRelay
-		}
-	} else {
-		c = prior
-	}
-	c.Domains, c.RetiredDomains = domains, nil
-	for _, domain := range slices.Concat(prior.Domains, prior.RetiredDomains) {
-		if !slices.Contains(domains, domain) {
-			c.RetiredDomains = append(c.RetiredDomains, domain)
-		}
-	}
-	slices.Sort(c.RetiredDomains)
-	if c.Validate() != nil {
-		return DomainRelay{}, ErrDomainRelay
-	}
-	if err := c.keepDKIMKeys(prior.DKIM, time.Now()); err != nil {
-		return DomainRelay{}, err
-	}
-	if err := writeDomainRelay(ctx, path, keyPath, c); err != nil {
-		return DomainRelay{}, err
-	}
-	return c, nil
+	doc := vol.OpenDocument(path)
+	var result DomainRelay
+	err = vol.Retry(func() error {
+		var attemptErr error
+		result, attemptErr = func() (DomainRelay, error) {
+			prior, exists, err := currentDomainRelayDocument(doc, keyPath)
+			if err != nil || !exists && !transport || exists && transport && prior.Issuer != c.Issuer {
+				return DomainRelay{}, ErrDomainRelay
+			}
+			if transport {
+				if c.Generation, err = fsutil.NewUUIDv4(); err != nil {
+					return DomainRelay{}, ErrDomainRelay
+				}
+			} else {
+				c = prior
+			}
+			c.Domains, c.RetiredDomains = domains, nil
+			for _, domain := range slices.Concat(prior.Domains, prior.RetiredDomains) {
+				if !slices.Contains(domains, domain) {
+					c.RetiredDomains = append(c.RetiredDomains, domain)
+				}
+			}
+			slices.Sort(c.RetiredDomains)
+			if c.Validate() != nil {
+				return DomainRelay{}, ErrDomainRelay
+			}
+			if err := c.keepDKIMKeys(prior.DKIM, time.Now()); err != nil {
+				return DomainRelay{}, err
+			}
+			if err := writeDomainRelayDocument(ctx, doc, path, keyPath, c); err != nil {
+				return DomainRelay{}, err
+			}
+			return c, nil
+
+		}()
+		return attemptErr
+	})
+	return result, err
 }
 
-func writeDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay) error {
+func writeDomainRelayDocument(ctx context.Context, doc *vol.Document, path, keyPath string, c DomainRelay) error {
 	key, err := cryptutil.LoadOrCreateKey(keyPath)
 	if err != nil {
 		return ErrDomainRelay
@@ -369,6 +396,9 @@ func writeDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay) 
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if doc.IsTable() {
+		return doc.Write(raw)
 	}
 	return relayWriteFile(path, raw, 0600)
 }

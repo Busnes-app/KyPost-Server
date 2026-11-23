@@ -3,13 +3,12 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // mailDefaults are instance-wide server settings an admin publishes so a new
@@ -29,7 +28,7 @@ func (s *Server) mailDefaultsPath() string {
 // loadMailDefaults returns the zero value when the file does not exist.
 func (s *Server) loadMailDefaults() (mailDefaults, error) {
 	var d mailDefaults
-	raw, err := os.ReadFile(s.mailDefaultsPath())
+	raw, err := vol.OpenDocument(s.mailDefaultsPath()).Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return d, nil
 	}
@@ -46,7 +45,7 @@ func (s *Server) handleMailDefaults(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			ac, _ := authFromContext(r)
 			s.logger.Error("failed to read mail defaults", "user_id", ac.UserID, "error", err.Error())
-			http.Error(w, "failed to read mail defaults", http.StatusInternalServerError)
+			http.Error(w, "failed to read mail defaults", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, d)
@@ -63,8 +62,8 @@ func (s *Server) handleMailDefaults(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		raw, _ := json.MarshalIndent(d, "", "  ")
-		if err := fsutil.AtomicWriteFile(s.mailDefaultsPath(), raw, 0o600); err != nil {
-			http.Error(w, "failed to save mail defaults", http.StatusInternalServerError)
+		if err := vol.OpenDocument(s.mailDefaultsPath()).Replace(raw); err != nil {
+			http.Error(w, "failed to save mail defaults", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		ac, _ := authFromContext(r)

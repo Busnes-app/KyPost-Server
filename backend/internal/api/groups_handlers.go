@@ -22,14 +22,14 @@ func groupFromPayload(id, name string) groups.Group {
 func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 	store, err := s.groupsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open groups store", http.StatusInternalServerError)
+		http.Error(w, "failed to open groups store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		list, err := store.List()
 		if err != nil {
-			http.Error(w, "failed to read groups", http.StatusInternalServerError)
+			http.Error(w, "failed to read groups", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"groups": list})
@@ -46,7 +46,7 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		created, err := store.Upsert(groupFromPayload("", name))
 		if err != nil {
-			http.Error(w, "failed to create group", http.StatusInternalServerError)
+			http.Error(w, "failed to create group", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, created)
@@ -61,7 +61,7 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGroupByID(w http.ResponseWriter, r *http.Request) {
 	store, err := s.groupsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open groups store", http.StatusInternalServerError)
+		http.Error(w, "failed to open groups store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
@@ -73,7 +73,7 @@ func (s *Server) handleGroupByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		_, ok, err := store.Get(id)
 		if err != nil {
-			http.Error(w, "failed to read groups", http.StatusInternalServerError)
+			http.Error(w, "failed to read groups", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if !ok {
@@ -92,19 +92,19 @@ func (s *Server) handleGroupByID(w http.ResponseWriter, r *http.Request) {
 		}
 		updated, err := store.Upsert(groupFromPayload(id, name))
 		if err != nil {
-			http.Error(w, "failed to rename group", http.StatusInternalServerError)
+			http.Error(w, "failed to rename group", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, updated)
 	case http.MethodDelete:
 		removed, err := store.Delete(id)
 		if err != nil {
-			http.Error(w, "failed to delete group", http.StatusInternalServerError)
+			http.Error(w, "failed to delete group", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if removed {
 			if err := s.removeGroupFromContacts(r, id); err != nil {
-				http.Error(w, "group deleted but failed to update contacts", http.StatusInternalServerError)
+				http.Error(w, "group deleted but failed to update contacts", documentStatus(err, http.StatusInternalServerError))
 				return
 			}
 		}

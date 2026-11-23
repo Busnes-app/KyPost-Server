@@ -5,16 +5,15 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"net/http"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,7 +49,7 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		payload, exists, err := mailmsg.ReadIMAPConfigPayload(imapConfigPath, s.imapConfigKeyPath)
 		if err != nil {
-			http.Error(w, "failed to read imap configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to read imap configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if !exists {
@@ -61,7 +60,7 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		if managed, err := s.imapConfigManaged(imapConfigPath); err != nil {
 			s.logger.Error("failed to read imap configuration", "user_id", ac.UserID, "error", err.Error())
-			http.Error(w, "failed to read imap configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to read imap configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		} else if managed {
 			http.Error(w, "mail settings are managed by your administrator", http.StatusForbidden)
@@ -90,12 +89,12 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		payload.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
-		if err := os.MkdirAll(filepath.Dir(imapConfigPath), 0o700); err != nil {
-			http.Error(w, "failed to create imap configuration directory", http.StatusInternalServerError)
+		if err := vol.OpenDocument(imapConfigPath).Mkdir(0o700); err != nil {
+			http.Error(w, "failed to create imap configuration directory", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if err := writeIMAPConfigPayload(imapConfigPath, s.imapConfigKeyPath, payload); err != nil {
-			http.Error(w, "failed to save imap configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to save imap configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		s.invalidateUserMail(ac.UserID)
@@ -106,14 +105,14 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		if managed, err := s.imapConfigManaged(imapConfigPath); err != nil {
 			s.logger.Error("failed to read imap configuration", "user_id", ac.UserID, "error", err.Error())
-			http.Error(w, "failed to read imap configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to read imap configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		} else if managed {
 			http.Error(w, "mail settings are managed by your administrator", http.StatusForbidden)
 			return
 		}
-		if err := os.Remove(imapConfigPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "failed to remove imap configuration", http.StatusInternalServerError)
+		if err := vol.RemoveFile(imapConfigPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "failed to remove imap configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		s.invalidateUserMail(ac.UserID)
@@ -189,7 +188,7 @@ func (s *Server) handleIMAPTest(w http.ResponseWriter, r *http.Request) {
 	case !suppliedHost && !suppliedUser && !suppliedPass:
 		stored, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(ac.UserID), s.imapConfigKeyPath)
 		if err != nil {
-			http.Error(w, "failed to load imap configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to load imap configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if !exists {
@@ -256,7 +255,7 @@ func writeEncryptedPayload(path, keyPath string, payload []byte) error {
 		return err
 	}
 
-	return fsutil.AtomicWriteFile(path, b, 0o600)
+	return vol.OpenDocument(path).Replace(b)
 }
 
 // decryptEncryptedPayload reverses writeEncryptedPayload. It is a thin

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"net/http"
 	"net/url"
@@ -941,7 +942,7 @@ func (p *Poller) mailboxTickContext(u users.User, mailboxID string, imapConfigMo
 	}
 
 	tuning := ""
-	if b, err := os.ReadFile(p.userTuningPath(u.ID)); err == nil {
+	if b, err := vol.OpenDocument(p.userTuningPath(u.ID)).Read(); err == nil {
 		tuning = strings.TrimSpace(string(b))
 	}
 

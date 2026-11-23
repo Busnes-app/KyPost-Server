@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -33,13 +34,17 @@ type davCredentialCacheEntry struct {
 // revoke an app password by deleting or rewriting carddav-auth.json on the shared volume; a
 // cached credential is used only while the file is the one it was verified against.
 type fileIdentity struct {
-	size int64
-	mod  time.Time
-	ino  uint64
-	ok   bool
+	size     int64
+	revision int64
+	mod      time.Time
+	ino      uint64
+	ok       bool
 }
 
 func fileIdentityOf(path string) fileIdentity {
+	if rev, table, err := vol.OpenDocument(path).Version(); table {
+		return fileIdentity{revision: rev, ok: err == nil}
+	}
 	fi, err := os.Stat(path)
 	if err != nil {
 		return fileIdentity{}
@@ -350,12 +355,17 @@ func (s *Server) rehashDAVAppPassword(ctx context.Context, userID, verifiedHash,
 	if s.davCredentials.currentGeneration() != gen {
 		return
 	}
-	err = fsutil.WithFileLock(s.userCardDAVAuthPath(userID), func() error {
-		current, exists, err := s.readDAVPassword(userID)
+	doc := vol.OpenDocument(s.userCardDAVAuthPath(userID))
+	err = doc.Update(func() error {
+		current, exists, err := readDAVDocument(doc)
 		if err != nil || !exists || current.Hash != verifiedHash {
 			return nil
 		}
-		return s.writeDAVPassword(userID, davPasswordFile{Hash: hash, CreatedAt: current.CreatedAt})
+		body, err := json.MarshalIndent(davPasswordFile{Hash: hash, CreatedAt: current.CreatedAt}, "", "  ")
+		if err != nil {
+			return err
+		}
+		return doc.Write(body)
 	})
 	if err != nil {
 		s.logger.Error("carddav app-password hash upgrade failed to persist", "user_id", userID, "error", err.Error())

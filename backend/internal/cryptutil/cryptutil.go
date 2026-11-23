@@ -89,6 +89,11 @@ func decodeKey(raw []byte) ([]byte, error) {
 // Seal AES-GCM encrypts payload with key, returning the envelope ready to be
 // marshaled to disk.
 func Seal(payload, key []byte) (EncryptedPayload, error) {
+	return SealAssociated(payload, key, nil)
+}
+
+// SealAssociated seals payload and authenticates its storage identity alongside it.
+func SealAssociated(payload, key, associated []byte) (EncryptedPayload, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return EncryptedPayload{}, err
@@ -103,7 +108,7 @@ func Seal(payload, key []byte) (EncryptedPayload, error) {
 		return EncryptedPayload{}, err
 	}
 
-	sealed := gcm.Seal(nil, nonce, payload, nil)
+	sealed := gcm.Seal(nil, nonce, payload, associated)
 	return EncryptedPayload{
 		Version:    1,
 		Nonce:      base64.StdEncoding.EncodeToString(nonce),
@@ -191,6 +196,11 @@ func OpenBytes(raw []byte, keyPath string) ([]byte, error) {
 
 // Open AES-GCM decrypts env with key.
 func Open(env EncryptedPayload, key []byte) ([]byte, error) {
+	return OpenAssociated(env, key, nil)
+}
+
+// OpenAssociated refuses an envelope copied to another authenticated identity.
+func OpenAssociated(env EncryptedPayload, key, associated []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -210,5 +220,5 @@ func Open(env EncryptedPayload, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gcm.Open(nil, nonce, ciphertext, nil)
+	return gcm.Open(nil, nonce, ciphertext, associated)
 }

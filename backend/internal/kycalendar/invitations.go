@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // maxInvitations bounds one user's record; the oldest entries go first.
@@ -32,8 +32,10 @@ func OpenInvitations(userStateDir string) Invitations {
 	return Invitations{path: filepath.Join(userStateDir, "kycalendar-invitations.json")}
 }
 
-func (s Invitations) load() ([]invitation, error) {
-	raw, err := os.ReadFile(s.path)
+func (s Invitations) load() ([]invitation, error) { return s.loadDocument(vol.OpenDocument(s.path)) }
+
+func (s Invitations) loadDocument(doc *vol.Document) ([]invitation, error) {
+	raw, err := doc.Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -47,11 +49,12 @@ func (s Invitations) load() ([]invitation, error) {
 // Record notes an invitation with uid from organizer. Idempotent.
 func (s Invitations) Record(uid, organizer string) error {
 	organizer = strings.ToLower(organizer)
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	doc := vol.OpenDocument(s.path)
+	if err := doc.Mkdir(0o700); err != nil {
 		return err
 	}
-	return fsutil.WithFileLock(s.path, func() error {
-		list, err := s.load()
+	return doc.Update(func() error {
+		list, err := s.loadDocument(doc)
 		if err != nil {
 			return err
 		}
@@ -68,7 +71,7 @@ func (s Invitations) Record(uid, organizer string) error {
 		if err != nil {
 			return err
 		}
-		return fsutil.AtomicWriteFile(s.path, raw, 0o600)
+		return doc.Write(raw)
 	})
 }
 

@@ -269,12 +269,7 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
   with no tombstone and no timing argument. A restore sets the sequence above the restored
   table's highest revision before any replica starts. The SQLite DDL exists only for the capsule
   copy (K "PR 1 as built"). Multi mode never writes through it.
-- **Size.** Each document has a cap, refused at the write. **The figure is provisional**:
-  16 MiB is a placeholder, not derived from anything. Before any store moves, MH2 measures each
-  store's largest legitimate document: each store's own limits, and the worst case its existing
-  tests build, as `TestEvidenceWorstCaseSize` does for evidence. The cap is then set at or above
-  the largest of those, so the table never refuses a write that the file implementation accepts.
-  Each store keeps its own caps.
+- **Size (owner answer, 2026-11-23).** Table-mode documents have a **64 MiB plaintext cap**. The owner approved this after code inspection found no finite aggregate byte bound for contacts or mail-cache files: 10,000 live contacts do not bound their variable-width fields, and 5,000 entries per cache window do not bound all window bodies. This supersedes MH1's 16 MiB placeholder and the earlier requirement to accept every possible file document. Ordinary single-tenant files remain unchanged. MH8 must refuse an oversized source file explicitly before publishing a migration; it must never truncate or omit one. Ciphertext overhead is additional, and the capsule library's separate per-file/total caps still apply.
 - **Class and owner.** `owner` is the owning user's ID for a D row and NULL for a P row. The
   seam sets it on every write and never takes it from the request:
   - from the path for `users/<id>/…`;
@@ -1158,6 +1153,22 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
   (endpoints per region code) and RX R4's enrolment (one gateway row per cell). RX step 3 (PostgreSQL as its
   own replicated service with a synchronous standby, RX R5) stays a launch prerequisite outside it.
 
+## MH2 document adapters as built (2026-11-23)
+
+This is the first MH2 implementation PR, with startup still refusing `multi`. It is not the multi-host launch gate. Paths are under `backend/internal/` unless prefixed otherwise.
+
+- `volumes/store.go` registers `volumes.db` (`kypost_volumes`) with matching PostgreSQL and SQLite capsule DDL for `documents` and `doc_keys`. `tenancy.DocumentRows` reads it there; `tenancy.db` no longer owns documents. Existing database import repairs the document identity sequence above restored revisions.
+- `app/documents.go` chooses table mode before stores open: multi, or a PostgreSQL root state record `volume_stores=postgres`. No migration command writes that record yet (MH8). A normal single start creates no volume database or document master key. Missing provisioned `documents.key` or required storage refuses table selection.
+- `vol.Document` keeps one observed revision per store operation. Read/modify/write adapters retry the complete mutation five times, then return `ErrBusy`; API document failures map contention to 503. File mode retains its directory modes, serialization and atomic bytes.
+- The adapters cover root/user config, mail defaults, SSO settings and v3 stubs, native domains/relay/DKIM, WKD, contacts/groups/rules/send-as, PGP preferences/suppressions, calendar flags/invitations, mail cache (including key-generation invalidation), CardDAV credentials, tuning, incoming-encryption journals, photos, pickup and recovery markers. Prepared-mailbox metadata reads also use the seam. Creating/publishing mailbox preparations and their cross-store fences remain MH4, after MH3's accounts guard; this stage does not make separate-host provisioning startable.
+- `vol.Table` seals every owner-bearing body with AES-GCM, under an org data key wrapped with the provisioned master. Associated data binds root, path, owner and org. Mailbox ownership comes from the ledger; pickup ownership comes from the retained record. Platform bodies remain readable. A key and its first document commit together. MH3 still must lock the owner's account row before either can be created; the final purge check is the guard in this gated stage, as designed above.
+- Photo directory admission checks exact plaintext lengths and writes inside the same shared writer transaction. Pickup consumes by CAS before returning content; competing replicas cannot both consume it. Sweeps remove their observed revisions. Platform restore-marker moves are atomic and refuse a stale checked revision.
+- `volumes.PurgeDocuments` deletes by the snapshot owners across roots and paths, including photos and pickup. Whole-org purge then deletes its wrapped key; one-member erasure keeps the key for surviving members. The final check includes documents and keys. Classification explicitly includes `contact-photos`, `volumes.db`, `doc_keys` and `documents.key`.
+- Backup collection exports `volumes.db` and required keys. A table-document recipe requires that database instead of duplicating root config; stale source documents are excluded. Authenticated SQLite staging reads through the seam, including native metadata, hold/qualification markers and CardDAV revocation. Both outer document seals and nested credential/pickup encryption must open before validation succeeds. The existing capsule size limits remain: an oversized aggregate database refuses a backup rather than dropping data. Large-database backup delivery is not solved here.
+- Tests include private-root shared stores, CAS/ABA and bounded contention, cross-path/root/user/org ciphertext copy refusals, corrupt/missing keys, concurrent org-key creation, exact photo lengths and competing admission, one-use pickup consumption and expiry, whole-org/member purge key behavior, a table-backed `TestCrossOrgMatrix`, root-config follower revision reads, sealed capsule/restore including a photo and nested credential key, and unchanged SQLite/PostgreSQL single-tenant upgrade snapshots. PostgreSQL CI includes `internal/volumes`.
+
+The owner approved the 64 MiB rule in this thread on 2026-11-23. MH3's owner-row guard, MH4's preparation publication/fences, MH5's complete key-set provisioning, MH7's volume-free assertion, MH8's opt-in migration/refusal checks, regional cells and object storage remain separate work. No SaaS-readiness claim is made.
+
 ## Threat model
 
 | Attacker or fault | Goal or effect | Defence |
@@ -1233,8 +1244,7 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
    multi-host"). Changed PRs: MH2 (the `volumes.db` move, table-mode selection), MH3, MH5 and MH7
    (table mode), MH8 (new). Proof: "Proof that an un-migrated install is untouched".
 2. **Object storage for photos and large documents?** *Approved as recommended (2026-11-22):* no.
-   PostgreSQL `BYTEA` with a per-document cap set from MH2's measured bounds (16 MiB is a
-   placeholder). *Overturned for message bodies (2026-11-23):* on the hosted install, attachments
+   PostgreSQL `BYTEA`. The owner approved a 64 MiB plaintext cap on 2026-11-23, with oversized files refusing migration and ordinary file mode unchanged. *Overturned for message bodies (2026-11-23):* on the hosted install, attachments
    and large message bodies go to object storage ("Object storage for message bodies", MH11).
    Documents stay in PostgreSQL as approved.
 3. **Local backup copies in multi mode?** *Approved as recommended (2026-11-22):* refused, and a

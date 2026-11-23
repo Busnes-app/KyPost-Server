@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // defaultTombstoneRetention is how long a deleted contact's tombstone is kept
@@ -37,6 +37,7 @@ type Store struct {
 	// pgpKeyGen changes whenever any contact's PGP key material or address set
 	// changes. See PGPKeyGeneration.
 	pgpKeyGen int64
+	document  *vol.Document
 }
 
 type contactsFile struct {
@@ -47,11 +48,12 @@ type contactsFile struct {
 }
 
 func New(baseDir string) (*Store, error) {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	s := &Store{baseDir: baseDir, contacts: []Contact{}}
+	s.document = vol.OpenDocument(s.path())
+	if err := s.document.Mkdir(0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{baseDir: baseDir, contacts: []Contact{}}
-	if err := s.load(); err != nil {
+	if err := vol.Retry(s.load); err != nil {
 		return nil, err
 	}
 	if err := s.stripPrivatePGPKeys(); err != nil {
@@ -65,7 +67,7 @@ func (s *Store) path() string {
 }
 
 func (s *Store) load() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, s.persistLocked)
+	return vol.LoadJSON(s.document, s.applyFile, s.persistLocked)
 }
 
 func (s *Store) applyFile(cf contactsFile) {
@@ -84,7 +86,7 @@ func (s *Store) applyFile(cf contactsFile) {
 // from the last copy that happened to load is how a key the user removed keeps
 // authorizing. Every reader below propagates it and every caller fails closed.
 func (s *Store) refreshFromDiskLocked() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, nil)
+	return vol.LoadJSON(s.document, s.applyFile, nil)
 }
 
 func (s *Store) persistLocked() error {
@@ -94,7 +96,7 @@ func (s *Store) persistLocked() error {
 		GCHighWaterRev: s.gcHighWaterRev,
 		PGPKeyGen:      s.pgpKeyGen,
 	}
-	if err := fsutil.PersistJSONFile(s.path(), cf); err != nil {
+	if err := vol.PersistJSON(s.document, cf); err != nil {
 		return fmt.Errorf("write contacts: %w", err)
 	}
 	return nil
@@ -139,9 +141,19 @@ func (s *Store) Get(uid string) (Contact, bool, error) {
 // need the precondition check to be atomic with the write (so a concurrent
 // writer can't slip in between) must use UpsertIfMatch instead.
 func (s *Store) Upsert(c Contact) (Contact, error) {
+	var result0 Contact
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptUpsert(c)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptUpsert(c Contact) (Contact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return Contact{}, err
 	}
@@ -158,9 +170,20 @@ func (s *Store) Upsert(c Contact) (Contact, error) {
 // can change it; the photo upload and delete handlers are the only legitimate
 // writers. Returns false if uid is unknown.
 func (s *Store) SetPhotoRef(uid, ref string) (Contact, bool, error) {
+	var result0 Contact
+	var result1 bool
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, result1, callErr = s.attemptSetPhotoRef(uid, ref)
+		return callErr
+	})
+	return result0, result1, retryErr
+}
+
+func (s *Store) attemptSetPhotoRef(uid, ref string) (Contact, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return Contact{}, false, err
 	}
@@ -208,9 +231,19 @@ type ContactPrecondition struct {
 // they both read moments earlier) can't both pass the check and silently
 // clobber each other — the second one gets ErrPreconditionFailed instead.
 func (s *Store) UpsertWithPrecondition(c Contact, precondition ContactPrecondition) (Contact, error) {
+	var result0 Contact
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptUpsertWithPrecondition(c, precondition)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptUpsertWithPrecondition(c Contact, precondition ContactPrecondition) (Contact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return Contact{}, err
 	}
@@ -310,9 +343,20 @@ var ErrPGPKeyMismatch = errors.New("the fingerprint does not match this contact'
 // its owner. fingerprint must equal the pin, spaces ignored; ok is false when
 // there is no such live contact.
 func (s *Store) ConfirmPGPKey(uid, fingerprint string) (c Contact, ok bool, err error) {
+	var result0 Contact
+	var result1 bool
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, result1, callErr = s.attemptConfirmPGPKey(uid, fingerprint)
+		return callErr
+	})
+	return result0, result1, retryErr
+}
+
+func (s *Store) attemptConfirmPGPKey(uid, fingerprint string) (c Contact, ok bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return Contact{}, false, err
 	}
@@ -476,9 +520,19 @@ func (s *Store) applyDeleteLocked(uid string) bool {
 // identity/bookkeeping) so sync consumers can observe the deletion. Returns
 // false if no contact with that UID exists.
 func (s *Store) Delete(uid string) (bool, error) {
+	var result0 bool
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptDelete(uid)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptDelete(uid string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return false, err
 	}
@@ -503,9 +557,20 @@ func (s *Store) Delete(uid string) (bool, error) {
 // ChangedSince reports the change to sync clients; a call that changes nothing
 // is a no-op. Returns found=false if uid does not exist.
 func (s *Store) SetSelf(uid string, self bool) (Contact, bool, error) {
+	var result0 Contact
+	var result1 bool
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, result1, callErr = s.attemptSetSelf(uid, self)
+		return callErr
+	})
+	return result0, result1, retryErr
+}
+
+func (s *Store) attemptSetSelf(uid string, self bool) (Contact, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return Contact{}, false, err
 	}
@@ -625,9 +690,19 @@ type DedupeReport struct {
 // list; losers get MergedInto set. The whole pass is applied under the lock and
 // persisted once. It is idempotent — a second run finds no live duplicates.
 func (s *Store) Dedupe() (DedupeReport, error) {
+	var result0 DedupeReport
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptDedupe()
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptDedupe() (DedupeReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return DedupeReport{}, err
 	}
@@ -701,12 +776,16 @@ func (s *Store) Dedupe() (DedupeReport, error) {
 // defaultTombstoneRetention), recording the highest purged Rev as the new GC
 // watermark so ChangedSince can detect stale cursors.
 func (s *Store) GC(retention time.Duration) error {
+	return vol.Retry(func() error { return s.attemptGC(retention) })
+}
+
+func (s *Store) attemptGC(retention time.Duration) error {
 	if retention <= 0 {
 		retention = defaultTombstoneRetention
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}
@@ -854,12 +933,16 @@ type BatchOp struct {
 // meaningful, or nothing does. The in-memory state is restored on failure, not
 // left ahead of the file.
 func (s *Store) ApplyBatch(ops []BatchOp) error {
+	return vol.Retry(func() error { return s.attemptApplyBatch(ops) })
+}
+
+func (s *Store) attemptApplyBatch(ops []BatchOp) error {
 	if len(ops) == 0 {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}
@@ -947,9 +1030,13 @@ func publicPGPKey(armored string) string {
 // part. Runs on every open: a no-op once clean, and a crash before the atomic
 // write leaves the file as it was.
 func (s *Store) stripPrivatePGPKeys() error {
+	return vol.Retry(func() error { return s.attemptStripPrivatePGPKeys() })
+}
+
+func (s *Store) attemptStripPrivatePGPKeys() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}

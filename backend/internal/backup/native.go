@@ -25,9 +25,16 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
+	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
 func nativeSnapshot(dir string) (bool, error) {
+	release, err := documentSnapshot(dir, true)
+	if err != nil {
+		return true, err
+	}
+	defer release()
 	// Snapshots may predate migration, so domain and relay accept both formats.
 	relay, relayVersion, err := mailmsg.ReadDomainRelayAnyVersion(filepath.Join(dir, "config/native-relay.json"), filepath.Join(dir, "private/native-relay.key"))
 	if err != nil {
@@ -56,6 +63,9 @@ func nativeSnapshot(dir string) (bool, error) {
 			return true, err
 		}
 	}
+	if err := validateDocumentSnapshot(dir); err != nil {
+		return true, err
+	}
 	native, err := sso.NewLifecycleStore(filepath.Join(dir, "config")).ValidateNativeSnapshot(filepath.Join(dir, "state"), doc.Users)
 	if native && usersErr != nil {
 		return true, usersErr
@@ -71,7 +81,7 @@ func nativeSnapshot(dir string) (bool, error) {
 		}
 		if !entry.IsDir() && snapshotDatabase(entry.Name()) {
 			// tenancy.db is the org side store: a multi install is native, and held, by its ledger.
-			if entry.Name() != "state.db" && entry.Name() != tenancy.File {
+			if entry.Name() != "state.db" && entry.Name() != tenancy.File && entry.Name() != volumes.File {
 				native = true
 				if !qualified {
 					return sso.ErrNativeProvisioning
@@ -107,7 +117,7 @@ func validateNativePayload(ctx context.Context, files []recoveryclient.File, sta
 			if _, err := ingress.ParseBlocks(f.Data); err != nil {
 				return fmt.Errorf("refusing to seal %s: %w", f.Path, err)
 			}
-		case "native-provisioning.json", sso.NativeAuthorityFile, sso.NativeDomainsFile, "native-mailbox.json", "mailbox.db", "ingress.db", "native-relay.json":
+		case volumes.File, "native-provisioning.json", sso.NativeAuthorityFile, sso.NativeDomainsFile, "native-mailbox.json", "mailbox.db", "ingress.db", "native-relay.json":
 			native = true
 		case "sso-lifecycle.json":
 			var doc struct {
@@ -143,7 +153,7 @@ func validateNativePayload(ctx context.Context, files []recoveryclient.File, sta
 		}
 		// Validate ownership metadata, relay ciphertext/key and database snapshots.
 		base := filepath.Base(f.Path)
-		if base != "users.json" && base != "sso-lifecycle.json" && base != "native-domain.json" && base != sso.NativeDomainsFile && base != "native-provisioning.json" && base != "native-mailbox.json" && base != "native-relay.json" && base != "native-relay.key" && !snapshotDatabase(base) {
+		if base != "users.json" && base != "sso-lifecycle.json" && base != "native-domain.json" && base != sso.NativeDomainsFile && base != "native-provisioning.json" && base != "native-mailbox.json" && base != "native-relay.json" && base != "native-relay.key" && base != "documents.key" && base != "imap-config.key" && base != "pickup-store.key" && !snapshotDatabase(base) {
 			continue
 		}
 		path := filepath.Join(dir, f.Path)
@@ -177,18 +187,24 @@ var recordQualification = (*sso.LifecycleStore).RecordNativeRestoreQualification
 // QuarantineNativeRestore is post-decryption product validation. It never
 // opens a capsule or handles shares. Leave all restored data intact on failure.
 func QuarantineNativeRestore(dir string) (bool, error) {
+	release, err := documentSnapshot(dir, true)
+	if err != nil {
+		return true, err
+	}
+	defer release()
 	path := filepath.Join(dir, "state", sso.NativeRestoreHoldFile)
-	_, priorErr := os.Lstat(path)
+	prior, priorErr := vol.Exists(path)
 	// A hold persists even when ownership validation fails. Fresh external
 	// reconciliation, not old backup evidence, must authorize its future release.
 	// Persist an unusable epoch first: crypto/rand may terminate the process.
 	// No outstanding reconciliation survives a failed generation attempt.
 	hold := map[string]any{"version": 1, "epoch": "", "reason": "restore_requires_identity_domain_receiver_reconciliation"}
 	// The qualification marker exists only once this run's stages all succeed.
-	if err := os.Remove(filepath.Join(dir, "state", sso.NativeRestoreQualificationFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := vol.RemoveFile(filepath.Join(dir, "state", sso.NativeRestoreQualificationFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return true, fmt.Errorf("cannot remove an earlier native restore qualification; keep workers stopped and preserve staging: %w", err)
 	}
-	holdErr := fsutil.PersistJSONFile(path, hold)
+	holdBody, _ := json.MarshalIndent(hold, "", "  ")
+	holdErr := vol.OpenDocument(path).Replace(holdBody)
 	if holdErr != nil {
 		return true, fmt.Errorf("cannot persist native restore hold; keep workers stopped: %w", holdErr)
 	}
@@ -197,15 +213,17 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 		return true, fmt.Errorf("cannot create native restore epoch; preserve held staging and keep workers stopped: %w", epochErr)
 	}
 	hold["epoch"] = epoch
-	if err := fsutil.PersistJSONFile(path, hold); err != nil {
+	holdBody, _ = json.MarshalIndent(hold, "", "  ")
+	if err := vol.OpenDocument(path).Replace(holdBody); err != nil {
 		return true, fmt.Errorf("cannot persist native restore epoch; preserve held staging and keep workers stopped: %w", err)
 	}
 	native, checkErr := nativeSnapshot(dir)
-	if !native && checkErr == nil && errors.Is(priorErr, os.ErrNotExist) {
-		if err := os.Remove(path); err != nil {
+	if !native && checkErr == nil && priorErr == nil && !prior {
+		doc := vol.OpenDocument(path)
+		if err := vol.RemoveFile(path); err != nil {
 			return true, err
 		}
-		return false, fsutil.SyncDir(filepath.Dir(path))
+		return false, doc.SyncDir()
 	}
 	if checkErr != nil {
 		return true, fmt.Errorf("restored native data is unqualified; keep workers stopped and preserve the staging files for reconciliation: %w", checkErr)
@@ -295,7 +313,7 @@ func fenceRestoredNativeAccounts(dir string) error {
 		if err := revokeRestoredDeviceCredentials(filepath.Join(m.Dir, "state.db"), m.Source); err != nil {
 			return fmt.Errorf("mailbox %s: %w", id, err)
 		}
-		if err := os.Remove(filepath.Join(dir, "config/users", id, "carddav-auth.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := vol.RemoveFile(filepath.Join(dir, "config/users", id, "carddav-auth.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

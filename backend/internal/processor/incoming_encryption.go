@@ -13,14 +13,15 @@ import (
 	"strconv"
 	"strings"
 
+	"bytes"
 	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 var errIncomingRateLimited = errors.New("incoming classification rate limit reached")
@@ -69,16 +70,17 @@ func usableIncomingKey(u users.User) error {
 	return nil
 }
 
-func saveIncomingJob(path string, job incomingJob) error {
+func saveIncomingJob(doc *vol.Document, job incomingJob) error {
 	data, err := json.Marshal(job)
 	if err != nil {
 		return err
 	}
-	return fsutil.AtomicWriteFile(path, data, 0o600)
+	return doc.Write(data)
 }
 
 func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg imapadapter.Message) error {
-	if _, err := os.Stat(p.incomingJobPath(uc.id)); !errors.Is(err, os.ErrNotExist) {
+	doc := vol.OpenDocument(p.incomingJobPath(uc.id))
+	if _, err := doc.Read(); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("an incoming encryption job is pending; retry it before admitting more mail")
 	}
 	mail, ok := uc.mail.(incomingEncryptor)
@@ -184,10 +186,10 @@ func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg ima
 	if _, err := p.users.ReserveIncomingEncryption(uc.id, u.PGPFingerprint, u.PGPRevision); err != nil {
 		return err
 	}
-	if err := saveIncomingJob(p.incomingJobPath(uc.id), job); err != nil {
+	if err := saveIncomingJob(doc, job); err != nil {
 		// AtomicWrite may have committed before directory fsync failed. Preserve
 		// the key reservation whenever the durable job might exist.
-		if _, statErr := os.Stat(p.incomingJobPath(uc.id)); errors.Is(statErr, os.ErrNotExist) {
+		if _, statErr := vol.OpenDocument(p.incomingJobPath(uc.id)).Read(); errors.Is(statErr, os.ErrNotExist) {
 			_ = p.users.ReleaseIncomingEncryption(uc.id)
 		}
 		return err
@@ -197,7 +199,8 @@ func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg ima
 
 func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error {
 	path := p.incomingJobPath(uc.id)
-	file, err := os.Open(path)
+	doc := vol.OpenDocument(path)
+	body, err := doc.Read()
 	if errors.Is(err, os.ErrNotExist) {
 		// A crash between reserving the key and writing the job has not touched
 		// mail storage. Only the single daemon owns creating jobs for this account.
@@ -211,13 +214,10 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 	}
 	var job incomingJob
 	// The ciphertext is base64 in JSON; never accept an unbounded journal read.
-	decodeErr := json.NewDecoder(io.LimitReader(file, mailmsg.MaxInboundMessageBytes*2+1<<20)).Decode(&job)
-	closeErr := file.Close()
+	decodeErr := json.NewDecoder(io.LimitReader(bytes.NewReader(body), mailmsg.MaxInboundMessageBytes*2+1<<20)).Decode(&job)
+
 	if decodeErr != nil {
 		return errors.New("incoming encryption journal is unreadable; preserve it and repair before retrying")
-	}
-	if closeErr != nil {
-		return closeErr
 	}
 	if job.Version != 1 || job.Source.UID <= 0 || job.NextAction < 0 || job.NextAction > len(job.Actions) {
 		return errors.New("invalid incoming encryption journal; preserve it for reconciliation")
@@ -250,7 +250,7 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 	if repaired {
 		job.Decision.Status = "failed"
 		job.Decision.Detail = "encrypted copy retained; invalid saved rule or label values skipped; update filters and labels"
-		if err := saveIncomingJob(path, job); err != nil {
+		if err := saveIncomingJob(doc, job); err != nil {
 			return err
 		}
 	}
@@ -280,7 +280,7 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 			return errors.New("invalid encrypted replacement UID; journal preserved")
 		}
 		job.ReplacementUID = uid
-		if err := saveIncomingJob(path, job); err != nil {
+		if err := saveIncomingJob(doc, job); err != nil {
 			return err
 		}
 	}
@@ -293,7 +293,7 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 		return err
 	}
 	if seen {
-		return p.finishIncomingJournal(uc.id, path)
+		return p.finishIncomingJournal(uc.id, doc)
 	}
 	if !job.LabelsApplied {
 		for _, keyword := range job.Keywords {
@@ -302,7 +302,7 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 			}
 		}
 		job.LabelsApplied = true
-		if err := saveIncomingJob(path, job); err != nil {
+		if err := saveIncomingJob(doc, job); err != nil {
 			return err
 		}
 	}
@@ -312,7 +312,7 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 			return err
 		}
 		job.NextAction++
-		if err := saveIncomingJob(path, job); err != nil {
+		if err := saveIncomingJob(doc, job); err != nil {
 			return err
 		}
 	}
@@ -320,7 +320,7 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 	if err := uc.store.RecordReplacementDecision(originalID, job.Decision); err != nil {
 		return err
 	}
-	if err := p.finishIncomingJournal(uc.id, path); err != nil {
+	if err := p.finishIncomingJournal(uc.id, doc); err != nil {
 		return err
 	}
 	// Do not send the old UID or original subject in notification previews.
@@ -331,11 +331,11 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 	return nil
 }
 
-func (p *Poller) finishIncomingJournal(userID, path string) error {
-	if err := os.Remove(path); err != nil {
+func (p *Poller) finishIncomingJournal(userID string, doc *vol.Document) error {
+	if err := doc.Remove(); err != nil {
 		return err
 	}
-	if err := fsutil.SyncDir(filepath.Dir(path)); err != nil {
+	if err := doc.SyncDir(); err != nil {
 		return err
 	}
 	return p.users.ReleaseIncomingEncryption(userID)

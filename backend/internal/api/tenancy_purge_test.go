@@ -21,6 +21,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
 var errKilled = errors.New("killed by the test")
@@ -388,7 +389,12 @@ func TestPurgeFinalCheckCoversTheClassification(t *testing.T) {
 // the purge from finishing.
 func TestPurgeFinalCheckFindsADocument(t *testing.T) {
 	px := newPurgeFixture(t)
-	if _, err := px.db.Exec(`INSERT INTO documents(root, path, owner, revision, body, updated_at) VALUES('config', 'users/u-doc/rules.json', 'u-doc', 1, ?, 1)`, []byte("{}")); err != nil {
+	db, err := volumes.Open(px.srv.stateDir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO documents(root, path, owner, revision, body, updated_at) VALUES('config', 'users/u-doc/rules.json', 'u-doc', 1, ?, 1)`, []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
 	left, err := px.srv.purgeLeft(context.Background(), tenancy.PurgeSnapshot{Users: []string{"u-doc"}}, func(string) (bool, error) { return false, nil })
@@ -419,4 +425,48 @@ func TestOrgPurgeFailsClosedOnAnUnreadablePickup(t *testing.T) {
 		t.Fatal(err)
 	}
 	px.assertPurged(t)
+}
+
+// Org key deletion follows whole-org purge; member erasure preserves the shared key.
+func TestPurgeDocumentsAndOrgKeys(t *testing.T) {
+	px := newPurgeFixture(t)
+	db, err := volumes.Open(px.srv.stateDir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, m := range []orgMember{px.a, px.other, px.b} {
+		for _, suffix := range []string{"contacts.json", "contact-photos/p.jpg"} {
+			if _, err := db.Exec(`INSERT INTO documents(root,path,owner,revision,body,updated_at) VALUES('state',?,?,1,?,1)`, "users/"+m.ID+"/"+suffix, m.ID, []byte("sealed")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO documents(root,path,owner,revision,body,updated_at) VALUES('state','pickup/p.json',?,1,?,1)`, px.a.ID, []byte("sealed")); err != nil {
+		t.Fatal(err)
+	}
+	for _, org := range []string{orgA, orgB} {
+		if _, err := db.Exec(`INSERT INTO doc_keys(org_id,wrapped,created_at) VALUES(?,?,1)`, org, []byte("wrapped")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The final check must see the wrapped key even when no snapshot-owned document remains.
+	left, err := px.srv.purgeLeft(context.Background(), tenancy.PurgeSnapshot{}, func(string) (bool, error) { return false, nil }, tenancy.PurgeScope{Org: orgA})
+	if err != nil || left["doc_keys"] != 1 {
+		t.Fatal("final check missed org key", left, err)
+	}
+	px.purgeOrgA(t, 0)
+	for _, q := range []string{`SELECT count(*) FROM documents WHERE owner IN ('` + px.a.ID + `','` + px.other.ID + `')`, `SELECT count(*) FROM doc_keys WHERE org_id='` + orgA + `'`} {
+		var n int
+		if err := db.QueryRow(q).Scan(&n); err != nil || n != 0 {
+			t.Fatal("purge left documents/keys", n, err)
+		}
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM documents WHERE owner=?`, px.b.ID).Scan(&n); err != nil || n != 2 {
+		t.Fatal("other org changed", n, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM doc_keys WHERE org_id=?`, orgB).Scan(&n); err != nil || n != 1 {
+		t.Fatal("other org key changed", n, err)
+	}
 }

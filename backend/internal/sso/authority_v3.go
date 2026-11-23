@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -550,7 +551,7 @@ func queryRows(ctx context.Context, db queryer, name, query string, r authorityR
 
 // jsonStub reports whether the file at path is exactly the stub want.
 func jsonStub(path string, want map[string]any) (bool, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := vol.OpenDocument(path).Read()
 	if err != nil {
 		return false, err
 	}

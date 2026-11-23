@@ -28,8 +28,11 @@ func (f File) Read(_ context.Context, path string) ([]byte, int64, error) {
 }
 
 func (f File) Write(_ context.Context, path string, body []byte, rev int64) (int64, error) {
-	if err := checkWrite(path, body, rev); err != nil {
+	if err := CheckPath(path); err != nil {
 		return 0, err
+	}
+	if rev < 0 {
+		return 0, errNegative
 	}
 	return 1, fsutil.AtomicWriteFile(filepath.Join(f.Dir, filepath.FromSlash(path)), body, 0o600)
 }

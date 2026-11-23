@@ -26,6 +26,8 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
+	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,8 +36,16 @@ const scratchDirName = dbbackend.ScratchDir
 
 var required = []string{"config/config.yaml", "config/users.json", "private/totp-secret.key", "state/state.db"}
 
+func requiredFiles(table bool) []string {
+	names := append([]string(nil), required...)
+	if table {
+		names[0] = "state/" + volumes.File
+	}
+	return names
+}
+
 func snapshotDatabase(name string) bool {
-	return name == "state.db" || name == "mailbox.db" || name == "ingress.db" || name == cfreceiving.DBFile || name == sso.NativeAuthorityFile || name == tenancy.File
+	return name == "state.db" || name == "mailbox.db" || name == "ingress.db" || name == cfreceiving.DBFile || name == sso.NativeAuthorityFile || name == tenancy.File || name == volumes.File
 }
 
 // ".v1-migrated" and ".v2-migrated" (native storage migration copies) need
@@ -51,6 +61,8 @@ func (s *Service) Collect() (recoveryclient.Payload, error) { return s.collect(c
 
 func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	var empty recoveryclient.Payload
+	tableDocuments := vol.OpenDocument(filepath.Join(s.dirs.Config, "config.yaml")).IsTable()
+	requiredNames := requiredFiles(tableDocuments)
 	// Individual secret overrides must remain at their canonical location. A
 	// capsule cannot reproduce an arbitrary host mount on a different machine.
 	for env, name := range map[string]string{"IMAP_CONFIG_KEY_FILE": "imap-config.key", "TOTP_SECRET_KEY_FILE": "totp-secret.key", "PGP_PRIVATE_KEY_FILE": "pgp-private-key.key", "PICKUP_STORE_KEY_FILE": "pickup-store.key", "PAIRING_SECRET_FILE": "pairing.key", "POW_SECRET_FILE": "pow.key", "RELAY_IDENTITY_KEY_FILE": "relay-identity.key", "PUSH_RELAY_KEY_FILE": "push_relay_key", "APNS_RELAY_KEY_FILE": "apns_relay_key"} {
@@ -188,6 +200,11 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 						return nil // the SQLite source left after a move to Postgres; its schema is added below
 					}
 				}
+				// A migrated install may retain stale source files. Only the exported
+				// document store is authoritative; never seal a second, obsolete copy.
+				if tableDocuments && r.prefix != "private" && !snapshotDatabase(d.Name()) && d.Name() != "users.json" && d.Name() != "recovery.pub" {
+					return nil
+				}
 				if !d.Type().IsRegular() {
 					return fmt.Errorf("cannot back up non-regular file %s/%s", r.prefix, rel)
 				}
@@ -245,7 +262,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 			return empty, err
 		}
 	}
-	for _, name := range required {
+	for _, name := range requiredNames {
 		if !have[name] {
 			return empty, fmt.Errorf("refusing to seal without %s", name)
 		}
@@ -291,7 +308,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	if err := validateDependencies(files); err != nil {
 		return empty, err
 	}
-	recipe := map[string]any{"version": 1, "mail": ErrMailExcluded, "required": required, "sqlite": "all-state-databases", "imap": "all-stored-credentials", "relay": "domain-credentials-and-authority", "outbox": "encrypted-jobs-claims-and-sent"}
+	recipe := map[string]any{"version": 1, "mail": ErrMailExcluded, "required": requiredNames, "sqlite": "all-state-databases", "imap": "all-stored-credentials", "relay": "domain-credentials-and-authority", "outbox": "encrypted-jobs-claims-and-sent"}
 	staged := map[string]string{}
 	if bulk != nil {
 		for _, rel := range bulk.files {

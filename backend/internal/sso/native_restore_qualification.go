@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"io/fs"
 	"maps"
@@ -61,7 +62,11 @@ func (s *LifecycleStore) RecordNativeRestoreQualification(stateRoot string, crea
 			return err
 		}
 	}
-	return fsutil.PersistJSONFile(filepath.Join(stateRoot, NativeRestoreQualificationFile), q)
+	body, err := json.MarshalIndent(q, "", "  ")
+	if err != nil {
+		return err
+	}
+	return vol.OpenDocument(filepath.Join(stateRoot, NativeRestoreQualificationFile)).Replace(body)
 }
 
 // CheckNativeRestoreQualification is read-only. It returns a
@@ -224,16 +229,22 @@ func (s *LifecycleStore) NativeRestoreMailboxes(stateRoot string) (map[string]Na
 
 func readNativeRestoreQualification(path string) (NativeRestoreQualification, error) {
 	var q NativeRestoreQualification
-	info, err := os.Lstat(path)
+	doc := vol.OpenDocument(path)
+	if !doc.IsTable() {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return q, err
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 1<<20 {
+			return q, errQualificationMalformed
+		}
+	}
+	body, err := doc.Read()
 	if err != nil {
 		return q, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 1<<20 {
+	if len(body) > 1<<20 {
 		return q, errQualificationMalformed
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return q, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()

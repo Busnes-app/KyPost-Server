@@ -36,6 +36,8 @@ derived from it must be invalidated by a mechanism the daemon can reach — see
 
 ## Local Contracts
 
+- Storage is selected through `vol.OpenDocument` at construction. File mode retains the file behavior below; table mode reloads the row and CAS-retries the complete mutation. Keep new writers on that seam, including key-generation and privacy updates. Shared contracts: [../vol/AGENTS.md](../vol/AGENTS.md).
+
 - `Store` is instantiated per user directory (`contacts.New(userStateDir)`),
   mirroring `state.Store` — one file, `contacts.json`, sibling to `state.db`
   in `$STATE_DIR/users/<userID>/`.
