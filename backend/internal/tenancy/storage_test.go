@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,7 +57,7 @@ func TestStorageGrant(t *testing.T) {
 	if s, _, err := NextStorageSeq(ctx, db, orgTwo); err != nil || s != 1 {
 		t.Fatalf("another org's first seq %d %v", s, err)
 	}
-	want := Grant{Used: 10, Ceiling: 50, Expires: time.Unix(now.Add(time.Minute).Unix(), 0)}
+	want := Grant{Used: 10, Reported: 10, Ceiling: 50, Expires: time.Unix(now.Add(time.Minute).Unix(), 0)}
 	// The answer to the older report arrives late: it changes nothing.
 	if err := SetGrant(ctx, db, orgOne, s1, Grant{Used: 99, Ceiling: 1 << 40, Expires: want.Expires}); err != nil {
 		t.Fatal(err)
@@ -232,5 +234,68 @@ func TestReportStorage(t *testing.T) {
 		if _, err := ReportStorage(ctx, dir, make([]StorageReport, n)); err == nil {
 			t.Errorf("%d reports sent", n)
 		}
+	}
+}
+
+// Reservations serialize per org, and a report answer never erases growth admitted
+// while it measured usage or waited for KyIdentity. Failed writes stay conservative.
+func TestStorageReservationsSurviveReport(t *testing.T) {
+	ctx, db := context.Background(), openCache(t).DB
+	seq, _, err := NextStorageSeq(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(time.Minute)
+	if err := SetGrant(ctx, db, orgOne, seq, Grant{Ceiling: 100, Expires: expiry}); err != nil {
+		t.Fatal(err)
+	}
+	var accepted atomic.Int64
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() {
+			ok, err := ReserveStorage(ctx, db, orgOne, 10, time.Now())
+			if err != nil {
+				t.Error(err)
+			}
+			if ok {
+				accepted.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	if accepted.Load() != 10 {
+		t.Fatalf("accepted %d writes into 100 bytes", accepted.Load())
+	}
+	snapshot, err := StorageGrant(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq, _, err = NextStorageSeq(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A deletion is seen by the scan; more writes can spend a renewed old grant
+	// while its HTTP answer is pending.
+	if _, err := db.ExecContext(ctx, `UPDATE org_storage SET ceiling_bytes = 200 WHERE org_id = ?`, orgOne); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := ReserveStorage(ctx, db, orgOne, 30, time.Now()); err != nil || !ok {
+		t.Fatalf("reserve while reporting: %v %v", ok, err)
+	}
+	if err := SetGrant(ctx, db, orgOne, seq, Grant{Used: 40, Admitted: snapshot.Admitted, Ceiling: 80, Expires: expiry}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := StorageGrant(ctx, db, orgOne)
+	if err != nil || g.Used != 70 || g.Admitted != 130 {
+		t.Fatalf("report erased reservations: %+v %v", g, err)
+	}
+	if ok, err := ReserveStorage(ctx, db, orgOne, 11, time.Now()); err != nil || ok {
+		t.Fatalf("spent more than remaining headroom: %v %v", ok, err)
+	}
+	if ok, err := ReserveStorage(ctx, db, orgTwo, 1, time.Now()); err != nil || ok {
+		t.Fatalf("missing org borrowed a grant: %v %v", ok, err)
+	}
+	if ok, err := ReserveStorage(ctx, db, orgOne, 1, expiry); err != nil || ok {
+		t.Fatalf("expired grant: %v %v", ok, err)
 	}
 }

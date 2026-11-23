@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Hosted org storage: reserve cached headroom atomically for each new write, without rescanning mailboxes or photos per imported message. Periodic reports read only the org's member mailboxes and preserve concurrent reservations; deletions release room at the next report.
+
 - Native device hardening: multi-mode registrations use server-minted IDs, retaining an owner’s existing ID only after device-secret verification. Single-mode ID compatibility is preserved. Failed device authentication uses a uniform source-address budget.
 
 - Web app accessibility: the compose To, Cc and Bcc fields are now combobox fields (Base UI): screen readers announce the suggestions and the highlighted one, Backspace in an empty field (or on a chip reached with Left) removes a recipient, and typing, comma/semicolon, Tab and Enter work as before. Settings tabs (Mail, Email Labels, Server, Diagnostics, Account) move with the arrow keys and open on Enter or Space, and each section is named by its tab. The inbox and contact page buttons are page navigation (the current page is marked) rather than tabs. Adds the `@base-ui/react` 1.9.0 dependency (about 45 kB gzipped on the main bundle).

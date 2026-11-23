@@ -1866,7 +1866,7 @@ so only tests run any of this.
     - a ceiling below 0 or over 2^53;
     - a negative TTL.
 - **The grant** is a new `tenancy.db` table, `org_storage` (`tenancy/tenancy.go:87`, `:143`).
-  Its columns are `org_id`, `seq`, `used_bytes`, `ceiling_bytes` and `expires_at`.
+  Its columns are `org_id`, `seq`, `used_bytes`, `reported_bytes`, `admitted_bytes`, `ceiling_bytes` and `expires_at`. `used_bytes` includes new reservations; `reported_bytes` is the last measured usage; `admitted_bytes` is a monotonic reservation watermark.
   - It is platform class, like the `orgs` cache: byte counts keyed by org
     (`TestEveryStoreIsClassified`). A single install has no `tenancy.db`, so it never has
     this table.
@@ -1892,9 +1892,7 @@ so only tests run any of this.
   member of the org:
   - `usage.payload_bytes` of every mailbox the member owns in the ledger (primary and extra).
     That covers stored mail in every folder, queued sends and their reserved Sent copies.
-  - Mail held for import. The report reads the ledger and scans the spool once for every org
-    (`HeldBytesByMailbox`). A write check reads the ledger once and asks `HeldBytes` for the
-    org's own mailboxes only.
+  - Mail held for import. The report opens the spool once and asks `HeldBytes` only for each org's own mailboxes. Mailbox ownership is queried per member (`NativeMailboxesOf`), never from the install-wide ledger. Writes never open the spool or scan storage.
   - Contact photos (`contactPhotoBytesUsed`).
   - Exports, import uploads and backups are not counted, as above.
 - **The check** is `orgPoolRoom` (`api/tenancy_storage.go:76`). A write of `n` bytes fits only
@@ -1920,9 +1918,25 @@ so only tests run any of this.
     implements. Nothing installs it outside tests, so `backend/deadcode.allow` lists it. PR 7
     must install it wherever it sets `Server.tenancy`, in every process that writes mail, and
     drop that entry. That joins the multi start gate.
-  - The check runs inside the write's transaction, but usage is summed from the other
-    mailboxes' committed counters. Concurrent writes in one org can pass together, bounded by
-    the writes in flight, as `orgRoom`'s ponytail note says.
+  - The check reserves bytes with one conditional `UPDATE org_storage`, inside the mailbox
+    transaction after replay checks. Every mailbox and replica spends the same cached
+    headroom atomically. A failed write stays charged until the next report; deletions
+    free room at that report. No per-message storage scan runs.
+  - **Report overlap bound.** The report reads `admitted_bytes` before scanning, then its
+    answer adds every reservation since that watermark to measured usage. A slow answer
+    cannot reset concurrent spending; some writes may be counted twice until the next
+    report. Reservations already in flight at the watermark can be missing from the scan:
+    at most one per mailbox writer and one per member's photo lock. The worst-case local
+    overshoot is the sum of `(128 MiB + mailbox MessageBytes)` per org mailbox (the maximum
+    sealed send plus its Sent copy), plus `maxContactPhotoBytes` per member. Receiving is
+    exempt in this PR and retains its existing mailbox/holding/safety caps; #707 adds the
+    shared reservation to DATA acceptance. Other apps' stale reports retain KyIdentity's
+    grant/TTL bound. Failed reservations overcount, never refund uncommitted writes.
+  - **Regression evidence.** `TestOrgStorageBatchImportUsesCachedUsage` imports 1 and 64
+    messages with 0 and 100 unrelated orgs, counts zero mailbox storage reads per write,
+    and disables authority storage after the report. `TestOrgStorageConcurrentWriters`
+    admits exactly one of two mailbox transactions competing for one message's headroom.
+    `TestStorageReservationsSurviveReport` covers shared admission, expiry and late answers.
 - **What a member sees.** `mailbox.ErrPoolFull` (`mailbox/pool.go:11`) is `ErrCapacity`, so
   every existing capacity path still refuses. Its text names the organisation's storage:
   - an immediate send answers `507` with that text and no `outboxId`, since nothing was queued
@@ -1943,7 +1957,7 @@ so only tests run any of this.
     - no grant, an org at exactly the ceiling, one byte over, the send route's `507`;
     - org B unaffected by A;
     - a held import over the pool;
-    - a deletion freeing room with no new report;
+    - a deletion freeing room at the next report;
     - a `ttl_seconds` past 15 minutes, KyIdentity down, a `stale` answer, an expired grant,
       `unknown_org`, a zero grant, and the staff exemption.
   - `api` `TestOrgStoragePoolCountsHeldMail`: held mail counts in the report and in the write

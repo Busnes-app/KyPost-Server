@@ -38,7 +38,11 @@ const maxBytes = 1 << 53
 // Grant is an org's last grant. A missing row is the zero Grant, which fits nothing.
 type Grant struct {
 	Used, Ceiling int64
-	Expires       time.Time
+	// Admitted is a monotonic watermark of locally reserved growth, never reset by a report.
+	Admitted int64
+	// Reported is the measured usage in the last accepted report, before reservations.
+	Reported int64
+	Expires  time.Time
 }
 
 // Fits reports whether used+add stays within the ceiling of an unexpired grant.
@@ -50,7 +54,7 @@ func (g Grant) Fits(used, add int64, now time.Time) bool {
 func StorageGrant(ctx context.Context, db *sql.DB, org string) (Grant, error) {
 	var g Grant
 	var expires int64
-	err := db.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at FROM org_storage WHERE org_id = ?`, org).Scan(&g.Used, &g.Ceiling, &expires)
+	err := db.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes FROM org_storage WHERE org_id = ?`, org).Scan(&g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Grant{}, nil
 	}
@@ -64,17 +68,40 @@ func NextStorageSeq(ctx context.Context, db *sql.DB, org string) (int64, Grant, 
 	var seq, expires int64
 	var g Grant
 	err := db.QueryRowContext(ctx, `INSERT INTO org_storage(org_id, seq, used_bytes, ceiling_bytes, expires_at) VALUES(?, 1, 0, 0, 0)
-ON CONFLICT(org_id) DO UPDATE SET seq = org_storage.seq + 1 RETURNING seq, used_bytes, ceiling_bytes, expires_at`, org).Scan(&seq, &g.Used, &g.Ceiling, &expires)
+ON CONFLICT(org_id) DO UPDATE SET seq = org_storage.seq + 1 RETURNING seq, used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes`, org).Scan(&seq, &g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported)
 	g.Expires = time.Unix(expires, 0)
 	return seq, g, err
 }
 
-// SetGrant records the answer to report seq. A newer report drawn since wins: the write
+// SetGrant records the answer to report seq. g.Admitted is the watermark read BEFORE
+// measuring usage; growth reserved since then is retained, including while HTTP waited.
+// A scan can count some of that growth twice, conservatively, until the next report.
+// A reservation already in flight when that watermark was read can escape the scan:
+// at most one bounded write per mailbox writer or photo-directory lock, plus receiving
+// copies under its quota fences. This is the documented report-overlap bound.
+// Failed writes also stay charged until the next report.
+// A newer report drawn since wins: the write
 // applies only while seq is still the org's latest.
 func SetGrant(ctx context.Context, db *sql.DB, org string, seq int64, g Grant) error {
-	_, err := db.ExecContext(ctx, `UPDATE org_storage SET used_bytes = ?, ceiling_bytes = ?, expires_at = ? WHERE org_id = ? AND seq = ?`,
-		g.Used, g.Ceiling, g.Expires.Unix(), org, seq)
+	_, err := db.ExecContext(ctx, `UPDATE org_storage SET used_bytes = ? + admitted_bytes - ?, reported_bytes = ?, ceiling_bytes = ?, expires_at = ? WHERE org_id = ? AND seq = ?`,
+		g.Used, g.Admitted, g.Used, g.Ceiling, g.Expires.Unix(), org, seq)
 	return err
+}
+
+// ReserveStorage atomically spends org's cached headroom across mailboxes, processes
+// and replicas. The caller invokes it INSIDE its write transaction, after replay checks.
+// Reservations commit first: a failed mailbox/photo write can only overcount until a
+// report, never let another writer spend the same bytes. No storage is scanned here.
+func ReserveStorage(ctx context.Context, db *sql.DB, org string, add int64, now time.Time) (bool, error) {
+	res, err := db.ExecContext(ctx, `UPDATE org_storage SET used_bytes = used_bytes + ?, admitted_bytes = admitted_bytes + ?
+ WHERE org_id = ? AND expires_at > ? AND used_bytes >= 0 AND used_bytes <= ceiling_bytes
+ AND ? <= ceiling_bytes - used_bytes AND admitted_bytes <= 9223372036854775807 - ?`,
+		add, add, org, now.Unix(), add, add)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // ReportableOrgs lists the cached orgs KyPost reports for: every one not deleted.

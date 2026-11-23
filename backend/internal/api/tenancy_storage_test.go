@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,7 +105,7 @@ var poolDraft = mailmsg.Message{From: "a@example.test", To: []string{"x@outside.
 // org's or the staff org's; checks every write that adds bytes against the grant, exactly
 // to the byte; fails closed with no grant, an expired one, an unknown org or the grant
 // zeroed for an org over its pool; keeps the grant through a failed or stale report; and
-// still imports mail receiving accepted. A deletion frees room at once.
+// still imports mail receiving accepted. A deletion frees room at the next report.
 func TestOrgStoragePool(t *testing.T) {
 	fx, _ := newOrgFixture(t)
 	srv, db, ctx := fx.srv, fx.srv.tenancy, context.Background()
@@ -200,7 +202,7 @@ func TestOrgStoragePool(t *testing.T) {
 	// Mail receiving accepted imports over the pool.
 	fx.message(fx.a)
 
-	// A deletion frees room at once, with no new report.
+	// A deletion frees room at the next report.
 	ids, err := boxA.List(ctx, "Drafts", 0, 10)
 	check(fx, err)
 	if len(ids) == 0 {
@@ -209,6 +211,7 @@ func TestOrgStoragePool(t *testing.T) {
 	check(fx, boxA.Delete(ctx, "Drafts", ids[0].ID))
 	// The held message imported above still takes the room the delete freed.
 	check(fx, boxA.Delete(ctx, "INBOX", mustInboxID(t, boxA)))
+	check(fx, srv.reportStorage(ctx))
 	check(fx, draft(boxA))
 
 	// KyIdentity down: the report fails and the grant stands until it expires.
@@ -260,11 +263,7 @@ func TestOrgStoragePool(t *testing.T) {
 // orgUsageNow is org's usage as the write check computes it.
 func orgUsageNow(t *testing.T, srv *Server, org string) int64 {
 	t.Helper()
-	ledger, err := srv.ssoLifecycle.NativeMailboxesWithoutAddresses()
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, err := srv.orgUsage(context.Background(), org, ledger, func(string) (int64, error) { return 0, nil })
+	n, err := srv.orgUsage(context.Background(), org, func(string) (int64, error) { return 0, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,5 +397,79 @@ func TestOrgStorageReportSkipsAFailingOrg(t *testing.T) {
 	}
 	if strings.Contains(out, orgA) || strings.Contains(out, fx.a.ID) || strings.Contains(out, photos) {
 		t.Fatalf("the log names the org, the user or the path: %s", out)
+	}
+}
+
+// A batch import does zero storage reads per write, regardless of batch size or
+// unrelated orgs. Only the shared grant row and immutable subject binding are read.
+func TestOrgStorageBatchImportUsesCachedUsage(t *testing.T) {
+	fx, _ := newOrgFixture(t)
+	srv, ctx := fx.srv, context.Background()
+	idp := newStorageIdP(t)
+	check(fx, srv.ssoStore.Save(sso.SSOSettings{Enabled: true, IssuerURL: idp.URL, ClientID: "kypost", ClientSecret: "suite-secret"}))
+	box := fx.openMailbox(fx.a)
+	client, err := mailbox.NewClient(box, "a@example.test")
+	check(fx, err)
+	mailbox.SetPoolCheck(srv.StoragePoolCheck)
+	t.Cleanup(func() { mailbox.SetPoolCheck(nil) })
+	var reads atomic.Int64
+	old := readOrgMailboxUsage
+	readOrgMailboxUsage = func(dir string) (mailbox.Usage, error) { reads.Add(1); return old(dir) }
+	t.Cleanup(func() { readOrgMailboxUsage = old })
+	check(fx, srv.reportStorage(ctx))
+	if reads.Load() == 0 {
+		t.Fatal("report did not measure mailbox usage")
+	}
+	// No write may touch authority storage or the spool. The binding is in tenancy.db.
+	srv.ssoLifecycle = nil
+	for _, orgs := range []int{0, 100} {
+		for i := 0; i < orgs; i++ {
+			setOrg(t, srv.tenancy, fmt.Sprintf("1a2b3c4d-1000-4000-8000-%012d", i), "active", true, `{}`)
+		}
+		for _, n := range []int{1, 64} {
+			reads.Store(0)
+			for i := 0; i < n; i++ {
+				raw := []byte(fmt.Sprintf("From: a@example.test\r\nSubject: batch-%d-%d-%d\r\n\r\nbody", orgs, n, i))
+				err := client.ImportMessage(ctx, "Drafts", raw, mailbox.ImportMeta{})
+				check(fx, err)
+			}
+			if got := reads.Load(); got != 0 {
+				t.Fatalf("%d writes, %d orgs: %d storage reads; want 0", n, orgs, got)
+			}
+		}
+	}
+}
+
+// Separate mailbox writer transactions cannot spend the same org's final message.
+func TestOrgStorageConcurrentWriters(t *testing.T) {
+	fx, _ := newOrgFixture(t)
+	srv, ctx := fx.srv, context.Background()
+	idp := newStorageIdP(t)
+	idp.room = func(string, int64) int64 { return int64(len(poolDraft)) }
+	check(fx, srv.ssoStore.Save(sso.SSOSettings{Enabled: true, IssuerURL: idp.URL, ClientID: "kypost", ClientSecret: "suite-secret"}))
+	boxes := []*mailbox.Store{fx.openMailbox(fx.a), fx.openMailbox(fx.other)}
+	mailbox.SetPoolCheck(srv.StoragePoolCheck)
+	t.Cleanup(func() { mailbox.SetPoolCheck(nil) })
+	check(fx, srv.reportStorage(ctx))
+	results, start := make(chan error, len(boxes)), make(chan struct{})
+	for _, box := range boxes {
+		go func(box *mailbox.Store) {
+			<-start
+			_, err := box.Append(ctx, "Drafts", bytes.NewReader(poolDraft), true)
+			results <- err
+		}(box)
+	}
+	close(start)
+	accepted := 0
+	for range boxes {
+		err := <-results
+		if err == nil {
+			accepted++
+		} else if !errors.Is(err, mailbox.ErrPoolFull) {
+			t.Fatal(err)
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("%d writers spent one message of headroom", accepted)
 	}
 }
