@@ -1305,3 +1305,22 @@ Verification is recorded at the implementation PR head; no full-check or release
     change a self-hosted install's files on upgrade, which the byte-for-byte rule forbids.
     Contacts on those installs stay plaintext, as `SECURITY.md` documents. The alternative is an
     opt-in sealed file mode.
+
+## MH4 receiving import lease clock as built (2026-11-23)
+
+The first MH4 boundary removes the host clock from `tenancy.TakeImportLease`.
+The atomic take/renew statement compares `lease_until` with database `unixepoch()`
+and writes database time + 60 seconds. The existing PostgreSQL translator uses
+`floor(extract(epoch from statement_timestamp()))::bigint`; SQLite uses its native
+clock. Holder-scoped release, the mailbox key and the lease duration stay unchanged.
+
+`TestImportLeaseIgnoresReplicaClockSkew` opens separate replica sessions with a
+synctest clock in 2000 and the real host clock, verifies skew beyond the lease,
+refuses stealing/clock advancement, renews against database time, then allows
+handoff only after the database row expires. The pre-fix test reproduced a live
+lease stolen by the faster replica. Lease tests retain concurrent one-winner,
+wrong-holder release, dead-holder renewal refusal and invalid/cancelled no-write
+coverage. Importer expiry fixtures now age database rows rather than supply an
+older host time. This is only the clock boundary: mailbox publication, cross-store
+fences, catalog tombstones, elected-job coverage and backup restrictions remain
+MH4 prerequisites. Startup `multi` refusal and all later launch gates remain.

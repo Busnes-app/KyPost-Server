@@ -81,7 +81,7 @@ func newPurgeFixture(t *testing.T) *purgeFixture {
 	check(fx, err)
 	check(fx, holding.Acknowledge(ctx, purgeGateway, "imported", d.Lease, d.Digest))
 	for _, m := range []string{fx.a.ID, fx.a.extra, fx.b.ID} {
-		_, err := tenancy.TakeImportLease(ctx, px.db, m, "importer", time.Now())
+		_, err := tenancy.TakeImportLease(ctx, px.db, m, "importer")
 		check(fx, err)
 		check(fx, tenancy.RecordRetired(ctx, px.db, purgeGateway, "retired", m, time.Now()))
 	}

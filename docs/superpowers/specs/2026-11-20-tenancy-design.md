@@ -542,6 +542,64 @@ Exactly as M, which this note does not change. M's "What changes in KyPost" item
 hosted-mail phase. The `orgAdmit` hops and K10's tombstones are the "KyPost tenancy work" M D6
 waits for.
 
+#### Owner priority and acceptance (2026-11-23)
+
+This is approved product direction, not competitor-parity advice: after critical
+isolation, tenancy, reliability, security and launch prerequisites, KyPost's next
+product priority is **self-service random per-site addresses, disable controls and
+protected replies**. Administrator-managed aliases alone do not satisfy it. This
+planning update changes no startup gate, frozen verification input or ownership.
+The hosted implementation stays in PR 7/M's existing roadmap after the required MH,
+region, receiving and mandatory object-storage gates; no separate builder is created.
+
+The suite research `zentrimail-site/docs/research/competitor-product-gaps-2026-11-23.md`
+in the suite workspace supplies first-party evidence (especially Fastmail F3 and
+mailbox.org M6), not implementation authority. The owner supersedes its password-vault
+recommendation: **no first-party password manager or password-manager task**.
+Compatibility with existing managers is sufficient; a new integration is optional.
+VPN and AI remain optional, with no new work requested.
+
+Inventory checked against `origin/main` at `d8a17386` (code/test inspection only in
+this planning pass; hosted delivery and native-client parity are unverified):
+
+| Requirement | Implemented foundation | Remaining hosted qualification/work |
+|---|---|---|
+| Random address per site | Native-mail members can create random addresses with a freeform site note and optional expiry; cryptographic random adjective/animal/four-digit generation and five collision attempts (`backend/internal/api/masked_addresses.go:58-80,325-405`). The settings UI exposes creation and notes (`frontend/src/settings/sections/Addresses.tsx:96-119`). | M's larger shared-domain space, region character, owner/org isolation, per-org quotas and platform breaker. A note does not establish a structured or browser-bound site identity. |
+| Disable controls | Owner pause/resume/delete with a permanent reservation (`masked_addresses.go:408-470`); live/paused/expired sending and reception cases in `backend/internal/api/masked_addresses_test.go:59` and `backend/internal/app/receiving_plus_masked_test.go:69`. | Two-replica propagation, lost-fence/purge/restore races, same-org member privacy and shared-domain never-reuse qualification. No administrator action should be needed to disable one's own address. |
+| Protected replies | Web reply identity retains the delivered masked address and blocks when the address is unknown (`frontend/src/hooks/useCompose.reply.test.ts:65-108`). Server test checks masked envelope/From/Message-ID and absence of primary identity headers/Autocrypt (`backend/internal/api/masked_addresses_test.go:193-253`); DKIM omits `i=` (`backend/internal/mailmsg/dkim_test.go:323`). | Recipient-observed reply evidence through the actual hosted MX and outbound relay, including retries, drafts, PGP, Sent and each supported native client. Existing queued-MIME/unit tests do not establish hosted delivery or confidentiality of user-written content. |
+
+Acceptance belongs to the existing hosted-mail phase, after its safety gates:
+
+1. An ordinary member creates two independently random addresses for two sites,
+   labels/copies them and receives mail at the same owner's mailbox. Other members,
+   including those in the same org, cannot list, change or send as those addresses;
+   foreign identifiers answer exactly like missing ones. Staff remains mailbox-less.
+2. The owner can pause, resume an unexpired address, and permanently delete it.
+   A second replica observes each decision; paused/expired/deleted addresses cannot
+   receive or originate new mail and are never reissued, including after org purge
+   and recovery with the retained tombstone key. Already-accepted mail retains the
+   receiving obligations and deletion rules in K/RX; disabling creates no new rule
+   for silently dropping previously accepted bytes.
+3. A reply uses the masked receiving identity, and an unknown or unavailable identity
+   requires a deliberate From choice rather than falling back to the primary.
+   Capture recipient-visible SMTP envelope and MIME for web/native replies, recovery
+   of drafts and scheduled retries, confirming no automatically added primary
+   address in headers, display name, signature metadata or key-advertising fields.
+   Cover relay DKIM alignment, Sent consistency, quotas, refusal and stale authority.
+   “Protected” does not itself claim E2EE to an arbitrary recipient.
+4. Run M's hosted cross-org/quota/tombstone checks and the two-host recipient-delivery
+   harness; retain the single-tenant byte-for-byte suite. Publish only the tested
+   transport/client coverage. Ordinary aliases or an address-generation demo cannot
+   satisfy this acceptance.
+
+Distinct product decisions remain for the owner before extending these contracts:
+whether a site note is sufficient or a structured site/origin binding is required;
+the treatment of identifying user-written signatures/quoted text in a protected
+reply (warning, removal or explicit user control); and any alias portability beyond
+the already-deferred custom-domain scope. Browser/password-manager integration is
+optional and is not a prerequisite. Existing quotas/domain/region decisions stand;
+this update chooses no new tier, quota, UI or external integration contract.
+
 ### Abuse limits per org
 
 Every limit an org can be sold, except the storage pool (KyIdentity's, "Quotas"), is a key in

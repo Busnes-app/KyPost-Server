@@ -116,7 +116,7 @@ func (r *receivingRuntime) importPass(ctx context.Context, holder string, skip m
 // reports a batch cut short by its bound.
 func (r *receivingRuntime) importMailbox(ctx context.Context, holder, m string, logger *logging.Logger) (more bool, err error) {
 	start := time.Now()
-	ok, err := tenancy.TakeImportLease(ctx, r.tenancy, m, holder, start)
+	ok, err := tenancy.TakeImportLease(ctx, r.tenancy, m, holder)
 	if err != nil || !ok {
 		return false, err
 	}
@@ -135,7 +135,7 @@ func (r *receivingRuntime) importMailbox(ctx context.Context, holder, m string, 
 			if attempted >= importBatch || time.Since(start) >= importBatchFor {
 				return true, nil
 			}
-			if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, m, holder, time.Now()); err != nil || !ok {
+			if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, m, holder); err != nil || !ok {
 				return false, errors.Join(errLeaseLost, err)
 			}
 			tried, err := r.importObligation(ctx, holder, o, m)
@@ -255,7 +255,7 @@ func (r *receivingRuntime) writeMailbox(ctx context.Context, holder string, d in
 			if imp == tenancy.ImportNever {
 				return tenancy.ErrImportDeleted
 			}
-			if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, owner.Mailbox, holder, time.Now()); err != nil || !ok {
+			if ok, err := tenancy.TakeImportLease(ctx, r.tenancy, owner.Mailbox, holder); err != nil || !ok {
 				return errors.Join(errLeaseLost, err)
 			}
 			return r.holding.ImportMailbox(ctx, d, "INBOX", store)

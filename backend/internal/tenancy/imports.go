@@ -17,17 +17,17 @@ import (
 // ImportLease is how long a taken or renewed lease lasts.
 const ImportLease = 60 * time.Second
 
-// TakeImportLease takes mailbox's lease for holder until now+ImportLease. A free or
+// TakeImportLease takes mailbox's lease for holder until database time+ImportLease. A free or
 // expired lease is taken; holder's own live lease is renewed. It reports false, and
 // changes nothing, while another holder's lease is live.
-func TakeImportLease(ctx context.Context, db *sql.DB, mailbox, holder string, now time.Time) (bool, error) {
+func TakeImportLease(ctx context.Context, db *sql.DB, mailbox, holder string) (bool, error) {
 	if db == nil || mailbox == "" || holder == "" {
 		return false, ErrOrgMismatch
 	}
-	res, err := db.ExecContext(ctx, `INSERT INTO import_leases(mailbox, holder, lease_until) VALUES(?, ?, ?)
+	res, err := db.ExecContext(ctx, `INSERT INTO import_leases(mailbox, holder, lease_until) VALUES(?, ?, unixepoch() + ?)
  ON CONFLICT(mailbox) DO UPDATE SET holder = excluded.holder, lease_until = excluded.lease_until
- WHERE import_leases.lease_until <= ? OR import_leases.holder = excluded.holder`,
-		mailbox, holder, now.Add(ImportLease).Unix(), now.Unix())
+ WHERE import_leases.lease_until <= unixepoch() OR import_leases.holder = excluded.holder`,
+		mailbox, holder, int64(ImportLease/time.Second))
 	if err != nil {
 		return false, err
 	}
