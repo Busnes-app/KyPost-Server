@@ -792,11 +792,15 @@ check the mailbox quota:
 PR 5's statement that imports, drafts and Sent copies are bounded by the install quota only
 ("PR 5 as built") is superseded for the pool.
 
-*What over-pool does* (the safest default for each, with nothing ever deleted or locked):
+*What over-pool does.* The owner approved the rule on 2026-11-23 (ky-launch#4): new uploads and
+new stored content are blocked until the org is back under the pool, no data is ever deleted, and
+the holder is warned before a seat change that would leave the org over. The warning is
+KyIdentity's and billing's, because the seat change happens there. Receiving is open question 16.
+Each surface takes the safest default:
 
 | Surface | Over the pool |
 |---|---|
-| Receiving | `452 4.2.2` "Mailbox full", today's temporary exit 9 (`app/receiving_config.go:198`). The sender retries for days, so freeing space in any app lets the mail in. It is lost only if the sender gives up first, as with a full mailbox today. |
+| Receiving | Open question 16. *Default:* a grace window keeps accepting mail, and then comes `452 4.2.2` "Mailbox full", today's temporary exit 9 (`app/receiving_config.go:198`). Senders retry, so freeing space in any app lets the mail in. It is lost only if a sender gives up first, as with a full mailbox today. |
 | Sending | A new send is refused at enqueue with today's capacity answer and a message naming storage, before anything is sent. A send already queued goes out, because its Sent copy was reserved at enqueue. Sending without a Sent copy is not offered: it would lose the copy silently. |
 | Drafts, copies, client uploads, imports | A write that adds bytes is refused with the capacity answer. An import stops at the first refused message and reports how far it got. The existing draft is kept. |
 | Sync, read, search, export | Unchanged, always allowed. |
@@ -1899,3 +1903,29 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
     the org accepts nothing new and receiving answers a temporary `452` (Quotas). K PR 7 must not accept
     `multi` before KyIdentity publishes the pool, so this happens only through a KyIdentity fault.
     The alternative, no pool cap, lets an org grow without limit during that fault.
+16. **Incoming mail while an org is over its pool (new, 2026-11-23; KyPost owns this rule).**
+    Refusing mail at once bounces it to outside senders, often because another app (a Drive
+    upload) filled the pool. *Recommend* a grace window, then a temporary refusal, and never a
+    permanent one for quota:
+    - **Grace.** Mail is still accepted for **14 days** after the org went over, or until usage
+      reaches **110 % of the pool**, whichever comes first. Every other write is blocked from the
+      first byte over (approved rule). The start is KyIdentity's over-quota-since timestamp in
+      the org entry (proposed; T's name for it is unverified, board `kyidentity-business-orgs`),
+      so every app agrees on one date even when another app caused the overrun.
+    - **After grace,** `452 4.2.2` "Mailbox full" (exit 9) to every sender, for as long as the
+      org stays over. Sending MTAs retry for about five days and then send their own bounce
+      naming a full mailbox (unverified: senders' retry periods vary). A `552 5.2.2` is not
+      used: it would bounce mail at once for a state a deletion can end at any moment. If the
+      owner prefers a firm end, the alternative is `452` for 7 days and then `552 5.2.2`, which
+      needs a new exit code in the receiving profile and in RX's code table.
+    - **What people see.** Every member sees a banner in KyPost: "Storage full: new mail is
+      still accepted until <date> (or <N> GB more)", and after grace, "Mail to this org is being
+      refused until you free space". The holder also gets billing's notice. KyPost sends no mail
+      about this into the full mailbox.
+    - **What senders see.** Nothing during grace. After it, a temporary refusal and eventually
+      their own server's bounce. They never get a permanent rejection from KyPost for quota.
+    - **Fit with receiving.** The answer is made where it is today, at `accept` after the
+      mailbox's own check (RX; `orgRoom`, `app/receiving.go:85`), and `250` still follows the
+      PostgreSQL commit. MX hosts stay stateless. Org status answers must come first: a suspended org's
+      answer and `deletion_scheduled`'s `550` (open question 11) win over the quota answer (the order in code is unverified). Grace
+      never passes the per-mailbox install ceiling, the 25 MiB cap or a `mailboxBytes` safety key.
