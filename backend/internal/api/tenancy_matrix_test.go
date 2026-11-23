@@ -476,7 +476,6 @@ func newOrgFixture(t *testing.T) (*orgFixture, *syncBuffer) {
 	fx := &orgFixture{t: t, srv: srv}
 	member := func(sub, org string) orgMember {
 		u := orgUser(sub, org, true)
-		u["emails"] = []map[string]any{{"value": sub + "@example.test", "primary": true}}
 		directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "ev-"+sub, 1, u))
 		rec, err := srv.users.GetBySSOSub(sub)
 		if err != nil || rec.OrgID != org {

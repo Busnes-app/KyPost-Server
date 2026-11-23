@@ -10,6 +10,9 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ## Local Contracts
 
+- Hosted native allocation uses exactly one SCIM `emails` entry with `type:"mailbox"`, never the sign-in primary. Its domain must be in KyIdentity's current `/api/suite/email-domains` answer and independently DNS-proven locally. A missing entry stays `pending` with `mailbox_address_missing`, without mailbox storage or user publication. Single mode retains primary-email selection. `TestHostedDirectoryMailboxAllocation` covers both database backends.
+- Signed `user.mfa_reset` uses the same org binding, revision and replay fences as other user events. Apply desired membership, revoke sessions, native devices/pending pairing, CardDAV passwords and agent tokens, preserve the SSO sign-in link, and advance the ID-token fence only after cleanup succeeds, covering that second and the verifier's 30-second future skew (cutoff = completion Unix second + 31). Exact replay never revokes newly issued credentials. `TestDirectoryMFAResetRevokesCredentialsAndOrdersReplay` and `TestDirectoryMFAResetFencesPreResetDeviceTokens` cover single and multi modes on both backends.
+
 - Bundled SMTP admission limits are the four `config.Receiving*` IntEnv values: concurrency
   1–64 (global/IP defaults 4/2), rate/minute 1–60,000 (defaults 30/10). `CheckEnv`
   rejects bad settings at startup; `app.receivingRuntime.writeConfig` validates them

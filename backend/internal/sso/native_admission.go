@@ -164,7 +164,7 @@ func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, r authorityRea
 	if _, configured := domains.Domains[domain]; err != nil || domains.Issuer != issuer || !configured {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}
-	address, err := nativePrimary(*d.Resource, domain)
+	address, err := nativePrimary(*d.Resource, domain, u.OrgID != "")
 	if err != nil || address != a.Address || a.Revision > d.Revision {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}

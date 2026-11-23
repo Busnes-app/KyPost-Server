@@ -73,7 +73,25 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status, err := s.ssoLifecycle.ApplyDirectoryUser(settings.IssuerURL, event, u, sso.EventDigest(event.Type, body), func() (bool, error) {
-		return s.applyDirectoryUser(settings.IssuerURL, u)
+		fence, err := s.applyDirectoryUser(settings.IssuerURL, u)
+		if err != nil || event.Type != "user.mfa_reset" {
+			return fence, err
+		}
+		existing, err := s.users.GetBySSOSubIssuer(settings.IssuerURL, u.ID)
+		if errors.Is(err, users.ErrNotFound) {
+			return true, nil // retain the token fence even before local provisioning
+		}
+		if errors.Is(err, users.ErrNativeAccountConflict) {
+			return false, &syncRefusal{http.StatusUnprocessableEntity, errIssuerConflict}
+		}
+		if err != nil {
+			return false, errors.New("failed to look up user")
+		}
+		if !s.peerOrgAdmit(body, existing) {
+			return false, &syncRefusal{http.StatusUnprocessableEntity, errors.New("directory event refused: the subject is bound to another org")}
+		}
+		// Reset transport credentials; the directory identity remains a sign-in path.
+		return true, s.revokeUserCredentials(existing, "", true)
 	})
 	var refusal *syncRefusal
 	switch {

@@ -58,7 +58,6 @@ func TestRestoreReleaseWaitsForKyIdentity(t *testing.T) {
 	}
 	// An unaffected tenant member, whose mailboxes must stay qualified.
 	kept := orgUser("member-b3", orgB, true)
-	kept["emails"] = []map[string]any{{"value": "member-b3@example.test", "primary": true}}
 	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "ev-b3", 1, kept))
 	b3, err := srv.users.GetBySSOSub("member-b3")
 	if err != nil {

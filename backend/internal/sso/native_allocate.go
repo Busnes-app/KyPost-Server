@@ -2,8 +2,14 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/url"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -45,7 +51,7 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	domain := ""
 	if requested.Resource != nil {
 		for _, email := range requested.Resource.Emails {
-			if email.Primary {
+			if org == "" && email.Primary || org != "" && email.Type == "mailbox" {
 				domain = AddressDomain(email.Value)
 			}
 		}
@@ -53,8 +59,16 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	// A primary missing or off the configured domains is recorded as a durable
 	// failure below, without DNS, instead of being retried as a lapsed proof.
 	_, configured := set.Domains[domain]
+	eligible := configured
+	if org != "" && domain != "" {
+		allowed, err := s.hostedMailDomains(ctx, issuer)
+		if err != nil {
+			return users.User{}, err
+		}
+		eligible = configured && slices.Contains(allowed, domain)
+	}
 	var proof NativeDomain
-	if configured {
+	if eligible {
 		if proof, err = domains.VerifyDomain(ctx, domain); err != nil {
 			return users.User{}, err
 		}
@@ -71,7 +85,7 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	if err != nil {
 		return users.User{}, err
 	}
-	if _, nowConfigured := current.Domains[domain]; configured != nowConfigured || configured && !current.CurrentProof(proof) {
+	if _, nowConfigured := current.Domains[domain]; configured != nowConfigured || eligible && !current.CurrentProof(proof) {
 		return users.User{}, ErrNativeDomain
 	}
 	releaseDirectory, err := s.LockDirectoryContext(ctx)
@@ -105,12 +119,12 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	if users.ValidateUsername(username) != nil {
 		username = "native-" + id
 	}
-	if !configured {
-		_, err = s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, "", limits, false, nil)
+	if !eligible {
+		_, err = s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, "", limits, false, org != "", nil)
 		return users.User{}, err
 	}
 	prepare := func() (string, error) {
-		a, e := s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, proof.Domain, limits, false, func(root string, o mailbox.Owner, address string, l mailbox.Limits) (string, error) {
+		a, e := s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, proof.Domain, limits, false, org != "", func(root string, o mailbox.Owner, address string, l mailbox.Limits) (string, error) {
 			return mailbox.PrepareAccountContext(ctx, root, o, address, l)
 		})
 		return a.Source, e
@@ -120,4 +134,41 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 		return accounts.PublishPreparedSSOUser(ctx, id, "native-"+id, role, issuer, subject, d.Resource.UserName, d.Resource.Email(), org, prepare)
 	}
 	return user, err
+}
+
+// hostedMailDomains reads the suite allowlist only for hosted allocation. DNS proof
+// remains independently required. No cached answer can outlive a domain removal.
+// ponytail: suitedir has no email-domains reader yet; reuse the SSO transport policy.
+func (s *LifecycleStore) hostedMailDomains(ctx context.Context, issuer string) ([]string, error) {
+	settings := NewStore(filepath.Dir(s.path)).Load()
+	if dir, ok := settings.SuiteDirectory(); !ok || dir.Issuer != issuer {
+		return nil, ErrNativeDomain
+	}
+	base, err := url.Parse(issuer)
+	if err != nil || requireSafeURL("suite issuer", issuer, false) != nil || base.RawQuery != "" || base.Fragment != "" {
+		return nil, ErrNativeDomain
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.JoinPath("api", "suite", "email-domains").String(), nil)
+	if err != nil {
+		return nil, ErrNativeDomain
+	}
+	req.SetBasicAuth(settings.ClientID, settings.ClientSecret)
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		return nil, ErrNativeDomain
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10+1))
+	var answer struct {
+		Domains []string `json:"domains"`
+	}
+	if err != nil || resp.StatusCode != http.StatusOK || len(raw) > 64<<10 || json.Unmarshal(raw, &answer) != nil || answer.Domains == nil {
+		return nil, ErrNativeDomain
+	}
+	for _, domain := range answer.Domains {
+		if !nativeDomain(domain) || strings.ToLower(domain) != domain {
+			return nil, ErrNativeDomain
+		}
+	}
+	return answer.Domains, nil
 }

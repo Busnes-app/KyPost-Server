@@ -165,13 +165,8 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 			return true, ErrNativeProvisioning
 		}
 		if a.Address != "" {
-			requested := DirectoryUser{}
-			requested.Emails = append(requested.Emails, struct {
-				Value   string `json:"value"`
-				Primary bool   `json:"primary"`
-			}{a.Address, true})
-			// Every ledger address sits on a domain in the set, retired or not.
-			address, err := nativePrimary(requested, AddressDomain(a.Address))
+			// Validate the ledger's address itself, independent of the directory profile.
+			address, err := nativeAddress(a.Address, AddressDomain(a.Address))
 			if err != nil || address != a.Address || addresses[address] || !domains.Known(AddressDomain(address)) {
 				return true, ErrNativeProvisioning
 			}

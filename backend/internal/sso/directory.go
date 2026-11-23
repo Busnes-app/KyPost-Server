@@ -66,6 +66,7 @@ type DirectoryUser struct {
 	Roles      json.RawMessage `json:"roles"`
 	Emails     []struct {
 		Value   string `json:"value"`
+		Type    string `json:"type,omitempty"`
 		Primary bool   `json:"primary"`
 	} `json:"emails"`
 	Meta struct {
@@ -95,7 +96,7 @@ func (u DirectoryUser) Revision(eventType string) (int64, error) {
 		return 0, errors.New("an active user needs a valid userName")
 	}
 	switch eventType {
-	case "user.created", "user.updated":
+	case "user.created", "user.updated", "user.mfa_reset":
 	case "user.deleted":
 		if *u.Active {
 			return 0, errors.New("a deleted user cannot be active")
@@ -226,7 +227,13 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			}
 			state := DirectoryState{Resource: resource, Revision: revision, Digest: digest, Active: active, EventID: ev.ID, RevokedBefore: prior.RevokedBefore}
 			if fence {
-				state.RevokedBefore = max(prior.RevokedBefore, now)
+				cutoff := now
+				if ev.Type == "user.mfa_reset" {
+					// Cover the current second and the verifier's 30-second future
+					// skew, measured after credential cleanup has succeeded.
+					cutoff = time.Now().Unix() + 31
+				}
+				state.RevokedBefore = max(prior.RevokedBefore, cutoff)
 			}
 			if err := s.syncNativeDirectory(w, key, state); err != nil {
 				return err
