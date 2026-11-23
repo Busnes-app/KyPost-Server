@@ -1876,7 +1876,7 @@ so only tests run any of this.
     answer to an older report changes nothing.
 - **The report** runs about every 60 s on the `api-sweepers` owner, in `StartOrgPoller` after
   the poll, whether or not the poll succeeded (`api/tenancy_lifecycle.go:75`, `reportStorage`,
-  `api/tenancy_storage.go:113`).
+  `api/tenancy_storage.go:116`).
   - It covers every cached org that is not `deleted` and not the staff org. `want_bytes` is
     the larger of 256 MiB and twice the growth since the last report.
   - The expiry is the time the request was sent plus `min(ttl_seconds, 15 min)`.
@@ -1936,7 +1936,8 @@ so only tests run any of this.
     - org B unaffected by A;
     - a held import over the pool;
     - a deletion freeing room with no new report;
-    - KyIdentity down, a `stale` answer, an expired grant, `unknown_org`, a zero grant, and the
+    - a `ttl_seconds` past 15 minutes, KyIdentity down, a `stale` answer, an expired grant,
+      `unknown_org`, a zero grant, and the
       staff exemption.
   - `api` `TestSingleTenantHasNoStoragePool`: no report, no check.
   - The single-tenant upgrade test is unchanged.

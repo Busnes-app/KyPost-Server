@@ -99,6 +99,9 @@ func (s *Server) orgPoolRoom(ctx context.Context, org string, add int64) error {
 // StoragePoolCheck is the mailbox.PoolCheck for this server's tenancy.db: the owner's org
 // from subject_orgs, as receiving reads it.
 func (s *Server) StoragePoolCheck(ctx context.Context, owner mailbox.Owner, add int64) error {
+	if !s.multiTenant() {
+		return nil
+	}
 	org, err := tenancy.SubjectOrg(ctx, s.tenancy, owner.Issuer, owner.Subject)
 	if err != nil {
 		return err
@@ -142,7 +145,7 @@ func (s *Server) reportStorage(ctx context.Context) error {
 				continue
 			case "ok":
 				g.Ceiling = r.CeilingBytes
-				g.Expires = sent.Add(min(time.Duration(r.TTLSeconds)*time.Second, tenancy.GrantTTL))
+				g.Expires = sent.Add(time.Duration(min(r.TTLSeconds, int64(tenancy.GrantTTL/time.Second))) * time.Second)
 			}
 			if err := tenancy.SetGrant(ctx, s.tenancy, rep.OrgID, rep.Seq, g); err != nil {
 				return err

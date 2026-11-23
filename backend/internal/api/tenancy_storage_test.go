@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -30,10 +31,11 @@ type storageIdP struct {
 	status  int
 	result  string
 	room    func(org string, used int64) int64
+	ttl     int64
 }
 
 func newStorageIdP(t *testing.T) *storageIdP {
-	idp := &storageIdP{reports: map[string]tenancy.StorageReport{}, room: func(string, int64) int64 { return 1 << 30 }}
+	idp := &storageIdP{reports: map[string]tenancy.StorageReport{}, room: func(string, int64) int64 { return 1 << 30 }, ttl: 900}
 	idp.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if id, secret, ok := r.BasicAuth(); r.Method != http.MethodPost || r.URL.Path != "/api/suite/storage" || !ok || id != "kypost" || secret != "suite-secret" {
 			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
@@ -56,7 +58,7 @@ func newStorageIdP(t *testing.T) *storageIdP {
 		results := []tenancy.StorageResult{}
 		for _, rep := range body.Reports {
 			idp.reports[rep.OrgID] = rep
-			res := tenancy.StorageResult{OrgID: rep.OrgID, Result: "ok", Seq: rep.Seq, CeilingBytes: rep.UsedBytes + idp.room(rep.OrgID, rep.UsedBytes), TTLSeconds: 900}
+			res := tenancy.StorageResult{OrgID: rep.OrgID, Result: "ok", Seq: rep.Seq, CeilingBytes: rep.UsedBytes + idp.room(rep.OrgID, rep.UsedBytes), TTLSeconds: idp.ttl}
 			if idp.result != "" {
 				res.Result = idp.result
 			}
@@ -152,6 +154,14 @@ func TestOrgStoragePool(t *testing.T) {
 	if repB.UsedBytes != 0 {
 		t.Fatalf("org B reported %d bytes it does not hold", repB.UsedBytes)
 	}
+
+	// A grant never lives past 15 minutes, whatever ttl_seconds says.
+	idp.set(func(idp *storageIdP) { idp.ttl = 1 << 62 })
+	check(fx, srv.reportStorage(ctx))
+	if g, _ := tenancy.StorageGrant(ctx, db, orgA); !g.Expires.After(time.Now()) || g.Expires.After(time.Now().Add(tenancy.GrantTTL)) {
+		t.Fatalf("grant expiry %v for a huge ttl", g.Expires)
+	}
+	idp.set(func(idp *storageIdP) { idp.ttl = 900 })
 
 	// Within the grant every write path stores; the photo counts at once.
 	check(fx, draft(boxA))
@@ -271,6 +281,9 @@ func TestSingleTenantHasNoStoragePool(t *testing.T) {
 		t.Fatal("a single-tenant install reported storage")
 	}
 	if err := srv.orgPoolRoom(context.Background(), "", 1<<40); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.StoragePoolCheck(context.Background(), mailbox.Owner{Issuer: "https://idp.example", Subject: "x"}, 1<<40); err != nil {
 		t.Fatal(err)
 	}
 	u := srv.mustBootstrapUserID(t)
