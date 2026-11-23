@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,6 +134,57 @@ func TestDirectoryMFAResetRevokesCredentialsAndOrdersReplay(t *testing.T) {
 			}
 			if rec := postDirectory(t, srv, testSyncKey, "user.mfa_reset", "stale-reset", 1, stale); rec.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("stale reset: %d %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestDirectoryMFAResetFencesPreResetDeviceTokens(t *testing.T) {
+	for _, multi := range []bool{false, true} {
+		name := "single"
+		if multi {
+			name = "multi"
+		}
+		t.Run(name, func(t *testing.T) {
+			srv, idp := nativeSignOnServer(t)
+			srv.pairingSecret = testSyncKey
+			profile := func() map[string]any {
+				if multi {
+					return orgUser("sso-sub-12345", orgA, true)
+				}
+				return scimUser("sso-sub-12345", "alice", true)
+			}
+			if multi {
+				makeMultiTenant(t, srv)
+			}
+			directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "create", 1, profile()))
+			claims := func(issued int64, jti string) map[string]any {
+				c := deviceClaims(map[string]any{"iat": issued, "jti": jti})
+				if multi {
+					c["org_id"] = orgA
+				}
+				return c
+			}
+			issuance := time.Now().Unix()
+			idp.SetClaims(claims(issuance, "control"))
+			control := httptest.NewRecorder()
+			srv.handleNativeSignOn(control, signOnRequest(idp.IDToken()))
+			if control.Code != http.StatusOK {
+				t.Fatalf("pre-reset sign-in: %d %s", control.Code, control.Body.String())
+			}
+			// Mint unused tokens before the reset, including the verifier's future skew.
+			var tokens []string
+			for _, offset := range []int64{-1, 0, 30} {
+				idp.SetClaims(claims(issuance+offset, "unused-"+strconv.FormatInt(offset, 10)))
+				tokens = append(tokens, idp.IDToken())
+			}
+			directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.mfa_reset", "reset", 2, profile()))
+			for i, token := range tokens {
+				rec := httptest.NewRecorder()
+				srv.handleNativeSignOn(rec, signOnRequest(token))
+				if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "directory access changed") {
+					t.Errorf("pre-reset token %d: %d %s", i, rec.Code, rec.Body.String())
+				}
 			}
 		})
 	}

@@ -227,7 +227,13 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			}
 			state := DirectoryState{Resource: resource, Revision: revision, Digest: digest, Active: active, EventID: ev.ID, RevokedBefore: prior.RevokedBefore}
 			if fence {
-				state.RevokedBefore = max(prior.RevokedBefore, now)
+				cutoff := now
+				if ev.Type == "user.mfa_reset" {
+					// Cover the current second and the verifier's 30-second future
+					// skew, measured after credential cleanup has succeeded.
+					cutoff = time.Now().Unix() + 31
+				}
+				state.RevokedBefore = max(prior.RevokedBefore, cutoff)
 			}
 			if err := s.syncNativeDirectory(w, key, state); err != nil {
 				return err
