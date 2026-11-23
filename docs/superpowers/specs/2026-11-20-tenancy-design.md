@@ -1910,8 +1910,9 @@ so only tests run any of this.
       unchanged.
   - The mailbox checks run through one process-wide hook, `mailbox.SetPoolCheck`
     (`mailbox/pool.go:30`), which `Server.StoragePoolCheck` (`api/tenancy_storage.go:101`)
-    implements. Nothing installs it outside tests. PR 7 must install it wherever it sets
-    `Server.tenancy`, in every process that writes mail. That joins the multi start gate.
+    implements. Nothing installs it outside tests, so `backend/deadcode.allow` lists it. PR 7
+    must install it wherever it sets `Server.tenancy`, in every process that writes mail, and
+    drop that entry. That joins the multi start gate.
   - The check runs inside the write's transaction, but usage is summed from the other
     mailboxes' committed counters. Concurrent writes in one org can pass together, bounded by
     the writes in flight, as `orgRoom`'s ponytail note says.
@@ -1937,8 +1938,7 @@ so only tests run any of this.
     - a held import over the pool;
     - a deletion freeing room with no new report;
     - a `ttl_seconds` past 15 minutes, KyIdentity down, a `stale` answer, an expired grant,
-      `unknown_org`, a zero grant, and the
-      staff exemption.
+      `unknown_org`, a zero grant, and the staff exemption.
   - `api` `TestSingleTenantHasNoStoragePool`: no report, no check.
   - The single-tenant upgrade test is unchanged.
   - **Proof that the gates bite:** each of these mutations fails its test:
