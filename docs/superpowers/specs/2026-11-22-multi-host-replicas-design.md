@@ -437,8 +437,8 @@ through one body loader.
     the object again. The clock is not the object's age: an object written before a newer
     capsule, and orphaned by restoring an older one, must outlive that newer capsule. Any
     capsule naming it is younger than the first sighting, so it ages out of retention first.
-    A restore replaces `body_orphans` with the capsule's copy, so every clock restarts no
-    earlier than the restore.
+    A restore replaces `body_orphans` with the capsule's copy. An object that a restored row
+    names has no record there, so its clock starts only when it is next unnamed.
 
   So any capsule within retention, restored in any order, names only objects that still exist.
   The cost is that an uncommitted write's object lingers for the retention period. It is rare,
