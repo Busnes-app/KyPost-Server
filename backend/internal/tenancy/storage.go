@@ -172,9 +172,10 @@ func (g Grant) Mail(used, add int64, now time.Time) (answer PoolMail, firstOver,
 		if add >= 0 && total+add <= ceiling {
 			return PoolMailAccept, firstOver, time.Time{}
 		}
-		// Only stored usage reaching the overage ends grace. A delivery too large for what
-		// is left is refused for now, so no sender can end grace without storing anything.
-		if total < ceiling {
+		// Reservations can include failed/in-flight writes. They bound admission but
+		// cannot end grace: only the periodic report confirms stored usage. A refused
+		// oversized delivery or a failed holding write therefore cannot shorten grace.
+		if total < ceiling || g.OrgUsed < ceiling {
 			return PoolMailTemporary, firstOver, time.Time{}
 		}
 		end, graceEnd = now, now

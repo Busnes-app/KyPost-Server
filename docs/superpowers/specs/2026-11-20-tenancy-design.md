@@ -2018,7 +2018,7 @@ so only tests run any of this.
 
 The owner's 2026-11-23 rule replaces open question 16: incoming mail has 7 days of
 receiving grace, limited to max(10% of the pool, 2 GB) over; then 452 4.2.2 for 3 days;
-then 552 5.2.2 (hosted exit 14). Only stored usage exhausting overage ends grace early.
+then 552 5.2.2 (hosted exit 14). Only confirmed reported usage exhausting overage ends grace early. Cached reservations can include failed/in-flight writes: they bound admission but cannot end grace. Confirming new stored bytes may therefore wait until the next periodic report.
 `first_over` and `grace_end` are write-once per overrun; a fresh report confirming the org
 back within its pool clears them. Missing pools fail closed with 452; staff is exempt.
 `pool_bytes`, `org_used_bytes`, `over_since`, `first_over`, `grace_end` extend the new,
