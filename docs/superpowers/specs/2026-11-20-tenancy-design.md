@@ -827,9 +827,10 @@ PRs 1–5 have merged. Where it accepts `multi`, PR 7 adds MH's prerequisites to
 
 **Second amendment, 2026-11-22 (owner answers to MH's open questions).**
 - **Multi-region is required.** PR 7 accepts `multi` only after MH9 as well: `KYPOST_REGION`
-  recorded with K1's `meta` record from the first multi start, the `orgs` poller caching only
-  the cell's own orgs, and sync events for another region's org refused without a write (an
-  org not cached yet gets a temporary refusal until the next poll). PR 7
+  recorded with K1's `meta` record from the first multi start, the `orgs` poller serving only
+  the cell's own orgs (other regions' orgs kept as foreign ID and region only), and sync events
+  for a foreign org refused permanently without a write (an org the poll has not returned yet
+  gets a temporary refusal until the next poll). PR 7
   builds M's D3 relay local part with MH9's region character, so every hosted masked address
   carries its region from the first one. PR 7 owns that test: masked allocation only under the cell's code, with the
   code outside the 6 random characters. MH10 (cross-region relay routing on the MX hosts) must

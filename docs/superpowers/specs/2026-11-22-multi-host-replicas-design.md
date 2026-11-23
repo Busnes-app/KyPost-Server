@@ -533,8 +533,8 @@ section is B.
 | Fences, CAS, revisions, the owner guard | Per cell. No lock ever spans two cells, so MH's design and its latency budget hold per cell. |
 | Elected roles (`daemon`, `mail-runtime`, `api-sweepers`) | One election per cell. Two cells never share a job. |
 | Sessions, CSRF, revocations, step-ups, lockouts, shared meters | Per cell, in its PostgreSQL. A session of cell A means nothing to cell B. |
-| The `orgs` poll | Each cell's `api-sweepers` polls KyIdentity. It caches **only orgs whose home region is its own**, so an org of another region is "not in the cache" and refused as K's Lifecycle table refuses one (MH9). This needs a `region` field on each org in `/api/suite/orgs` (a T change). |
-| Sync events and provisioning | KyIdentity sends an org's events to its home cell only (T change). A cell also refuses, without writing, an event for an org cached with another region. An event for an org not cached yet (a new org, before the next poll) gets a temporary refusal, and KyIdentity retries it, so a new org's first sign-in can wait up to one poll. So an account exists in one cell only. |
+| The `orgs` poll | Each cell's `api-sweepers` polls KyIdentity. It serves **only orgs whose home region is its own**. For an org of another region it keeps only the ID and region, marked foreign, and never serves it: sign-in, device sign-on and `bind` refuse it as K's Lifecycle table refuses an uncached org, writing nothing (MH9). This needs a `region` field on each org in `/api/suite/orgs` (a T change). |
+| Sync events and provisioning | KyIdentity sends an org's events to its home cell only (T change). A cell refuses an event for a foreign org **permanently** (a definite answer, so KyIdentity stops retrying), without writing. Only an event for an org the poll has not returned yet (a new org, before the next poll) gets a temporary refusal, and KyIdentity retries it, so a new org's first sign-in can wait up to one poll. So an account exists in one cell only. |
 | The purge and Delete everything | In the org's home cell, unchanged. Its address tombstones are that cell's. |
 | Backups and restore | Per cell. A capsule holds one cell, and a restore rolls back only that cell's orgs. Deposits go to a KyRecovery in the same residency zone (KyRecovery's own regional install, outside KyPost). No local copies (open question 3). |
 | Staff | The staff org is the same in every cell (`KYPOST_STAFF_ORG_ID`), and each cell is exempt for it (K8). Staff accounts are provisioned in each cell from that cell's events, and each cell has its own staff console. The per-org step-up (K "PR 4 as built", owner answer) is per cell. |
@@ -969,15 +969,17 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
    a migrated install as two containers with separate volumes on one database. A single install
    can start, so this harness does not wait for K PR 7.
 9. **MH9: cells.** `KYPOST_REGION` recorded in `meta` with K1's record and refused in single
-   mode; the `orgs` poller caching only the cell's own orgs; sync events for another region's org
+   mode; the `orgs` poller serving only the cell's own orgs and keeping other regions' orgs as foreign ID and region only; sync events for a foreign org permanently
    refused without a write; the region code table that names each cell's masked relay character;
    and the disaster-recovery runbook. MH9 does not allocate masked addresses: K PR 7 builds D3
    and uses this table, so MH9 merges before K PR 7 with no circular dependency. Needs T's `region` field on orgs and on suite
    email domains.
    Tests:
    - a replica with another region, or none, refused; single mode refusing `KYPOST_REGION`;
-   - an org of another region refused at sign-in, device sign-on, a sync event and `bind`, as an
-     uncached org is, with nothing written;
+   - a foreign org refused at sign-in, device sign-on and `bind`, as an uncached org is, with
+     nothing written;
+   - a sync event for a foreign org refused permanently (not the temporary answer), with nothing
+     written;
    - a sync event for a not-yet-cached org refused as temporary, then accepted after the poll;
    - the code table: one code per region, each a single base32 character, no two regions sharing
      one (masked allocation under the cell's code is K PR 7's test);
@@ -1024,7 +1026,7 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
 | Stale reads on another host | Serve a revoked account or old settings | No cross-replica cache without a revision check. `currentUser` re-reads per request, and the root config's 5 s re-read becomes a revision read. |
 | Network attacker between the proxy and a replica on another host | Steal session cookies or change responses | Today that hop is plain HTTP (`docs/RUNNING.md:257-258`). Table mode serves TLS and refuses a plain listener off loopback (MH7). |
 | A self-hosted operator, or a script, deleting the `volume_stores` row by hand | Roll back to stale files | The completed `volumes.db` remains, so the start and a forward run both refuse and name `migrate-volumes-to-files` (MH8). Nothing is served from the stale files. |
-| An org of region A presented at cell B | Reach another cell's data, or be provisioned twice | Cell B caches only its own orgs and refuses an uncached org at sign-in, device sign-on, sync and `bind`, writing nothing (MH9). KyIdentity sends events only to the home cell. |
+| An org of region A presented at cell B | Reach another cell's data, or be provisioned twice | Cell B serves only its own orgs. It keeps A's orgs as foreign ID and region only, refuses them at sign-in, device sign-on and `bind`, and refuses their sync events permanently, writing nothing (MH9). KyIdentity sends events only to the home cell. |
 | A prober spreading relay-domain guesses over regions | Find live masked addresses | The budget is per cell, so R cells allow R times the budget. The 6 random characters are unchanged. |
 | A compromised MX host | Send mail into any cell | It is a gateway in each cell it forwards to, under its own ID only (RX R4), and each cell can retire it alone. |
 
