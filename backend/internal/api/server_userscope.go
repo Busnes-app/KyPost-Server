@@ -415,11 +415,7 @@ func (s *Server) sanitizeGroupIDsForUser(userID string, ids []string) ([]string,
 // userContactPhotosDir is where a user's contact photo files live, one
 // content-hashed file per uploaded photo.
 func (s *Server) userContactPhotosDir(userID string) string {
-	return contactPhotosDir(s.stateDir, userID)
-}
-
-func contactPhotosDir(stateDir, userID string) string {
-	return filepath.Join(config.UserDir(stateDir, userID), "contact-photos")
+	return filepath.Join(s.userStateDir(userID), "contact-photos")
 }
 
 // userContactPhotoPath resolves a photoRef to its on-disk path.

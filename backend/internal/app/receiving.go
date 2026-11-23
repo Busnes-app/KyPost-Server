@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -96,10 +95,7 @@ func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignme
 // in the org, each storing its own copy (sameOrgCopies). A full answer is the mailbox-full exit 9; a lower
 // quota refuses new mail only. It runs inside the users fence, so the owner's org and
 // the members come from tenancy.db (subject_orgs, user_orgs), never the users store.
-// ponytail: the org sum costs one usage read per org mailbox and one held-bytes scan per
-// message, and is not fenced across mailboxes, so concurrent deliveries can pass it
-// together. A cached per-org sum under a per-org lease is the upgrade, when RX's capacity
-// measurement (K open question 8) shows the cost.
+// Org-wide counters are cached by the report; DATA reserves all copies atomically.
 func (r *receivingRuntime) orgRoom(ctx context.Context, a sso.NativeAssignment, used, size, copies int64) error {
 	if r.tenancy == nil {
 		return nil
@@ -140,15 +136,7 @@ func (r *receivingRuntime) poolRoom(ctx context.Context, org string, add int64) 
 	if err != nil {
 		return err
 	}
-	ledger, err := r.life.NativeMailboxesWithoutAddresses()
-	if err != nil {
-		return err
-	}
-	used, err := api.OrgStorageUsed(ctx, r.tenancy, r.stateDir, org, ledger, func(id string) (int64, error) { return r.holding.HeldBytes(ctx, id) })
-	if err != nil {
-		return err
-	}
-	answer, firstOver, graceEnd := g.Mail(used, add, time.Now())
+	answer, firstOver, graceEnd := g.Mail(g.Used, add, time.Now())
 	if err := tenancy.MarkOverrun(ctx, r.tenancy, org, firstOver, graceEnd); err != nil {
 		return err
 	}
@@ -165,34 +153,11 @@ func (r *receivingRuntime) poolRoom(ctx context.Context, org string, add int64) 
 // org, against q.
 func (r *receivingRuntime) orgStorageBytes(ctx context.Context, org string, q, add int64) error {
 	full := &receivingCommandError{err: errMailboxFull, code: 9}
-	ids, err := tenancy.OrgUsers(ctx, r.tenancy, org)
+	g, err := tenancy.StorageGrant(ctx, r.tenancy, org)
 	if err != nil {
 		return err
 	}
-	members := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		members[id] = true
-	}
-	mailboxes, err := r.life.NativeMailboxesWithoutAddresses()
-	if err != nil {
-		return err
-	}
-	held, err := r.holding.HeldBytesByMailbox(ctx)
-	if err != nil {
-		return err
-	}
-	total := add
-	for _, m := range mailboxes {
-		if !members[m.User] || m.Dir == "" {
-			continue
-		}
-		u, err := mailbox.ReadUsage(filepath.Join(m.Dir, "mailbox"))
-		if err != nil {
-			return err
-		}
-		total += u.Bytes + held[m.ID]
-	}
-	if total > q {
+	if g.Used > q || add > q-g.Used {
 		return full
 	}
 	return nil
@@ -879,6 +844,14 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery, sender string, raw []byte, proofs []sso.NativeDomain) error {
 	return r.frozenAuthority(ctx, true, d, proofs, func(current map[string]sso.NativeAssignment) error {
 		return r.quotaFence(ctx, current, func() error {
+			// Another accept may have completed since d was read. Replays never reserve again.
+			latest, err := r.holding.Get(ctx, r.gatewayID(), d.ID)
+			if err != nil {
+				return err
+			}
+			if latest.State != "staged" {
+				return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))
+			}
 			copies, err := r.sameOrgCopies(ctx, current)
 			if err != nil {
 				return err
@@ -894,9 +867,62 @@ func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery,
 					return err
 				}
 			}
+			if err := r.reservePoolMail(ctx, current, int64(len(raw))); err != nil {
+				return err
+			}
 			return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))
 		})
 	})
+}
+
+// reservePoolMail spends each org's copies once, across every mailbox and replica.
+// The byte reservation commits before holding storage: a failure overcounts until the
+// next report, and can never let another DATA transaction spend the same headroom.
+func (r *receivingRuntime) reservePoolMail(ctx context.Context, current map[string]sso.NativeAssignment, size int64) error {
+	if r.tenancy == nil {
+		return nil
+	}
+	_, staff, err := config.Tenancy()
+	if err != nil {
+		return err
+	}
+	byOrg := map[string]tenancy.MailReservation{}
+	for _, a := range current {
+		org, err := tenancy.SubjectOrg(ctx, r.tenancy, a.Owner.Issuer, a.Owner.Subject)
+		if err != nil {
+			return err
+		}
+		if org == staff {
+			continue
+		}
+		v := byOrg[org]
+		v.Org, v.Bytes = org, v.Bytes+size
+		byOrg[org] = v
+	}
+	var reservations []tenancy.MailReservation
+	for _, org := range slices.Sorted(maps.Keys(byOrg)) {
+		v := byOrg[org]
+		o, err := tenancy.LookupOrg(ctx, r.tenancy, org)
+		if err != nil {
+			return err
+		}
+		v.Limit = o.Quotas.StorageBytes
+		reservations = append(reservations, v)
+	}
+	if len(reservations) == 0 {
+		return nil
+	}
+	answer, err := tenancy.ReserveMail(ctx, r.tenancy, reservations, time.Now())
+	if err != nil {
+		return err
+	}
+	if answer == tenancy.PoolMailTemporary {
+		return &receivingCommandError{err: errMailboxFull, code: 9}
+	}
+	if answer == tenancy.PoolMailRefuse {
+		return &receivingCommandError{err: errPoolRefused, code: 14}
+	}
+	return nil
 }
 
 func bindingAddresses(d ingress.Delivery) []string {

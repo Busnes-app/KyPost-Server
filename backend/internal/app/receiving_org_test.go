@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
-	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -42,9 +42,9 @@ func multiRuntime(t *testing.T, r *receivingRuntime, db *sql.DB) {
 func grantPool(t *testing.T, db *sql.DB, org string, bytes int64, ttl time.Duration) {
 	t.Helper()
 	ctx := context.Background()
-	seq, _, err := tenancy.NextStorageSeq(ctx, db, org)
+	seq, last, err := tenancy.NextStorageSeq(ctx, db, org)
 	if err == nil {
-		err = tenancy.SetGrant(ctx, db, org, seq, tenancy.Grant{Ceiling: bytes, Expires: time.Now().Add(ttl), PoolBytes: bytes})
+		err = tenancy.SetGrant(ctx, db, org, seq, tenancy.Grant{Admitted: last.Admitted, Ceiling: bytes, Expires: time.Now().Add(ttl), PoolBytes: bytes})
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +118,12 @@ func TestReceivingOrgStorageQuotas(t *testing.T) {
 		if _, err := store.Append(ctx, "Archive", bytes.NewReader(raw), false); err != nil {
 			t.Fatal(err)
 		}
+		// This fixture writes directly without the multi-mode hook. Record the reservation
+		// that the runtime hook would have made, so the cached safety quota sees the growth.
+		org := []string{receivingOrgA, receivingOrgB}[i]
+		if ok, err := tenancy.ReserveStorage(ctx, cache, org, int64(len(raw)), time.Now()); err != nil || !ok {
+			t.Fatalf("fixture storage reservation: %v %v", ok, err)
+		}
 	}
 	fill(1)
 	if err := bind("storage-other-org"); err != nil {
@@ -188,8 +194,9 @@ func TestReceivingOrgStorageCountsEveryCopy(t *testing.T) {
 func setPool(t *testing.T, db *sql.DB, org string, g tenancy.Grant) {
 	t.Helper()
 	ctx := context.Background()
-	seq, _, err := tenancy.NextStorageSeq(ctx, db, org)
+	seq, last, err := tenancy.NextStorageSeq(ctx, db, org)
 	if err == nil {
+		g.Admitted = last.Admitted
 		err = tenancy.SetGrant(ctx, db, org, seq, g)
 	}
 	if err != nil {
@@ -224,14 +231,7 @@ func TestReceivingOrgStoragePool(t *testing.T) {
 	}
 	// 10 MiB of overage left: a delivery of 30 MiB (several copies) is refused for now
 	// without ending grace, and a smaller one is accepted (security review of #707).
-	ledger, err := r.life.NativeMailboxesWithoutAddresses()
-	if err != nil {
-		t.Fatal(err)
-	}
-	used, err := api.OrgStorageUsed(ctx, r.tenancy, r.stateDir, receivingOrgA, ledger, func(string) (int64, error) { return 0, nil })
-	if err != nil {
-		t.Fatal(err)
-	}
+	used := int64(0)
 	nearly := exhausted
 	nearly.Used, nearly.OrgUsed, nearly.OverSince = used, pool+tenancy.PoolOverage(pool)-10<<20, time.Now().Add(-day)
 	setPool(t, r.tenancy, receivingOrgA, nearly)
@@ -252,7 +252,7 @@ func TestReceivingOrgStoragePool(t *testing.T) {
 	}
 	over.OverSince = time.Now().Add(-11 * day)
 	setPool(t, r.tenancy, receivingOrgA, over)
-	err = r.bind(ctx, "refused", "sender@outside.test", "one@example.test")
+	err := r.bind(ctx, "refused", "sender@outside.test", "one@example.test")
 	if receivingExit(err) != 14 || !errors.Is(err, errPoolRefused) {
 		t.Fatalf("day 11: %v, want exit 14", err)
 	}
@@ -275,5 +275,78 @@ func TestReceivingOrgStoragePool(t *testing.T) {
 	t.Setenv("KYPOST_STAFF_ORG_ID", receivingOrgA)
 	if got := exit("staff", "one@example.test"); got != 0 {
 		t.Fatalf("staff org: exit %d", got)
+	}
+}
+
+// Concurrent DATA deliveries to different mailboxes of one org share one admission
+// budget, including grace. Replaying the accepted transaction never spends it twice.
+func TestReceivingConcurrentPoolAdmission(t *testing.T) {
+	r, created := receivingFixtureIn(t, receivingOrgA, receivingOrgA)
+	ctx := context.Background()
+	db, err := tenancy.Open(t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	multiRuntime(t, r, db)
+	for _, u := range created {
+		if err := tenancy.BindSubject(ctx, db, u.NativeMailboxIssuer, u.SSOSub, receivingOrgA); err != nil {
+			t.Fatal(err)
+		}
+		if err := tenancy.BindUser(ctx, db, u.ID, receivingOrgA); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setOrg(t, db, receivingOrgA, suitedir.OrgActive)
+	for _, v := range []struct{ id, to string }{{"race-one", "one@example.test"}, {"race-two", "two@example.test"}} {
+		if err := r.bind(ctx, v.id, tlsSender, v.to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw := []byte("From: sender@outside.test\r\nSubject: concurrent DATA\r\n\r\nbody")
+	const pool = 20_000_000_000
+	setPool(t, db, receivingOrgA, tenancy.Grant{PoolBytes: pool, OrgUsed: pool + tenancy.PoolOverage(pool) - int64(len(raw)), OverSince: time.Now().Add(-time.Hour)})
+	type result struct {
+		id  string
+		err error
+	}
+	results, start := make(chan result, 2), make(chan struct{})
+	var wg sync.WaitGroup
+	for _, id := range []string{"race-one", "race-two"} {
+		wg.Go(func() {
+			<-start
+			results <- result{id, r.accept(ctx, id, tlsSender, bytes.NewReader(raw))}
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	accepted := ""
+	for v := range results {
+		if v.err == nil {
+			if accepted != "" {
+				t.Fatal("both mailboxes spent the same grace headroom")
+			}
+			accepted = v.id
+		} else if receivingExit(v.err) != 9 {
+			t.Fatal(v.err)
+		}
+	}
+	if accepted == "" {
+		t.Fatal("neither delivery admitted")
+	}
+	before, err := tenancy.StorageGrant(ctx, db, receivingOrgA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Used != int64(len(raw)) {
+		t.Fatalf("charged %d bytes", before.Used)
+	}
+	if err := r.accept(ctx, accepted, tlsSender, bytes.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := tenancy.StorageGrant(ctx, db, receivingOrgA)
+	if err != nil || after.Admitted != before.Admitted {
+		t.Fatalf("replay charged again: %+v -> %+v %v", before, after, err)
 	}
 }

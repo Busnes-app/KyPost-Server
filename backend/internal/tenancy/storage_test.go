@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
- "sync"
- "sync/atomic"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -382,5 +382,69 @@ func TestStorageReservationsSurviveReport(t *testing.T) {
 	}
 	if ok, err := ReserveStorage(ctx, db, orgOne, 1, expiry); err != nil || ok {
 		t.Fatalf("expired grant: %v %v", ok, err)
+	}
+}
+
+// DATA and mailbox/photo writers spend one shared counter. Multi-org delivery is
+// all-or-none, and every reservation preserves the other apps' reported contribution.
+func TestStorageMailReservations(t *testing.T) {
+	ctx, db := context.Background(), openCache(t).DB
+	now := time.Now()
+	for _, org := range []string{orgOne, orgTwo} {
+		seq, _, err := NextStorageSeq(ctx, db, org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SetGrant(ctx, db, org, seq, Grant{Ceiling: 10, Expires: now.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results := make(chan bool, 2)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		ok, err := ReserveStorage(ctx, db, orgOne, 10, now)
+		if err != nil {
+			t.Error(err)
+		}
+		results <- ok
+	})
+	wg.Go(func() {
+		answer, err := ReserveMail(ctx, db, []MailReservation{{Org: orgOne, Bytes: 10}}, now)
+		if err != nil {
+			t.Error(err)
+		}
+		results <- answer == PoolMailAccept
+	})
+	wg.Wait()
+	accepted := 0
+	for range 2 {
+		if <-results {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("accepted %d writers with 10 bytes of headroom", accepted)
+	}
+	answer, err := ReserveMail(ctx, db, []MailReservation{{Org: orgTwo, Bytes: 5}, {Org: orgOne, Bytes: 1}}, now)
+	if err != nil || answer != PoolMailTemporary {
+		t.Fatalf("multi-org decision: %v %v", answer, err)
+	}
+	if g, _ := StorageGrant(ctx, db, orgTwo); g.Used != 0 {
+		t.Fatalf("partial reservation for org two: %+v", g)
+	}
+	// Cached local usage grows while the last reported local usage stays fixed.
+	const gb = 1_000_000_000
+	seq, last, err := NextStorageSeq(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetGrant(ctx, db, orgOne, seq, Grant{Used: 10 * gb, Admitted: last.Admitted, PoolBytes: 20 * gb, OrgUsed: 21 * gb, OverSince: now.Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []PoolMail{PoolMailAccept, PoolMailAccept, PoolMailTemporary} {
+		got, err := ReserveMail(ctx, db, []MailReservation{{Org: orgOne, Bytes: gb / 2}}, now)
+		if err != nil || got != want {
+			t.Fatalf("grace reservation %d: %v %v, want %v", i, got, err, want)
+		}
 	}
 }

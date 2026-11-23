@@ -38,9 +38,9 @@ const maxBytes = 1 << 53
 // Grant is an org's last grant, with the pool KyIdentity reported beside it. A missing row
 // is the zero Grant, which fits nothing and has no pool. Zero times are unset.
 type Grant struct {
-	Used, Ceiling int64
- Admitted, Reported int64
-	Expires       time.Time
+	Used, Ceiling      int64
+	Admitted, Reported int64
+	Expires            time.Time
 	// PoolBytes is the org's pool; OrgUsed is every app's usage, KyPost's last report
 	// included; OverSince is KyIdentity's start of the overrun.
 	PoolBytes, OrgUsed int64
@@ -199,6 +199,62 @@ func ReserveStorage(ctx context.Context, db *sql.DB, org string, add int64, now 
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// MailReservation is all the copies a DATA delivery adds to one org. Limit is the
+// optional KyPost storage safety ceiling; the pool and grace still apply separately.
+type MailReservation struct {
+	Org   string
+	Bytes int64
+	Limit *int64
+}
+
+// ReserveMail admits every org's copies or none, under the shared tenancy writer
+// transaction. RCPT probes never call it. Refusals persist overrun dates without
+// spending bytes; failed holding writes remain charged until the next usage report.
+func ReserveMail(ctx context.Context, db *sql.DB, reservations []MailReservation, now time.Time) (PoolMail, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return PoolMailTemporary, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	answer := PoolMailAccept
+	for _, r := range reservations {
+		var g Grant
+		var expires, over, first, end int64
+		err := tx.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, reported_bytes, pool_bytes, org_used_bytes, over_since, first_over, grace_end FROM org_storage WHERE org_id = ?`, r.Org).
+			Scan(&g.Used, &g.Ceiling, &expires, &g.Reported, &g.PoolBytes, &g.OrgUsed, &over, &first, &end)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return PoolMailTemporary, err
+		}
+		g.Expires, g.OverSince, g.FirstOver, g.GraceEnd = timeOrZero(expires), timeOrZero(over), timeOrZero(first), timeOrZero(end)
+		if r.Limit != nil && (g.Used > *r.Limit || r.Bytes > *r.Limit-g.Used) {
+			return PoolMailTemporary, nil
+		}
+		decision, firstAt, endAt := g.Mail(g.Used, r.Bytes, now)
+		answer = max(answer, decision)
+		if _, err := tx.ExecContext(ctx, `UPDATE org_storage SET first_over = CASE WHEN first_over = 0 THEN ? ELSE first_over END,
+   grace_end = CASE WHEN grace_end = 0 THEN ? ELSE grace_end END WHERE org_id = ?`, unixOrZero(firstAt), unixOrZero(endAt), r.Org); err != nil {
+			return PoolMailTemporary, err
+		}
+	}
+	if answer == PoolMailAccept {
+		for _, r := range reservations {
+			result, err := tx.ExecContext(ctx, `UPDATE org_storage SET used_bytes = used_bytes + ?, admitted_bytes = admitted_bytes + ?
+    WHERE org_id = ? AND admitted_bytes <= 9223372036854775807 - ?`, r.Bytes, r.Bytes, r.Org, r.Bytes)
+			if err != nil {
+				return PoolMailTemporary, err
+			}
+			n, err := result.RowsAffected()
+			if err != nil {
+				return PoolMailTemporary, err
+			}
+			if n != 1 {
+				return PoolMailTemporary, nil
+			}
+		}
+	}
+	return answer, tx.Commit()
 }
 
 // ReportableOrgs lists the cached orgs KyPost reports for: every one not deleted.

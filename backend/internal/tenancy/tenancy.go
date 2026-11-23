@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS restore_reads (epoch TEXT PRIMARY KEY, read_at INTEGE
 CREATE TABLE IF NOT EXISTS purged_mailboxes (mailbox TEXT PRIMARY KEY, org_id TEXT NOT NULL, subject TEXT NOT NULL, purged_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS import_leases (mailbox TEXT PRIMARY KEY, holder TEXT NOT NULL, lease_until INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS retired_bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, mailbox TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(gateway, id, mailbox));
+-- org_storage is new in this unreleased series; multi startup is gated, so it has no prior shape.
 CREATE TABLE IF NOT EXISTS org_storage (org_id TEXT PRIMARY KEY, seq INTEGER NOT NULL, used_bytes INTEGER NOT NULL, admitted_bytes INTEGER NOT NULL DEFAULT 0, reported_bytes INTEGER NOT NULL DEFAULT 0, ceiling_bytes INTEGER NOT NULL, expires_at INTEGER NOT NULL,
  pool_bytes INTEGER NOT NULL DEFAULT 0, org_used_bytes INTEGER NOT NULL DEFAULT 0, over_since INTEGER NOT NULL DEFAULT 0, first_over INTEGER NOT NULL DEFAULT 0, grace_end INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS documents (
@@ -142,6 +143,7 @@ CREATE TABLE IF NOT EXISTS restore_reads (epoch TEXT PRIMARY KEY, read_at BIGINT
 CREATE TABLE IF NOT EXISTS purged_mailboxes (mailbox TEXT PRIMARY KEY, org_id TEXT NOT NULL, subject TEXT NOT NULL, purged_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS import_leases (mailbox TEXT PRIMARY KEY, holder TEXT NOT NULL, lease_until BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS retired_bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, mailbox TEXT NOT NULL, at BIGINT NOT NULL, PRIMARY KEY(gateway, id, mailbox));
+-- org_storage is new in this unreleased series; multi startup is gated, so it has no prior shape.
 CREATE TABLE IF NOT EXISTS org_storage (org_id TEXT PRIMARY KEY, seq BIGINT NOT NULL, used_bytes BIGINT NOT NULL, admitted_bytes BIGINT NOT NULL DEFAULT 0, reported_bytes BIGINT NOT NULL DEFAULT 0, ceiling_bytes BIGINT NOT NULL, expires_at BIGINT NOT NULL,
  pool_bytes BIGINT NOT NULL DEFAULT 0, org_used_bytes BIGINT NOT NULL DEFAULT 0, over_since BIGINT NOT NULL DEFAULT 0, first_over BIGINT NOT NULL DEFAULT 0, grace_end BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS documents (

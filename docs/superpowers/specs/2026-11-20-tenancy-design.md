@@ -2031,7 +2031,7 @@ next report. `reported_bytes` remains fixed when `used_bytes` grows, preserving 
 apps' contribution to the grace ceiling. Exact accepted replay never reserves twice.
 The report-overlap bound above also includes incoming writes: at most one message per
 mailbox quota fence in flight at the watermark, each within the mailbox message limit.
-No per-message full-org or install-wide pool usage scan runs.
+No per-message full-org or install-wide pool usage scan runs. The optional `storageBytes` safety cap uses that same cached mail/held/photo total and is rechecked in the DATA reservation transaction; deletions take effect on the next report.
 
 ## Residual risks
 

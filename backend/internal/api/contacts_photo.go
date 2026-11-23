@@ -215,12 +215,7 @@ func (s *Server) photoPoolRoom(userID string, n int64) error {
 // contactPhotoBytesUsed totals the bytes in a user's photo directory. A missing
 // directory is zero, not an error.
 func (s *Server) contactPhotoBytesUsed(userID string) (int64, error) {
-	return photoBytes(s.userContactPhotosDir(userID))
-}
-
-// photoBytes totals the regular files in dir; a missing dir is zero.
-func photoBytes(dir string) (int64, error) {
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(s.userContactPhotosDir(userID))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
