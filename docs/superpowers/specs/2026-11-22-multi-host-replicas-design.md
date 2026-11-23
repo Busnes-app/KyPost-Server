@@ -301,6 +301,42 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
   capsule's database export. A restore loads them with the rest of `volumes.db`, so it writes no
   files. K PR 6 is therefore a hard dependency of MH2.
 
+### Per-org encryption at rest (owner decision 2026-11-22)
+
+Today contacts are plaintext JSON (`contacts/store.go:26`, `SECURITY.md` "Unencrypted"). In table
+mode every org's contacts would sit in one database, so the seam seals what it stores.
+
+- **What is sealed.** The table implementation seals the `body` of every D row (`owner` is set):
+  `contacts.json` and each `contact-photos/` row included. Sealing at the seam is one code path, and
+  no store changes. P rows and the bookkeeping columns (`root`, `path`, `owner`, `revision`) stay
+  plaintext, because CAS and the purge read them.
+- **Why the server holds the key, not the browser.** The server reads contacts with no browser
+  present: pre-sort and out-of-office match senders (`processor/presort.go:60`), signature checks
+  bind keys to addresses (`api/pgp_receive.go:294`), send-time key lookup, Autocrypt harvest and
+  key discovery write contacts, and CardDAV clients need plaintext vCards. The armored public key
+  also carries the addresses as User IDs. Browser-side encryption breaks those and still leaks
+  most addresses, so it is not done.
+- **Keys.** One random 256-bit data key per org, in a `volumes.db` table
+  `doc_keys(org_id TEXT PRIMARY KEY, wrapped BYTEA, created_at BIGINT)`, wrapped with AES-256-GCM
+  under `documents.key` in `SECRET_DIR`. A migrated single-tenant install has one row with an empty
+  `org_id`. `documents.key` is provisioned and read-only like every MH5 key, and joins MH5's
+  key-set digest. A data key is a database row, so creating one is an
+  `INSERT … ON CONFLICT DO NOTHING` followed by a read, and two replicas agree on one key.
+  Rotation is offline, as for MH5 keys.
+- **Binding.** AES-256-GCM with a random nonce, as `cryptutil.Seal`, plus associated data of
+  `root`, `path` and `owner`. A body copied to another path, user or org fails to open. `Seal`
+  takes no associated data today (`cryptutil/cryptutil.go:91`), so MH2 adds that variant.
+- **Failure.** A body that does not open is an error, never an empty document (the
+  refresh-from-disk rule, `backend/AGENTS.md`). No plaintext, key or address is logged.
+- **What it protects.** A copy of the database, a dump or a capsule's `volumes.db` without
+  `SECRET_DIR`. It does not protect against a compromised replica, which holds the keys (threat
+  model).
+- **The purge.** The purge deletes the org's `doc_keys` row after its documents. Capsules made
+  earlier still carry the wrapped key, so this is not a cryptographic erase of backups. K's restore
+  release keeps governing those.
+- **File mode is unchanged.** An un-migrated single-tenant install keeps plaintext files, byte for
+  byte (open question 16).
+
 ### The `accounts` table
 
 ```
@@ -839,7 +875,12 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
    - the purge's final check failing while a document of a purged owner remains;
    - expired-pickup cleanup;
    - a cross-org case in `TestCrossOrgMatrix` per new document kind;
-   - the upgrade test asserting no `volumes.db` on a single install.
+   - the upgrade test asserting no `volumes.db` on a single install;
+   - sealing (Per-org encryption at rest): every D row's `body` in the database holds no
+     plaintext (a test address and name are absent from a dump); a body moved to another path,
+     owner or org fails to open; two replicas creating one org's data key at once agree on one
+     key; a missing `documents.key` refuses the start; an unopenable body fails the read; the
+     purge removes the org's `doc_keys` row; P rows stay readable.
 3. **MH3: accounts.** The `accounts` table, in `volumes.db`, per-row invariants, the `REPEATABLE READ` read-only
    snapshot, and `SERIALIZABLE` with a bounded `40001` retry for every write that checks a
    whole-set invariant (the last-administrator rule and the demotions checked against it), plus
@@ -960,6 +1001,7 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
 |---|---|---|
 | Network attacker between a replica host and PostgreSQL | Read or change every org's data in transit | Today's Compose URL uses `sslmode=disable` on one Docker network (`docs/RUNNING.md:313`), and the code sets no TLS mode of its own (unverified beyond a search of `dbbackend` and `config`). Multi mode refuses a database URL whose `sslmode` is not `verify-full` unless the host is loopback (MH7, and K PR 7's K2 check). |
 | A rogue or misconfigured host joining | Serve with other keys, settings or mode | Joining needs the database credentials. Then K1's tenancy record, R's settings fingerprint and MH5's key-set digest each refuse a mismatch before anything listens. |
+| Anyone holding a database copy, a dump or a capsule's `volumes.db`, without `SECRET_DIR` | Read members' contacts and other per-user documents | Every D row's body is sealed under its org's data key, and the data keys are wrapped under `documents.key` (Per-org encryption at rest). Bookkeeping columns stay readable: paths, owners and revisions. |
 | A compromised replica host | Read every org | Unchanged in kind: any replica holds every key and the database, today and in multi mode (K residual risks). More hosts mean more such machines. Keys are mounted read-only from the secret store, so a host compromise cannot plant a new key for the others to accept. |
 | Member of org A | Reach B's documents by path | Document paths are built by the same helpers from the caller's own admitted IDs (`config.SafeUserPathComponent`). The table validator refuses traversal. `TestCrossOrgMatrix` and `TestOrgAdmitCallSites` (K PR 3) keep running against the table implementation. |
 | Oversize input | Fill the database through one document | The per-document cap at the write, plus each store's own caps. Per-org storage quotas cover mail, not documents (K PR 5 owner answer 5). The capacity measurement sizes documents per user. |
@@ -1069,3 +1111,7 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
     only) is the floor until it is built.
 15. **Residency zones.** Which regions may hold a standby or a KyRecovery deposit for which other
     region is a legal and product decision. *Default:* only regions in the same jurisdiction.
+16. **Seal per-user files on un-migrated single-tenant installs too?** *Default:* no. That would
+    change a self-hosted install's files on upgrade, which the byte-for-byte rule forbids.
+    Contacts on those installs stay plaintext, as `SECURITY.md` documents. The alternative is an
+    opt-in sealed file mode.
