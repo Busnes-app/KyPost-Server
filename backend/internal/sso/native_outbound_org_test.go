@@ -24,7 +24,8 @@ const heldOrg = "1a2b3c4d-0000-4000-8000-00000000000a"
 func TestNativeOutboundHoldsANotServedOrg(t *testing.T) {
 	ctx := context.Background()
 	sender, _, _ := outboundFixture(t)
-	nativeDesired(t, NewLifecycleStore(sender.ConfigDir), "two", "two@example.test", 1, true)
+	hostedDomainsFixture(t, sender.ConfigDir)
+	hostedDesired(t, NewLifecycleStore(sender.ConfigDir), "two", "two@example.test", "two@example.test", 1)
 	u, err := NewLifecycleStore(sender.ConfigDir).AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits, heldOrg)
 	if err != nil || u.OrgID != heldOrg {
 		t.Fatal(u.OrgID, err)

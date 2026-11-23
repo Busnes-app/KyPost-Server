@@ -279,10 +279,18 @@ receiving stopped. To roll back, restore the backup taken before the upgrade
 flow. It proves the domain before acquiring locks, then holds locks in order:
 domain → directory → users → account. It requires a live retained signed SCIM
 resource with matching issuer/subject and active state. Roles come from that
-resource, never a token email/name or classifier label. Exactly one explicit
-primary bare ASCII dot-atom email is required; its domain must be a configured,
-non-retired member of the set and is the one freshly proven; comparisons are
-case-insensitive. Quoted/SMTPUTF8 addresses and implicit aliases are refused.
+resource, never a token email/name or classifier label. Single mode requires
+exactly one explicit primary email, unchanged. Hosted multi mode requires exactly
+one `emails` entry with `type:"mailbox"`; the primary sign-in email is never a
+fallback. With no mailbox entry, allocation stays `pending` with
+`mailbox_address_missing` and publishes no account or mailbox storage. A later
+signed profile can finish allocation. Hosted allocation also reads KyIdentity's
+current `/api/suite/email-domains` using the configured SSO client credentials;
+an unavailable or malformed answer leaves provisioning pending. The requested
+domain must be on that list and a configured, non-retired, freshly DNS-proven
+member of KyPost's own set. Addresses must be bare ASCII dot-atom emails;
+comparisons are case-insensitive. Quoted/SMTPUTF8 addresses and implicit aliases
+are refused.
 
 Reuse an existing durable reservation's local ID or reserve a new UUID. Resolve
 username collisions under the users lock with a stable `native-<localID>` name.

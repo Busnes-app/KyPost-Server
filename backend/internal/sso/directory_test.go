@@ -80,8 +80,9 @@ func TestDirectoryDesiredResourceSurvivesRetryAndFailure(t *testing.T) {
 	resource.Meta.Version = `W/"1"`
 	resource.Emails = append(resource.Emails, struct {
 		Value   string `json:"value"`
+		Type    string `json:"type,omitempty"`
 		Primary bool   `json:"primary"`
-	}{"primary@example.test", true})
+	}{"primary@example.test", "", true})
 	ev := syncauth.Event{ID: "one", Type: "user.created", At: time.Now()}
 	applied := 0
 	apply := func() (bool, error) { applied++; return false, nil }

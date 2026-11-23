@@ -170,7 +170,8 @@ func TestNativeAllocationKeepsItsIDAndOrgAcrossACrash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nativeDesired(t, life, "member", "member@example.test", 1, true)
+	hostedDomainsFixture(t, config)
+	hostedDesired(t, life, "member", "member@example.test", "member@example.test", 1)
 	reserved, err := life.ReconcileNativeMailbox(root, nativeIssuer, "member", "reserved-id", "example.test", nativeLimits)
 	if err != nil {
 		t.Fatal(err)

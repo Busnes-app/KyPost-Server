@@ -648,12 +648,12 @@ func (s *LifecycleStore) reconcileNativeMailboxContext(ctx context.Context, stat
 		return result, err
 	}
 	defer release()
-	return s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, localID, domain, limits, disableOnly, prepare)
+	return s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, localID, domain, limits, disableOnly, false, prepare)
 }
 
 // domain is the freshly proven domain; "" means the requested primary is not on
 // a configured domain, which is recorded as a failure for an active subject.
-func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root, issuer, subject, localID, domain string, limits mailbox.Limits, disableOnly bool, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
+func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root, issuer, subject, localID, domain string, limits mailbox.Limits, disableOnly, hosted bool, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
 	var result NativeAssignment
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -718,11 +718,26 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 			return ErrNativeProvisioning
 		}
 		address := a.Address
+		if hosted && d.Active {
+			hasMailbox := false
+			for _, email := range d.Resource.Emails {
+				hasMailbox = hasMailbox || email.Type == "mailbox"
+			}
+			if !hasMailbox {
+				a.Status, a.Failure = "pending", "mailbox_address_missing"
+				result = a
+				f.Accounts[key] = a
+				if err := s.commitNative(f, nil); err != nil {
+					return err
+				}
+				return ErrNativeProvisioning
+			}
+		}
 		if d.Active && domain == "" {
 			return fail("primary_domain_unavailable")
 		}
 		if d.Active {
-			address, e = nativePrimary(*d.Resource, domain)
+			address, e = nativePrimary(*d.Resource, domain, hosted)
 			if e != nil {
 				return fail("invalid_primary_address")
 			}
@@ -805,11 +820,11 @@ func nativeDomain(domain string) bool {
 	return true
 }
 
-func nativePrimary(u DirectoryUser, domain string) (string, error) {
+func nativePrimary(u DirectoryUser, domain string, hosted bool) (string, error) {
 	address := ""
 	count := 0
 	for _, email := range u.Emails {
-		if email.Primary {
+		if !hosted && email.Primary || hosted && email.Type == "mailbox" {
 			count++
 			address = email.Value
 		}

@@ -66,6 +66,7 @@ type DirectoryUser struct {
 	Roles      json.RawMessage `json:"roles"`
 	Emails     []struct {
 		Value   string `json:"value"`
+		Type    string `json:"type,omitempty"`
 		Primary bool   `json:"primary"`
 	} `json:"emails"`
 	Meta struct {
@@ -95,7 +96,7 @@ func (u DirectoryUser) Revision(eventType string) (int64, error) {
 		return 0, errors.New("an active user needs a valid userName")
 	}
 	switch eventType {
-	case "user.created", "user.updated":
+	case "user.created", "user.updated", "user.mfa_reset":
 	case "user.deleted":
 		if *u.Active {
 			return 0, errors.New("a deleted user cannot be active")
