@@ -148,7 +148,7 @@ const (
 // org with no pool (KyIdentity has not reported one) gets the temporary answer and no
 // grace (K open question 15).
 func (g Grant) Mail(used, add int64, now time.Time) (answer PoolMail, firstOver, graceEnd time.Time) {
-	if g.Fits(used, add, now) {
+	if now.Before(g.Expires) && used >= 0 && add >= 0 && used <= g.Ceiling && add <= g.Ceiling-used {
 		return PoolMailAccept, time.Time{}, time.Time{}
 	}
 	if g.PoolBytes <= 0 {
