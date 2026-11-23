@@ -55,6 +55,13 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 	if marker != "" && marker != "postgres" {
 		return nil, errors.New("invalid volume_stores setting")
 	}
+	// Historical MH2 stores and capsules retain file account authority. MH8 owns
+	// migration; never replace retained accounts with an empty/new table at startup.
+	if _, err := os.Lstat(filepath.Join(configDir, "users.json")); err == nil {
+		return nil, errors.New("table-mode startup found retained users.json; preserve it and complete the offline account migration before switching authority")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	master, err := cryptutil.LoadKey(filepath.Join(secretDir, "documents.key"))
 	if err != nil {
 		return nil, errors.New("table-mode documents require a provisioned documents.key")
@@ -78,6 +85,17 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 	if err != nil {
 		db.Close()
 		return nil, err
+	}
+	if mode != config.TenancyMulti {
+		all, err := accounts.List()
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		if users.FirstAdminFrom(all).ID == "" {
+			db.Close()
+			return nil, errors.New("migrated table-mode accounts have no active administrator; preserve retained data and restore complete account authority before startup")
+		}
 	}
 	options := documentTableOptions(configDir, mode, master, accounts)
 	configVol, err := vol.NewTable(db, "config", options)

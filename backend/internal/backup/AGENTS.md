@@ -10,7 +10,7 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Local Contracts
 
-- Table account snapshots carry `accounts` inside `volumes.db`, omit stale `users.json`, validate routing columns and account secret dependencies, and restore account records without expanding a file. Historical file authority remains supported; simultaneous nonempty file/table authority is refused.
+- Table account snapshots carry `accounts` inside `volumes.db`, omit stale `users.json`, validate routing columns and account secret dependencies, and restore account records without expanding a file. Historical file authority remains readable offline; simultaneous nonempty file/table authority is refused. Runtime table-mode startup refuses retained `users.json` until MH8 explicitly converts account authority; accepting a historical capsule is not permission to discard its accounts.
 
 - `volumes.db` is a catalogued/snapshotted database. A table-document payload requires it instead of a duplicate root `config.yaml`; stale document files left by a migration are excluded. Authenticate wrapped keys, every derived body and nested credential keys before native validation. Private SQLite staging mounts the document seam for native metadata, holds, CardDAV revocation and qualification; publish the imported database, never expanded document files. File snapshots retain their original layout. The capsule library's per-file/total caps still apply; this PR does not add a large-document backup destination.
 

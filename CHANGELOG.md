@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Preserve the staff-org customer-cache exemption behind org fences, scope table recovery identities by issuer, and refuse historical file accounts before a table authority switch until explicit offline migration.
+
 - Keep signed directory subjects behind org admission before helper dispatch. Row-writer transactions retain requested/server isolation; deterministic overlapping-admin and foreign-org MFA/update regressions cover the boundaries.
 
 - Multi-host accounts (MH3): table-mode account rows, issuer-scoped uniqueness, fresh snapshot reads, bounded serializable mutations, document owner-row guards and late-member purge rechecks. Account backup/restore stays in `volumes.db`; ordinary single-tenant files and hosted startup refusal remain unchanged.
