@@ -211,7 +211,10 @@ type MailReservation struct {
 }
 
 // ReserveMail admits every org's copies or none, under the shared tenancy writer
-// transaction. RCPT probes never call it. Refusals persist overrun dates without
+// transaction. tenancy.Open uses SQLite immediate transactions or kypg, whose BeginTx
+// takes the schema writer advisory lock BEFORE any read (pgdialect/driver.go). Thus
+// separate PostgreSQL connections/replicas serialize admission, not just the UPDATE.
+// RCPT probes never call it. Refusals persist overrun dates without
 // spending bytes; failed holding writes remain charged until the next usage report.
 func ReserveMail(ctx context.Context, db *sql.DB, reservations []MailReservation, now time.Time) (PoolMail, error) {
 	tx, err := db.BeginTx(ctx, nil)

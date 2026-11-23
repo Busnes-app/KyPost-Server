@@ -2,6 +2,7 @@ package tenancy
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 const orgTwo = "1a2b3c4d-0000-4000-8000-00000000000b"
@@ -447,5 +449,112 @@ func TestStorageMailReservations(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("grace reservation %d: %v %v, want %v", i, got, err, want)
 		}
+	}
+}
+
+// The production driver, not database/sql's pool size, fences the grant read. Pin two
+// independent pools to one physical connection each, observe the second waiting for
+// the advisory lock before its first read, then race both for one message of headroom.
+func TestStorageMailPostgresSeparateConnections(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	first, err := Open(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	first.SetMaxOpenConns(1)
+	second.SetMaxOpenConns(1)
+	var pidA, pidB int
+	if err := first.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pidA); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pidB); err != nil {
+		t.Fatal(err)
+	}
+	if pidA == pidB {
+		t.Fatal("test did not open separate PostgreSQL connections")
+	}
+	grant := func() {
+		t.Helper()
+		seq, last, err := NextStorageSeq(ctx, first, orgOne)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SetGrant(ctx, first, orgOne, seq, Grant{Admitted: last.Admitted, Ceiling: 10, Expires: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	grant()
+	held, err := first.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Rollback() }()
+	type result struct {
+		answer PoolMail
+		err    error
+	}
+	done := make(chan result, 2)
+	go func() {
+		a, err := ReserveMail(ctx, second, []MailReservation{{Org: orgOne, Bytes: 10}}, time.Now())
+		done <- result{a, err}
+	}()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err := held.QueryRowContext(ctx, `SELECT COALESCE(wait_event_type = 'Lock' AND wait_event = 'advisory', false) FROM pg_stat_activity WHERE pid = ?`, pidB).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case r := <-done:
+			t.Fatalf("admission passed the held writer fence: %+v", r)
+		case <-ctx.Done():
+			t.Fatal("second connection never waited for the writer advisory lock")
+		case <-ticker.C:
+		}
+	}
+	if err := held.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-done; r.err != nil || r.answer != PoolMailAccept {
+		t.Fatalf("admission after fence release: %+v", r)
+	}
+	grant()
+	start := make(chan struct{})
+	for _, db := range []*sql.DB{first, second} {
+		go func(db *sql.DB) {
+			<-start
+			a, err := ReserveMail(ctx, db, []MailReservation{{Org: orgOne, Bytes: 10}}, time.Now())
+			done <- result{a, err}
+		}(db)
+	}
+	close(start)
+	accepted := 0
+	for range 2 {
+		r := <-done
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if r.answer == PoolMailAccept {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("%d separate connections spent one message of headroom", accepted)
+	}
+	if g, err := StorageGrant(ctx, first, orgOne); err != nil || g.Used != 10 {
+		t.Fatalf("org overshot its grant: %+v %v", g, err)
 	}
 }
