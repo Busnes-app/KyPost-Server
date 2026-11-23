@@ -197,3 +197,21 @@ func TestDeviceAuthFailuresAreUniform(t *testing.T) {
 		})
 	}
 }
+
+// An ordinary unauthenticated route request presents no device credential and
+// does not spend the device-authentication budget.
+func TestDeviceAuthAbsentHeadersDoNotSpendSourceBudget(t *testing.T) {
+	s := newTestServer(t)
+	id, secret := pairNativeDevice(t, s, s.mustBootstrapUserID(t), "header-control")
+	for i := 0; i < deviceMaxFailures+1; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/api/inbox", nil)
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, r)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("request %d: %d %s", i+1, w.Code, w.Body)
+		}
+	}
+	if _, _, ok, wait := s.deviceAuthFromRequest(deviceRequest(id, secret)); !ok || wait != 0 {
+		t.Fatalf("valid credential: ok=%v wait=%v", ok, wait)
+	}
+}

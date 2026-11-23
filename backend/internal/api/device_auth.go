@@ -86,6 +86,10 @@ func (s *Server) deviceAuthFromRequest(r *http.Request) (userID string, device s
 // Retain the exact user authority snapshot that admitted the credential, rather
 // than attaching a newer account epoch after verification completed.
 func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device state.NativeDevice, epoch uint64, ok bool, retryAfter time.Duration) {
+	deviceID, deviceSecret := deviceCredentialsFromRequest(r)
+	if deviceID == "" || deviceSecret == "" {
+		return "", state.NativeDevice{}, 0, false, 0
+	}
 	lockoutKey := s.deviceLockoutKey(r)
 	allowed, wait, strike := s.deviceLockout.tryAttempt(lockoutKey)
 	if !allowed {
@@ -93,10 +97,6 @@ func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device stat
 			return "", state.NativeDevice{}, 0, false, retryAfterKDFBusy
 		}
 		return "", state.NativeDevice{}, 0, false, wait
-	}
-	deviceID, deviceSecret := deviceCredentialsFromRequest(r)
-	if deviceID == "" || deviceSecret == "" {
-		return "", state.NativeDevice{}, 0, false, 0
 	}
 	ownerID, okOwner := s.lookupUserByDevice(deviceID)
 	if !okOwner {
