@@ -791,6 +791,11 @@ check the mailbox quota:
   and refusing the move would only strand mail that got `250`. This is the rule `checkReserve`
   already follows (`mailbox/store.go:431-434`), so open question 16's grace mail always reaches
   the mailbox;
+- **Not** filing a Sent copy that its send's enqueue already reserved (`FileOutboundSent`,
+  `mailbox/outbox.go:456`). The reservation was charged against the pool at enqueue (the
+  enqueue check below), and today's code already never refuses this filing
+  (`mailbox/outbox.go:218-219`). So a send enqueued under the pool still files its Sent copy if
+  the org goes over before delivery;
 - a send's enqueue, which reserves its Sent copy (`mailbox/outbox.go:216`);
 - a contact photo upload (`storeContactPhoto`, `api/contacts_photo.go:141`).
 
@@ -837,7 +842,7 @@ single-tenant install, which is not designed.
 *Negative tests the build must carry:* wrong org (a report or a check never counts another org's
 mailbox), a wrong client (KyIdentity refuses a report signed by another app), a replayed or older
 `as_of` (KyIdentity keeps the newer figure), a stale cache, a missing or malformed pool, an
-oversize or negative usage figure, an org at exactly the limit, mail accepted during grace that imports while the org is over, a deletion that frees room, and
+oversize or negative usage figure, an org at exactly the limit, mail accepted during grace that imports while the org is over, a send enqueued under the pool whose org goes over before delivery (its Sent copy still lands), a deletion that frees room, and
 single-tenant mode, where the pool is never read and the upgrade test is unchanged.
 
 ## Replicas (PR #677)
