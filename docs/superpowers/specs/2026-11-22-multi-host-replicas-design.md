@@ -1140,3 +1140,48 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
     change a self-hosted install's files on upgrade, which the byte-for-byte rule forbids.
     Contacts on those installs stay plaintext, as `SECURITY.md` documents. The alternative is an
     opt-in sealed file mode.
+17. **Object storage for primary content (cost input, 2026-11-23; not decided).** This revisits
+    open question 2 with a cost the owner gave: object storage (Backblaze B2) costs about
+    $0.007/GB/month, against about EUR 0.057 (Hetzner volumes) or $0.10 (DigitalOcean) for block
+    storage, 8–15× more. Storage is the main cost per account. These are the owner's figures, not
+    checked here. Block storage is also paid once per PostgreSQL copy, so the primary plus K's
+    synchronous standby (K "Phased build plan", launch prerequisites) is at least twice the
+    figure. **The owner has not chosen object storage**, and per-org quotas (K "Abuse limits per
+    org") work either way. Lines are at `origin/main` `e46f01c2`.
+
+    Where KyPost's bulk bytes are, and whether each could move:
+
+    | Content | Where | Could move? |
+    |---|---|---|
+    | Every stored message, attachments included | `mailbox.db` `messages.raw`, `BYTEA` (`mailbox/pg_schema.go:22`) | **Yes, the main candidate.** It is most of an account's bytes (unverified: no measurement). |
+    | Mail held before import | `ingress.db` `deliveries.raw` (`ingress/pg_schema.go:15`) | No. It lives minutes to days, and RX's `250` after commit relies on one PostgreSQL transaction. |
+    | Queued sends | `mailbox.db` `outbox.ciphertext` (`mailbox/pg_schema.go:30`) | No. Transient. |
+    | Contact photos and other per-user documents | `documents` (MH2) | No. Small, and capped per document (open question 2). |
+    | Backup capsules | KyRecovery deposits (open question 3) | KyRecovery's own question, not KyPost's. |
+
+    KyDrive's files and the other apps' content are their own repos' question.
+
+    *Recommend:* measure first, then move only message bodies, in table mode only.
+    - **Measure.** With open question 8's capacity run, record what share of a hosted cell's bytes
+      is `messages.raw`. If it dominates, as expected, object storage for message bodies is
+      worth building. If it does not, keep PostgreSQL `BYTEA` as open question 2 approved.
+    - **If built,** it is a new MH PR after MH7, with these rules:
+      - **No shared table changes shape** (K3). The object reference lives in a table-mode side
+        table keyed by mailbox and message ID. `raw IS NULL` already has a meaning: the indexes
+        skip such rows (`mailbox/pg_schema.go:23-24`; what NULL stands for is unverified), so a
+        moved body must not be marked by NULL alone.
+      - **Usage stays exact.** The `usage` triggers count `length(raw)` (`mailbox/pg_schema.go:43-51`),
+        and receiving and the org quotas read that count. A moved body keeps its size counted.
+      - **Sealed before upload** with the org's data key ("Per-org encryption at rest"), with
+        associated data naming the mailbox and message, so the store sees only ciphertext.
+        Whether `raw` is sealed at rest today is unverified.
+      - **Committed in order.** The object is written before the row that names it commits. An
+        object whose row never committed is swept later. Receiving's `250` still waits for the
+        PostgreSQL commit (RX).
+      - **Purged.** K's purge deletes the org's objects, and its final check lists them, as for
+        `documents`. Deleting the org's data key also leaves any missed object unreadable.
+      - **Backed up.** A capsule includes the bodies, or a restore loses mail.
+      - **Per region.** One bucket per cell, in the cell's residency zone ("Regions"), reached over
+        TLS ("Encryption in transit").
+      - **Single-tenant unchanged.** An un-migrated install keeps its bodies where they are,
+        byte for byte.
