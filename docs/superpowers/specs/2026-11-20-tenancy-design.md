@@ -487,7 +487,7 @@ billing service sets them. When a quota is missing, KyPost uses today's default.
 
 In multi mode the KyPost admin UI is a **staff console**. A route is admitted only for K7 staff,
 with today's step-up (`withAdminStepUp`, `api/server_users.go:30`; `withActionDigest`,
-`api/sso_stepup.go:55`). Every admin route declares one class. A route with no class fails the
+`api/sso_stepup.go:56`). Every admin route declares one class. A route with no class fails the
 build, which extends `TestEveryRouteDeclaresItsAuthModel`.
 
 | Class | Routes (`api/server.go`) | Multi-mode behaviour |
@@ -1171,9 +1171,22 @@ with a staff administrator provisioned from a signed staff-org event.
   - The bootstrap administrator is still refused by `bootstrap-admin` refusing `multi` (PR 1).
     PR 7 must keep it off when it accepts `multi`.
   - PRs 2 and 3 already turned off SSO link and unlink and HR.
-- **Step-up replay across orgs.** The action digest (`withActionDigest`) does not cover
-  `X-Ky-Org`. A grant replayed with another org's header reaches the same object, which belongs
-  to one org, so it gets the missing answer. Read in code; not separately tested.
+- **Step-up is per org** (owner decision 2026-11-22, overturning this PR's first reading that
+  one step-up covered any org). The action digest (`withActionDigest`) does not cover
+  `X-Ky-Org`, so the grant itself records the org `withOrgAdmin` selected when it was minted
+  (`ssoStepUp.Org` in `api/sso_stepup.go`). `confirmSSOStepUp`, the one sink behind every
+  KySignOn step-up, spends a grant only when that org equals the org now selected.
+  A grant made with org A, or with no org selected, presented with org B is not spent: the
+  request gets the existing `403 sso_step_up_required` with a new challenge for B, and nothing
+  runs. That covers every org-bound route with a step-up: the `/api/users/{id}` writes
+  (`withAdminStepUp`) and the mailbox and address writes (`nativeDomainGate`).
+  Platform routes and single mode select no org, so their grants carry `""`, which `omitempty`
+  keeps out of the stored row: their bytes and behaviour are unchanged. A password session
+  re-proves on every request, so it has nothing to bind. Tests: `TestStaffStepUpIsPerOrg`
+  (A on A allowed; A on B and none on A refused with a fresh challenge for the selected org;
+  an expired grant keeps today's answer; a customer member on a KySignOn session, holding a
+  live grant for the exact action and its own org, gets `403` and the grant stays unspent) and
+  `TestStepUpGrantWithoutOrgKeepsItsBytes`.
 - **Tests** (`api/tenancy_staff_test.go`, in every `internal/api` job, SQLite and PostgreSQL):
   - **The staff variant:** `TestCrossOrgMatrixStaff`. Every `withOrgAdmin` route needs a case in
     `staffCases` or the build fails. As staff with org A selected, each case makes three calls:

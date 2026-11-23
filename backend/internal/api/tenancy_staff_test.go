@@ -46,6 +46,12 @@ func staffFixture(t *testing.T) (*orgFixture, *syncBuffer, users.User) {
 // X-Ky-Org when it is set. A write carries a verified step-up grant for its exact action.
 func (fx *orgFixture) staffCall(staff users.User, method, path, body, org string) *httptest.ResponseRecorder {
 	fx.t.Helper()
+	return fx.staffCallGrant(staff, method, path, body, org, func(g *ssoStepUp) { g.Org = org })
+}
+
+// staffCallGrant is staffCall with the write's grant shaped by grant first.
+func (fx *orgFixture) staffCallGrant(staff users.User, method, path, body, org string, grant func(*ssoStepUp)) *httptest.ResponseRecorder {
+	fx.t.Helper()
 	sess := Session{UserID: staff.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), CSRFToken: "staff-csrf", SSOKySignOn: true}
 	if fx.srv.shared != nil {
 		ctx := context.Background()
@@ -70,7 +76,9 @@ func (fx *orgFixture) staffCall(staff users.User, method, path, body, org string
 		h := sha256.New()
 		h.Write([]byte(method + "\x00" + req.URL.RequestURI() + "\x00" + req.Header.Get("Content-Type") + "\x00" + body))
 		id := newID(fx)
-		check(fx, fx.srv.putStepUp(id, ssoStepUp{Session: sessionHash(staffToken), Action: hex.EncodeToString(h.Sum(nil)), Verified: true, Created: time.Now(), Expires: time.Now().Add(5 * time.Minute)}))
+		g := ssoStepUp{Session: sessionHash(staffToken), Action: hex.EncodeToString(h.Sum(nil)), Verified: true, Created: time.Now(), Expires: time.Now().Add(5 * time.Minute)}
+		grant(&g)
+		check(fx, fx.srv.putStepUp(id, g))
 		req.Header.Set(stepUpHeader, id)
 	}
 	w := httptest.NewRecorder()
@@ -409,5 +417,90 @@ func TestSingleTenantIgnoresTheOrgHeader(t *testing.T) {
 	}
 	if rows, err := srv.globalStore.RecentBackupAudit(10); err != nil || len(rows) != 0 {
 		t.Errorf("single mode wrote audit rows: %+v %v", rows, err)
+	}
+}
+
+// A staff step-up holds for the org selected when it was made (owner decision 2026-11-22):
+// replayed with another org selected, or made with none, it is refused with a fresh
+// sso_step_up_required for the org now selected, and nothing runs.
+func TestStaffStepUpIsPerOrg(t *testing.T) {
+	fx, _, staff := staffFixture(t)
+	deactivate := func(m orgMember, org string, grant func(*ssoStepUp)) *httptest.ResponseRecorder {
+		return fx.staffCallGrant(staff, http.MethodPost, "/api/users/"+m.ID+"/deactivate", "", org, grant)
+	}
+	active := func(m orgMember) bool {
+		u, err := fx.srv.users.Get(m.ID)
+		check(fx, err)
+		return u.Active
+	}
+	refusedForOrg := func(name string, w *httptest.ResponseRecorder, m orgMember, org string) {
+		t.Helper()
+		var got struct{ Error, Challenge string }
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		if w.Code != http.StatusForbidden || got.Error != "sso_step_up_required" || got.Challenge == "" {
+			t.Fatalf("%s: %d %s, want 403 sso_step_up_required", name, w.Code, w.Body)
+		}
+		if !active(m) {
+			t.Fatalf("%s: the action ran", name)
+		}
+		var c ssoStepUp
+		if !fx.srv.editStepUp(got.Challenge, func(x *ssoStepUp, found bool) (rowEdit, bool) { c = *x; return rowKeep, found }) || c.Org != org || c.Verified {
+			t.Fatalf("%s: new challenge %+v, want unverified for org %q", name, c, org)
+		}
+	}
+	forOrg := func(org string) func(*ssoStepUp) { return func(g *ssoStepUp) { g.Org = org } }
+
+	// Made for B, spent on B: allowed (the control).
+	if w := deactivate(fx.b, orgB, forOrg(orgB)); w.Code != http.StatusOK || active(fx.b) {
+		t.Fatalf("step-up for B, action on B: %d %s", w.Code, w.Body)
+	}
+	_, _ = fx.srv.users.Reactivate(fx.b.ID)
+
+	// Made with A selected, the same action with B selected: refused.
+	refusedForOrg("step-up for A, action on B", deactivate(fx.b, orgB, forOrg(orgA)), fx.b, orgB)
+	// Made with no org selected: refused on an org-bound action.
+	refusedForOrg("step-up with no org, action on A", deactivate(fx.a, orgA, forOrg("")), fx.a, orgA)
+
+	// Expiry is unchanged: an expired grant for the right org gets today's answer.
+	w := deactivate(fx.a, orgA, func(g *ssoStepUp) { g.Org = orgA; g.Expires = time.Now().Add(-time.Second) })
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "expired, spent or for a different action") || !active(fx.a) {
+		t.Fatalf("expired grant for A: %d %s", w.Code, w.Body)
+	}
+	// A customer member on a KySignOn session, holding a live grant for this exact action and
+	// its own org, is still not an administrator: refused before the step-up, grant unspent.
+	const memberToken = "member-kysignon-token"
+	msess := Session{UserID: fx.a.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), CSRFToken: "member-csrf", SSOKySignOn: true}
+	if fx.srv.shared != nil {
+		check(fx, fx.srv.putSharedSession(context.Background(), memberToken, msess))
+	} else {
+		fx.srv.sessMu.Lock()
+		fx.srv.sessions[memberToken] = msess
+		fx.srv.sessMu.Unlock()
+	}
+	path := "/api/users/" + fx.a.ID + "/deactivate"
+	digest := sha256.Sum256([]byte(http.MethodPost + "\x00" + path + "\x00\x00"))
+	id := "rea_member-" + newID(fx)
+	check(fx, fx.srv.putStepUp(id, ssoStepUp{Session: sessionHash(memberToken), Action: hex.EncodeToString(digest[:]), Org: orgA, Verified: true, Created: time.Now(), Expires: time.Now().Add(time.Minute)}))
+	req := httptest.NewRequest(http.MethodPost, path, nil)
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: memberToken})
+	req.Header.Set("X-CSRF-Token", "member-csrf")
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(orgHeader, orgA)
+	req.Header.Set(stepUpHeader, id)
+	w = httptest.NewRecorder()
+	fx.srv.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden || strings.TrimSpace(w.Body.String()) != `{"error":"admin access required"}` || !active(fx.a) {
+		t.Fatalf("a customer member with a grant: %d %s", w.Code, w.Body)
+	}
+	if !fx.srv.editStepUp(id, func(_ *ssoStepUp, found bool) (rowEdit, bool) { return rowKeep, found }) {
+		t.Fatal("a customer member's refused call spent its grant")
+	}
+}
+
+// Single mode and platform routes mint grants with no org; their stored bytes keep no org key.
+func TestStepUpGrantWithoutOrgKeepsItsBytes(t *testing.T) {
+	b, err := json.Marshal(ssoStepUp{Session: "s", Action: "a"})
+	if err != nil || strings.Contains(string(b), `"org"`) {
+		t.Fatalf("%s %v", b, err)
 	}
 }
