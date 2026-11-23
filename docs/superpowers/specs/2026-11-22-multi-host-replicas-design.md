@@ -415,16 +415,26 @@ Whether any reader treats an empty, non-NULL `raw` specially is unverified. MH11
   missing, short or failing body is an error, never an empty message (the refresh-from-disk rule,
   `backend/AGENTS.md`).
 - **Committed in order.** The object is written before the row that names it commits. Receiving's
-  `250` still waits for the PostgreSQL commit (RX). The elected sweeper deletes an object no
-  `bodies` row names once it is older than a day, so a crash between the two leaves no lasting
-  orphan.
+  `250` still waits for the PostgreSQL commit (RX).
+- **Deleted late, so a restore finds every body.** An expunge never deletes the object. It
+  deletes the `bodies` row and, in the same transaction, writes
+  `body_tombstones(object TEXT PRIMARY KEY, at BIGINT)`. The elected sweeper deletes:
+  - an object whose tombstone is older than the capsule retention (K open question 7);
+  - an object that no `bodies` row and no tombstone names, once it is older than a day. That is
+    a write whose row never committed, or, after a restore, a row newer than the capsule.
+
+  So a capsule restored at any age within retention names only objects that still exist. The
+  restore runs offline (MH), so the sweeper is not running during it, and afterwards it works
+  from the restored tables. The purge is the one immediate delete (below). A restored capsule
+  older than a purge carries rows of a purged org, which K's restore release governs as for
+  `documents`. Their bodies are gone by design.
 - **Purged.** K's purge lists and deletes the org's `bodies/<org>/` prefix after its mailboxes,
   and its final check requires the prefix to be empty, as for `documents`. Deleting the org's
   `doc_keys` row also leaves any missed object unreadable.
 - **Backed up.** The bucket keeps its backup copy in a second location (the owner's
-  $0.014 includes it), with versioning, so a capsule's database export plus the bucket restore
-  every body. Old versions are kept as long as capsules are (K open question 7), and a restore
-  re-applies Delete everything's erased list as today (K "Delete everything"). A capsule does
+  $0.014 includes it). The copy is for losing the bucket, not for a restore, which needs no
+  version surgery because of the late delete above. A restore re-applies Delete everything's
+  erased list as today (K "Delete everything"). A capsule does
   not copy the bodies, which would pay for them twice. Whether KyRecovery should hold body
   copies instead is KyRecovery's question.
 - **Per region.** One bucket per cell, in the cell's residency zone ("Regions"), reached over TLS
@@ -1094,12 +1104,13 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
 
 11. **MH11: object storage for message bodies (multi only).** `vol.Object`, the `bodies` side
     table and its usage triggers, one body loader for every `raw` read, the orphan sweep, the
-    purge's prefix delete and check, and the start refusal for missing or wrong credentials. Not
+    purge's prefix delete and check, `body_tombstones` and the late delete, and the start refusal for missing or wrong credentials. Not
     a K PR 7 prerequisite: launch runs with bodies in PostgreSQL if MH11 is not ready.
     Tests: a body over the threshold lands in the bucket sealed and reads back; under it stays in
     `raw`; `usage` is equal either way; a conditional put that loses a race is refused; a tampered,
     missing or other-org object fails the read, never returns empty; a body copied to another
-    mailbox's key fails to open; the purge leaves an empty prefix; an orphan is swept; no
+    mailbox's key fails to open; the purge leaves an empty prefix; an orphan is swept; a capsule taken
+    before an expunge and older than several sweep cycles restores with every body readable; no
     credential reaches a log; with object storage not configured every body stays in `raw`; and
     the single-tenant upgrade test is unchanged.
 

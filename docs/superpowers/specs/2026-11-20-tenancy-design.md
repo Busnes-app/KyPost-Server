@@ -527,7 +527,8 @@ waits for.
 
 ### Abuse limits per org
 
-Every limit an org can be sold is a key in that org's KyPost `quotas_json` (T `org_apps`), so a
+Every limit an org can be sold, except the storage pool (KyIdentity's, "Quotas"), is a key in
+that org's KyPost `quotas_json` (T `org_apps`), so a
 plan, or one org, can be given any value without a code change. Today's per-user and install-wide
 limits stay: they are the only limits in single-tenant mode (self-hosted and Enterprise), and in
 multi mode they remain the per-account and per-mailbox layer under the org caps and the default
@@ -812,7 +813,7 @@ limits"), and names the pool, not the mailbox, as what is full.
 *Failure defaults.*
 - **No pool in an org's entry** (KyIdentity not upgraded, or a malformed value): the pool reads
   as 0, the same rule as a malformed key (`parseQuotas`). Nothing new is accepted, receiving
-  answers the temporary `452`, and no data is lost. The pool is a launch requirement, so K PR 7
+  answers the temporary `452` at once with no grace, and no data is lost. The pool is a launch requirement, so K PR 7
   must not accept `multi` until KyIdentity publishes it and KyPost's checks are built (open
   question 15).
 - **A stale cache** keeps the last known pool and usage, as receiving keeps the last known
@@ -1900,14 +1901,17 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
     button only removes the holder, or needs a second person), that is a T and billing change
     that KyPost does not need to know about.
 15. **An org entry with no storage pool (new, 2026-11-23).** *Default:* the pool reads as 0, so
-    the org accepts nothing new and receiving answers a temporary `452` (Quotas). K PR 7 must not accept
+    the org accepts nothing new and receiving answers a temporary `452` at once (Quotas). Open
+    question 16's grace does not apply: a missing or malformed pool has no over-quota-since
+    date and no meaningful 110 %. K PR 7 must not accept
     `multi` before KyIdentity publishes the pool, so this happens only through a KyIdentity fault.
     The alternative, no pool cap, lets an org grow without limit during that fault.
 16. **Incoming mail while an org is over its pool (new, 2026-11-23; KyPost owns this rule).**
     Refusing mail at once bounces it to outside senders, often because another app (a Drive
     upload) filled the pool. *Recommend* a grace window, then a temporary refusal, and never a
     permanent one for quota:
-    - **Grace.** Mail is still accepted for **14 days** after the org went over, or until usage
+    - **Grace** (only for a valid pool; a missing or malformed one is open question 15). Mail
+      is still accepted for **14 days** after the org went over, or until usage
       reaches **110 % of the pool**, whichever comes first. Every other write is blocked from the
       first byte over (approved rule). The start is KyIdentity's over-quota-since timestamp in
       the org entry (proposed; T's name for it is unverified, board `kyidentity-business-orgs`),
