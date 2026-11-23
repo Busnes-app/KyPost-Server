@@ -831,7 +831,8 @@ PRs 1–5 have merged. Where it accepts `multi`, PR 7 adds MH's prerequisites to
   the cell's own orgs, and sync events for another region's org refused without a write (an
   org not cached yet gets a temporary refusal until the next poll). PR 7
   builds M's D3 relay local part with MH9's region character, so every hosted masked address
-  carries its region from the first one. MH10 (cross-region relay routing on the MX hosts) must
+  carries its region from the first one. PR 7 owns that test: masked allocation only under the cell's code, with the
+  code outside the 6 random characters. MH10 (cross-region relay routing on the MX hosts) must
   merge before a second region opens, not before PR 7.
 - **Self-hosted multi-host is opt-in.** MH8 (`migrate-volumes-to-postgres` and its reverse) is not
   a gate for PR 7. Every MH PR from MH2 on selects its tables by table mode (multi, or a migrated
