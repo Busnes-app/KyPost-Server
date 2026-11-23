@@ -40,6 +40,7 @@ const (
 type ssoStepUp struct {
 	Session  string    `json:"session"` // sessionHash of the session it belongs to
 	Action   string    `json:"action"`
+	Org      string    `json:"org,omitempty"` // staff org selected when minted (multi mode)
 	Created  time.Time `json:"created"`
 	Expires  time.Time `json:"expires"`
 	Started  bool      `json:"started"`
@@ -107,14 +108,25 @@ func (s *Server) confirmSSOStepUp(w http.ResponseWriter, r *http.Request, sessio
 		http.Error(w, "this action cannot be confirmed", http.StatusInternalServerError)
 		return false
 	}
+	// A staff step-up holds for the org it was made for only; elsewhere org is "".
+	org, _ := r.Context().Value(staffOrgKey{}).(string)
 	now := time.Now()
 	if id := r.Header.Get(stepUpHeader); id != "" {
+		otherOrg := false
 		ok := s.editStepUp(id, func(c *ssoStepUp, found bool) (rowEdit, bool) {
 			if found && c.Session == sessionHash(sessionToken) && c.Action == action && c.Verified && now.Before(c.Expires) {
+				if c.Org != org {
+					otherOrg = true
+					return rowKeep, false
+				}
 				return rowDrop, true
 			}
 			return rowKeep, false
 		})
+		if otherOrg {
+			// The org switched since the step-up: ask for a new one, for this org.
+			return s.mintSSOStepUp(w, sessionToken, action, org, now)
+		}
 		if !ok {
 			http.Error(w, "the KySignOn confirmation is expired, spent or for a different action; try again", http.StatusForbidden)
 			return false
@@ -122,13 +134,18 @@ func (s *Server) confirmSSOStepUp(w http.ResponseWriter, r *http.Request, sessio
 		s.logger.Info("SSO step-up consumed", "challenge_id", id)
 		return true
 	}
+	return s.mintSSOStepUp(w, sessionToken, action, org, now)
+}
+
+// mintSSOStepUp records a challenge for action and org and answers 403 sso_step_up_required.
+func (s *Server) mintSSOStepUp(w http.ResponseWriter, sessionToken, action, org string, now time.Time) bool {
 	id, err := sso.RandomToken(16)
 	if err != nil {
 		http.Error(w, "reauthentication unavailable", http.StatusInternalServerError)
 		return false
 	}
 	id = "rea_" + id
-	if err := s.putStepUp(id, ssoStepUp{Session: sessionHash(sessionToken), Action: action, Created: now, Expires: now.Add(ssoStepUpTTL)}); err != nil {
+	if err := s.putStepUp(id, ssoStepUp{Session: sessionHash(sessionToken), Action: action, Org: org, Created: now, Expires: now.Add(ssoStepUpTTL)}); err != nil {
 		writeUnavailable(w)
 		return false
 	}
