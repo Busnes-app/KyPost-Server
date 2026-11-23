@@ -51,3 +51,8 @@ github.com/Busnes-app/kypost-server/backend/internal/dbbackend.KindsForTest
 # Fails migrate-to-postgres before its commit or changes its recount for app's
 # refusal tests; panics outside a test binary.
 github.com/Busnes-app/kypost-server/backend/internal/backup.SetImportHooksForTest
+
+# Installs the org storage pool check; only api's multi-tenant tests call it
+# until build plan PR 7 installs it where it sets Server.tenancy (tenancy
+# design "Org storage pool as built"). Delete this entry then.
+github.com/Busnes-app/kypost-server/backend/internal/mailbox.SetPoolCheck

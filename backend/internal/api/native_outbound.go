@@ -44,6 +44,11 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 		if s.refuseNativeAdministrator(w, r, ac.UserID, sendErr) {
 			return
 		}
+		// Refused at enqueue: nothing was queued or sent.
+		if errors.Is(sendErr, mailbox.ErrPoolFull) {
+			writeJSON(w, http.StatusInsufficientStorage, map[string]any{"error": mailbox.ErrPoolFull.Error(), "ok": false})
+			return
+		}
 		message := "native submission was not confirmed; inspect this outbox job before resubmitting to avoid duplicates"
 		if errors.Is(sendErr, sso.ErrNativeOutboundStale) || errors.Is(sendErr, sso.ErrNativeProvisioning) {
 			message = "native sender authority changed; reload account and domain setup before sending"

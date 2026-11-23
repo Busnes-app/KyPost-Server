@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PRs 6a and 6b are built ("PR 1 as built" to "PR 6 as built"), the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PRs 6a and 6b are built ("PR 1 as built" to "PR 6 as built"), and so is KyPost's side of the org storage pool ("Org storage pool as built"); the rest is not. Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -756,7 +756,8 @@ new creations only, never existing data. That matches today's mailbox-quota rule
 
 **Storage: the org pool (owner decision, 2026-11-23, required for launch).** One number per org,
 shared by every member and every app, is held by KyIdentity. Each app checks it before a write
-that adds bytes and reports its own usage. Nothing here is built. KyIdentity's half is T's
+that adds bytes and reports its own usage. KyPost's side is built against KyIdentity's contract,
+except at receiving ("Org storage pool as built"). KyIdentity's half is T's
 amendment (board `kyidentity-business-orgs`). It has no PR yet, so the field and route names
 below are this note's proposals, and how T names them is unverified.
 
@@ -1838,6 +1839,164 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
 - **Not in 6a or 6b:** the multi-mode restore release with the full poll and erased-subject read (6c). The end-to-end
   Delete everything tests (click, purge, restore a capsule from before the click, release,
   poll) need 6c's release, so they are 6c's.
+
+## Org storage pool as built (2026-11-23)
+
+KyPost's side of "Quotas", built from this note's defaults before the owner merged it. Paths are
+under `backend/internal/`. KyIdentity's half is its tenancy spec's "Org storage pool" (KyIdentity
+#288, not merged; another worker builds it), cited here as **S**. Startup still refuses `multi`,
+so only tests run any of this.
+
+- **The contract is S's grant model.** It replaces this note's draft, which computed the room
+  from the pool and the other apps' reports. KyPost does not read `storage` from
+  `/api/suite/orgs` (S: `pool_bytes`, `over_since`). The only other use of `over_since` is
+  receiving grace, which is not built.
+  - `POST /api/suite/storage` carries `{reports: [{org_id, used_bytes, seq, want_bytes}]}`.
+    The answer is `{results: [{org_id, result, seq, ceiling_bytes, ttl_seconds, …}]}`.
+  - The client is `tenancy.ReportStorage` (`tenancy/storage.go:120`). It uses the SSO settings'
+    suite-directory credentials, the same HTTPS-or-loopback rule as `suitedir` and no
+    redirects. It sends 1 to 500 reports and accepts an answer of at most 1 MiB.
+  - `ky-primitives` has no POST client, so this one lives in KyPost. Moving it into `suitedir`
+    is the upgrade once S merges.
+  - `matchResults` (`:177`) refuses the whole answer when any of these hold, so nothing of it
+    is applied:
+    - an org is missing, repeated or not in the request;
+    - a result other than `ok`, `stale` or `unknown_org`;
+    - an `ok` for another `seq`;
+    - a ceiling below 0 or over 2^53;
+    - a negative TTL.
+- **The grant** is a new `tenancy.db` table, `org_storage` (`tenancy/tenancy.go:87`, `:143`).
+  Its columns are `org_id`, `seq`, `used_bytes`, `reported_bytes`, `admitted_bytes`, `ceiling_bytes` and `expires_at`. `used_bytes` includes new reservations; `reported_bytes` is the last measured usage; `admitted_bytes` is a monotonic reservation watermark.
+  - It is platform class, like the `orgs` cache: byte counts keyed by org
+    (`TestEveryStoreIsClassified`). A single install has no `tenancy.db`, so it never has
+    this table.
+  - `NextStorageSeq` (`tenancy/storage.go:63`) draws each report's `seq` from the shared
+    database with an upsert, so two replicas never send the same one.
+  - `SetGrant` (`:74`) writes an answer only while its `seq` is still the org's latest. A late
+    answer to an older report changes nothing.
+- **The report** runs about every 60 s on the `api-sweepers` owner, in `StartOrgPoller` after
+  the poll, whether or not the poll succeeded (`api/tenancy_lifecycle.go:75`, `reportStorage`,
+  `api/tenancy_storage.go:130`).
+  - It covers every cached org that is not `deleted` and not the staff org. `want_bytes` is
+    the larger of 256 MiB and twice the growth since the last accepted measurement (`n - last.Reported`, never the reservation-inflated `last.Used`).
+  - The expiry is the time the request was sent plus `min(ttl_seconds, 15 min)`.
+  - `stale` keeps the current grant. `unknown_org` zeroes it.
+  - A failed batch logs one line naming no org and is retried at the next poll. The grant
+    stands until it expires.
+  - An org whose usage or sequence cannot be read (an unreadable mailbox or photo
+    directory, say) is skipped. Its sequence does not advance and its grant is left to
+    expire, so it alone fails closed. Every other org is still reported, and one line logs
+    only the number skipped. A failure that touches every org still stops the report: the
+    org list, the suite directory, the ledger, the spool scan, a batch or a grant write.
+- **What KyPost counts** (`orgUsage`, `api/tenancy_storage.go:30`), over every `user_orgs`
+  member of the org:
+  - `usage.payload_bytes` of every mailbox the member owns in the ledger (primary and extra).
+    That covers stored mail in every folder, queued sends and their reserved Sent copies.
+  - Mail held for import. The report opens the spool once and asks `HeldBytes` only for each org's own mailboxes. Mailbox ownership is queried per member (`NativeMailboxesOf`), never from the install-wide ledger. Writes never open the spool or scan storage.
+  - Contact photos (`contactPhotoBytesUsed`).
+  - Exports, import uploads and backups are not counted, as above.
+- **The check** is `orgPoolRoom` (`api/tenancy_storage.go:76`). A write of `n` bytes fits only
+  while the grant is unexpired and usage plus `n` is at most the ceiling (`tenancy.ReserveStorage`). Its edge cases:
+  - A missing grant fits nothing. That covers an org never reported, an unknown org, or
+    KyIdentity unreachable past the grant's life. This is open question 15's default.
+  - An account with no org is refused.
+  - The staff org is exempt.
+  - A read error refuses the write with that error.
+  - It runs at four points:
+    - **Every new message** (`mailbox/store.go:437`): drafts, client uploads, copies and user
+      imports. A gateway receipt is exempt: held mail receiving accepted always imports.
+    - **A send's enqueue** (`mailbox/outbox.go:223`), for the sealed job plus its Sent copy.
+      `FileOutboundSent` is never checked, and neither is an exact replay, which returns before
+      the check.
+    - **A new contact photo** (`api/contacts_photo.go:188`). A photo already stored adds
+      nothing.
+    - **Not receiving.** Open question 16 is the owner's, so `orgRoom` and `receiving bind` are
+      unchanged.
+  - The mailbox checks run through one process-wide hook, `mailbox.SetPoolCheck`
+    (`mailbox/pool.go:30`), which `Server.StoragePoolCheck` (`api/tenancy_storage.go:115`)
+    implements. Nothing installs it outside tests, so `backend/deadcode.allow` lists it. PR 7
+    must install it wherever it sets `Server.tenancy`, in every process that writes mail, and
+    drop that entry. That joins the multi start gate.
+  - The check reserves bytes with one conditional `UPDATE org_storage`, inside the mailbox
+    transaction after replay checks. Every mailbox and replica spends the same cached
+    headroom atomically. A failed write stays charged until the next report; deletions
+    free room at that report. No per-message storage scan runs.
+  - **Report overlap bound.** The report reads `admitted_bytes` before scanning, then its
+    answer adds every reservation since that watermark to measured usage. A slow answer
+    cannot reset concurrent spending; some writes may be counted twice until the next
+    report. Reservations already in flight at the watermark can be missing from the scan:
+    at most one per mailbox writer and one per member's photo lock. The worst-case local
+    overshoot is the sum of `(128 MiB + mailbox MessageBytes)` per org mailbox (the maximum
+    sealed send plus its Sent copy), plus `maxContactPhotoBytes` per member. Receiving is
+    exempt in this PR and retains its existing mailbox/holding/safety caps; #707 adds the
+    shared reservation to DATA acceptance. Other apps' stale reports retain KyIdentity's
+    grant/TTL bound. Failed reservations overcount, never refund uncommitted writes.
+  - **Regression evidence.** `TestOrgStorageBatchImportUsesCachedUsage` imports 1 and 64
+    messages with 0 and 100 unrelated orgs, counts zero mailbox storage reads per write,
+    and disables authority storage after the report. `TestOrgStorageConcurrentWriters`
+    admits exactly one of two mailbox transactions competing for one message's headroom.
+    `TestStorageReservationsSurviveReport` covers shared admission, expiry and late answers.
+- **What a member sees.** `mailbox.ErrPoolFull` (`mailbox/pool.go:11`) is `ErrCapacity`, so
+  every existing capacity path still refuses. Its text names the organisation's storage:
+  - an immediate send answers `507` with that text and no `outboxId`, since nothing was queued
+    (`api/native_outbound.go:48`);
+  - an import stops with "your organisation's storage is full" (`api/mail_import.go:508`);
+  - a scheduled send returns to Drafts with that reason (`api/scheduled_send.go:518`);
+  - a photo upload answers `400` with the text.
+- **Tests:**
+  - `mailbox` `TestPoolCheck`: what is checked and with how many bytes; that a refusal writes
+    nothing; and that a replay, Sent filing and a held import are never checked.
+  - `tenancy` `TestStorageGrant`: the ceiling to the byte, expiry, the zero grant, `seq`
+    order, a late answer, and another org's grant.
+  - `tenancy` `TestReportStorage`: credentials, every malformed answer, oversize, an insecure
+    issuer, a redirect, and the batch bounds.
+  - `api` `TestOrgStoragePool`, against a fake KyIdentity:
+    - org A's figure counts both members' mailboxes and photos;
+    - org B's figure holds none of A's, and the staff org is not reported;
+    - no grant, an org at exactly the ceiling, one byte over, the send route's `507`;
+    - org B unaffected by A;
+    - a held import over the pool;
+    - a deletion freeing room at the next report;
+    - a `ttl_seconds` past 15 minutes, KyIdentity down, a `stale` answer, an expired grant,
+      `unknown_org`, a zero grant, and the staff exemption.
+  - `api` `TestOrgStoragePoolCountsHeldMail`: held mail counts in the report and in the write
+    check, for its own org only.
+  - `api` `TestOrgStorageReportSkipsAFailingOrg`: the first org's usage read fails; the second
+    is still reported and granted; the first keeps its grant and sequence; the log names no
+    org, user or path.
+  - `api` `TestSingleTenantHasNoStoragePool`: no report, no check.
+  - The single-tenant upgrade test is unchanged.
+  - **Proof that the gates bite:** each of these mutations fails its test:
+    - removing the append, enqueue, photo or send-answer check;
+    - checking held imports;
+    - `<` for `<=` at the ceiling;
+    - ignoring expiry;
+    - counting other orgs' mailboxes;
+    - not counting held mail, in the report or in the check;
+    - stopping the report at one org's failure, or logging its raw error;
+    - not counting photos;
+    - reporting the staff org;
+    - dropping the staff exemption;
+    - letting a stale or late answer overwrite;
+    - checking in single mode.
+- **Not built:**
+  - Receiving over the pool and its grace (open question 16, owner-only). Receiving is
+    unchanged.
+  - The UI's pool usage and its 80 % and 95 % warnings. No screen changed, so there are no
+    screenshots.
+  - An early report when half the grant is used. The 60 s report is the only one, so a fast
+    import can stop at its grant until the next report.
+  - Incoming encryption's replacement copies are not checked (they rewrite accepted mail).
+  - The restore step that advances `org_storage.seq` past KyIdentity's stored `seq` (S "After
+    a restore"). Until an operator advances it, every report answers `stale` and writes stop
+    once the grant expires. It belongs with PR 7's restore runbook.
+  - Object storage (MH11) is a later phase.
+- **Owner questions, each with the default now in code:**
+  1. A member's figure is every mailbox their account owns. An extra mailbox counts against
+     its owner's org.
+  2. `want_bytes` is at least 256 MiB per org per report, which reserves that much of an idle
+     org's pool for KyPost. The alternative is to release it with `0` when idle.
+  3. The staff org is exempt from the check and never reported.
 
 ## Residual risks
 

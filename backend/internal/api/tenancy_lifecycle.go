@@ -70,6 +70,11 @@ func (s *Server) StartOrgPoller(ctx context.Context) {
 			// The error can quote an org ID; the line names none.
 			s.logger.Error("org entitlements not refreshed; members are refused once the cache is 15 minutes old", "error", "suite directory unavailable or its answer malformed")
 		}
+		// Grants expire on their own, so a failed poll does not stop the report. Its errors
+		// can quote an org ID; the line names none.
+		if err := s.reportStorage(ctx); err != nil && ctx.Err() == nil {
+			s.logger.Error("org storage not reported; writes that add bytes are refused once the grant expires", "error", "suite directory unavailable or its answer malformed")
+		}
 		// The purge reads only the cache, so it runs whether or not this poll succeeded. Its
 		// errors can carry paths and database detail; the line names none.
 		if err := s.runPurges(ctx, time.Now()); err != nil && ctx.Err() == nil {
