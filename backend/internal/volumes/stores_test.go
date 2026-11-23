@@ -3,6 +3,9 @@ package volumes_test
 import (
 	"context"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
 	"os"
 	"path/filepath"
 	"sync"
@@ -147,6 +150,116 @@ func TestDocumentStoresShareChangesAcrossPrivateRoots(t *testing.T) {
 				if _, err := os.Stat(root); !os.IsNotExist(err) {
 					t.Fatal("table store wrote to private root", root, err)
 				}
+			}
+		})
+	}
+}
+
+func TestSmallDocumentAdaptersOnBothVolumes(t *testing.T) {
+	for _, kind := range []string{"files", "tables"} {
+		t.Run(kind, func(t *testing.T) {
+			dirs := []string{filepath.Join(t.TempDir(), "users", "member"), ""}
+			dirs[1] = dirs[0]
+			if kind == "tables" {
+				dbbackend.RequirePostgres(t)
+				db, err := volumes.Open(t.TempDir(), true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				for i := range 2 {
+					root := filepath.Join(t.TempDir(), "state")
+					table, err := vol.NewTable(db, "state", vol.TableOptions{MasterKey: make([]byte, 32), Org: func(context.Context, string) (string, error) { return "", nil }})
+					if err != nil {
+						t.Fatal(err)
+					}
+					release, err := vol.Mount(root, table)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer release()
+					dirs[i] = filepath.Join(root, "users", "member")
+				}
+			}
+			for _, dir := range dirs {
+				if err := vol.OpenDocument(filepath.Join(dir, "pgp-discovery.json")).Mkdir(0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			start := make(chan struct{})
+			result := make(chan error, 2)
+			go func() {
+				<-start
+				_, err := pgpdiscovery.Update(dirs[0], func(s pgpdiscovery.Settings) pgpdiscovery.Settings { s.StoreDiscoveredKeys = false; return s })
+				result <- err
+			}()
+			go func() {
+				<-start
+				_, err := pgpdiscovery.Update(dirs[1], func(s pgpdiscovery.Settings) pgpdiscovery.Settings { s.AdvertiseAutocrypt = false; return s })
+				result <- err
+			}()
+			close(start)
+			for range 2 {
+				if err := <-result; err != nil {
+					t.Fatal(err)
+				}
+			}
+			if s, err := pgpdiscovery.Load(dirs[0]); err != nil || s.StoreDiscoveredKeys || s.AdvertiseAutocrypt {
+				t.Fatal("lost a PGP preference update", s, err)
+			}
+			if err := pgpdiscovery.AddSuppression(dirs[0], "refused@example.test", pgpdiscovery.ReasonExplicit); err != nil {
+				t.Fatal(err)
+			}
+			if list, err := pgpdiscovery.LoadSuppressions(dirs[1]); err != nil || len(list) != 1 {
+				t.Fatal("suppression not shared", list, err)
+			}
+			if removed, err := pgpdiscovery.RemoveSuppression(dirs[1], "refused@example.test"); err != nil || !removed {
+				t.Fatal(removed, err)
+			}
+			if list, err := pgpdiscovery.LoadSuppressions(dirs[0]); err != nil || len(list) != 0 {
+				t.Fatal("suppression removal not shared", list, err)
+			}
+			if err := kycalendar.OpenInvitations(dirs[0]).Record("uid-1", "organizer@example.test"); err != nil {
+				t.Fatal(err)
+			}
+			if has, err := kycalendar.OpenInvitations(dirs[1]).Has("uid-1", "organizer@example.test"); err != nil || !has {
+				t.Fatal("invitation not shared", has, err)
+			}
+			ref, err := kycalendar.OpenFlags(dirs[0]).Put(kycalendar.Flag{Folder: "INBOX", Message: "1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if flag, ok, err := kycalendar.OpenFlags(dirs[1]).Get(ref); err != nil || !ok || flag.Cleared {
+				t.Fatal("flag not shared", ok, err)
+			}
+			if _, err := kycalendar.OpenFlags(dirs[1]).Clear("", "INBOX", "1"); err != nil {
+				t.Fatal(err)
+			}
+			if flag, ok, err := kycalendar.OpenFlags(dirs[0]).Get(ref); err != nil || !ok || !flag.Cleared {
+				t.Fatal("flag clear not shared", ok, err)
+			}
+			a, err := mailcache.New(dirs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := mailcache.New(dirs[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.Upsert("INBOX", []mailcache.Entry{{UID: 1, Body: "private warm body"}}); err != nil {
+				t.Fatal(err)
+			}
+			if list, _, err := b.Snapshot("INBOX", 10); err != nil || len(list) != 1 || list[0].Body != "private warm body" {
+				t.Fatal("warm cache not shared", err)
+			}
+			if err := b.OmitBodies(); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.Upsert("INBOX", []mailcache.Entry{{UID: 1, Body: "must stay omitted"}}); err != nil {
+				t.Fatal(err)
+			}
+			if list, _, err := a.Snapshot("INBOX", 10); err != nil || len(list) != 1 || list[0].Body != "" {
+				t.Fatal("privacy policy lost across writers", err)
 			}
 		})
 	}
