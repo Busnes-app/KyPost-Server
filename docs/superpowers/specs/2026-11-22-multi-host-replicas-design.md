@@ -5,6 +5,8 @@ Revised 2026-11-22 with the owner's answers to every open question. Two overturn
 recommendation and are redesigned here: self-hosted single-tenant installs get multi-host as an
 opt-in migration ("Self-hosted multi-host"), and multi mode runs in several regions
 ("Regions"). The rest are approved as recommended ("Open questions").
+Revised 2026-11-23 with the owner's object-storage decision, which overturns open question 2 for
+message bodies ("Object storage for message bodies", MH11).
 
 **Owner decision, 2026-11-22: multi-tenant needs multi-server.** A multi-tenant install
 (`KYPOST_TENANCY=multi`) must run as several replicas on several hosts. Today R ("Replicas on one
@@ -344,6 +346,95 @@ mode every org's contacts would sit in one database, so the seam seals what it s
   release keeps governing those.
 - **File mode is unchanged.** An un-migrated single-tenant install keeps plaintext files, byte for
   byte (open question 16).
+
+### Object storage for message bodies (owner decision 2026-11-23)
+
+**Owner decision:** on the hosted install, primary content goes in S3-compatible object storage
+(about $0.014/GB/month with a backup copy, against about $0.07 for volumes; the owner's figures,
+not checked here). At minimum, attachments and large message bodies go there. Launch runs without
+it if it is not ready, so the PostgreSQL path must keep working behind the same seam.
+Single-tenant installs keep their storage unchanged. This overturns open question 2 for message
+bodies only. Line references in this section were checked at `origin/main` `e46f01c2`.
+
+**What a body is.** KyPost stores each message whole: one RFC 5322 `raw` per row, with its
+attachments inside it (`mailbox.db` `messages.raw BYTEA`, `mailbox/pg_schema.go:22`). Splitting
+MIME parts out would change the digest, the duplicate check (`mailbox/store.go:414`) and incoming
+encryption's replacement (`mailbox/incoming_encryption.go:150-170`). So the unit that moves is a
+whole `raw` over a size threshold. Attachments move with the message that carries them, and so do
+drafts and Sent copies, because they are `messages` rows too.
+
+| Content | Where it goes in multi mode | Why |
+|---|---|---|
+| A message body (`raw`) at or over the threshold, attachments included, in every folder, Drafts and Sent too | **Object storage** | Most of an account's bytes (unverified: no measurement) |
+| A message body under the threshold | `messages.raw`, PostgreSQL | A list, search or sync must not make one object read per small message. *Default threshold:* 128 KiB, a placeholder that MH11 sets from K open question 8's capacity run. |
+| Every `messages` column but `raw`, and `changes`, `usage`, `receipts`, `imported`, `incoming_replacements` | PostgreSQL | Transactions, indexes, CAS and the usage triggers need them |
+| `outbox.ciphertext` (queued sends) | PostgreSQL | Transient, and the send ledger and the Sent reservation commit with it (`mailbox/store.go:133-134`) |
+| `ingress.db` `deliveries.raw` (mail held for import) | PostgreSQL | RX's `250` follows one PostgreSQL commit (RX). It lives minutes to days. |
+| `documents` (settings, contacts, contact photos) | PostgreSQL | Small and capped per document (open question 2 still stands for them) |
+| `accounts`, `doc_keys`, `tenancy.db`, `state.db` | PostgreSQL | The keys and the directory must never sit with the data in one bucket |
+| Exports | Nothing is stored: an export streams one message at a time (`api/mail_export.go:22-26`) | — |
+| Import uploads (`$STATE/imports/upload-*`) | Per host (inventory) | *Could* move later, so a lost host does not lose an upload. Not needed for launch. |
+| Backups | KyRecovery capsules; the bucket's own backup copy covers bodies (below) | — |
+
+**One seam.** The bucket is a third implementation of MH1's `vol.Vol` (`vol/vol.go:16-24`),
+`vol.Object`, beside `File` and `Table`. No second interface is added. Bodies are written once
+and never changed (an expunge sets `raw` to NULL, `mailbox/store.go:677`), so the object
+implementation needs only part of the contract:
+- **Write** with revision 0 creates with a conditional put (`If-None-Match: *`), so two replicas
+  can never overwrite one key. A write at any other revision is refused. Whether every target
+  provider honours conditional puts is unverified, and MH11 tests it against the chosen one.
+- **Read** returns revision 1 for a present object, as `File` does (MH1 as built).
+- **Remove** deletes the object. **List** under a prefix serves the purge and the orphan sweep.
+- **Paths** pass `vol.CheckPath` (`vol/vol.go:50-60`). The key is
+  `bodies/<org>/<mailbox>/<object id>`, where the object ID is 128 random bits. It is never the
+  message ID: a restore restarts identities above the copied maximum (MH1 as built), so a
+  message ID can name two bodies over time.
+- **Size.** The object implementation's cap is the 25 MiB message cap
+  (`mailmsg/limits.go:38`) plus sealing overhead, not `vol.MaxBody` (`vol/vol.go:30`), which
+  bounds documents.
+
+The choice is made once, at open, as for `Table`. With object storage not configured, every body
+stays in `messages.raw`, which is the launch fallback and today's behaviour, and no code path
+branches anywhere else.
+
+**Where the reference lives.** No shared table changes shape (K3), and `raw IS NULL` already
+means an expunged tombstone (`mailbox/store.go:677`; the indexes skip it,
+`mailbox/pg_schema.go:23-24`). So a moved body is a row in a multi-only side table in the
+mailbox's schema, `bodies(message_id BIGINT PRIMARY KEY REFERENCES messages(id), object TEXT NOT
+NULL UNIQUE, size BIGINT NOT NULL, sha256 BYTEA NOT NULL)`, and `raw` holds the empty string. Its
+own triggers add and remove `size` in `usage.payload_bytes`, so usage stays exact, and the
+mailbox quota, the org pool (K "Quotas") and receiving read the same count they read today.
+Whether any reader treats an empty, non-NULL `raw` specially is unverified. MH11 checks every
+`raw` read, and each goes through one body loader.
+
+**The rules.**
+- **Sealed before upload** with the org's data key ("Per-org encryption at rest"), with
+  associated data naming the org, mailbox and object ID. The bucket sees only ciphertext. `raw` is
+  not sealed in PostgreSQL today (`mailbox/store.go` has no `Seal` call).
+- **Checked on read.** The loader opens the object and compares `sha256` before returning it. A
+  missing, short or failing body is an error, never an empty message (the refresh-from-disk rule,
+  `backend/AGENTS.md`).
+- **Committed in order.** The object is written before the row that names it commits. Receiving's
+  `250` still waits for the PostgreSQL commit (RX). The elected sweeper deletes an object no
+  `bodies` row names once it is older than a day, so a crash between the two leaves no lasting
+  orphan.
+- **Purged.** K's purge lists and deletes the org's `bodies/<org>/` prefix after its mailboxes,
+  and its final check requires the prefix to be empty, as for `documents`. Deleting the org's
+  `doc_keys` row also leaves any missed object unreadable.
+- **Backed up.** The bucket keeps its backup copy in a second location (the owner's
+  $0.014 includes it), with versioning, so a capsule's database export plus the bucket restore
+  every body. Old versions are kept as long as capsules are (K open question 7), and a restore
+  re-applies Delete everything's erased list as today (K "Delete everything"). A capsule does
+  not copy the bodies, which would pay for them twice. Whether KyRecovery should hold body
+  copies instead is KyRecovery's question.
+- **Per region.** One bucket per cell, in the cell's residency zone ("Regions"), reached over TLS
+  with certificate verification ("Encryption in transit").
+- **Credentials.** The endpoint, bucket and region come from configuration. The access keys come
+  from the environment or a file in `SECRET_DIR`, and are never logged, never written to a
+  capsule, and never in this spec. A key that is missing or wrong refuses the start in multi mode
+  once object storage is configured.
+- **Single-tenant unchanged.** Single-tenant installs, migrated ones included, keep every body in
+  `mailbox.db`, byte for byte. Object storage is multi-only.
 
 ### The `accounts` table
 
@@ -1001,6 +1092,17 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
     unknown code is refused and counted like an unknown address; a cell that does not pin the MX
     host refuses it.
 
+11. **MH11: object storage for message bodies (multi only).** `vol.Object`, the `bodies` side
+    table and its usage triggers, one body loader for every `raw` read, the orphan sweep, the
+    purge's prefix delete and check, and the start refusal for missing or wrong credentials. Not
+    a K PR 7 prerequisite: launch runs with bodies in PostgreSQL if MH11 is not ready.
+    Tests: a body over the threshold lands in the bucket sealed and reads back; under it stays in
+    `raw`; `usage` is equal either way; a conditional put that loses a race is refused; a tampered,
+    missing or other-org object fails the read, never returns empty; a body copied to another
+    mailbox's key fails to open; the purge leaves an empty prefix; an orphan is swept; no
+    credential reaches a log; with object storage not configured every body stays in `raw`; and
+    the single-tenant upgrade test is unchanged.
+
 **Against K and RX.**
 - MH1 has merged (#701). MH2 needs K PR 6's backup inclusion of `tenancy.db`, and starts by moving
   `documents` to `volumes.db`.
@@ -1096,7 +1198,9 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
    (table mode), MH8 (new). Proof: "Proof that an un-migrated install is untouched".
 2. **Object storage for photos and large documents?** *Approved as recommended (2026-11-22):* no.
    PostgreSQL `BYTEA` with a per-document cap set from MH2's measured bounds (16 MiB is a
-   placeholder).
+   placeholder). *Overturned for message bodies (2026-11-23):* on the hosted install, attachments
+   and large message bodies go to object storage ("Object storage for message bodies", MH11).
+   Documents stay in PostgreSQL as approved.
 3. **Local backup copies in multi mode?** *Approved as recommended (2026-11-22):* refused, and a
    KyRecovery deposit is required, so no capsule sits on whichever host ran the job (MH4). This
    note applies the same rule to a migrated single install (open question 11).
@@ -1140,48 +1244,3 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
     change a self-hosted install's files on upgrade, which the byte-for-byte rule forbids.
     Contacts on those installs stay plaintext, as `SECURITY.md` documents. The alternative is an
     opt-in sealed file mode.
-17. **Object storage for primary content (cost input, 2026-11-23; not decided).** This revisits
-    open question 2 with a cost the owner gave: object storage (Backblaze B2) costs about
-    $0.007/GB/month, against about EUR 0.057 (Hetzner volumes) or $0.10 (DigitalOcean) for block
-    storage, 8–15× more. Storage is the main cost per account. These are the owner's figures, not
-    checked here. Block storage is also paid once per PostgreSQL copy, so the primary plus K's
-    synchronous standby (K "Phased build plan", launch prerequisites) is at least twice the
-    figure. **The owner has not chosen object storage**, and per-org quotas (K "Abuse limits per
-    org") work either way. Lines are at `origin/main` `e46f01c2`.
-
-    Where KyPost's bulk bytes are, and whether each could move:
-
-    | Content | Where | Could move? |
-    |---|---|---|
-    | Every stored message, attachments included | `mailbox.db` `messages.raw`, `BYTEA` (`mailbox/pg_schema.go:22`) | **Yes, the main candidate.** It is most of an account's bytes (unverified: no measurement). |
-    | Mail held before import | `ingress.db` `deliveries.raw` (`ingress/pg_schema.go:15`) | No. It lives minutes to days, and RX's `250` after commit relies on one PostgreSQL transaction. |
-    | Queued sends | `mailbox.db` `outbox.ciphertext` (`mailbox/pg_schema.go:30`) | No. Transient. |
-    | Contact photos and other per-user documents | `documents` (MH2) | No. Small, and capped per document (open question 2). |
-    | Backup capsules | KyRecovery deposits (open question 3) | KyRecovery's own question, not KyPost's. |
-
-    KyDrive's files and the other apps' content are their own repos' question.
-
-    *Recommend:* measure first, then move only message bodies, in table mode only.
-    - **Measure.** With open question 8's capacity run, record what share of a hosted cell's bytes
-      is `messages.raw`. If it dominates, as expected, object storage for message bodies is
-      worth building. If it does not, keep PostgreSQL `BYTEA` as open question 2 approved.
-    - **If built,** it is a new MH PR after MH7, with these rules:
-      - **No shared table changes shape** (K3). The object reference lives in a table-mode side
-        table keyed by mailbox and message ID. `raw IS NULL` already has a meaning: the indexes
-        skip such rows (`mailbox/pg_schema.go:23-24`; what NULL stands for is unverified), so a
-        moved body must not be marked by NULL alone.
-      - **Usage stays exact.** The `usage` triggers count `length(raw)` (`mailbox/pg_schema.go:43-51`),
-        and receiving and the org quotas read that count. A moved body keeps its size counted.
-      - **Sealed before upload** with the org's data key ("Per-org encryption at rest"), with
-        associated data naming the mailbox and message, so the store sees only ciphertext.
-        Whether `raw` is sealed at rest today is unverified.
-      - **Committed in order.** The object is written before the row that names it commits. An
-        object whose row never committed is swept later. Receiving's `250` still waits for the
-        PostgreSQL commit (RX).
-      - **Purged.** K's purge deletes the org's objects, and its final check lists them, as for
-        `documents`. Deleting the org's data key also leaves any missed object unreadable.
-      - **Backed up.** A capsule includes the bodies, or a restore loses mail.
-      - **Per region.** One bucket per cell, in the cell's residency zone ("Regions"), reached over
-        TLS ("Encryption in transit").
-      - **Single-tenant unchanged.** An un-migrated install keeps its bodies where they are,
-        byte for byte.

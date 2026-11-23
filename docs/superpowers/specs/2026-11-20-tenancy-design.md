@@ -9,6 +9,9 @@ as built") and to MH's open questions: self-hosted multi-host as an opt-in migra
 multi-region as one cell per region (MH, `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`).
 Revised 2026-11-23 with the owner's plan decisions: every paid account is an org on the shared
 install, businesses included, and only Enterprise gets a dedicated install ("Plans and orgs").
+Revised again 2026-11-23 with the storage decisions: one storage pool per org across all apps,
+held by KyIdentity ("Quotas"), and message bodies in object storage on the hosted install (MH
+"Object storage for message bodies").
 
 KyIdentity's tenancy spec (`KyIdentity-server` `docs/superpowers/specs/2026-11-19-tenancy-design.md`,
 cited as **T**) makes every hosted customer an *organisation* (org) under one issuer. Since the
@@ -90,13 +93,13 @@ drive the design:
 
 ## Plans and orgs (owner decisions, 2026-11-23)
 
-| Plan | Org members | Install |
-|---|---|---|
-| Personal | 1 | the shared multi-tenant install, run on several hosts (Replicas) |
-| Couple | 2 | the shared install |
-| Family | up to 6 | the shared install |
-| Business | N seats (small teams) | the shared install |
-| Enterprise | its own directory | a dedicated single-tenant install, cloud or on premises; SQLite is fine |
+| Plan | Org members | Pooled storage, all apps (decision of 2026-11-23) | Install |
+|---|---|---|---|
+| Personal | 1 | 20 GB | the shared multi-tenant install, run on several hosts (Replicas) |
+| Couple | 2 | 40 GB | the shared install |
+| Family | up to 6 | 100 GB | the shared install |
+| Business | N seats (small teams) | 30 GB per seat, pooled across the team | the shared install |
+| Enterprise | its own directory | custom | a dedicated single-tenant install, cloud or on premises; SQLite is fine |
 
 Every plan sells all seven apps (email, contacts, calendar, tasks, notes, drive, messages), so
 KyPost is in every one.
@@ -106,6 +109,10 @@ KyPost is in every one.
   `backend/go.mod` pin). KyPost never sees a plan, an org kind or a seat count, and no rule in this
   note branches on one. Each rule is about one account, one mailbox or the whole org. What a plan
   allows reaches KyPost only as `quotas_json` (Abuse limits per org).
+- **Storage is one pool per org, held by KyIdentity** (owner decision, 2026-11-23, required for
+  launch). The number a customer buys is shared by every member and every app. KyPost checks the
+  pool before a write that adds bytes and reports its own usage ("Quotas"). It still sees no plan:
+  the pool reaches it as a number.
 - **Seats are KyIdentity's.** `max_seats` and the `seat_limit` refusal are enforced there (T
   "Entitlements"). KyPost adds no seat check: an account appears only from a signed directory
   event (Identity binding), and KyIdentity refuses the member add that would pass the seat count.
@@ -433,10 +440,10 @@ account to its `org_id`. No receiving path takes an org from the message.
   apex-only catch-all (checked in the receiving tier spec, "Cloudflare Email Routing's real
   limits"). Raising it would not fix the disclosure.
 - **Size and quota.** The 25 MiB cap is unchanged (`mailmsg/limits.go:38`). The per-mailbox quota
-  is reserved at bind (`app/receiving.go:458-479`). Hosted mode applies the org's `mailboxBytes`
-  and `storageBytes` after the install-wide `KYPOST_MAILBOX_QUOTA_BYTES`, so the lower limit wins
-  (Abuse limits per org). A lower quota refuses only new mail, never locks a mailbox
-  (today's rule, root `AGENTS.md` "Mailbox limits").
+  is reserved at bind (`app/receiving.go:458-479`). Hosted mode applies the org's storage pool
+  ("Quotas") after the install-wide `KYPOST_MAILBOX_QUOTA_BYTES` and the optional `mailboxBytes`
+  and `storageBytes` keys, so the lowest limit wins (Abuse limits per org). A lower quota refuses
+  only new mail, never locks a mailbox (today's rule, root `AGENTS.md` "Mailbox limits").
 
 ### Recommended hosted receiving tier (open question 3)
 
@@ -531,7 +538,7 @@ when a key is missing. Lines are at `origin/main` `e46f01c2`.
 | Sending, per account | 60 messages an hour and 1000 recipients a day, install-wide (`config/config.go:573`), with an optional per-account override (`users.User.SendQuota`, `users/users.go:65-66`; `sendQuotaFor`, `api/send_quota.go:26`). Kept in both modes. | `memberSendPerHour`, `memberRecipientsPerDay`: the per-account limit for that org's members, in place of the install default. A per-account override set by staff still wins. Not built (PR 7). | The install default |
 | Sending, whole org | None | `sendPerHour`, `recipientsPerDay`, summed from `send_ledger` through `user_orgs` (built in PR 5, `chargeOrgSend`, `api/tenancy_lifecycle.go:173`) | No org cap (`:179-181`) |
 | Masked creation | Per user, 100 live and 20 a day (`api/masked_addresses.go:31-37`). Kept as the single-tenant limit and the hosted default. | M D7: `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`, plus M's platform-wide circuit breaker. PR 7. | 100 and 20 per user; no org cap |
-| Mailbox storage | Per mailbox, the install's `KYPOST_MAILBOX_QUOTA_BYTES`, 256 MiB to 1 TiB (`config/native_mail.go:33-52`). Kept, and in multi mode it is the **ceiling**: receiving checks the mailbox's own limit first (`a.Limits`, `app/receiving.go:82`), then the org's (`:85`). That `a.Limits` always carries the install quota, which `app/app.go:159-163` reads at start, is unverified. | `mailboxBytes` per mailbox and `storageBytes` across the org, counting mail held for import (built in PR 5, `orgRoom`, `app/receiving.go:98`). An org key can lower a mailbox's room, never raise it past the install's, so a hosted install sets `KYPOST_MAILBOX_QUOTA_BYTES` to the largest mailbox any plan sells. | The install quota only |
+| Mailbox storage | Per mailbox, the install's `KYPOST_MAILBOX_QUOTA_BYTES`, 256 MiB to 1 TiB (`config/native_mail.go:33-52`). Kept, and in multi mode it is the **ceiling**: receiving checks the mailbox's own limit first (`a.Limits`, `app/receiving.go:82`), then the org's (`:85`). That `a.Limits` always carries the install quota, which `app/app.go:159-163` reads at start, is unverified. | **The org's storage pool, from KyIdentity** (decision 6 of 2026-11-23, "Quotas"): the number the customer buys. Under it, two optional safety keys stay: `mailboxBytes` per mailbox and `storageBytes`, KyPost's own share across the org, counting mail held for import (built in PR 5, `orgRoom`, `app/receiving.go:98`). Billing does not set them for a plan. No org value can raise a mailbox past the install's, so a hosted install sets `KYPOST_MAILBOX_QUOTA_BYTES` at or above the largest pool any plan sells, within its 1 TiB maximum. | The pool has its own default ("Quotas"). A missing safety key: the install quota only. |
 | Extra mailboxes | Administrator's choice | `mailboxes` (built in PR 5, `orgMailboxRoom`, `api/tenancy_lifecycle.go:220`) | No cap |
 | Import and export | 2 at a time per process and 1 per user (`api/mail_import.go:34-35`, `api/mail_export.go:30-31`). Kept. | `transfersPerOrg`: imports and exports one org may run at once. Not built (PR 7, with the receiving tier's per-mailbox leases). | 1 per org, so one org cannot hold a server's slots |
 | Seats | Not KyPost's | None: KyIdentity's `max_seats` (Plans and orgs) | — |
@@ -544,12 +551,9 @@ billing service sets them per plan, and staff may set them for one org. Parsing 
 0, which refuses new mail and creations, never existing data. PR 7 adds the new keys to
 `tenancy.Quotas` (`tenancy/orgs.go:33-38`) with the same rule.
 
-**Pooled or per-member storage (Family).** A pooled storage quota for Family is a recommendation,
-not decided (open question 13). Both choices are `quotas_json` values, with no code change:
-- **Pooled:** `storageBytes` set to the pool, and `mailboxBytes` missing (each mailbox is then
-  bounded by the install ceiling only).
-- **Per member:** `mailboxBytes` set to each member's share, and `storageBytes` missing or set to
-  the total.
+**Storage is pooled in every plan** (owner decision, 2026-11-23; this answers open question 13).
+The pool is KyIdentity's, not a KyPost `quotas_json` key ("Quotas"). A per-member allowance
+inside a pool is not sold. If it ever is, `mailboxBytes` already expresses it with no code change.
 
 ## Admin surface
 
@@ -742,10 +746,88 @@ only the export routes under it. Every other route answers as for a non-`active`
 
 ### Quotas
 
-These come from each org's `quotas_json` in the cache (Abuse limits per org, which lists every
-key and the per-user limit each sits on). A lower quota refuses new mail and new
-creations only, never existing data. That matches today's mailbox-quota rule and T's "over_limit,
-nobody is disabled".
+Every limit but storage comes from each org's `quotas_json` in the cache (Abuse limits per org,
+which lists every key and the per-user limit each sits on). A lower quota refuses new mail and
+new creations only, never existing data. That matches today's mailbox-quota rule and T's
+"over_limit, nobody is disabled".
+
+**Storage: the org pool (owner decision, 2026-11-23, required for launch).** One number per org,
+shared by every member and every app, is held by KyIdentity. Each app checks it before a write
+that adds bytes and reports its own usage. Nothing here is built. KyIdentity's half is T's
+amendment (board `kyidentity-business-orgs`). It has no PR yet, so the field and route names
+below are this note's proposals, and how T names them is unverified.
+
+*What KyPost needs from KyIdentity.*
+- **The pool.** Each org's limit in bytes and the usage the other apps last reported. It arrives
+  with the org entry in `GET /api/suite/orgs`, which KyPost already polls (K8), and is cached in
+  the `orgs` row, so no write waits on a network call.
+- **A usage report.** One authenticated call per poll, carrying `{org_id, used_bytes, as_of}`
+  for each org KyPost holds data for. KyIdentity binds the report to the calling client, so one
+  app can never report for another, and keeps only the newest `as_of` per app and org, so a
+  replayed or reordered report cannot lower a usage figure.
+
+*What KyPost counts* (exact, from PostgreSQL, summed over the org's mailboxes and members):
+
+| Counted | Source |
+|---|---|
+| Every stored message in every folder: Inbox, Sent, Drafts, Trash, archive, and incoming encryption's replacements. Attachments are inside the message. | `usage.payload_bytes` per mailbox, kept by the triggers (`mailbox/pg_schema.go:43-51`) |
+| Queued sends and the Sent copy reserved for each | The same counter (`mailbox/store.go:133-134`, `mailbox/pg_schema.go:34-39`) |
+| Mail held for import | `HeldBytes` (`app/receiving.go:77`), as `orgRoom` counts it today |
+| Contact photos | The per-user total `contactPhotoBytesUsed` reads (`api/contacts_photo.go:196`) |
+| A body moved to object storage | Counted at its size, as if it were in `raw` (MH "Object storage for message bodies") |
+
+Not counted: exports (streamed, nothing stored, `api/mail_export.go:22-26`), import uploads
+waiting to run (scratch, deleted with the job), settings and other small documents, indexes,
+logs and backups. Counting a backup would charge a customer for the platform's own safety copy.
+
+*Where KyPost checks.* The room is the pool limit, minus the other apps' last reported usage,
+minus KyPost's own usage now. Every write that adds bytes checks it, at the points that already
+check the mailbox quota:
+- receiving acceptance, after the mailbox's own check (`orgRoom`, `app/receiving.go:85`);
+- every new message, which covers drafts, Sent copies, client uploads and imports
+  (`mailbox/store.go:428`);
+- a send's enqueue, which reserves its Sent copy (`mailbox/outbox.go:216`);
+- a contact photo upload (`storeContactPhoto`, `api/contacts_photo.go:141`).
+
+PR 5's statement that imports, drafts and Sent copies are bounded by the install quota only
+("PR 5 as built") is superseded for the pool.
+
+*What over-pool does* (the safest default for each, with nothing ever deleted or locked):
+
+| Surface | Over the pool |
+|---|---|
+| Receiving | `452 4.2.2` "Mailbox full", today's temporary exit 9 (`app/receiving_config.go:198`). The sender retries for days, so freeing space in any app lets the mail in. It is lost only if the sender gives up first, as with a full mailbox today. |
+| Sending | A new send is refused at enqueue with today's capacity answer and a message naming storage, before anything is sent. A send already queued goes out, because its Sent copy was reserved at enqueue. Sending without a Sent copy is not offered: it would lose the copy silently. |
+| Drafts, copies, client uploads, imports | A write that adds bytes is refused with the capacity answer. An import stops at the first refused message and reports how far it got. The existing draft is kept. |
+| Sync, read, search, export | Unchanged, always allowed. |
+| Delete, move, flag, empty Trash | Always allowed, so a user can always free space. The room KyPost frees counts at once in KyPost's own checks, and in other apps after the next report. |
+
+The UI shows the pool's usage with today's 80% and 95% warnings (root `AGENTS.md` "Mailbox
+limits"), and names the pool, not the mailbox, as what is full.
+
+*Failure defaults.*
+- **No pool in an org's entry** (KyIdentity not upgraded, or a malformed value): the pool reads
+  as 0, the same rule as a malformed key (`parseQuotas`). Nothing new is accepted, receiving
+  answers the temporary `452`, and no data is lost. The pool is a launch requirement, so K PR 7
+  must not accept `multi` until KyIdentity publishes it and KyPost's checks are built (open
+  question 15).
+- **A stale cache** keeps the last known pool and usage, as receiving keeps the last known
+  status (open question 5). Other apps' growth since their last report can then overshoot the
+  pool by at most one poll interval of writes. KyPost's own part is always exact.
+- **A report that fails** is retried on the next poll. KyIdentity keeps the last good one.
+- **Concurrent writes** in one org can pass the check together, as `orgRoom`'s ponytail note
+  says (`app/receiving.go:94-97`). The overshoot is bounded by the writes in flight. The pool is
+  a billing limit, not a security boundary, and the per-mailbox ceiling still holds.
+
+*Single-tenant* (self-hosted and Enterprise) has no pool: there is no `tenancy.db`, so every check
+above is skipped, as `orgRoom` skips today (`app/receiving.go:99-101`). Enterprise's custom size
+is the install's `KYPOST_MAILBOX_QUOTA_BYTES`.
+
+*Negative tests the build must carry:* wrong org (a report or a check never counts another org's
+mailbox), a wrong client (KyIdentity refuses a report signed by another app), a replayed or older
+`as_of` (KyIdentity keeps the newer figure), a stale cache, a missing or malformed pool, an
+oversize or negative usage figure, an org at exactly the limit, a deletion that frees room, and
+single-tenant mode, where the pool is never read and the upgrade test is unchanged.
 
 ## Replicas (PR #677)
 
@@ -1806,12 +1888,14 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
     org's people are added through billing and KyIdentity's member endpoints, and extra
     mailboxes and aliases by staff on request. A business that needs a directory sync or its own
     IdP buys Enterprise.
-13. **Family storage: pooled or per member (new, 2026-11-23).** *Recommend* pooled: one
-    `storageBytes` for the org and no `mailboxBytes`, so one member's large mailbox uses room the
-    others are not using. The owner has not decided, and both choices are `quotas_json` values
-    with no code change (Abuse limits per org).
+13. **Family storage: pooled or per member (new, 2026-11-23).** *Answered (2026-11-23):* pooled,
+    in every plan, as one number per org across all apps, held by KyIdentity (Quotas).
 14. **A Business holder's Delete everything (new, 2026-11-23).** The holder's click deletes the
     whole org, every seat included, after the 7-day member export window. *Default:* the same rule
     in every plan, because KyPost sees no plan. If Business should differ (for example, the
     button only removes the holder, or needs a second person), that is a T and billing change
     that KyPost does not need to know about.
+15. **An org entry with no storage pool (new, 2026-11-23).** *Default:* the pool reads as 0, so
+    the org accepts nothing new and receiving answers a temporary `452` (Quotas). K PR 7 must not accept
+    `multi` before KyIdentity publishes the pool, so this happens only through a KyIdentity fault.
+    The alternative, no pool cap, lets an org grow without limit during that fault.
