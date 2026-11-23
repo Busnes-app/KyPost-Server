@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"net/http"
 	"os"
@@ -17,7 +18,6 @@ import (
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/groups"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -1006,8 +1006,8 @@ func (s *Server) revokeUserCredentials(u users.User, keepSessionToken string, pr
 	// admin clear-MFA and the self-service password change.
 	// Under rehashDAVAppPassword's file lock: an in-flight hash upgrade that
 	// re-read the file before this delete would otherwise write it back.
-	if err := fsutil.WithFileLock(s.userCardDAVAuthPath(u.ID), func() error {
-		if err := os.Remove(s.userCardDAVAuthPath(u.ID)); err != nil && !os.IsNotExist(err) {
+	if err := vol.OpenDocument(s.userCardDAVAuthPath(u.ID)).Update(func() error {
+		if err := vol.RemoveFile(s.userCardDAVAuthPath(u.ID)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		return nil

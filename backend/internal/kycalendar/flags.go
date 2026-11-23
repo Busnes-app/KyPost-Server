@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // maxFlags bounds one user's record; the oldest entries go first.
@@ -35,8 +35,10 @@ func OpenFlags(userStateDir string) Flags {
 	return Flags{path: filepath.Join(userStateDir, "kycalendar-flags.json")}
 }
 
-func (s Flags) load() ([]Flag, error) {
-	raw, err := os.ReadFile(s.path)
+func (s Flags) load() ([]Flag, error) { return s.loadDocument(vol.OpenDocument(s.path)) }
+
+func (s Flags) loadDocument(doc *vol.Document) ([]Flag, error) {
+	raw, err := doc.Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -48,11 +50,12 @@ func (s Flags) load() ([]Flag, error) {
 }
 
 func (s Flags) edit(fn func([]Flag) []Flag) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	doc := vol.OpenDocument(s.path)
+	if err := doc.Mkdir(0o700); err != nil {
 		return err
 	}
-	return fsutil.WithFileLock(s.path, func() error {
-		list, err := s.load()
+	return doc.Update(func() error {
+		list, err := s.loadDocument(doc)
 		if err != nil {
 			return err
 		}
@@ -64,7 +67,7 @@ func (s Flags) edit(fn func([]Flag) []Flag) error {
 		if err != nil {
 			return err
 		}
-		return fsutil.AtomicWriteFile(s.path, raw, 0o600)
+		return doc.Write(raw)
 	})
 }
 

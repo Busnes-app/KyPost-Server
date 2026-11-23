@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"maps"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -249,7 +248,9 @@ func (p *NativeRestoreReleasePlan) RecordIntent(ctx context.Context) error {
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	if epoch, err := nativeRecoveryEpoch(p.root); err != nil || epoch != p.Record.Epoch {
+	hold := vol.OpenDocument(filepath.Join(p.root, NativeRestoreHoldFile))
+	epoch, err := readRestoreEpochDocument(hold, filepath.Join(p.root, NativeRestoreHoldFile))
+	if err != nil || epoch != p.Record.Epoch {
 		return ErrNativeRecovery
 	}
 	record := p.Record
@@ -342,13 +343,15 @@ func (p *NativeRestoreReleasePlan) Commit(ctx context.Context, hit func(string) 
 	if err = hit("lifecycle"); err != nil {
 		return err
 	}
-	if epoch, err := nativeRecoveryEpoch(p.root); err != nil || epoch != p.Record.Epoch {
+	hold := vol.OpenDocument(filepath.Join(p.root, NativeRestoreHoldFile))
+	epoch, err := readRestoreEpochDocument(hold, filepath.Join(p.root, NativeRestoreHoldFile))
+	if err != nil || epoch != p.Record.Epoch {
 		return ErrNativeRecovery
 	}
-	if err = os.Rename(filepath.Join(p.root, NativeRestoreHoldFile), filepath.Join(p.root, NativeRestoreReleasedFile)); err != nil {
+	if err = hold.MoveTo(filepath.Join(p.root, NativeRestoreReleasedFile)); err != nil {
 		return err
 	}
-	if err = errors.Join(fsutil.SyncDir(p.root), hit("rename")); err != nil {
+	if err = errors.Join(hold.SyncDir(), hit("rename")); err != nil {
 		return fmt.Errorf("%w: %w", ErrNativeReleaseUnconfirmed, err)
 	}
 	return nil
@@ -357,10 +360,10 @@ func (p *NativeRestoreReleasePlan) Commit(ctx context.Context, hit func(string) 
 // NativeRestoreReleased reports a completed release: no hold, and a released
 // marker whose epoch matches the recorded release.
 func (s *LifecycleStore) NativeRestoreReleased(root string) (NativeRestoreReleaseRecord, bool, error) {
-	if _, err := os.Lstat(filepath.Join(root, NativeRestoreHoldFile)); !errors.Is(err, os.ErrNotExist) {
+	if exists, err := vol.Exists(filepath.Join(root, NativeRestoreHoldFile)); err != nil || exists {
 		return NativeRestoreReleaseRecord{}, false, nil
 	}
-	if _, err := os.Lstat(filepath.Join(root, NativeRestoreReleasedFile)); errors.Is(err, os.ErrNotExist) {
+	if exists, err := vol.Exists(filepath.Join(root, NativeRestoreReleasedFile)); err == nil && !exists {
 		return NativeRestoreReleaseRecord{}, false, nil
 	}
 	epoch, err := readRestoreEpoch(filepath.Join(root, NativeRestoreReleasedFile))

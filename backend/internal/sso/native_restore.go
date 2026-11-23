@@ -3,6 +3,7 @@ package sso
 import (
 	"database/sql"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io/fs"
 	"net/url"
 	"os"
@@ -25,8 +26,8 @@ var ErrNativeRestoreHold = errors.New("native mail is held after restore; preser
 // RequireNativeRestoreReleased refuses even an unreadable or malformed hold.
 // There is no automatic release: restored evidence cannot authorize live mail.
 func RequireNativeRestoreReleased(stateRoot string) error {
-	_, err := os.Lstat(filepath.Join(stateRoot, NativeRestoreHoldFile))
-	if errors.Is(err, os.ErrNotExist) {
+	exists, err := vol.Exists(filepath.Join(stateRoot, NativeRestoreHoldFile))
+	if err == nil && !exists {
 		return nil
 	}
 	return ErrNativeRestoreHold
@@ -176,7 +177,11 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 			return true, ErrNativeProvisioning
 		}
 		manifest := filepath.Join(stateRoot, "users", a.Owner.Mailbox, "native-mailbox.json")
-		_, err = os.Lstat(manifest)
+		manifestPresent, manifestErr := vol.Exists(manifest)
+		err = manifestErr
+		if err == nil && !manifestPresent {
+			err = os.ErrNotExist
+		}
 		if a.Source != "" || err == nil {
 			source, err := mailbox.ValidatePreparedAccount(stateRoot, a.Owner, a.Address, a.Limits)
 			if err != nil || a.Source != "" && source != a.Source {
@@ -199,7 +204,10 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 		}
 		ids[id] = true
 		dir := filepath.Join(stateRoot, nativeMailboxesDir, id)
-		_, err := os.Lstat(filepath.Join(dir, "native-mailbox.json"))
+		manifestPresent, err := vol.Exists(filepath.Join(dir, "native-mailbox.json"))
+		if err == nil && !manifestPresent {
+			err = os.ErrNotExist
+		}
 		if a.Source == "" && errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -233,7 +241,10 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 				continue
 			}
 			known := ids[entry.Name()]
-			_, manifestErr := os.Lstat(filepath.Join(stateRoot, parent, entry.Name(), "native-mailbox.json"))
+			manifestPresent, manifestErr := vol.Exists(filepath.Join(stateRoot, parent, entry.Name(), "native-mailbox.json"))
+			if manifestErr == nil && !manifestPresent {
+				manifestErr = os.ErrNotExist
+			}
 			if manifestErr == nil && !known {
 				return true, ErrNativeProvisioning
 			}

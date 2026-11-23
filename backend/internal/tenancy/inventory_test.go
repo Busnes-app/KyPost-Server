@@ -17,6 +17,7 @@ import (
 	_ "github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	_ "github.com/Busnes-app/kypost-server/backend/internal/sso"
 	_ "github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
 // Store classes of the tenancy design's Store inventory.
@@ -67,8 +68,9 @@ var tableClass = map[string]map[string]string{
 		"import_leases": derived, "retired_bindings": derived,
 		// Byte counts per org, like the orgs cache.
 		"org_storage": platform,
-		// Owner-keyed volume documents (MH); a row with no owner is a P document.
-		"documents": derived,
+	},
+	"volumes": {
+		"documents": derived, "doc_keys": org,
 	},
 	"catalog": {"stores": platform},
 }
@@ -92,14 +94,14 @@ var fileClass = map[string]string{
 	// Per mailbox.
 	"mailcache.json": derived, "native-mailbox.json": derived, "outbox-idle": derived,
 	// Owner-keyed records in install directories.
-	"pickup": derived, "imports": derived,
+	"pickup": derived, "imports": derived, "contact-photos": derived,
 	// Whole-install recovery, backups and process coordination.
 	"native-restore-hold.json": platform, "native-restore-qualification.json": platform,
 	"native-restore-released.json": platform, "mfa-clear-all.done": platform, "mfa-clear-all.progress": platform,
 	"backups": platform, "mail-bulk.json": platform, "backup-operation.lock": platform,
 	"replica-volume.id": platform, "server-instance.lock": platform,
 	// Keys (SECRET_DIR): one per install.
-	"native-relay.key": platform, "imap-config.key": platform, "totp-secret.key": platform,
+	"documents.key": platform, "native-relay.key": platform, "imap-config.key": platform, "totp-secret.key": platform,
 	"pgp-private-key.key": platform, "pickup-store.key": platform, "pairing.key": platform, "pow.key": platform,
 	"relay-identity.key": platform, "scheduled-send.key": platform, "push_relay_key": platform,
 	"apns_relay_key": platform, "notifications-vapid-private.pem": platform, "cloudflare-receiving.json": platform,
@@ -107,7 +109,7 @@ var fileClass = map[string]string{
 	"imap-import.key": platform, "receiving-tls.key": platform, TombstoneKeyFile: platform,
 	// The databases, classified table by table above.
 	"state.db": platform, "mailbox.db": derived, "ingress.db": platform, "cloudflare.db": platform,
-	"native-authority.db": platform, File: platform,
+	"native-authority.db": platform, File: platform, volumes.File: platform,
 }
 
 // notStores are file names in the code that name no store: legacy inputs migrated away,
@@ -123,7 +125,7 @@ var notStores = map[string]string{
 // fileName is a quoted file-like literal; extras are store names without an extension.
 var (
 	fileName = regexp.MustCompile(`"([A-Za-z0-9_.<>*%-]*\.(?:json|yaml|yml|key|env|txt|pem|conf|repo|db|md|lock|id))"`)
-	extras   = []string{"quota-", "outbox-idle", "pickup", "imports", "mfa-clear-all.done", "mfa-clear-all.progress", "backups", "push_relay_key", "apns_relay_key"}
+	extras   = []string{"contact-photos", "quota-", "outbox-idle", "pickup", "imports", "mfa-clear-all.done", "mfa-clear-all.progress", "backups", "push_relay_key", "apns_relay_key"}
 	ddlTable = regexp.MustCompile(`(?i)CREATE TABLE (?:IF NOT EXISTS )?(?:kypost_catalog\.)?([a-z_]+)`)
 )
 

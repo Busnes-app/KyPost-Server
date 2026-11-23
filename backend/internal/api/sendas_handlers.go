@@ -26,12 +26,12 @@ func (s *Server) handleSendAs(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		store, err := s.sendAsFor(r)
 		if err != nil {
-			http.Error(w, "failed to open send-as store", http.StatusInternalServerError)
+			http.Error(w, "failed to open send-as store", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		list, err := store.List()
 		if err != nil {
-			http.Error(w, "failed to read send-as aliases", http.StatusInternalServerError)
+			http.Error(w, "failed to read send-as aliases", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if list == nil {
@@ -103,12 +103,12 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 	// 5. Enforce the per-user cap.
 	store, err := s.sendAsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open send-as store", http.StatusInternalServerError)
+		http.Error(w, "failed to open send-as store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	existing, err := store.List()
 	if err != nil {
-		http.Error(w, "failed to read send-as aliases", http.StatusInternalServerError)
+		http.Error(w, "failed to read send-as aliases", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	if len(existing) >= maxSendAsAliasesPerUser {
@@ -141,7 +141,7 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 	// logic marks it failed.
 	alias, err := store.Create(ac.UserID, normalizedEmail, strings.TrimSpace(req.DisplayName))
 	if err != nil {
-		http.Error(w, "failed to create alias", http.StatusInternalServerError)
+		http.Error(w, "failed to create alias", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 
@@ -216,7 +216,7 @@ func (s *Server) handleSendAsConfirm(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, sendas.ErrNotPending):
 		http.Error(w, "this address is not awaiting a code", http.StatusConflict)
 	default:
-		http.Error(w, "failed to confirm alias", http.StatusInternalServerError)
+		http.Error(w, "failed to confirm alias", documentStatus(err, http.StatusInternalServerError))
 	}
 }
 
@@ -231,12 +231,12 @@ func (s *Server) ownSendAsRecord(w http.ResponseWriter, r *http.Request) (*senda
 	}
 	store, err := s.sendAsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open send-as store", http.StatusInternalServerError)
+		http.Error(w, "failed to open send-as store", documentStatus(err, http.StatusInternalServerError))
 		return nil, sendas.Alias{}, false
 	}
 	record, ok, err := store.Get(id)
 	if err != nil {
-		http.Error(w, "failed to read send-as aliases", http.StatusInternalServerError)
+		http.Error(w, "failed to read send-as aliases", documentStatus(err, http.StatusInternalServerError))
 		return nil, sendas.Alias{}, false
 	}
 	ac, authed := authFromContext(r)
@@ -262,7 +262,7 @@ func (s *Server) handleSendAsByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := store.Delete(record.ID); err != nil {
-		http.Error(w, "failed to delete alias", http.StatusInternalServerError)
+		http.Error(w, "failed to delete alias", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

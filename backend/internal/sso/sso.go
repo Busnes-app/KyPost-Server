@@ -18,10 +18,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -36,7 +36,6 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 )
 
@@ -102,7 +101,7 @@ func (s *Store) Load() SSOSettings {
 }
 
 func (s *Store) loadUnlocked() SSOSettings {
-	data, err := os.ReadFile(s.path)
+	data, err := vol.OpenDocument(s.path).Read()
 	if err != nil {
 		return SSOSettings{
 			AutoProvision: true,
@@ -120,18 +119,18 @@ func (s *Store) loadUnlocked() SSOSettings {
 
 // Save persists SSO settings atomically to disk.
 func (s *Store) Save(cfg SSOSettings) error {
-	release, err := fsutil.LockFile(s.path)
-	if err != nil {
-		return err
-	}
-	defer release()
-
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return fsutil.AtomicWriteFile(s.path, data, 0o600)
+	doc := vol.OpenDocument(s.path)
+	release, err := doc.Lock()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return doc.Replace(data)
 }
 
 // maxOIDCResponseBytes bounds every body read from the identity provider.

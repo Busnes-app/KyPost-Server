@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"maps"
 	"net"
 	"os"
@@ -127,7 +128,7 @@ func NewNativeDomainStore(configDir string) *NativeDomainStore {
 // legacyNativeDomain reports whether native-domain.json is the v2 tombstone or
 // still holds version-1 data. Anything but the exact tombstone counts as data.
 func legacyNativeDomain(configDir string) (tombstone, data bool, err error) {
-	raw, err := os.ReadFile(filepath.Join(configDir, legacyNativeDomainFile))
+	raw, err := vol.OpenDocument(filepath.Join(configDir, legacyNativeDomainFile)).Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return false, false, nil
 	}
@@ -209,7 +210,7 @@ func HistoricalNativeDomains(configDir string) (NativeDomainSet, int, error) {
 		return NativeDomainSet{}, 0, err
 	}
 	if data {
-		raw, err := os.ReadFile(filepath.Join(configDir, legacyNativeDomainFile))
+		raw, err := vol.OpenDocument(filepath.Join(configDir, legacyNativeDomainFile)).Read()
 		if err != nil {
 			return NativeDomainSet{}, 1, err
 		}
@@ -265,10 +266,14 @@ func (s *NativeDomainStore) Read() (NativeDomain, error) {
 }
 
 func (s *NativeDomainStore) readSet() (NativeDomainSet, error) {
+	return s.readSetDocument(vol.OpenDocument(s.path))
+}
+
+func (s *NativeDomainStore) readSetDocument(doc *vol.Document) (NativeDomainSet, error) {
 	set := NativeDomainSet{Domains: map[string]NativeDomain{}, Retired: []string{}}
 	var raw nativeDomainSet
 	present := false
-	if err := fsutil.LoadJSONFile(s.path, func(v nativeDomainSet) { raw = v; present = true }, nil); err != nil || !present {
+	if err := vol.LoadJSON(doc, func(v nativeDomainSet) { raw = v; present = true }, nil); err != nil || !present {
 		return set, err
 	}
 	invalid := NativeDomainSet{Domains: map[string]NativeDomain{}, Retired: []string{}}
@@ -304,7 +309,7 @@ func (s *NativeDomainStore) readSet() (NativeDomainSet, error) {
 // persistSet writes the set, then the tombstone if it is not already there, so
 // a v1 binary can never configure a domain behind a v2 one. A retired founding
 // domain hands the single-domain API to the smallest remaining domain.
-func (s *NativeDomainStore) persistSet(set NativeDomainSet) error {
+func (s *NativeDomainStore) persistSetDocument(set NativeDomainSet, doc *vol.Document) error {
 	raw := nativeDomainSet{Version: 1, Issuer: set.Issuer, Domains: map[string]nativeDomainProof{}, Retired: append([]string{}, set.Retired...)}
 	for domain, d := range set.Domains {
 		raw.Domains[domain] = nativeDomainProof{d.Token, d.ExpiresAt, d.Established, d.VerifiedUntil}
@@ -314,7 +319,7 @@ func (s *NativeDomainStore) persistSet(set NativeDomainSet) error {
 	} else if len(set.Domains) > 0 {
 		raw.Founding = slices.Sorted(maps.Keys(set.Domains))[0]
 	}
-	if err := fsutil.PersistJSONFile(s.path, raw); err != nil {
+	if err := vol.PersistJSON(doc, raw); err != nil {
 		return err
 	}
 	return writeNativeDomainTombstone(filepath.Dir(s.path))
@@ -324,7 +329,8 @@ func writeNativeDomainTombstone(configDir string) error {
 	if tombstone, _, err := legacyNativeDomain(configDir); err != nil || tombstone {
 		return err
 	}
-	return fsutil.PersistJSONFile(filepath.Join(configDir, legacyNativeDomainFile), map[string]string{"migratedTo": NativeDomainsFile})
+	body, _ := json.MarshalIndent(map[string]string{"migratedTo": NativeDomainsFile}, "", "  ")
+	return vol.OpenDocument(filepath.Join(configDir, legacyNativeDomainFile)).Replace(body)
 }
 
 // Configure is the single-domain API: it claims the founding domain or
@@ -365,42 +371,55 @@ func (s *NativeDomainStore) configure(ctx context.Context, domain, issuer string
 		return NativeDomain{}, err
 	}
 	defer release()
-	set, err := s.ReadSet()
-	if err != nil {
+	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
 		return NativeDomain{}, err
 	}
-	if set.Issuer != "" && set.Issuer != issuer || foundingOnly && set.Founding != "" && set.Founding != domain {
-		return NativeDomain{}, ErrNativeDomain
-	}
-	if ensure {
-		if slices.Contains(set.Retired, domain) {
-			return NativeDomain{}, ErrNativeDomain
-		}
-		if prior, ok := set.Domains[domain]; ok {
-			return prior, nil
-		}
-	}
-	var b [32]byte
-	if _, err = rand.Read(b[:]); err != nil {
-		return NativeDomain{}, err
-	}
-	d := NativeDomain{Domain: domain, Issuer: issuer, Token: hex.EncodeToString(b[:]), ExpiresAt: time.Now().Add(24 * time.Hour).Unix()}
-	if err = ctx.Err(); err != nil {
-		return NativeDomain{}, err
-	}
-	// The ledger exists before the set and tombstone, so native can start at
-	// once and a crash never leaves a tombstone without a ledger.
-	if err = NewLifecycleStore(filepath.Dir(s.path)).ensureNativeLedger(ctx); err != nil {
-		return NativeDomain{}, err
-	}
-	set.Issuer = issuer
-	set.Retired = slices.DeleteFunc(set.Retired, func(r string) bool { return r == domain })
-	// Founding changes only when no domain is in service.
-	if set.Founding == "" {
-		set.Founding = domain
-	}
-	set.Domains[domain] = d
-	return d, s.persistSet(set)
+	doc := vol.OpenDocument(s.path)
+	var result NativeDomain
+	err = vol.Retry(func() error {
+		var attemptErr error
+		result, attemptErr = func() (NativeDomain, error) {
+			set, err := s.readSetDocument(doc)
+			if err != nil {
+				return NativeDomain{}, err
+			}
+			if set.Issuer != "" && set.Issuer != issuer || foundingOnly && set.Founding != "" && set.Founding != domain {
+				return NativeDomain{}, ErrNativeDomain
+			}
+			if ensure {
+				if slices.Contains(set.Retired, domain) {
+					return NativeDomain{}, ErrNativeDomain
+				}
+				if prior, ok := set.Domains[domain]; ok {
+					return prior, nil
+				}
+			}
+			var b [32]byte
+			if _, err = rand.Read(b[:]); err != nil {
+				return NativeDomain{}, err
+			}
+			d := NativeDomain{Domain: domain, Issuer: issuer, Token: hex.EncodeToString(b[:]), ExpiresAt: time.Now().Add(24 * time.Hour).Unix()}
+			if err = ctx.Err(); err != nil {
+				return NativeDomain{}, err
+			}
+			// The ledger exists before the set and tombstone, so native can start at
+			// once and a crash never leaves a tombstone without a ledger.
+			if err = NewLifecycleStore(filepath.Dir(s.path)).ensureNativeLedger(ctx); err != nil {
+				return NativeDomain{}, err
+			}
+			set.Issuer = issuer
+			set.Retired = slices.DeleteFunc(set.Retired, func(r string) bool { return r == domain })
+			// Founding changes only when no domain is in service.
+			if set.Founding == "" {
+				set.Founding = domain
+			}
+			set.Domains[domain] = d
+			return d, s.persistSetDocument(set, doc)
+
+		}()
+		return attemptErr
+	})
+	return result, err
 }
 
 // Verify proves the founding domain.
@@ -450,41 +469,54 @@ func (s *NativeDomainStore) VerifyDomain(ctx context.Context, domain string) (Na
 		return d, err
 	}
 	defer release()
-	current, err := s.ReadSet()
-	if err != nil {
-		return d, err
+	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
+		return NativeDomain{}, err
 	}
-	// Only the challenge must be unchanged: a concurrent refresh of the same
-	// challenge (Established, VerifiedUntil) is not a change, and refusing it
-	// failed parallel deliveries and sends with a spurious domain error.
-	cur := current.Domains[domain]
-	if cur.Domain != d.Domain || cur.Issuer != d.Issuer || cur.Token != d.Token || cur.ExpiresAt != d.ExpiresAt ||
-		!cur.Established && cur.ExpiresAt <= time.Now().Unix() {
-		return cur, ErrNativeDomain
-	}
-	d = cur
-	d.VerifiedUntil = 0
-	if match {
-		d.VerifiedUntil = time.Now().Add(5 * time.Minute).Unix()
-		if !d.Established {
-			d.VerifiedUntil = min(d.ExpiresAt, d.VerifiedUntil)
-		}
-		d.Established = true
-	}
-	if err = ctx.Err(); err != nil {
-		return d, err
-	}
-	current.Domains[domain] = d
-	if err = s.persistSet(current); err != nil {
-		return d, err
-	}
-	if lookupErr != nil {
-		return d, lookupErr
-	}
-	if !match {
-		return d, ErrNativeDomain
-	}
-	return d, nil
+	doc := vol.OpenDocument(s.path)
+	var result NativeDomain
+	err = vol.Retry(func() error {
+		var attemptErr error
+		result, attemptErr = func() (NativeDomain, error) {
+			current, err := s.readSetDocument(doc)
+			if err != nil {
+				return d, err
+			}
+			// Only the challenge must be unchanged: a concurrent refresh of the same
+			// challenge (Established, VerifiedUntil) is not a change, and refusing it
+			// failed parallel deliveries and sends with a spurious domain error.
+			cur := current.Domains[domain]
+			if cur.Domain != d.Domain || cur.Issuer != d.Issuer || cur.Token != d.Token || cur.ExpiresAt != d.ExpiresAt ||
+				!cur.Established && cur.ExpiresAt <= time.Now().Unix() {
+				return cur, ErrNativeDomain
+			}
+			d = cur
+			d.VerifiedUntil = 0
+			if match {
+				d.VerifiedUntil = time.Now().Add(5 * time.Minute).Unix()
+				if !d.Established {
+					d.VerifiedUntil = min(d.ExpiresAt, d.VerifiedUntil)
+				}
+				d.Established = true
+			}
+			if err = ctx.Err(); err != nil {
+				return d, err
+			}
+			current.Domains[domain] = d
+			if err = s.persistSetDocument(current, doc); err != nil {
+				return d, err
+			}
+			if lookupErr != nil {
+				return d, lookupErr
+			}
+			if !match {
+				return d, ErrNativeDomain
+			}
+			return d, nil
+
+		}()
+		return attemptErr
+	})
+	return result, err
 }
 
 // CurrentProof reports whether proof's challenge is still the domain's stored,
@@ -513,52 +545,59 @@ func (s *NativeDomainStore) RetireDomain(ctx context.Context, domain, stateRoot,
 		return err
 	}
 	defer release()
-	set, err := s.ReadSet()
-	if err != nil {
+	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
 		return err
 	}
-	if _, ok := set.Domains[domain]; !ok {
-		return ErrNativeDomain
-	}
-	relay, _, err := mailmsg.ReadDomainRelay(filepath.Join(filepath.Dir(s.path), "native-relay.json"), relayKeyPath)
-	if err != nil {
-		return err
-	}
-	if relay.Sends(domain) {
-		return ErrNativeDomainInUse
-	}
-	life := NewLifecycleStore(filepath.Dir(s.path))
-	releaseDirectory, err := life.LockDirectoryContext(ctx)
-	if err != nil {
-		return err
-	}
-	defer releaseDirectory()
-	f, err := life.loadNative()
-	if err != nil {
-		return err
-	}
-	for address, x := range f.stored.Addresses {
-		if x.State == "active" && AddressDomain(address) == domain {
+	doc := vol.OpenDocument(s.path)
+	return vol.Retry(func() error {
+		set, err := s.readSetDocument(doc)
+		if err != nil {
+			return err
+		}
+		if _, ok := set.Domains[domain]; !ok {
+			return ErrNativeDomain
+		}
+		relay, _, err := mailmsg.ReadDomainRelay(filepath.Join(filepath.Dir(s.path), "native-relay.json"), relayKeyPath)
+		if err != nil {
+			return err
+		}
+		if relay.Sends(domain) {
 			return ErrNativeDomainInUse
 		}
-	}
-	queued, err := nativeQueuedFromDomains(ctx, f, stateRoot, relayKeyPath)
-	if err != nil {
-		return err
-	}
-	if queued[domain] {
-		return ErrNativeDomainInUse
-	}
-	held, err := nativeHeldRecipients(ctx, stateRoot)
-	if err != nil {
-		return err
-	}
-	if slices.ContainsFunc(held, func(address string) bool { return AddressDomain(address) == domain }) {
-		return ErrNativeDomainInUse
-	}
-	delete(set.Domains, domain)
-	set.Retired = append(set.Retired, domain)
-	return s.persistSet(set)
+		life := NewLifecycleStore(filepath.Dir(s.path))
+		releaseDirectory, err := life.LockDirectoryContext(ctx)
+		if err != nil {
+			return err
+		}
+		defer releaseDirectory()
+		f, err := life.loadNative()
+		if err != nil {
+			return err
+		}
+		for address, x := range f.stored.Addresses {
+			if x.State == "active" && AddressDomain(address) == domain {
+				return ErrNativeDomainInUse
+			}
+		}
+		queued, err := nativeQueuedFromDomains(ctx, f, stateRoot, relayKeyPath)
+		if err != nil {
+			return err
+		}
+		if queued[domain] {
+			return ErrNativeDomainInUse
+		}
+		held, err := nativeHeldRecipients(ctx, stateRoot)
+		if err != nil {
+			return err
+		}
+		if slices.ContainsFunc(held, func(address string) bool { return AddressDomain(address) == domain }) {
+			return ErrNativeDomainInUse
+		}
+		delete(set.Domains, domain)
+		set.Retired = append(set.Retired, domain)
+		return s.persistSetDocument(set, doc)
+
+	})
 }
 
 // nativeHeldRecipients lists recipients bound to staged or pending incoming

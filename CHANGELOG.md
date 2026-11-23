@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Multi-host document groundwork (MH2): catalogued `volumes.db`, per-org sealed per-user documents/photos, CAS store adapters, owner-based purge and authenticated sealed restore. Table-mode documents have the owner's 64 MiB cap; oversized files will refuse the later migration. Ordinary single-tenant files remain unchanged, and hosted startup remains refused while the remaining multi-host/region/object-storage gates are built.
+
 - Hosted incoming mail: reserve every organisation's DATA copies atomically against its cached pool/grace budget, including concurrent deliveries to different mailboxes. RCPT and accepted replays do not spend storage headroom.
 
 - Hosted org storage: reserve cached headroom atomically for each new write, without rescanning mailboxes or photos per imported message. Periodic reports read only the org's member mailboxes and preserve concurrent reservations; deletions release room at the next report.

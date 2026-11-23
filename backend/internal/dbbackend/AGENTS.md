@@ -10,6 +10,8 @@ Chooses where every store keeps its databases: SQLite files (default) or one Pos
 
 ## Local Contracts
 
+- `volumes.db` maps to `kypost_volumes`. It holds documents and wrapped data keys independently of multi-only `tenancy.db`; export/import and sequence repair follow the existing registered-kind copy path.
+
 - The URL is a secret: errors and logs name only host and database (`Describe`, `scrub`); a URL that does not parse is `pgdialect.ErrBadURL`. A configuration error still reports `Postgres()` true, so no open falls back to SQLite. `Check` refuses both variables, an unreadable or empty file, Postgres < 16 and a non-UTF8/non-C database before creating anything.
 - One schema per database file: `SchemaName` maps a path under `STATE_DIR` / `CONFIG_DIR` to `state/<rel>` / `config/<rel>` and a schema (readable for the install-wide files, `kypost_f_<hash>` otherwise, at most 41 bytes, only `[a-z0-9_]`, always quoted). `kypost_catalog.stores(path, schema, kind, ddl)` records each. A test binary maps other paths to `kt_<hash>` schemas.
 - Each schema's pool takes its own writer lock (`pgdialect.LockKeys` of its search_path) for every write transaction: one writer per database, as SQLite.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -22,7 +23,6 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/kydrive"
@@ -166,6 +166,13 @@ func Run(args []string) error {
 		ConfigFile: filepath.Join(config.ConfigDir(), "config.yaml"),
 		StateDir:   config.StateDir(),
 	}
+
+	tableMode, _, _ := config.Tenancy()
+	releaseDocuments, err := startDocuments(context.Background(), config.ConfigDir(), paths.StateDir, config.SecretDir(), tableMode)
+	if err != nil {
+		return err
+	}
+	defer releaseDocuments()
 
 	// Capture legacy notification prefs before LoadOrInit rewrites
 	// config.yaml with the trimmed multi-user schema (which drops the old
@@ -726,7 +733,7 @@ type mfaClearAllProgress struct {
 // cleared by a previous boot's MFA_CLEAR_ALL pass. A missing file (no prior
 // partial attempt) is not an error and yields an empty set.
 func loadMFAClearAllCleared(path string) (map[string]struct{}, error) {
-	data, err := os.ReadFile(path)
+	data, err := vol.OpenDocument(path).Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]struct{}{}, nil
 	}
@@ -757,7 +764,7 @@ func saveMFAClearAllCleared(path string, cleared map[string]struct{}) error {
 	if err != nil {
 		return err
 	}
-	return fsutil.AtomicWriteFile(path, data, 0o600)
+	return vol.OpenDocument(path).Replace(data)
 }
 
 // clearAllMFAIfRequested is a break-glass recovery path for self-hosters locked
@@ -776,9 +783,9 @@ func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, sta
 	}
 
 	markerPath := filepath.Join(stateDir, mfaClearAllMarkerFile)
-	if _, err := os.Stat(markerPath); err == nil {
+	if exists, err := vol.Exists(markerPath); err == nil && exists {
 		return
-	} else if !errors.Is(err, os.ErrNotExist) {
+	} else if err != nil {
 		logger.Error("MFA_CLEAR_ALL: failed to check completion marker; skipping clear this boot", "error", err.Error())
 		return
 	}
@@ -835,7 +842,7 @@ func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, sta
 
 	logger.Error("MFA_CLEAR_ALL is set: cleared two-factor auth for all users", "users_cleared_this_boot", strconv.Itoa(clearedThisBoot))
 
-	if err := fsutil.AtomicWriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
+	if err := vol.OpenDocument(markerPath).Replace([]byte(time.Now().UTC().Format(time.RFC3339) + "\n")); err != nil {
 		logger.Error("MFA_CLEAR_ALL: failed to write completion marker; will retry clearing MFA on next boot", "error", err.Error())
 		return
 	}

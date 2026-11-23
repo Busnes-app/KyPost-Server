@@ -15,6 +15,8 @@ imports the other; `api/` is the only place that knows about both.
 
 ## Local Contracts
 
+- Storage is selected through `vol.OpenDocument` at construction. File mode retains the file behavior below; table mode reloads the row and CAS-retries the complete mutation. Keep new writers on that seam, including key-generation and privacy updates. Shared contracts: [../vol/AGENTS.md](../vol/AGENTS.md).
+
 - `Store` is instantiated per user directory (`groups.New(userStateDir)`),
   mirroring `contacts.Store` — one file, `groups.json`, sibling to
   `contacts.json` in `$STATE_DIR/users/<userID>/`.

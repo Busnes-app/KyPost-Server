@@ -19,6 +19,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 var ErrPreparation = errors.New("native account preparation conflicts with existing state; preserve account data and reconcile provisioning")
@@ -205,8 +206,10 @@ func preparedSource(dir string, owner Owner, address string, limits Limits) (str
 		return "", err
 	}
 	// A successful retry also repairs a lost acknowledgement of the parent sync.
-	if err = fsutil.SyncDir(filepath.Dir(dir)); err != nil {
-		return "", err
+	if !vol.OpenDocument(filepath.Join(dir, preparationFile)).IsTable() {
+		if err = fsutil.SyncDir(filepath.Dir(dir)); err != nil {
+			return "", err
+		}
 	}
 	return source, nil
 }
@@ -472,20 +475,26 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	dir := p.dir
-	for _, path := range []string{dir, filepath.Join(dir, "mailbox")} {
+	path := filepath.Join(dir, preparationFile)
+	document := vol.OpenDocument(path)
+	if !document.IsTable() {
+		for _, path := range []string{dir, filepath.Join(dir, "mailbox")} {
+			info, err := os.Lstat(path)
+			if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+				return "", ErrPreparation
+			}
+		}
 		info, err := os.Lstat(path)
-		if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 8192 {
 			return "", ErrPreparation
 		}
 	}
-	path := filepath.Join(dir, preparationFile)
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 8192 {
-		return "", ErrPreparation
-	}
-	raw, err := os.ReadFile(path)
+	raw, err := document.Read()
 	if err != nil {
 		return "", err
+	}
+	if len(raw) > 8192 {
+		return "", ErrPreparation
 	}
 	if p.raw == nil || !bytes.Equal(raw, p.raw) {
 		var decoded preparedAccount
@@ -544,7 +553,7 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 		if p.state.pg {
 			break // no files; the schemas are found by path on every open
 		}
-		if info, err = os.Lstat(f.path); err != nil || !os.SameFile(info, f.info) {
+		if info, err := os.Lstat(f.path); err != nil || !os.SameFile(info, f.info) {
 			return "", ErrPreparation
 		}
 	}

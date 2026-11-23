@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"maps"
 	"net/url"
@@ -20,7 +21,6 @@ import (
 
 	"modernc.org/sqlite"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 )
 
@@ -196,7 +196,11 @@ func writeAuthorityStubs(dir string) error {
 			}
 			continue
 		}
-		if err := fsutil.PersistJSONFile(path, stub.doc); err != nil {
+		body, err := json.MarshalIndent(stub.doc, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := vol.OpenDocument(path).Replace(body); err != nil {
 			return err
 		}
 	}

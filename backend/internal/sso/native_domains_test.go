@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"os"
 	"path/filepath"
 	"slices"
@@ -280,7 +281,7 @@ func TestNativeOutboundRecoverEndsOrRetriesByDomain(t *testing.T) {
 				}
 				delete(set.Domains, "example.test")
 				set.Retired = append(set.Retired, "example.test")
-				if err = sender.Domains.persistSet(set); err != nil {
+				if err = sender.Domains.persistSetDocument(set, vol.OpenDocument(sender.Domains.path)); err != nil {
 					t.Fatal(err)
 				}
 			case "relay-removed":

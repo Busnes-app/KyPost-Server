@@ -12,10 +12,12 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
 func (s *Service) Drill(ctx context.Context) (*recoveryclient.DrillResult, error) {
@@ -84,10 +86,19 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 			requiredSet[path] = true
 		}
 	}
-	for _, name := range required {
+	for _, name := range requiredFiles(requiredSet["state/"+volumes.File] && !requiredSet["config/config.yaml"]) {
 		check("recipe requires:"+name, requiredSet[name])
 		_, err := os.Stat(filepath.Join(dir, name))
 		check("present:"+name, err == nil)
+	}
+	if requiredSet["state/"+volumes.File] && !requiredSet["config/config.yaml"] {
+		release, err := documentSnapshot(dir, true)
+		check("documents:authenticated", err == nil)
+		if err == nil {
+			defer release()
+			_, err = config.Load(filepath.Join(dir, "config/config.yaml"))
+			check("documents:root-config", err == nil)
+		}
 	}
 	for _, path := range drillPaths(dir, opened) {
 		if !fs.ValidPath(path) {

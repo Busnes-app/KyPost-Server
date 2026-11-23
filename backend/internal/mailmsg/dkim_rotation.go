@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // DKIM (RFC 6376) and DMARC (RFC 7489) do not require rotation; the 180-day
@@ -54,27 +55,38 @@ func (r DKIMRotation) edit(ctx context.Context, apply func(c *DomainRelay) ([]DK
 		return DomainRelay{}, nil, err
 	}
 	defer release()
-	prior, exists, err := ReadDomainRelay(r.Path, r.KeyPath)
-	if err != nil {
-		return DomainRelay{}, nil, err
-	}
-	if !exists || prior.Mode != "direct" {
-		return prior, nil, ErrDKIMNotDirect
-	}
-	c := prior
-	c.DKIM = slices.Clone(prior.DKIM)
-	events, err := apply(&c)
-	if err != nil || c.Equal(prior) {
-		return prior, nil, err
-	}
-	slices.SortFunc(c.DKIM, compareDKIM)
-	if c.Validate() != nil {
-		return prior, nil, ErrDomainRelay
-	}
-	if err := writeDomainRelay(ctx, r.Path, r.KeyPath, c); err != nil {
-		return prior, nil, err
-	}
-	return c, events, nil
+	doc := vol.OpenDocument(r.Path)
+	var result DomainRelay
+	var events []DKIMEvent
+	err = vol.Retry(func() error {
+		var attemptErr error
+		result, events, attemptErr = func() (DomainRelay, []DKIMEvent, error) {
+			prior, exists, err := currentDomainRelayDocument(doc, r.KeyPath)
+			if err != nil {
+				return DomainRelay{}, nil, err
+			}
+			if !exists || prior.Mode != "direct" {
+				return prior, nil, ErrDKIMNotDirect
+			}
+			c := prior
+			c.DKIM = slices.Clone(prior.DKIM)
+			events, err := apply(&c)
+			if err != nil || c.Equal(prior) {
+				return prior, nil, err
+			}
+			slices.SortFunc(c.DKIM, compareDKIM)
+			if c.Validate() != nil {
+				return prior, nil, ErrDomainRelay
+			}
+			if err := writeDomainRelayDocument(ctx, doc, r.Path, r.KeyPath, c); err != nil {
+				return prior, nil, err
+			}
+			return c, events, nil
+
+		}()
+		return attemptErr
+	})
+	return result, events, err
 }
 
 func (r DKIMRotation) read() (DomainRelay, error) {

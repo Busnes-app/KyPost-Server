@@ -78,14 +78,14 @@ func ruleFromPayload(p rulePayload) rules.Rule {
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	store, err := s.rulesFor(r)
 	if err != nil {
-		http.Error(w, "failed to open rules store", http.StatusInternalServerError)
+		http.Error(w, "failed to open rules store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		list, err := store.List()
 		if err != nil {
-			http.Error(w, "failed to read rules", http.StatusInternalServerError)
+			http.Error(w, "failed to read rules", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		out := make([]rulePayload, 0, len(list))
@@ -106,7 +106,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 		}
 		existing, err := store.List()
 		if err != nil {
-			http.Error(w, "failed to read rules", http.StatusInternalServerError)
+			http.Error(w, "failed to read rules", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if len(existing) >= maxRulesPerUser {
@@ -121,7 +121,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 		}
 		created, err := store.Upsert(ruleFromPayload(payload))
 		if err != nil {
-			http.Error(w, "failed to create rule", http.StatusInternalServerError)
+			http.Error(w, "failed to create rule", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, ruleToPayload(created))
@@ -134,7 +134,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 	store, err := s.rulesFor(r)
 	if err != nil {
-		http.Error(w, "failed to open rules store", http.StatusInternalServerError)
+		http.Error(w, "failed to open rules store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
@@ -146,7 +146,7 @@ func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		existing, ok, err := store.Get(id)
 		if err != nil {
-			http.Error(w, "failed to read rules", http.StatusInternalServerError)
+			http.Error(w, "failed to read rules", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if !ok {
@@ -178,14 +178,14 @@ func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		}
 		updated, err := store.Upsert(ruleFromPayload(payload))
 		if err != nil {
-			http.Error(w, "failed to update rule", http.StatusInternalServerError)
+			http.Error(w, "failed to update rule", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, ruleToPayload(updated))
 	case http.MethodDelete:
 		removed, err := store.Delete(id)
 		if err != nil {
-			http.Error(w, "failed to delete rule", http.StatusInternalServerError)
+			http.Error(w, "failed to delete rule", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": removed})
@@ -203,7 +203,7 @@ func (s *Server) handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 	}
 	store, err := s.rulesFor(r)
 	if err != nil {
-		http.Error(w, "failed to open rules store", http.StatusInternalServerError)
+		http.Error(w, "failed to open rules store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	var req struct {
@@ -218,7 +218,7 @@ func (s *Server) handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := store.Reorder(req.IDs); err != nil {
-		http.Error(w, "failed to reorder rules", http.StatusInternalServerError)
+		http.Error(w, "failed to reorder rules", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -233,13 +233,13 @@ func (s *Server) handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRuleSieve(w http.ResponseWriter, r *http.Request) {
 	store, err := s.rulesFor(r)
 	if err != nil {
-		http.Error(w, "failed to open rules store", http.StatusInternalServerError)
+		http.Error(w, "failed to open rules store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	existing, ok, err := store.Get(id)
 	if err != nil {
-		http.Error(w, "failed to read rules", http.StatusInternalServerError)
+		http.Error(w, "failed to read rules", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	if !ok {
@@ -250,7 +250,7 @@ func (s *Server) handleRuleSieve(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		script, err := rules.CompileRule(existing)
 		if err != nil {
-			http.Error(w, "failed to compile rule", http.StatusInternalServerError)
+			http.Error(w, "failed to compile rule", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"script": script})
@@ -283,7 +283,7 @@ func (s *Server) handleRuleSieve(w http.ResponseWriter, r *http.Request) {
 		}
 		updated, err := store.Upsert(parsed)
 		if err != nil {
-			http.Error(w, "failed to save rule", http.StatusInternalServerError)
+			http.Error(w, "failed to save rule", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, ruleToPayload(updated))
@@ -325,7 +325,7 @@ func (s *Server) handleRulesRun(w http.ResponseWriter, r *http.Request) {
 	}
 	store, err := s.rulesFor(r)
 	if err != nil {
-		http.Error(w, "failed to open rules store", http.StatusInternalServerError)
+		http.Error(w, "failed to open rules store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 
@@ -352,7 +352,7 @@ func (s *Server) handleRulesRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// This is the manual "run rules now" backfill, which moves and deletes
 		// real messages — it does not run against a list we could not re-read.
-		http.Error(w, "failed to read rules", http.StatusInternalServerError)
+		http.Error(w, "failed to read rules", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	// rules.json predates ValidateRule and is a plain file in the user's state

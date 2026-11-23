@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 const maxContactPhotoBytes = 5 << 20 // 5MB
@@ -61,7 +61,7 @@ var contentTypeExt = map[string]string{
 func (s *Server) handleContactPhoto(w http.ResponseWriter, r *http.Request) {
 	store, err := s.contactsFor(r)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	ac, ok := authFromContext(r)
@@ -72,7 +72,7 @@ func (s *Server) handleContactPhoto(w http.ResponseWriter, r *http.Request) {
 	uid := strings.TrimSpace(r.PathValue("id"))
 	c, found, err := store.Get(uid)
 	if err != nil {
-		http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+		http.Error(w, "failed to read contacts", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	if !found || c.Deleted {
@@ -90,7 +90,7 @@ func (s *Server) handleContactPhoto(w http.ResponseWriter, r *http.Request) {
 		// ordinary write so no contact update can change it, and this handler
 		// is one of the two legitimate writers.
 		if _, _, err := store.SetPhotoRef(c.UID, ""); err != nil {
-			http.Error(w, "failed to update contact", http.StatusInternalServerError)
+			http.Error(w, "failed to update contact", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -126,7 +126,7 @@ func (s *Server) handleContactPhotoUpload(w http.ResponseWriter, r *http.Request
 
 	updated, ok, err := store.SetPhotoRef(c.UID, ref)
 	if err != nil {
-		http.Error(w, "failed to update contact", http.StatusInternalServerError)
+		http.Error(w, "failed to update contact", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	if !ok {
@@ -172,8 +172,14 @@ func (s *Server) storeContactPhoto(userID string, body []byte) (string, error) {
 	// write were a check-then-act: concurrent uploads all observed the same
 	// pre-write usage, all passed, and the per-account cap was exceeded by
 	// roughly (concurrency x photo size).
-	if err := fsutil.WithFileLock(s.userContactPhotosDir(userID), func() error {
-		if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+	quota := vol.OpenDocument(s.userContactPhotosDir(userID))
+	photo := vol.OpenDocument(path)
+	if err := quota.Update(func() error {
+		_, readErr := photo.Read()
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return readErr
+		}
+		if errors.Is(readErr, os.ErrNotExist) {
 			used, uerr := s.contactPhotoBytesUsed(userID)
 			// Refuse when the quota cannot be measured. Skipping the check on a
 			// read error meant any transient ReadDir failure — EMFILE under the
@@ -189,7 +195,7 @@ func (s *Server) storeContactPhoto(userID string, body []byte) (string, error) {
 				return err
 			}
 		}
-		return fsutil.AtomicWriteFile(path, body, 0o600)
+		return photo.WriteWithDirectoryLimit(body, maxContactPhotoBytesPerUser)
 	}); err != nil {
 		return "", err
 	}
@@ -215,25 +221,7 @@ func (s *Server) photoPoolRoom(userID string, n int64) error {
 // contactPhotoBytesUsed totals the bytes in a user's photo directory. A missing
 // directory is zero, not an error.
 func (s *Server) contactPhotoBytesUsed(userID string) (int64, error) {
-	entries, err := os.ReadDir(s.userContactPhotosDir(userID))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	var total int64
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, ierr := entry.Info()
-		if ierr != nil {
-			continue
-		}
-		total += info.Size()
-	}
-	return total, nil
+	return vol.DirectoryBytes(s.userContactPhotosDir(userID))
 }
 
 // sweepContactPhotos deletes photo files no live contact references.
@@ -268,7 +256,7 @@ func (s *Server) sweepContactPhotos(userID string) error {
 	}
 
 	dir := s.userContactPhotosDir(userID)
-	entries, err := os.ReadDir(dir)
+	entries, err := vol.ListFiles(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -276,12 +264,12 @@ func (s *Server) sweepContactPhotos(userID string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || referenced[entry.Name()] {
+		if referenced[entry] {
 			continue
 		}
-		if rerr := os.Remove(filepath.Join(dir, entry.Name())); rerr != nil {
+		if rerr := vol.RemoveFile(filepath.Join(dir, entry)); rerr != nil {
 			s.logger.Error("failed to remove orphaned contact photo",
-				"user_id", userID, "file", entry.Name(), "error", rerr.Error())
+				"user_id", userID, "file", entry, "error", rerr.Error())
 		}
 	}
 	return nil
@@ -294,7 +282,7 @@ func (s *Server) loadContactPhoto(userID, ref string) (data []byte, contentType 
 	if ref == "" {
 		return nil, "", false
 	}
-	body, err := os.ReadFile(s.userContactPhotoPath(userID, ref))
+	body, err := vol.OpenDocument(s.userContactPhotoPath(userID, ref)).Read()
 	if err != nil {
 		return nil, "", false
 	}
@@ -316,12 +304,33 @@ func (s *Server) handleContactPhotoGet(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	path := s.userContactPhotoPath(userID, c.PhotoRef)
+	doc := vol.OpenDocument(path)
+	if doc.IsTable() {
+		body, err := doc.Read()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				http.Error(w, "no photo", http.StatusNotFound)
+			} else {
+				http.Error(w, "failed to read photo", documentStatus(err, http.StatusInternalServerError))
+			}
+			return
+		}
+		rev, _, err := doc.Version()
+		if err != nil {
+			http.Error(w, "failed to read photo", documentStatus(err, http.StatusInternalServerError))
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-cache")
+		w.Header().Set("ETag", fmt.Sprintf(`"document-%d"`, rev))
+		http.ServeContent(w, r, filepath.Base(path), time.Time{}, bytes.NewReader(body))
+		return
+	}
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			http.Error(w, "no photo", http.StatusNotFound)
 			return
 		}
-		http.Error(w, "failed to read photo", http.StatusInternalServerError)
+		http.Error(w, "failed to read photo", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	// The URL is not content-addressed — only the on-disk filename is — so a

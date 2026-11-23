@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"net/http"
 	"net/url"
@@ -81,7 +82,7 @@ func rejectURLUserinfo(rawURL string) error {
 }
 
 func readCardDAVClientConfigPayload(path, keyPath string) (carddavClientConfigPayload, bool, error) {
-	b, err := os.ReadFile(path)
+	b, err := vol.OpenDocument(path).Read()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return carddavClientConfigPayload{}, false, nil
@@ -121,7 +122,7 @@ func (s *Server) handleContactsCardDAVClientConfig(w http.ResponseWriter, r *htt
 	case http.MethodGet:
 		payload, exists, err := readCardDAVClientConfigPayload(cfgPath, s.imapConfigKeyPath)
 		if err != nil {
-			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to read carddav client configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		if !exists {
@@ -132,7 +133,7 @@ func (s *Server) handleContactsCardDAVClientConfig(w http.ResponseWriter, r *htt
 	case http.MethodPost:
 		if managed, err := s.cardDAVClientManaged(cfgPath); err != nil {
 			s.logger.Error("failed to read carddav client configuration", "user_id", ac.UserID, "error", err.Error())
-			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to read carddav client configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		} else if managed {
 			http.Error(w, "contact sync settings are managed by your administrator", http.StatusForbidden)
@@ -173,21 +174,21 @@ func (s *Server) handleContactsCardDAVClientConfig(w http.ResponseWriter, r *htt
 		payload.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 		if err := writeCardDAVClientConfigPayload(cfgPath, s.imapConfigKeyPath, payload); err != nil {
-			http.Error(w, "failed to save carddav client configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to save carddav client configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, cardDAVClientStatusResponse(payload))
 	case http.MethodDelete:
 		if managed, err := s.cardDAVClientManaged(cfgPath); err != nil {
 			s.logger.Error("failed to read carddav client configuration", "user_id", ac.UserID, "error", err.Error())
-			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
+			http.Error(w, "failed to read carddav client configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		} else if managed {
 			http.Error(w, "contact sync settings are managed by your administrator", http.StatusForbidden)
 			return
 		}
-		if err := os.Remove(cfgPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "failed to remove carddav client configuration", http.StatusInternalServerError)
+		if err := vol.RemoveFile(cfgPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "failed to remove carddav client configuration", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "configured": false})
@@ -237,7 +238,7 @@ func (s *Server) handleContactsCardDAVClientSync(w http.ResponseWriter, r *http.
 	cfgPath := s.userCardDAVClientConfigPath(ac.UserID)
 	payload, exists, err := readCardDAVClientConfigPayload(cfgPath, s.imapConfigKeyPath)
 	if err != nil {
-		http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
+		http.Error(w, "failed to read carddav client configuration", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	if !exists {
@@ -246,12 +247,12 @@ func (s *Server) handleContactsCardDAVClientSync(w http.ResponseWriter, r *http.
 	}
 	store, err := s.userContactsStore(ac.UserID)
 	if err != nil {
-		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		http.Error(w, "failed to open contacts store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	groupsStore, err := s.userGroupsStore(ac.UserID)
 	if err != nil {
-		http.Error(w, "failed to open groups store", http.StatusInternalServerError)
+		http.Error(w, "failed to open groups store", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 
@@ -291,7 +292,7 @@ func (s *Server) handleContactsCardDAVClientSync(w http.ResponseWriter, r *http.
 		return
 	}
 	if persistErr != nil {
-		http.Error(w, "contacts synchronized but sync state could not be saved", http.StatusInternalServerError)
+		http.Error(w, "contacts synchronized but sync state could not be saved", documentStatus(persistErr, http.StatusInternalServerError))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

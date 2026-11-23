@@ -3,7 +3,8 @@ package pgpdiscovery
 import (
 	"sync"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"encoding/json"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // Every file in this package is mutated read-modify-write: load the current
@@ -55,13 +56,18 @@ func Update(dir string, mutate func(Settings) Settings) (Settings, error) {
 	defer mu.Unlock()
 
 	var next Settings
-	err := fsutil.WithFileLock(path(dir), func() error {
-		current, err := Load(dir)
+	doc := vol.OpenDocument(path(dir))
+	err := doc.Update(func() error {
+		current, err := loadSettingsDocument(doc)
 		if err != nil {
 			return err
 		}
 		next = mutate(current)
-		return Save(dir, next)
+		body, err := json.Marshal(next)
+		if err != nil {
+			return err
+		}
+		return doc.Write(body)
 	})
 	if err != nil {
 		return Settings{}, err

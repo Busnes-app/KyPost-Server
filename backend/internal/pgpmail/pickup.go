@@ -13,6 +13,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // PickupRecord is one queued message a recipient without a known PGP key
@@ -140,16 +141,23 @@ var ErrPickupStorageFull = errors.New("pgpmail: pickup storage is full, try agai
 // pickupBytesTotalLocked sums the pickup directory from ReadDir metadata.
 // Deliberately does not open anything: this runs on every create.
 func (s *PickupStore) pickupBytesTotalLocked() int64 {
-	entries, err := os.ReadDir(s.baseDir)
+	if vol.OpenDocument(filepath.Join(s.baseDir, ".quota")).IsTable() {
+		n, err := vol.DirectoryBytes(s.baseDir)
+		if err != nil {
+			return maxPickupBytesTotal
+		}
+		return n
+	}
+	entries, err := vol.ListFiles(s.baseDir)
 	if err != nil {
 		return 0
 	}
 	var total int64
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		if !strings.HasSuffix(entry, ".json") {
 			continue
 		}
-		info, ierr := entry.Info()
+		info, ierr := os.Stat(filepath.Join(s.baseDir, entry))
 		if ierr != nil {
 			continue
 		}
@@ -174,7 +182,7 @@ var ErrPickupQuotaExceeded = errors.New("pgpmail: too many unread pickup message
 // to be denominated in the same unit as the shared ceiling it apportions — and
 // this scan already reads every record, so the byte total is free.
 func (s *PickupStore) outstandingForLocked(senderUserID string) (int, int64) {
-	entries, err := os.ReadDir(s.baseDir)
+	entries, err := vol.ListFiles(s.baseDir)
 	if err != nil {
 		// No directory yet means no records yet. A read failure is reported as
 		// zero rather than as "full": refusing to send because the quota could
@@ -185,10 +193,10 @@ func (s *PickupStore) outstandingForLocked(senderUserID string) (int, int64) {
 	count := 0
 	var bytes int64
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		if !strings.HasSuffix(entry, ".json") {
 			continue
 		}
-		b, rerr := os.ReadFile(filepath.Join(s.baseDir, entry.Name()))
+		b, rerr := vol.OpenDocument(filepath.Join(s.baseDir, entry)).Read()
 		if rerr != nil {
 			continue
 		}
@@ -305,11 +313,25 @@ func (s *PickupStore) CreateClientSealed(senderUserID, recipientEmail, sealed st
 }
 
 func (s *PickupStore) save(record PickupRecord) error {
-	b, err := json.Marshal(record)
+	doc := vol.OpenDocument(s.recordPath(record.ID))
+	return vol.Retry(func() error {
+		if _, err := doc.Read(); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		body, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		return doc.WriteWithDirectoryLimit(body, maxPickupBytesTotal)
+	})
+}
+
+func savePickupDocument(doc *vol.Document, record PickupRecord) error {
+	body, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
-	return fsutil.AtomicWriteFile(s.recordPath(record.ID), b, 0o600)
+	return doc.Write(body)
 }
 
 var ErrPickupNotFound = errors.New("pgpmail: pickup record not found")
@@ -336,7 +358,18 @@ const (
 // Marking viewed does not require reading the payload, which is what lets the
 // server enforce single-use on a blob it cannot decrypt.
 func (s *PickupStore) consumeLocked(id string, want wantKind) (PickupRecord, error) {
-	b, err := os.ReadFile(s.recordPath(id))
+	var record PickupRecord
+	err := vol.Retry(func() error {
+		var err error
+		record, err = s.consumeAttempt(id, want)
+		return err
+	})
+	return record, err
+}
+
+func (s *PickupStore) consumeAttempt(id string, want wantKind) (PickupRecord, error) {
+	doc := vol.OpenDocument(s.recordPath(id))
+	b, err := doc.Read()
 	if os.IsNotExist(err) {
 		return PickupRecord{}, ErrPickupNotFound
 	}
@@ -376,7 +409,7 @@ func (s *PickupStore) consumeLocked(id string, want wantKind) (PickupRecord, err
 		return r
 	}
 	if expiresAt, perr := time.Parse(time.RFC3339, record.ExpiresAt); perr == nil && time.Now().UTC().After(expiresAt) {
-		_ = s.save(tombstone(record))
+		_ = savePickupDocument(doc, tombstone(record))
 		return PickupRecord{}, ErrPickupExpired
 	}
 
@@ -405,7 +438,7 @@ func (s *PickupStore) consumeLocked(id string, want wantKind) (PickupRecord, err
 	// then answered 409. Failures that can be detected WITHOUT spending the read
 	// belong before the tombstone; the ones that cannot are what this ordering
 	// deliberately accepts.
-	if err := s.save(tombstone(record)); err != nil {
+	if err := savePickupDocument(doc, tombstone(record)); err != nil {
 		return PickupRecord{}, err
 	}
 	return record, nil
@@ -466,7 +499,8 @@ func (s *PickupStore) Kind(id string) (clientSealed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	b, rerr := os.ReadFile(s.recordPath(id))
+	doc := vol.OpenDocument(s.recordPath(id))
+	b, rerr := doc.Read()
 	if os.IsNotExist(rerr) {
 		return false, ErrPickupNotFound
 	}
@@ -509,30 +543,33 @@ func (s *PickupStore) Discard(senderUserID, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	b, err := os.ReadFile(s.recordPath(id))
-	if os.IsNotExist(err) {
-		// Already gone. The caller is on a failure path and may be reacting to
-		// the record never having landed, so this is the expected shape of
-		// success, not an error.
+	doc := vol.OpenDocument(s.recordPath(id))
+	return vol.Retry(func() error {
+		b, err := doc.Read()
+		if os.IsNotExist(err) {
+			// Already gone. The caller is on a failure path and may be reacting to
+			// the record never having landed, so this is the expected shape of
+			// success, not an error.
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var record PickupRecord
+		if err := json.Unmarshal(b, &record); err != nil {
+			return err
+		}
+		if record.SenderUserID != senderUserID {
+			return ErrPickupNotFound
+		}
+		if record.Viewed {
+			return nil
+		}
+		if err := doc.Remove(); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var record PickupRecord
-	if err := json.Unmarshal(b, &record); err != nil {
-		return err
-	}
-	if record.SenderUserID != senderUserID {
-		return ErrPickupNotFound
-	}
-	if record.Viewed {
-		return nil
-	}
-	if err := os.Remove(s.recordPath(id)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	})
 }
 
 // viewedPickupRetention is how long a consumed record's file lingers after it
@@ -552,7 +589,7 @@ func (s *PickupStore) Sweep(retention time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entries, err := os.ReadDir(s.baseDir)
+	entries, err := vol.ListFiles(s.baseDir)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -563,11 +600,12 @@ func (s *PickupStore) Sweep(retention time.Duration) error {
 	cutoff := now.Add(-retention)
 	viewedCutoff := now.Add(-viewedPickupRetention)
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		if !strings.HasSuffix(entry, ".json") {
 			continue
 		}
-		path := filepath.Join(s.baseDir, entry.Name())
-		b, err := os.ReadFile(path)
+		path := filepath.Join(s.baseDir, entry)
+		doc := vol.OpenDocument(path)
+		b, err := doc.Read()
 		if err != nil {
 			continue
 		}
@@ -577,13 +615,13 @@ func (s *PickupStore) Sweep(retention time.Duration) error {
 		}
 		createdAt, err := time.Parse(time.RFC3339, record.CreatedAt)
 		if err != nil || createdAt.Before(cutoff) {
-			_ = os.Remove(path)
+			_ = doc.Remove()
 			continue
 		}
 		// A consumed record has already freed its quota slot, so its bytes must
 		// not linger for the full retention window.
 		if record.Viewed && createdAt.Before(viewedCutoff) {
-			_ = os.Remove(path)
+			_ = doc.Remove()
 		}
 	}
 	return nil
@@ -595,7 +633,7 @@ func (s *PickupStore) Sweep(retention time.Duration) error {
 func (s *PickupStore) SenderRecords(senders []string, remove bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entries, err := os.ReadDir(s.baseDir)
+	entries, err := vol.ListFiles(s.baseDir)
 	if os.IsNotExist(err) {
 		return 0, nil
 	}
@@ -604,25 +642,26 @@ func (s *PickupStore) SenderRecords(senders []string, remove bool) (int, error) 
 	}
 	n := 0
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		if !strings.HasSuffix(entry, ".json") {
 			continue
 		}
-		path := filepath.Join(s.baseDir, entry.Name())
-		b, err := os.ReadFile(path)
+		path := filepath.Join(s.baseDir, entry)
+		doc := vol.OpenDocument(path)
+		b, err := doc.Read()
 		if err != nil {
 			return n, err
 		}
 		var record PickupRecord
 		if err := json.Unmarshal(b, &record); err != nil {
 			// Its owner cannot be read, so it cannot be ruled out: fail closed.
-			return n, fmt.Errorf("pickup record %s is unreadable", entry.Name())
+			return n, fmt.Errorf("pickup record %s is unreadable", entry)
 		}
 		if !slices.Contains(senders, record.SenderUserID) {
 			continue
 		}
 		n++
 		if remove {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			if err := doc.Remove(); err != nil && !os.IsNotExist(err) {
 				return n, err
 			}
 		}

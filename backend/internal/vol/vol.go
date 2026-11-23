@@ -1,12 +1,11 @@
 // Package vol is the multi-host volume seam (docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md,
 // "The documents table"): one interface over a store's files, chosen once at open. File is
-// today's fsutil calls; Table is tenancy.db's documents table, multi mode only.
+// today's fsutil calls; Table is volumes.db's documents table, selected by table mode.
 package vol
 
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"strings"
 	"unicode/utf8"
 )
@@ -23,11 +22,11 @@ type Vol interface {
 	List(ctx context.Context, prefix string) ([]string, error)
 }
 
-// Bounds. MaxBody is MH's provisional placeholder: MH2 sets it from each store's measured
-// largest document before any store moves.
+// Bounds. The owner approved 64 MiB for table documents on 2026-11-23.
+// Offline migration must refuse larger files; ordinary file stores keep their limits.
 const (
 	MaxPath    = 512
-	MaxBody    = 16 << 20
+	MaxBody    = 64 << 20
 	maxRetries = 5
 )
 
@@ -70,24 +69,4 @@ func checkWrite(path string, body []byte, rev int64) error {
 		return errNegative
 	}
 	return nil
-}
-
-// Update is a read-modify-write: change gets the current body (nil when absent) and returns
-// the new one; a stale write is retried, at most maxRetries times, then ErrBusy. Nothing is
-// written partially.
-func Update(ctx context.Context, v Vol, path string, change func(body []byte) ([]byte, error)) error {
-	for range maxRetries {
-		body, rev, err := v.Read(ctx, path)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		next, err := change(body)
-		if err != nil {
-			return err
-		}
-		if _, err := v.Write(ctx, path, next, rev); !errors.Is(err, ErrStale) {
-			return err
-		}
-	}
-	return ErrBusy
 }

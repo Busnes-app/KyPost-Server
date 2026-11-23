@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
 // The org purge (docs/superpowers/specs/2026-11-20-tenancy-design.md, "Purge (`deleted`)",
@@ -173,7 +174,12 @@ func (s *Server) purge(ctx context.Context, scope tenancy.PurgeScope, now time.T
 			return err
 		}
 	}
-	left, err := s.purgeLeft(ctx, snap, gone)
+	if scope.Subject == "" {
+		if err := volumes.PurgeKey(ctx, s.stateDir, scope.Org); err != nil {
+			return err
+		}
+	}
+	left, err := s.purgeLeft(ctx, snap, gone, scope)
 	if err != nil {
 		return err
 	}
@@ -257,6 +263,9 @@ func purgeDirs(configDir, stateDir string, users, mailboxes []string) ([]string,
 // Step 3: storage, then the users' pickup records.
 func (s *Server) purgeStorage(ctx context.Context, snap tenancy.PurgeSnapshot) error {
 	if err := PurgeStorage(ctx, s.configDir, s.stateDir, snap.Users, snap.Mailboxes); err != nil {
+		return err
+	}
+	if err := volumes.PurgeDocuments(ctx, s.stateDir, snap.Users); err != nil {
 		return err
 	}
 	if s.pickupStore != nil {
@@ -349,10 +358,10 @@ func (s *Server) purgeRoot(ctx context.Context, snap tenancy.PurgeSnapshot) erro
 
 // purgeChecks names the final check's parts; tenancy.PurgeCoverage maps every org-owned and
 // derived store of the classification to one of them.
-var purgeChecks = []string{"users.json", "user_orgs", "root-state", "directories", "schemas", "pickup", "ingress", "ledger", "documents"}
+var purgeChecks = []string{"users.json", "user_orgs", "root-state", "directories", "schemas", "pickup", "ingress", "ledger", "documents", "doc_keys"}
 
 // purgeLeft is the final check: what of the snapshot each part still finds.
-func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone func(string) (bool, error)) (map[string]int, error) {
+func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone func(string) (bool, error), scopes ...tenancy.PurgeScope) (map[string]int, error) {
 	left := map[string]int{}
 	for _, check := range purgeChecks {
 		left[check] = 0
@@ -371,8 +380,15 @@ func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone
 	}
 	n, err := tenancy.UserOrgRows(ctx, s.tenancy, snap.Users)
 	note("user_orgs", n, err)
-	n, err = tenancy.DocumentRows(ctx, s.tenancy, snap.Users)
+	n, err = tenancy.DocumentRows(ctx, s.stateDir, snap.Users)
 	note("documents", n, err)
+	for _, scope := range scopes {
+		if scope.Subject == "" {
+			n, err := volumes.KeyRows(ctx, s.stateDir, scope.Org)
+			note("doc_keys", n, err)
+		}
+	}
+
 	n, err = s.globalStore.UserRows(ctx, snap.Users)
 	note("root-state", n, err)
 	dirs, err := purgeDirs(s.configDir, s.stateDir, snap.Users, snap.Mailboxes)

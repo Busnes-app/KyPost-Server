@@ -274,7 +274,7 @@ func TestSingleTenantUpgradeIsByteForByte(t *testing.T) {
 		}
 		for k, val := range got {
 			// No volume documents either (MH1): single mode keeps every file on its volume.
-			if strings.Contains(k, "tenancy") || strings.Contains(val, "tenancy_mode") || strings.Contains(val, "staff_org_id") ||
+			if strings.Contains(k, "tenancy") || strings.Contains(k, "volumes") || strings.Contains(k, "documents.key") || strings.Contains(val, "volume_stores") || strings.Contains(val, "tenancy_mode") || strings.Contains(val, "staff_org_id") ||
 				strings.HasSuffix(k, " documents") || strings.Contains(k, "documents.") {
 				t.Errorf("KYPOST_TENANCY %s left a tenancy trace in %s", v.name, k)
 			}

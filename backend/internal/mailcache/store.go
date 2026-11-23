@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // maxWindowEntries bounds how many entries a single mailbox window retains,
@@ -80,7 +80,8 @@ type Store struct {
 	referencePrefix string
 	// raw is the file the in-memory state was decoded from; nil once memory
 	// may differ from it (persistLocked clears it before any write lands).
-	raw []byte
+	raw      []byte
+	document *vol.Document
 }
 
 type mailCacheFile struct {
@@ -91,11 +92,12 @@ type mailCacheFile struct {
 }
 
 func New(baseDir string) (*Store, error) {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	s := &Store{baseDir: baseDir, mailboxes: map[string]*mailboxWindow{}}
+	s.document = vol.OpenDocument(s.path())
+	if err := s.document.Mkdir(0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{baseDir: baseDir, mailboxes: map[string]*mailboxWindow{}}
-	if err := s.load(); err != nil {
+	if err := vol.Retry(s.load); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -174,9 +176,13 @@ func clearPGPVerdict(e *Entry) {
 // cost of being coarse is one body re-fetch per signed message, on an action a
 // user takes rarely.
 func (s *Store) InvalidatePGPVerdicts() error {
+	return vol.Retry(func() error { return s.attemptInvalidatePGPVerdicts() })
+}
+
+func (s *Store) attemptInvalidatePGPVerdicts() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}
@@ -217,7 +223,11 @@ func (s *Store) refreshFromDiskLocked() error {
 }
 
 func (s *Store) readDiskLocked() error {
-	b, err := os.ReadFile(s.path())
+	b, err := s.document.Read()
+	if errors.Is(err, os.ErrNotExist) && s.document.IsTable() {
+		s.applyFile(mailCacheFile{})
+		s.raw = nil
+	}
 	if err != nil || (s.raw != nil && bytes.Equal(b, s.raw)) {
 		return err
 	}
@@ -241,7 +251,7 @@ func (s *Store) persistLocked() error {
 			}
 		}
 	}
-	return fsutil.PersistJSONFile(s.path(), mailCacheFile{ReferencePrefix: s.referencePrefix, SourceIdentity: s.sourceIdentity, Mailboxes: s.mailboxes, OmitBodies: s.omitBodies})
+	return vol.PersistJSON(s.document, mailCacheFile{ReferencePrefix: s.referencePrefix, SourceIdentity: s.sourceIdentity, Mailboxes: s.mailboxes, OmitBodies: s.omitBodies})
 }
 
 // Snapshot returns up to limit cached entries for mailboxKey (the limit
@@ -328,9 +338,19 @@ func (s *Store) Snapshot(mailboxKey string, limit int) ([]Entry, bool, error) {
 // without computing Removed (a limit change invalidates window comparability)
 // and every live entry is reported as New.
 func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64) (SyncResult, error) {
+	var result0 SyncResult
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptSync(mailboxKey, limit, live, since)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptSync(mailboxKey string, limit int, live []Overview, since int64) (SyncResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -643,13 +663,17 @@ func redactPickupLinkFragments(body string) string {
 // is not a change a polling client needs to be told about. Trims the window to
 // maxWindowEntries by evicting the lowest-UID entries beyond the cap.
 func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
+	return vol.Retry(func() error { return s.attemptUpsert(mailboxKey, entries) })
+}
+
+func (s *Store) attemptUpsert(mailboxKey string, entries []Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}
@@ -783,9 +807,13 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 // writes from another process. It remains enabled after incoming encryption is
 // turned off: switching off future encryption must not restore plaintext copies.
 func (s *Store) OmitBodies() error {
+	return vol.Retry(func() error { return s.attemptOmitBodies() })
+}
+
+func (s *Store) attemptOmitBodies() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}
@@ -800,9 +828,13 @@ func (s *Store) OmitBodies() error {
 // Remove drops a replaced UID from every limit window of mailbox and retains
 // its removal for delta clients.
 func (s *Store) Remove(mailbox string, uid int) error {
+	return vol.Retry(func() error { return s.attemptRemove(mailbox, uid) })
+}
+
+func (s *Store) attemptRemove(mailbox string, uid int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}
@@ -865,9 +897,13 @@ func (s *Store) checkMailSource(source string) error {
 	return nil
 }
 func (s *Store) BindMailSource(source string) error {
+	return vol.Retry(func() error { return s.attemptBindMailSource(source) })
+}
+
+func (s *Store) attemptBindMailSource(source string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}
@@ -889,9 +925,13 @@ func (s *Store) BindMailSource(source string) error {
 // identity changes. Preserve source and body-omission policy across every writer.
 // Call before cache use, after authoritative account/source admission.
 func (s *Store) BindMessageReferencePrefix(prefix string) error {
+	return vol.Retry(func() error { return s.attemptBindMessageReferencePrefix(prefix) })
+}
+
+func (s *Store) attemptBindMessageReferencePrefix(prefix string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}

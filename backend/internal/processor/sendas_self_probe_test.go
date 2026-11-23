@@ -80,7 +80,7 @@ func setPublishWKD(t *testing.T, p *Poller, userID string, publish bool) {
 		t.Fatalf("pgpdiscovery.Load: %v", err)
 	}
 	settings.PublishWKD = publish
-	if err := pgpdiscovery.Save(p.userStateDir(userID), settings); err != nil {
+	if _, err := pgpdiscovery.Update(p.userStateDir(userID), func(pgpdiscovery.Settings) pgpdiscovery.Settings { return settings }); err != nil {
 		t.Fatalf("pgpdiscovery.Save: %v", err)
 	}
 }

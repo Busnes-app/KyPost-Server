@@ -14,6 +14,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
+	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
 const (
@@ -41,7 +42,6 @@ func seedTenancy(t *testing.T, s *Service) (tombstone string) {
 		`INSERT INTO sender_blocks(id, kind, value, until, source, level, created_at, actor, reason) VALUES('b1', 'domain', 'spam.example', NULL, 'manual', 0, 1, 'staff', 'test')`,
 		`INSERT INTO receiving_gateways(id, spki_sha256, created_at, expires_at) VALUES('mx-1', 'aa', 1, 99999999999)`,
 		`INSERT INTO org_purges(org_id, subject, step, started_at, done_at) VALUES('` + purgedOrg + `', '', 5, 1, 2)`,
-		`INSERT INTO documents(root, path, owner, revision, body, updated_at) VALUES('config', 'users/u-kept/contacts.json', 'u-kept', 41, ?, 1)`,
 	} {
 		var args []any
 		if strings.Contains(q, "?") {
@@ -60,6 +60,14 @@ func seedTenancy(t *testing.T, s *Service) (tombstone string) {
 	}
 	tombstone = tenancy.Tombstone(key, "gone@example.test")
 	if err := tenancy.AddTombstones(ctx, db, []string{tombstone}); err != nil {
+		t.Fatal(err)
+	}
+	vdb, err := volumes.Open(s.dirs.State, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vdb.Close()
+	if _, err := vdb.Exec(`INSERT INTO documents(root, path, owner, revision, body, updated_at) VALUES('config', 'mail-defaults.json', NULL, 41, ?, 1)`, []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
 	return tombstone
@@ -89,7 +97,6 @@ func checkRestoredTenancy(t *testing.T, db *sql.DB, tombstone string) {
 		`SELECT count(*) FROM sender_blocks WHERE value = 'spam.example'`:          1,
 		`SELECT count(*) FROM receiving_gateways WHERE id = 'mx-1'`:                1,
 		`SELECT count(*) FROM address_tombstones WHERE hmac = '` + tombstone + `'`: 1,
-		`SELECT count(*) FROM documents WHERE revision = 41 AND owner = 'u-kept'`:  1,
 	} {
 		if got := countRows(t, db, query); got != want {
 			t.Errorf("%s = %d, want %d", query, got, want)
@@ -154,9 +161,17 @@ func TestTenancySurvivesARestore(t *testing.T) {
 	}
 	defer db.Close()
 	checkRestoredTenancy(t, db, tombstone)
+	vdb, err := volumes.Open(filepath.Join(dir, "state"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vdb.Close()
+	if got := countRows(t, vdb, `SELECT count(*) FROM documents WHERE revision = 41 AND owner IS NULL`); got != 1 {
+		t.Fatalf("restored documents = %d", got)
+	}
 	// The revision sequence restarts above the restored maximum, so no revision repeats.
 	var next int64
-	if err := db.QueryRow(`SELECT nextval(pg_get_serial_sequence('documents', 'revision'))`).Scan(&next); err != nil || next <= 41 {
+	if err := vdb.QueryRow(`SELECT nextval(pg_get_serial_sequence('documents', 'revision'))`).Scan(&next); err != nil || next <= 41 {
 		t.Fatalf("next document revision %d after a restore at 41: %v", next, err)
 	}
 }

@@ -4,6 +4,7 @@
 package api
 
 import (
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"time"
 
 	"encoding/json"
@@ -22,7 +23,6 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/redaction"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -89,7 +89,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := config.Save(s.configPath, next); err != nil {
-			http.Error(w, "failed to save config", http.StatusInternalServerError)
+			http.Error(w, "failed to save config", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		s.cfgMu.Lock()
@@ -120,7 +120,7 @@ func (s *Server) handleNotificationPreferences(w http.ResponseWriter, r *http.Re
 	case http.MethodGet:
 		settings, err := config.LoadUserSettings(path)
 		if err != nil {
-			http.Error(w, "failed to read notification preferences", http.StatusInternalServerError)
+			http.Error(w, "failed to read notification preferences", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, settings.Notifications)
@@ -140,7 +140,7 @@ func (s *Server) handleNotificationPreferences(w http.ResponseWriter, r *http.Re
 			settings.Notifications = prefs
 			return nil
 		}); err != nil {
-			http.Error(w, "failed to save notification preferences", http.StatusInternalServerError)
+			http.Error(w, "failed to save notification preferences", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -229,7 +229,7 @@ func (s *Server) handleLabelPreferences(w http.ResponseWriter, r *http.Request) 
 			settings.Labels = prefs
 			return nil
 		}); err != nil {
-			http.Error(w, "failed to save label preferences", http.StatusInternalServerError)
+			http.Error(w, "failed to save label preferences", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -252,7 +252,7 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		store, err = s.mailboxStore(r.Context(), ac.UserID, ac.Mailbox)
 	}
 	if err != nil {
-		http.Error(w, "failed to open user state", http.StatusInternalServerError)
+		http.Error(w, "failed to open user state", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	limit := 50
@@ -294,7 +294,7 @@ func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
 	tuningPath := s.userTuningPath(ac.UserID)
 	switch r.Method {
 	case http.MethodGet:
-		b, err := os.ReadFile(tuningPath)
+		b, err := vol.OpenDocument(tuningPath).Read()
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				// New users start from the install's default tuning prompt.
@@ -306,7 +306,7 @@ func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusOK, map[string]any{"content": ""})
 				return
 			}
-			http.Error(w, "failed to read tuning file", http.StatusInternalServerError)
+			http.Error(w, "failed to read tuning file", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"content": string(b), "path": tuningPath})
@@ -324,8 +324,8 @@ func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
 		// AtomicWriteFile, like every other persisted file here: os.WriteFile
 		// truncates in place, so a full disk or a mid-write kill leaves a
 		// half-written prompt.
-		if err := fsutil.AtomicWriteFile(tuningPath, []byte(req.Content), 0o600); err != nil {
-			http.Error(w, "failed to save tuning file", http.StatusInternalServerError)
+		if err := vol.OpenDocument(tuningPath).Replace([]byte(req.Content)); err != nil {
+			http.Error(w, "failed to save tuning file", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		// Tuning is now passed to the model per classify call, so no classifier
@@ -357,7 +357,7 @@ func (s *Server) handleSignatures(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		settings, err := config.LoadUserSettings(path)
 		if err != nil {
-			http.Error(w, "failed to read signatures", http.StatusInternalServerError)
+			http.Error(w, "failed to read signatures", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, settings.Signatures)
@@ -378,7 +378,7 @@ func (s *Server) handleSignatures(w http.ResponseWriter, r *http.Request) {
 			settings.Signatures = prefs
 			return nil
 		}); err != nil {
-			http.Error(w, "failed to save signatures", http.StatusInternalServerError)
+			http.Error(w, "failed to save signatures", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 		writeJSON(w, http.StatusOK, prefs)
@@ -409,13 +409,13 @@ func (s *Server) handleMailSettings(w http.ResponseWriter, r *http.Request) {
 			st.Conversations = req.Conversations
 			return nil
 		}); err != nil {
-			http.Error(w, "failed to save settings", http.StatusInternalServerError)
+			http.Error(w, "failed to save settings", documentStatus(err, http.StatusInternalServerError))
 			return
 		}
 	}
 	settings, err := config.LoadUserSettings(path)
 	if err != nil {
-		http.Error(w, "failed to read settings", http.StatusInternalServerError)
+		http.Error(w, "failed to read settings", documentStatus(err, http.StatusInternalServerError))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"conversations": settings.Conversations == nil || *settings.Conversations})

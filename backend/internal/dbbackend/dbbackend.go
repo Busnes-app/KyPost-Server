@@ -251,6 +251,7 @@ var rootSchemas = map[string]string{
 	"state/receiving/ingress.db":    "kypost_ingress",
 	"state/receiving/cloudflare.db": "kypost_cloudflare",
 	"config/native-authority.db":    "kypost_native_authority",
+	"state/volumes.db":              "kypost_volumes", // table-mode volume documents
 	"state/tenancy.db":              "kypost_tenancy", // multi-tenant installs only
 }
 

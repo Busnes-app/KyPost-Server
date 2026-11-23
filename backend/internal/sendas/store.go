@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // pendingExpiry is how long a newly created alias stays "pending" before its
@@ -38,9 +38,10 @@ var (
 // first and every mutation runs through update, which additionally holds an
 // inter-process file lock for the whole read-modify-write cycle.
 type Store struct {
-	mu      sync.Mutex
-	baseDir string
-	aliases []Alias
+	mu       sync.Mutex
+	baseDir  string
+	aliases  []Alias
+	document *vol.Document
 }
 
 type aliasesFile struct {
@@ -48,11 +49,12 @@ type aliasesFile struct {
 }
 
 func New(baseDir string) (*Store, error) {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	s := &Store{baseDir: baseDir, aliases: []Alias{}}
+	s.document = vol.OpenDocument(s.path())
+	if err := s.document.Mkdir(0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{baseDir: baseDir, aliases: []Alias{}}
-	if err := s.load(); err != nil {
+	if err := vol.Retry(s.load); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -63,7 +65,7 @@ func (s *Store) path() string {
 }
 
 func (s *Store) load() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, s.persistLocked)
+	return vol.LoadJSON(s.document, s.applyFile, s.persistLocked)
 }
 
 func (s *Store) applyFile(af aliasesFile) {
@@ -71,12 +73,12 @@ func (s *Store) applyFile(af aliasesFile) {
 }
 
 func (s *Store) refreshFromDiskLocked() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, nil)
+	return vol.LoadJSON(s.document, s.applyFile, nil)
 }
 
 func (s *Store) persistLocked() error {
 	af := aliasesFile{Aliases: s.aliases}
-	if err := fsutil.PersistJSONFile(s.path(), af); err != nil {
+	if err := vol.PersistJSON(s.document, af); err != nil {
 		return fmt.Errorf("write send-as aliases: %w", err)
 	}
 	return nil
@@ -95,7 +97,7 @@ func (s *Store) persistLocked() error {
 func (s *Store) update(mutate func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return fsutil.WithFileLock(s.path(), func() error {
+	return s.document.Update(func() error {
 		if err := s.refreshFromDiskLocked(); err != nil {
 			return err
 		}

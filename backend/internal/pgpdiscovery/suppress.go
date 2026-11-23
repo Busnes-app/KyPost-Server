@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // Discovery-suppression reasons.
@@ -35,7 +35,11 @@ func normalizeEmail(email string) string {
 // LoadSuppressions reads the caller's opt-out list, returning an empty slice
 // when the file does not exist.
 func LoadSuppressions(dir string) ([]Suppression, error) {
-	b, err := os.ReadFile(suppressionsPath(dir))
+	return loadSuppressions(vol.OpenDocument(suppressionsPath(dir)))
+}
+
+func loadSuppressions(doc *vol.Document) ([]Suppression, error) {
+	b, err := doc.Read()
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -49,12 +53,12 @@ func LoadSuppressions(dir string) ([]Suppression, error) {
 	return list, nil
 }
 
-func saveSuppressions(dir string, list []Suppression) error {
+func saveSuppressions(doc *vol.Document, list []Suppression) error {
 	b, err := json.Marshal(list)
 	if err != nil {
 		return err
 	}
-	return fsutil.AtomicWriteFile(suppressionsPath(dir), b, 0o600)
+	return doc.Write(b)
 }
 
 // AddSuppression records (or refreshes) a discovery opt-out for email. It is
@@ -73,27 +77,22 @@ func AddSuppression(dir, email, reason string) error {
 	mu := dirMu(dir)
 	mu.Lock()
 	defer mu.Unlock()
-	release, err := fsutil.LockFile(suppressionsPath(dir))
-	if err != nil {
-		return err
-	}
-	defer release()
-
-	list, err := LoadSuppressions(dir)
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	for i := range list {
-		if normalizeEmail(list[i].Email) == e {
-			list[i].Email = e
-			list[i].SuppressedAt = now
-			list[i].Reason = reason
-			return saveSuppressions(dir, list)
+	doc := vol.OpenDocument(suppressionsPath(dir))
+	return doc.Update(func() error {
+		list, err := loadSuppressions(doc)
+		if err != nil {
+			return err
 		}
-	}
-	list = append(list, Suppression{Email: e, SuppressedAt: now, Reason: reason})
-	return saveSuppressions(dir, list)
+		now := time.Now().UTC().Format(time.RFC3339)
+		for i := range list {
+			if normalizeEmail(list[i].Email) == e {
+				list[i] = Suppression{Email: e, SuppressedAt: now, Reason: reason}
+				return saveSuppressions(doc, list)
+			}
+		}
+		list = append(list, Suppression{Email: e, SuppressedAt: now, Reason: reason})
+		return saveSuppressions(doc, list)
+	})
 }
 
 // RemoveSuppression deletes the opt-out for email ("allow discovery again"),
@@ -104,29 +103,28 @@ func RemoveSuppression(dir, email string) (bool, error) {
 	mu := dirMu(dir)
 	mu.Lock()
 	defer mu.Unlock()
-	release, err := fsutil.LockFile(suppressionsPath(dir))
-	if err != nil {
-		return false, err
-	}
-	defer release()
-
-	list, err := LoadSuppressions(dir)
-	if err != nil {
-		return false, err
-	}
-	kept := make([]Suppression, 0, len(list))
+	doc := vol.OpenDocument(suppressionsPath(dir))
 	removed := false
-	for _, s := range list {
-		if normalizeEmail(s.Email) == e {
-			removed = true
-			continue
+	err := doc.Update(func() error {
+		list, err := loadSuppressions(doc)
+		if err != nil {
+			return err
 		}
-		kept = append(kept, s)
-	}
-	if !removed {
-		return false, nil
-	}
-	return true, saveSuppressions(dir, kept)
+		kept := make([]Suppression, 0, len(list))
+		removed = false
+		for _, s := range list {
+			if normalizeEmail(s.Email) == e {
+				removed = true
+				continue
+			}
+			kept = append(kept, s)
+		}
+		if !removed {
+			return nil
+		}
+		return saveSuppressions(doc, kept)
+	})
+	return removed, err
 }
 
 // SuppressedSet returns the normalized suppressed addresses as a set for the

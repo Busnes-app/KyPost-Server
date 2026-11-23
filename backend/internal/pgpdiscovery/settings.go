@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 type Settings struct {
@@ -25,7 +25,11 @@ func path(dir string) string { return filepath.Join(dir, "pgp-discovery.json") }
 // Load reads settings, returning defaults (auto-encrypt off, store keys on, advertise autocrypt on,
 // publish WKD on) when the file does not exist.
 func Load(dir string) (Settings, error) {
-	b, err := os.ReadFile(path(dir))
+	return loadSettingsDocument(vol.OpenDocument(path(dir)))
+}
+
+func loadSettingsDocument(doc *vol.Document) (Settings, error) {
+	b, err := doc.Read()
 	if os.IsNotExist(err) {
 		return Settings{AutoEncryptWhenKeyKnown: false, StoreDiscoveredKeys: true, AdvertiseAutocrypt: true, PublishWKD: true}, nil
 	}
@@ -50,12 +54,4 @@ func Load(dir string) (Settings, error) {
 		PublishWKD:              raw.PublishWKD == nil || *raw.PublishWKD,
 	}
 	return s, nil
-}
-
-func Save(dir string, s Settings) error {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	return fsutil.AtomicWriteFile(path(dir), b, 0o600)
 }

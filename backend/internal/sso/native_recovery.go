@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"io"
 	"os"
 	"path/filepath"
@@ -76,11 +77,20 @@ func nativeRecoveryEpoch(root string) (string, error) {
 
 // readRestoreEpoch reads a hold or released marker; both share one format.
 func readRestoreEpoch(path string) (string, error) {
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
+	return readRestoreEpochDocument(vol.OpenDocument(path), path)
+}
+
+func readRestoreEpochDocument(doc *vol.Document, path string) (string, error) {
+	if !doc.IsTable() {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
+			return "", ErrNativeRecovery
+		}
+	}
+	body, err := doc.Read()
+	if len(body) > 4096 {
 		return "", ErrNativeRecovery
 	}
-	body, err := os.ReadFile(path)
 	var hold struct {
 		Version int    `json:"version"`
 		Epoch   string `json:"epoch"`

@@ -169,3 +169,11 @@ silent until someone needs them:
    survived. A reset checkpoint re-labels and re-notifies everything.
 
 Only once that passes should you upgrade to a newer version, as a separate step.
+
+## Table documents under development
+
+MH2 adds `volumes.db` for table-mode settings, contacts, photos and other document stores. Each derived body is encrypted with an org data key wrapped under provisioned `SECRET_DIR/documents.key`. Capsules carry the database and every required key; restore authenticates both document encryption and any nested mail/contact-sync credential encryption before using them. Whole-org purge removes documents and its wrapped key; removing one member preserves the other members' key.
+
+The owner approved a 64 MiB plaintext cap per table document on 2026-11-23. The later opt-in migration must refuse a larger file explicitly. Existing file-backed single-tenant installs keep their current limits and bytes. The capsule library still imposes its own per-file and total limits; a large `volumes.db` can refuse a capsule rather than silently omit data.
+
+Hosted startup is still refused. Accounts/owner-row guards (MH3), preparation and cross-store fences (MH4), key provisioning, volume-free startup, regions and object storage remain separate gates. No migration command or SaaS readiness is introduced by this groundwork.

@@ -3,7 +3,6 @@ package groups
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // Store is one user's contact-group list, persisted as groups.json alongside
@@ -18,10 +18,11 @@ import (
 // re-reads the file from disk first, matching contacts.Store's convention,
 // since the API and daemon processes share no memory.
 type Store struct {
-	mu      sync.Mutex
-	baseDir string
-	groups  []Group
-	seq     int64
+	mu       sync.Mutex
+	baseDir  string
+	groups   []Group
+	seq      int64
+	document *vol.Document
 }
 
 type groupsFile struct {
@@ -30,11 +31,12 @@ type groupsFile struct {
 }
 
 func New(baseDir string) (*Store, error) {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	s := &Store{baseDir: baseDir, groups: []Group{}}
+	s.document = vol.OpenDocument(s.path())
+	if err := s.document.Mkdir(0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{baseDir: baseDir, groups: []Group{}}
-	if err := s.load(); err != nil {
+	if err := vol.Retry(s.load); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -45,7 +47,7 @@ func (s *Store) path() string {
 }
 
 func (s *Store) load() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, s.persistLocked)
+	return vol.LoadJSON(s.document, s.applyFile, s.persistLocked)
 }
 
 func (s *Store) applyFile(gf groupsFile) {
@@ -58,11 +60,11 @@ func (s *Store) applyFile(gf groupsFile) {
 // failed re-read means this process does not know what the groups are — and a
 // group is a recipient set. See contacts.Store for the same rule.
 func (s *Store) refreshFromDiskLocked() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, nil)
+	return vol.LoadJSON(s.document, s.applyFile, nil)
 }
 
 func (s *Store) persistLocked() error {
-	if err := fsutil.PersistJSONFile(s.path(), groupsFile{Groups: s.groups, Seq: s.seq}); err != nil {
+	if err := vol.PersistJSON(s.document, groupsFile{Groups: s.groups, Seq: s.seq}); err != nil {
 		return fmt.Errorf("write groups: %w", err)
 	}
 	return nil
@@ -99,9 +101,19 @@ func (s *Store) Get(id string) (Group, bool, error) {
 // Upsert creates (when g.ID is empty) or renames/replaces a group, stamping
 // a new Rev/UpdatedAt.
 func (s *Store) Upsert(g Group) (Group, error) {
+	var result0 Group
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptUpsert(g)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptUpsert(g Group) (Group, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return Group{}, err
 	}
@@ -183,9 +195,19 @@ var ErrTooManyGroups = errors.New("groups: too many groups for this account")
 // first appearance. Blank names are skipped rather than creating an unnamed
 // group.
 func (s *Store) EnsureByName(names []string) ([]string, error) {
+	var result0 []string
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptEnsureByName(names)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptEnsureByName(names []string) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return nil, err
 	}
@@ -259,9 +281,19 @@ func (s *Store) EnsureByName(names []string) ([]string, error) {
 // sufficient — no tombstone/GC machinery. Callers are responsible for
 // stripping the deleted ID from any contact's GroupIDs.
 func (s *Store) Delete(id string) (bool, error) {
+	var result0 bool
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptDelete(id)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptDelete(id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return false, err
 	}

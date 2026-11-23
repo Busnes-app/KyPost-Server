@@ -14,13 +14,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // Claim is one domain this instance is (or is trying to be) authoritative
@@ -50,9 +49,10 @@ type Claim struct {
 // processor.New. That is now a convenience (one warm in-memory copy), not a
 // correctness requirement: a second Store over the same baseDir is safe.
 type Store struct {
-	mu      sync.Mutex
-	baseDir string
-	claims  []Claim
+	mu       sync.Mutex
+	baseDir  string
+	claims   []Claim
+	document *vol.Document
 }
 
 type claimsFile struct {
@@ -60,11 +60,12 @@ type claimsFile struct {
 }
 
 func New(baseDir string) (*Store, error) {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	s := &Store{baseDir: baseDir, claims: []Claim{}}
+	s.document = vol.OpenDocument(s.path())
+	if err := s.document.Mkdir(0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{baseDir: baseDir, claims: []Claim{}}
-	if err := s.load(); err != nil {
+	if err := vol.Retry(s.load); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -75,7 +76,7 @@ func (s *Store) path() string {
 }
 
 func (s *Store) load() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, s.persistLocked)
+	return vol.LoadJSON(s.document, s.applyFile, s.persistLocked)
 }
 
 func (s *Store) applyFile(cf claimsFile) {
@@ -83,12 +84,12 @@ func (s *Store) applyFile(cf claimsFile) {
 }
 
 func (s *Store) refreshFromDiskLocked() error {
-	return fsutil.LoadJSONFile(s.path(), s.applyFile, nil)
+	return vol.LoadJSON(s.document, s.applyFile, nil)
 }
 
 func (s *Store) persistLocked() error {
 	cf := claimsFile{Claims: s.claims}
-	if err := fsutil.PersistJSONFile(s.path(), cf); err != nil {
+	if err := vol.PersistJSON(s.document, cf); err != nil {
 		return fmt.Errorf("write wkd domains: %w", err)
 	}
 	return nil
@@ -128,13 +129,23 @@ func (s *Store) List() ([]Claim, error) {
 // control via a fresh DNS TXT record. Domain is normalized (lowercased and
 // trimmed) before storing or matching.
 func (s *Store) Create(domain string) (Claim, error) {
+	var result0 Claim
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptCreate(domain)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptCreate(domain string) (Claim, error) {
 	d := normalizeDomain(domain)
 	if d == "" {
 		return Claim{}, fmt.Errorf("wkdpublish: empty domain")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return Claim{}, err
 	}
@@ -174,10 +185,14 @@ func (s *Store) Create(domain string) (Claim, error) {
 // re-verifications and on transitions into unverified. Returns an error if
 // no claim exists for domain.
 func (s *Store) SetVerified(domain string, verified bool, checkedAt time.Time) error {
+	return vol.Retry(func() error { return s.attemptSetVerified(domain, verified, checkedAt) })
+}
+
+func (s *Store) attemptSetVerified(domain string, verified bool, checkedAt time.Time) error {
 	d := normalizeDomain(domain)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return err
 	}
@@ -202,10 +217,20 @@ func (s *Store) SetVerified(domain string, verified bool, checkedAt time.Time) e
 // Delete removes the claim for domain entirely. Returns (false, nil) if no
 // claim exists for domain.
 func (s *Store) Delete(domain string) (bool, error) {
+	var result0 bool
+	retryErr := vol.Retry(func() error {
+		var callErr error
+		result0, callErr = s.attemptDelete(domain)
+		return callErr
+	})
+	return result0, retryErr
+}
+
+func (s *Store) attemptDelete(domain string) (bool, error) {
 	d := normalizeDomain(domain)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
+	release, err := s.document.Lock()
 	if err != nil {
 		return false, err
 	}

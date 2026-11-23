@@ -1,7 +1,5 @@
 package mailcache
 
-import "github.com/Busnes-app/kypost-server/backend/internal/fsutil"
-
 // SyncContactKeyGeneration discards every cached signature verdict that was
 // computed under a different contacts-store key generation.
 //
@@ -20,33 +18,30 @@ import "github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 func (s *Store) SyncContactKeyGeneration(gen int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFile(s.path())
-	if err != nil {
-		return err
-	}
-	defer release()
-	if err := s.refreshFromDiskLocked(); err != nil {
-		return err
-	}
-	changed := false
-	for _, w := range s.mailboxes {
-		if w == nil {
-			continue
+	return s.document.Update(func() error {
+		if err := s.refreshFromDiskLocked(); err != nil {
+			return err
 		}
-		for i := range w.Entries {
-			e := &w.Entries[i]
-			if !e.PGPSigned && !e.PGPVerified && e.PGPSignerFingerprint == "" && !e.PGPBodyOmitted {
+		changed := false
+		for _, w := range s.mailboxes {
+			if w == nil {
 				continue
 			}
-			if e.ContactKeyGen == gen {
-				continue
+			for i := range w.Entries {
+				e := &w.Entries[i]
+				if !e.PGPSigned && !e.PGPVerified && e.PGPSignerFingerprint == "" && !e.PGPBodyOmitted {
+					continue
+				}
+				if e.ContactKeyGen == gen {
+					continue
+				}
+				clearPGPVerdict(e)
+				changed = true
 			}
-			clearPGPVerdict(e)
-			changed = true
 		}
-	}
-	if !changed {
-		return nil
-	}
-	return s.persistLocked()
+		if !changed {
+			return nil
+		}
+		return s.persistLocked()
+	})
 }
