@@ -7,6 +7,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -23,6 +24,28 @@ func SetMailboxQuota(quota int64) {
 }
 
 func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject string) error {
+	if s.multiTenant() && users.TableMode(s.configDir) {
+		org, err := s.subjectOrg(ctx, issuer, subject)
+		if err != nil {
+			return err
+		}
+		return s.withAccountOrgFence(ctx, org, true, func(ctx context.Context) error {
+			if org != s.staffOrg {
+				o, err := tenancy.LookupOrg(ctx, s.tenancy, org)
+				if err != nil {
+					return err
+				}
+				if o.Status == "deleted" {
+					return tenancy.ErrNotServed
+				}
+			}
+			return s.reconcileNativeSubjectHeld(ctx, issuer, subject)
+		})
+	}
+	return s.reconcileNativeSubjectHeld(ctx, issuer, subject)
+}
+
+func (s *Server) reconcileNativeSubjectHeld(ctx context.Context, issuer, subject string) error {
 	if err := sso.RequireNativeRestoreReleased(s.stateDir); err != nil {
 		return err
 	}
@@ -66,7 +89,7 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 	}
 	if lookupErr != nil && d.Active && sso.HasAdminRole(d.Resource.Roles) {
 		defer release()
-		return s.provisionDirectoryUser(issuer, *d.Resource, users.RoleAdmin)
+		return s.provisionDirectoryUser(ctx, issuer, *d.Resource, users.RoleAdmin)
 	}
 	a, reserved, err := s.ssoLifecycle.NativeAssignment(issuer, subject)
 	if err != nil {

@@ -70,7 +70,7 @@ var tableClass = map[string]map[string]string{
 		"org_storage": platform,
 	},
 	"volumes": {
-		"documents": derived, "doc_keys": org,
+		"documents": derived, "doc_keys": org, "accounts": org,
 	},
 	"catalog": {"stores": platform},
 }

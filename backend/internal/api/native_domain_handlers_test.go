@@ -101,14 +101,14 @@ func TestNativeAccountIssuerFenceUsesVerifiedProvenance(t *testing.T) {
 	}
 	active := false
 	resource := sso.DirectoryUser{ID: "same-sub", Active: &active}
-	if _, err = srv.applyDirectoryUser("https://replacement.example.test", resource); err == nil {
+	if _, err = srv.applyDirectoryUserContext(context.Background(), "https://replacement.example.test", resource); err == nil {
 		t.Fatal("new issuer offboarded old mailbox")
 	}
 	current, err := srv.users.GetBySSOSub("same-sub")
 	if err != nil || !current.Active || current.ID != u.ID {
 		t.Fatal("foreign issuer changed owner", current, err)
 	}
-	if _, err = srv.applyDirectoryUser(issuer, resource); err != nil {
+	if _, err = srv.applyDirectoryUserContext(context.Background(), issuer, resource); err != nil {
 		t.Fatal("verified original issuer refused after settings switch", err)
 	}
 	current, err = srv.users.GetBySSOSub("same-sub")

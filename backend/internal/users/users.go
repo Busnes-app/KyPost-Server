@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -532,8 +533,13 @@ type usersFile struct {
 //
 // Reads are served from a stat-guarded cache — see load.
 type Store struct {
-	mu   sync.RWMutex
-	path string
+	mu               sync.RWMutex
+	path             string
+	accounts         *sql.DB
+	activeAccounts   *sql.Tx
+	accountsContext  context.Context
+	accountsReleases []func()
+	orgTable         string
 
 	// cached is the last parsed file, valid only while the file's mtime and size
 	// still match cachedMod/cachedSize. Guarded by mu. Without it Get reparsed
@@ -629,7 +635,12 @@ func buildUserIndex(f usersFile) userIndex {
 }
 
 func newStore(path string) *Store {
-	return &Store{path: path}
+	s := &Store{path: path}
+	if mount := mountedAccounts(path); mount != nil {
+		s.accounts = mount.db
+		s.orgTable = mount.orgTable
+	}
+	return s
 }
 
 // load returns the current file contents, from cache when the file on disk is
@@ -642,6 +653,11 @@ func newStore(path string) *Store {
 // writing. Mutators hold the file lock and call readFileUnlocked instead — a
 // read-modify-write cycle must not start from a cached copy.
 func (s *Store) load() (usersFile, userIndex, error) {
+	if s.accounts != nil {
+		f, err := readAccounts(context.Background(), s.accounts, "ORDER BY id")
+		return f, buildUserIndex(f), err
+	}
+
 	info, err := os.Stat(s.path)
 	if err != nil {
 		return usersFile{}, userIndex{}, err
@@ -700,6 +716,12 @@ func (s *Store) invalidateCacheLocked() {
 func LoadOrMigrate(ctx context.Context, configDir, legacyAdminEnvPath string) (*Store, error) {
 	path := filepath.Join(configDir, "users.json")
 	store := newStore(path)
+	if store.accounts != nil {
+		if err := store.WithCurrentUsers(ctx, func([]User) error { return nil }); err != nil {
+			return nil, err
+		}
+		return store, nil
+	}
 
 	if _, err := os.Stat(path); err == nil {
 		if _, err := store.readFileUnlocked(); err != nil {
@@ -810,6 +832,12 @@ func LoadOrMigrate(ctx context.Context, configDir, legacyAdminEnvPath string) (*
 // helpers must never create an administrator when their shared volume is absent.
 func OpenExisting(ctx context.Context, configDir string) (*Store, error) {
 	path := filepath.Join(configDir, "users.json")
+	if s := newStore(path); s.accounts != nil {
+		if err := s.WithCurrentUsers(ctx, func([]User) error { return nil }); err != nil {
+			return nil, err
+		}
+		return s, nil
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -830,6 +858,9 @@ func OpenExisting(ctx context.Context, configDir string) (*Store, error) {
 func (s *Store) WithCurrentUsers(ctx context.Context, action func([]User) error) error {
 	if action == nil {
 		return errors.New("account authority action is required")
+	}
+	if s.accounts != nil {
+		return s.accountSnapshot(ctx, action)
 	}
 	if err := s.lockContext(ctx); err != nil {
 		return err
@@ -874,6 +905,21 @@ func withWriteLock(path string, fn func() error) error {
 	}
 	defer release()
 	return fn()
+}
+
+func (s *Store) withWriteLock(ctx context.Context, action func() error) error {
+	if s.accounts != nil {
+		return s.accountWrite(ctx, action)
+	}
+	if ctx.Done() == nil {
+		return withWriteLock(s.path, action)
+	}
+	release, err := fsutil.LockFileGated(ctx, s.path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return action()
 }
 
 func (s *Store) lockContext(ctx context.Context) error {
@@ -979,6 +1025,13 @@ func readLegacyAdminEnv(path string) (map[string]string, bool) {
 // cycle must start from what is actually on disk, or it can serialize a cached
 // copy back over another process's committed write.
 func (s *Store) readFileUnlocked() (usersFile, error) {
+	if s.accounts != nil {
+		if s.activeAccounts != nil {
+			return readAccounts(s.accountsContext, s.activeAccounts, "ORDER BY id")
+		}
+		return readAccounts(context.Background(), s.accounts, "ORDER BY id")
+	}
+
 	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return usersFile{}, err
@@ -1001,6 +1054,9 @@ func (s *Store) writeFileUnlocked(f usersFile) error {
 	}
 	if f.Version == 0 {
 		f.Version = 1
+	}
+	if s.accounts != nil {
+		return s.writeAccounts(f)
 	}
 	// Encoder with HTML escaping OFF, not json.MarshalIndent.
 	//
@@ -1116,6 +1172,10 @@ func (s *Store) withIndexedUsers(index func(userIndex) (int, bool), fn func(u Us
 // every account's armored key material to answer "is this account still
 // active?" was the hottest avoidable cost in the request path.
 func (s *Store) Get(id string) (User, error) {
+	if s.accounts != nil {
+		return s.accountLookup("WHERE id=?", id)
+	}
+
 	found := false
 	var out User
 	err := s.withIndexedUsers(
@@ -1134,6 +1194,10 @@ func (s *Store) Get(id string) (User, error) {
 // GetByUsername returns a user by username, compared case-insensitively —
 // see NormalizeUsername.
 func (s *Store) GetByUsername(username string) (User, error) {
+	if s.accounts != nil {
+		return s.accountLookup("WHERE username=?", NormalizeUsername(username))
+	}
+
 	want := NormalizeUsername(username)
 	found := false
 	var out User
@@ -1156,6 +1220,9 @@ func (s *Store) GetBySSOSub(ssoSub string) (User, error) {
 	if sub == "" {
 		return User{}, ErrNotFound
 	}
+	if s.accounts != nil {
+		return s.accountLookup("WHERE subject=?", sub)
+	}
 	found := false
 	var out User
 	err := s.withIndexedUsers(
@@ -1176,6 +1243,23 @@ func (s *Store) GetBySSOSub(ssoSub string) (User, error) {
 // (written before issuers were stored) matches nothing until
 // BindUnboundSSOLinks adopts it.
 func (s *Store) GetBySSOSubIssuer(issuer, sub string) (User, error) {
+	if s.accounts != nil {
+		u, err := s.accountLookup("WHERE issuer=? AND subject=?", issuer, strings.TrimSpace(sub))
+		if err == nil && u.NativeMailboxSource != "" && u.NativeMailboxIssuer != issuer {
+			return User{}, ErrNativeAccountConflict
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return u, err
+		}
+		if _, e := s.GetBySSOSub(sub); !errors.Is(e, ErrNotFound) {
+			if e != nil && !errors.Is(e, ErrNativeAccountConflict) {
+				return User{}, e
+			}
+			return User{}, ErrNativeAccountConflict
+		}
+		return User{}, ErrNotFound
+	}
+
 	u, err := s.GetBySSOSub(sub)
 	if err == nil && (issuer == "" || u.SSOIssuer != issuer || (u.NativeMailboxSource != "" && u.NativeMailboxIssuer != issuer)) {
 		return User{}, ErrNativeAccountConflict
@@ -1216,7 +1300,8 @@ func (s *Store) updateSSOLinks(fn func(*User) bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	changed := 0
-	err := withWriteLock(s.path, func() error {
+	err := s.withWriteLock(context.Background(), func() error {
+		changed = 0
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1255,13 +1340,13 @@ func (s *Store) linkSSO(issuer, userID, ssoSub, ssoUsername, ssoEmail string) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return withWriteLock(s.path, func() error {
+	return s.withWriteLock(context.Background(), func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
 		}
 		for _, u := range f.Users {
-			if strings.TrimSpace(ssoSub) != "" && u.ID != userID && u.SSOSub == strings.TrimSpace(ssoSub) {
+			if strings.TrimSpace(ssoSub) != "" && u.ID != userID && u.SSOSub == strings.TrimSpace(ssoSub) && (s.accounts == nil || u.SSOIssuer == issuer) {
 				return ErrSSOSubTaken
 			}
 		}
@@ -1303,7 +1388,7 @@ func (s *Store) RevokeSSOLink(userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return withWriteLock(s.path, func() error {
+	return s.withWriteLock(context.Background(), func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1328,7 +1413,7 @@ func (s *Store) UnlinkSSO(userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return withWriteLock(s.path, func() error {
+	return s.withWriteLock(context.Background(), func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1368,10 +1453,16 @@ func (s *Store) CreateSSOUser(username string, role Role, ssoSub, ssoUsername, s
 // CreateSSOUserIssuer binds a newly provisioned identity to verified issuer evidence.
 // org is the account's write-once OrgID, "" in a single-tenant install.
 func (s *Store) CreateSSOUserIssuer(issuer, username string, role Role, sub, ssoUsername, email, org string) (User, error) {
+	return s.CreateSSOUserIssuerContext(context.Background(), issuer, username, role, sub, ssoUsername, email, org)
+}
+
+// CreateSSOUserIssuerContext retains the provisioning fence's cancellation
+// through account publication, including SERIALIZABLE retries and commit.
+func (s *Store) CreateSSOUserIssuerContext(ctx context.Context, issuer, username string, role Role, sub, ssoUsername, email, org string) (User, error) {
 	if issuer == "" {
 		return User{}, ErrNativeAccountConflict
 	}
-	return s.createSSOUser(context.Background(), "", username, role, sub, ssoUsername, email, issuer, org, nil)
+	return s.createSSOUser(ctx, "", username, role, sub, ssoUsername, email, issuer, org, nil)
 }
 
 // PublishPreparedSSOUser is internal allocation: prepare runs while users.json
@@ -1393,68 +1484,71 @@ func (s *Store) createSSOUser(ctx context.Context, id, username string, role Rol
 		return User{}, err
 	}
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFileGated(ctx, s.path)
-	if err != nil {
-		return User{}, err
-	}
-	defer release()
-	f, err := s.readFileUnlocked()
-	if err != nil {
-		return User{}, err
-	}
-	username = strings.TrimSpace(username)
-	ssoSub = strings.TrimSpace(ssoSub)
-	for _, u := range f.Users {
-		if id != "" && u.ID == id {
-			if prepare == nil || u.SSOSub != ssoSub || u.NativeMailboxIssuer != nativeIssuer || u.NativeMailboxSource == "" || u.OrgID != org {
-				return User{}, ErrNativeAccountConflict
-			}
-			source, e := prepare()
-			if e != nil {
-				return User{}, e
-			}
-			if source != u.NativeMailboxSource {
-				return User{}, ErrNativeAccountConflict
-			}
-			if err := ctx.Err(); err != nil {
-				return User{}, err
-			}
-			return u, nil
-		}
-		if ssoSub != "" && u.SSOSub == ssoSub {
-			return User{}, ErrSSOSubTaken
-		}
-		if NormalizeUsername(u.Username) == NormalizeUsername(username) {
-			return User{}, ErrUsernameTaken
-		}
-	}
-	if id == "" {
-		id, err = fsutil.NewUUIDv4()
+	var created User
+	err := s.withWriteLock(ctx, func() error {
+		f, err := s.readFileUnlocked()
 		if err != nil {
-			return User{}, err
+			return err
 		}
-	}
-	var source string
-	if prepare != nil {
-		source, err = prepare()
-		if err != nil {
-			return User{}, err
+		username = strings.TrimSpace(username)
+		ssoSub = strings.TrimSpace(ssoSub)
+		for _, u := range f.Users {
+			if id != "" && u.ID == id {
+				if prepare == nil || u.SSOSub != ssoSub || u.NativeMailboxIssuer != nativeIssuer || u.NativeMailboxSource == "" || u.OrgID != org {
+					return ErrNativeAccountConflict
+				}
+				source, e := prepare()
+				if e != nil {
+					return e
+				}
+				if source != u.NativeMailboxSource {
+					return ErrNativeAccountConflict
+				}
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				created = u
+				return nil
+			}
+			if ssoSub != "" && u.SSOSub == ssoSub && (s.accounts == nil || u.SSOIssuer == nativeIssuer) {
+				return ErrSSOSubTaken
+			}
+			if NormalizeUsername(u.Username) == NormalizeUsername(username) {
+				return ErrUsernameTaken
+			}
 		}
-		hash, e := hex.DecodeString(strings.TrimPrefix(source, "native:"))
-		if !strings.HasPrefix(source, "native:") || e != nil || len(hash) != 32 {
-			return User{}, ErrNativeAccountConflict
+		if id == "" {
+			id, err = fsutil.NewUUIDv4()
+			if err != nil {
+				return err
+			}
 		}
-	}
-	if err := ctx.Err(); err != nil {
-		return User{}, err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	created := User{ID: id, Username: username, Role: role, Active: true, SSOSub: ssoSub, SSOUsername: strings.TrimSpace(ssoUsername), SSOEmail: strings.TrimSpace(ssoEmail), SSOLinkedAt: time.Now().UTC().Unix(), CreatedAt: now, UpdatedAt: now, NativeMailboxSource: source, SSOIssuer: nativeIssuer, OrgID: org}
-	if source != "" {
-		created.NativeMailboxIssuer = nativeIssuer
-	}
-	f.Users = append(f.Users, created)
-	if err = s.writeFileUnlocked(f); err != nil {
+		var source string
+		if prepare != nil {
+			source, err = prepare()
+			if err != nil {
+				return err
+			}
+			hash, e := hex.DecodeString(strings.TrimPrefix(source, "native:"))
+			if !strings.HasPrefix(source, "native:") || e != nil || len(hash) != 32 {
+				return ErrNativeAccountConflict
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		created = User{ID: id, Username: username, Role: role, Active: true, SSOSub: ssoSub, SSOUsername: strings.TrimSpace(ssoUsername), SSOEmail: strings.TrimSpace(ssoEmail), SSOLinkedAt: time.Now().UTC().Unix(), CreatedAt: now, UpdatedAt: now, NativeMailboxSource: source, SSOIssuer: nativeIssuer, OrgID: org}
+		if source != "" {
+			created.NativeMailboxIssuer = nativeIssuer
+		}
+		f.Users = append(f.Users, created)
+		if err = s.writeFileUnlocked(f); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return User{}, err
 	}
 	return created, nil
@@ -1471,7 +1565,7 @@ func (s *Store) Create(ctx context.Context, username, password string, role Role
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var created User
-	err := withWriteLock(s.path, func() error {
+	err := s.withWriteLock(context.Background(), func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1566,7 +1660,8 @@ func (s *Store) SweepExpiredEnvelopes() (int, error) {
 	defer s.mu.Unlock()
 
 	removed := 0
-	err := withWriteLock(s.path, func() error {
+	err := s.withWriteLock(context.Background(), func() error {
+		removed = 0
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1606,7 +1701,7 @@ func (s *Store) mutateGuarded(id string, guard func(all []User, target User) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var updated User
-	err := withWriteLock(s.path, func() error {
+	err := s.withWriteLock(context.Background(), func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -2821,7 +2916,8 @@ func (s *Store) RemoveUsers(ids []string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	removed := 0
-	err := withWriteLock(s.path, func() error {
+	err := s.withWriteLock(context.Background(), func() error {
+		removed = 0
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err

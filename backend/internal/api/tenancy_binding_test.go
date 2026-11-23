@@ -46,7 +46,7 @@ func (s *Server) useTenancy(db *sql.DB, staffOrg string) {
 
 func makeMultiTenant(t *testing.T, srv *Server) *sql.DB {
 	t.Helper()
-	db, err := tenancy.Open(t.TempDir(), true)
+	db, err := tenancy.Open(srv.stateDir, true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -176,4 +176,15 @@ MH2 adds `volumes.db` for table-mode settings, contacts, photos and other docume
 
 The owner approved a 64 MiB plaintext cap per table document on 2026-11-23. The later opt-in migration must refuse a larger file explicitly. Existing file-backed single-tenant installs keep their current limits and bytes. The capsule library still imposes its own per-file and total limits; a large `volumes.db` can refuse a capsule rather than silently omit data.
 
-Hosted startup is still refused. Accounts/owner-row guards (MH3), preparation and cross-store fences (MH4), key provisioning, volume-free startup, regions and object storage remain separate gates. No migration command or SaaS readiness is introduced by this groundwork.
+MH3 adds table-mode account rows, fresh account reads, serializable mutations and the same-transaction account guard before a derived body or org key can be created. Account capsules carry those rows in `volumes.db` and omit stale `users.json`; restore checks routing columns and required secret keys without expanding an account file. A purge removes account rows first and rechecks late members before completion.
+
+Hosted startup is still refused. Preparation and remaining cross-store fences (MH4), key provisioning, volume-free startup, regions and object storage remain separate gates. No migration command or SaaS readiness is introduced by this groundwork.
+
+Historical MH2 document-table stores or capsules can still carry account authority
+in `users.json`. Startup now refuses that mixed layout before mounting account
+rows, identifying the retained file and requiring explicit offline conversion.
+Keep the restored files/database and services stopped; MH8 owns that migration
+and is not implemented by this startup check. Never remove `users.json` to bypass
+the refusal: an empty table would discard the retained identities and administrator
+access. A migrated single install also refuses empty, administrator-less or corrupt
+table accounts. Ordinary un-migrated single installs continue using their files.

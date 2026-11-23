@@ -64,6 +64,12 @@ func (s *Server) beginPurge(ctx context.Context, scope tenancy.PurgeScope, now t
 	if scope.Org == s.staffOrg || !config.ValidOrgID(scope.Org) {
 		return nil
 	}
+	return s.withAccountOrgFence(ctx, scope.Org, false, func(ctx context.Context) error { return s.beginPurgeHeld(ctx, scope, now) })
+}
+func (s *Server) beginPurgeHeld(ctx context.Context, scope tenancy.PurgeScope, now time.Time) error {
+	if scope.Org == s.staffOrg || !config.ValidOrgID(scope.Org) {
+		return nil
+	}
 	if done, err := tenancy.Purged(ctx, s.tenancy, scope.Org, scope.Subject); err != nil || done {
 		return err
 	}
@@ -135,6 +141,20 @@ func purgeOwners(subjects []tenancy.Subject) []sso.PurgeOwner {
 
 // purge runs scope's steps from the first, then the final check, then records it done.
 func (s *Server) purge(ctx context.Context, scope tenancy.PurgeScope, now time.Time) error {
+	return s.withAccountOrgFence(ctx, scope.Org, false, func(ctx context.Context) error {
+		for range 5 {
+			err := s.purgePass(ctx, scope, now)
+			if !errors.Is(err, errPurgeGrew) {
+				return err
+			}
+		}
+		return errPurgeLeft
+	})
+}
+
+var errPurgeGrew = errors.New("purge snapshot grew; repeat member steps")
+
+func (s *Server) purgePass(ctx context.Context, scope tenancy.PurgeScope, now time.Time) error {
 	snap, err := tenancy.PurgeMembers(ctx, s.tenancy, scope)
 	if err != nil {
 		return err
@@ -172,6 +192,18 @@ func (s *Server) purge(ctx context.Context, scope tenancy.PurgeScope, now time.T
 		}
 		if err := tenancy.MarkPurgeStep(ctx, s.tenancy, scope, i+1); err != nil {
 			return err
+		}
+	}
+	if users.TableMode(s.configDir) {
+		fresh, err := s.purgeSnapshot(ctx, scope)
+		if err != nil {
+			return err
+		}
+		if !snapshotContains(snap, fresh) {
+			if err := tenancy.ExtendPurge(ctx, s.tenancy, scope, fresh); err != nil {
+				return err
+			}
+			return errPurgeGrew
 		}
 	}
 	if scope.Subject == "" {
@@ -262,6 +294,14 @@ func purgeDirs(configDir, stateDir string, users, mailboxes []string) ([]string,
 
 // Step 3: storage, then the users' pickup records.
 func (s *Server) purgeStorage(ctx context.Context, snap tenancy.PurgeSnapshot) error {
+	// Removing accounts first closes the same-database owner guard. A paused D
+	// writer cannot recreate a document or org key after the following deletes.
+	if users.TableMode(s.configDir) {
+		if _, err := s.users.RemoveUsers(snap.Users); err != nil {
+			return err
+		}
+	}
+
 	if err := PurgeStorage(ctx, s.configDir, s.stateDir, snap.Users, snap.Mailboxes); err != nil {
 		return err
 	}
@@ -449,7 +489,7 @@ func (s *Server) eraseMember(w http.ResponseWriter, r *http.Request, issuer stri
 	removal := event
 	removal.Type = "user.deleted"
 	status, err := s.ssoLifecycle.ApplyDirectoryUser(issuer, removal, u, sso.EventDigest(event.Type, body), func() (bool, error) {
-		return s.applyDirectoryUser(issuer, u)
+		return s.applyDirectoryUserContext(r.Context(), issuer, u)
 	})
 	var refusal *syncRefusal
 	switch {
@@ -465,4 +505,23 @@ func (s *Server) eraseMember(w http.ResponseWriter, r *http.Request, issuer stri
 	}
 	s.logger.Info("member erasure recorded", "event_id", event.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"status": status, "eventId": event.ID, "version": u.Meta.Version})
+}
+
+func snapshotContains(prior, next tenancy.PurgeSnapshot) bool {
+	for _, id := range next.Users {
+		if !slices.Contains(prior.Users, id) {
+			return false
+		}
+	}
+	for _, id := range next.Mailboxes {
+		if !slices.Contains(prior.Mailboxes, id) {
+			return false
+		}
+	}
+	for _, subject := range next.Subjects {
+		if !slices.Contains(prior.Subjects, subject) {
+			return false
+		}
+	}
+	return true
 }

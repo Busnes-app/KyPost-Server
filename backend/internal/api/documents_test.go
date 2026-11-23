@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
@@ -30,6 +31,34 @@ func mountServerDocuments(t *testing.T, s *Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	all, err := s.users.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range all {
+		raw, err := json.Marshal(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var issuer, subject any
+		if u.SSOIssuer != "" {
+			issuer, subject = u.SSOIssuer, u.SSOSub
+		}
+		if _, err = db.Exec(`INSERT INTO accounts(id,username,issuer,subject,record) VALUES(?,?,?,?,?)`, u.ID, users.NormalizeUsername(u.Username), issuer, subject, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	releaseAccounts, err := users.MountAccounts(s.configDir, s.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(releaseAccounts)
+	staff := s.users.StaffOrg
+	s.users, err = users.OpenExisting(context.Background(), s.configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.users.StaffOrg = staff
 	options := vol.TableOptions{MasterKey: make([]byte, 32), Org: func(_ context.Context, id string) (string, error) { u, err := s.users.Get(id); return u.OrgID, err }, Owner: func(_ context.Context, path string, body []byte) (string, error) {
 		if strings.HasPrefix(path, "pickup/") {
 			var r struct {

@@ -16,7 +16,7 @@ File and PostgreSQL document I/O for the multi-host design. Store packages retai
 - Every derived body is sealed with its org key and root/path/user/org associated data. Resolve mailbox and pickup owners from retained ledger/record data. Platform rows are plaintext. Keys are wrapped under provisioned `documents.key`; the seam never creates that master file.
 - Table writes accept at most 64 MiB of plaintext (owner, 2026-11-23); file writes retain existing limits. MH8 must refuse oversized source files before publishing a migration. Ciphertext overhead is additional.
 - Directory admission and the new row share one writer transaction. `kypg.BeginTx` takes the schema advisory writer lock before any usage query; do not bypass that driver or add a second quota lock. Marker moves compare the checked source revision in that transaction; only platform bodies may move without resealing. File callers sync the directory after a rename.
-- Runtime tables require PostgreSQL. `NewSnapshotTable` is exclusively for private, stopped SQLite capsule staging. MH3 adds the account-row guard before any derived write or key creation; startup remains gated until it exists.
+- Runtime tables require PostgreSQL. `NewSnapshotTable` is exclusively for private, stopped SQLite capsule staging. Live derived writes lock their retained account `FOR KEY SHARE` in the document transaction before creating a body or key, and compare its org with the trusted resolver. A missing/mismatched account refuses the write. Purge deletes accounts first; startup remains gated on later MH phases.
 
 ## Work Guidance
 

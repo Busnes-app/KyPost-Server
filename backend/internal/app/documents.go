@@ -55,6 +55,13 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 	if marker != "" && marker != "postgres" {
 		return nil, errors.New("invalid volume_stores setting")
 	}
+	// Historical MH2 stores and capsules retain file account authority. MH8 owns
+	// migration; never replace retained accounts with an empty/new table at startup.
+	if _, err := os.Lstat(filepath.Join(configDir, "users.json")); err == nil {
+		return nil, errors.New("table-mode startup found retained users.json; preserve it and complete the offline account migration before switching authority")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	master, err := cryptutil.LoadKey(filepath.Join(secretDir, "documents.key"))
 	if err != nil {
 		return nil, errors.New("table-mode documents require a provisioned documents.key")
@@ -63,7 +70,34 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 	if err != nil {
 		return nil, err
 	}
-	options := documentTableOptions(ctx, configDir, mode, master)
+	releaseAccounts, err := users.MountAccounts(configDir, stateDir)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	mounted := false
+	defer func() {
+		if !mounted {
+			releaseAccounts()
+		}
+	}()
+	accounts, err := users.OpenExisting(ctx, configDir)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if mode != config.TenancyMulti {
+		all, err := accounts.List()
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		if users.FirstAdminFrom(all).ID == "" {
+			db.Close()
+			return nil, errors.New("migrated table-mode accounts have no active administrator; preserve retained data and restore complete account authority before startup")
+		}
+	}
+	options := documentTableOptions(configDir, mode, master, accounts)
 	configVol, err := vol.NewTable(db, "config", options)
 	if err != nil {
 		db.Close()
@@ -85,19 +119,15 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 		db.Close()
 		return nil, err
 	}
-	return func() { releaseState(); releaseConfig(); _ = db.Close() }, nil
+	mounted = true
+	return func() { releaseState(); releaseConfig(); releaseAccounts(); _ = db.Close() }, nil
 }
 
 // TableOptions derives ownership from retained identities, never request fields.
 // MH3 replaces file accounts and adds its same-transaction owner-row guard.
-func documentTableOptions(ctx context.Context, configDir, mode string, master []byte) vol.TableOptions {
-	account := func(id string) (users.User, error) {
-		store, err := users.OpenExisting(ctx, configDir)
-		if err != nil {
-			return users.User{}, err
-		}
-		return store.Get(id)
-	}
+func documentTableOptions(configDir, mode string, master []byte, accounts *users.Store) vol.TableOptions {
+	account := accounts.Get
+
 	return vol.TableOptions{MasterKey: master,
 		Org: func(_ context.Context, id string) (string, error) {
 			u, err := account(id)
@@ -109,7 +139,7 @@ func documentTableOptions(ctx context.Context, configDir, mode string, master []
 			}
 			return u.OrgID, nil
 		},
-		Owner: func(callCtx context.Context, path string, body []byte) (string, error) {
+		Owner: func(_ context.Context, path string, body []byte) (string, error) {
 			if strings.HasPrefix(path, "pickup/") {
 				var record struct {
 					Sender string `json:"senderUserId"`
@@ -133,11 +163,7 @@ func documentTableOptions(ctx context.Context, configDir, mode string, master []
 				if !found {
 					return "", os.ErrNotExist
 				}
-				store, err := users.OpenExisting(callCtx, configDir)
-				if err != nil {
-					return "", err
-				}
-				u, err := store.GetBySSOSubIssuer(a.Owner.Issuer, a.Owner.Subject)
+				u, err := accounts.GetBySSOSubIssuer(a.Owner.Issuer, a.Owner.Subject)
 				return u.ID, err
 			}
 			return "", vol.ErrPath

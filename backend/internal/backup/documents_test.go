@@ -18,6 +18,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
@@ -130,6 +131,38 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	store, err := users.LoadOrMigrate(context.Background(), s.dirs.Config, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The legacy fixture has an IMAP document for u1 and a pre-issuer native
+	// link. Make both identities explicit before selecting account tables.
+	all = append(all, users.User{ID: "u1", Username: "legacy", Role: users.RoleUser, Active: true})
+	for _, u := range all {
+		if u.SSOIssuer == "" && u.SSOSub != "" {
+			u.SSOIssuer = u.NativeMailboxIssuer
+		}
+		raw, err := json.Marshal(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var issuer, subject any
+		if u.SSOIssuer != "" {
+			issuer, subject = u.SSOIssuer, u.SSOSub
+		}
+		if _, err = db.Exec(`INSERT INTO accounts(id,username,issuer,subject,record) VALUES(?,?,?,?,?)`, u.ID, users.NormalizeUsername(u.Username), issuer, subject, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	releaseAccounts, err := users.MountAccounts(s.dirs.Config, s.dirs.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseAccounts()
 	options := vol.TableOptions{MasterKey: master, Org: func(context.Context, string) (string, error) { return "", nil }}
 	for _, root := range []struct{ name, path string }{{"config", s.dirs.Config}, {"state", s.dirs.State}} {
 		table, err := vol.NewTable(db, root.name, options)
@@ -194,7 +227,7 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range p.Files {
-		if f.Path == "config/config.yaml" || strings.Contains(f.Path, "native-domains.json") {
+		if f.Path == "config/config.yaml" || f.Path == "config/users.json" || strings.Contains(f.Path, "native-domains.json") {
 			t.Fatal("sealed stale file beside table", f.Path)
 		}
 	}
@@ -209,6 +242,19 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "restore")
 	if _, _, err := capsule.Open(raw, key, dir); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config/users.json")); !os.IsNotExist(err) {
+		t.Fatal("table accounts expanded to a file", err)
+	}
+	accountBytes, err := snapshotAccountBytes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restoredAccounts struct {
+		Users []users.User `json:"users"`
+	}
+	if err = json.Unmarshal(accountBytes, &restoredAccounts); err != nil || len(restoredAccounts.Users) != 2 {
+		t.Fatal("account rows did not restore", err)
 	}
 	if _, err := nativeSnapshot(dir); err != nil {
 		t.Fatal("table snapshot", err)

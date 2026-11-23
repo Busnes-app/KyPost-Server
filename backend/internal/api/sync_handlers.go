@@ -10,7 +10,9 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -60,20 +62,57 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid directory event: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if s.multiTenant() {
-		org, status, err := s.bindDirectoryOrg(r.Context(), settings.IssuerURL, event.ID, body, &u)
-		if err != nil {
-			http.Error(w, err.Error(), status)
-			return
+
+	// Admission belongs to the signed event's handoff, before another helper
+	// receives its account ID. Table mode runs this whole boundary under the
+	// shared org fence; an erased member enters the exclusive purge separately.
+	apply := func(ctx context.Context) {
+		request := r.WithContext(ctx)
+		if s.multiTenant() {
+			org, status, err := s.bindDirectoryOrg(ctx, settings.IssuerURL, event.ID, body, &u)
+			if err != nil {
+				http.Error(w, err.Error(), status)
+				return
+			}
+			if erased {
+				s.eraseMember(w, request, settings.IssuerURL, event, u, body, org)
+				return
+			}
 		}
-		if erased {
-			s.eraseMember(w, r, settings.IssuerURL, event, u, body, org)
-			return
-		}
+
+		s.applyVerifiedSync(w, request, settings, event, u, body, revision)
 	}
 
+	if s.multiTenant() && users.TableMode(s.configDir) && !erased {
+		var identity struct {
+			Org string `json:"org_id"`
+		}
+		if json.Unmarshal(body, &identity) != nil || !config.ValidOrgID(identity.Org) {
+			http.Error(w, "invalid directory event: org_id is required", http.StatusBadRequest)
+			return
+		}
+		err := s.withAccountOrgFence(r.Context(), identity.Org, true, func(ctx context.Context) error {
+			// Re-read the cache under the fence before any provisioning write.
+			if identity.Org != s.staffOrg {
+				if _, err := tenancy.LookupOrg(ctx, s.tenancy, identity.Org); err != nil {
+					return err
+				}
+			}
+			apply(ctx)
+			return nil
+		})
+		if err != nil {
+			http.Error(w, "directory account authority is busy; retry later", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	apply(r.Context())
+}
+
+// applyVerifiedSync receives only a verified, org-admitted directory event.
+func (s *Server) applyVerifiedSync(w http.ResponseWriter, r *http.Request, settings sso.SSOSettings, event syncauth.Event, u sso.DirectoryUser, body []byte, revision int64) {
 	status, err := s.ssoLifecycle.ApplyDirectoryUser(settings.IssuerURL, event, u, sso.EventDigest(event.Type, body), func() (bool, error) {
-		fence, err := s.applyDirectoryUser(settings.IssuerURL, u)
+		fence, err := s.applyDirectoryUserContext(r.Context(), settings.IssuerURL, u)
 		if err != nil || event.Type != "user.mfa_reset" {
 			return fence, err
 		}
@@ -108,7 +147,11 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("directory event "+status, "event_id", event.ID, "revision", strconv.FormatInt(revision, 10))
 	if s.nativeMail {
-		if err := s.reconcileNativeSubject(r.Context(), settings.IssuerURL, u.ID); err != nil {
+		reconcile := s.reconcileNativeSubject
+		if s.multiTenant() && users.TableMode(s.configDir) {
+			reconcile = s.reconcileNativeSubjectHeld
+		}
+		if err := reconcile(r.Context(), settings.IssuerURL, u.ID); err != nil {
 			s.logger.Error("native mailbox provisioning pending", "event_id", event.ID, "error", err.Error())
 			writeJSON(w, http.StatusOK, map[string]any{"status": status, "eventId": event.ID, "version": u.Meta.Version, "mailboxStatus": "pending"})
 			return
@@ -164,7 +207,11 @@ var errIssuerConflict = errors.New("directory event refused: the subject's accou
 // the change invalidates ID tokens issued before it. Nothing here erases
 // data: a disabled or deleted user keeps their mailbox and keys and loses
 // only access.
-func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, error) {
+func (s *Server) applyDirectoryUserContext(ctx context.Context, issuer string, u sso.DirectoryUser) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
 	active := *u.Active
 	role := users.RoleUser
 	if active && sso.HasAdminRole(u.Roles) {
@@ -179,7 +226,7 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 		if s.nativeMail && role != users.RoleAdmin {
 			return false, nil // retain desired state; allocate after the directory unlock
 		}
-		return false, s.provisionDirectoryUser(issuer, u, role)
+		return false, s.provisionDirectoryUser(ctx, issuer, u, role)
 	}
 	if errors.Is(err, users.ErrNativeAccountConflict) {
 		return false, &syncRefusal{http.StatusUnprocessableEntity, errIssuerConflict}
@@ -222,16 +269,27 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 // administrator subject gets even in native mode, under a distinct name when
 // a local account already owns the directory's userName. In multi mode it
 // carries the subject's org, and user_orgs is written after it.
-func (s *Server) provisionDirectoryUser(issuer string, u sso.DirectoryUser, role users.Role) error {
-	ctx := context.Background()
+func (s *Server) provisionDirectoryUser(ctx context.Context, issuer string, u sso.DirectoryUser, role users.Role) error {
 	org, err := s.subjectOrg(ctx, issuer, u.ID)
 	if err != nil {
 		return errors.New("the subject's org is not bound")
 	}
+	if s.multiTenant() && users.TableMode(s.configDir) && org != s.staffOrg {
+		o, err := tenancy.LookupOrg(ctx, s.tenancy, org)
+		if err != nil {
+			return err
+		}
+		if o.Status == "deleted" {
+			return tenancy.ErrNotServed
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	username := ssoUsername(u.UserName, u.ID)
-	created, err := s.users.CreateSSOUserIssuer(issuer, username, role, u.ID, u.UserName, u.Email(), org)
+	created, err := s.users.CreateSSOUserIssuerContext(ctx, issuer, username, role, u.ID, u.UserName, u.Email(), org)
 	if errors.Is(err, users.ErrUsernameTaken) {
-		created, err = s.users.CreateSSOUserIssuer(issuer, ssoUsernameWithSuffix(username, u.ID), role, u.ID, u.UserName, u.Email(), org)
+		created, err = s.users.CreateSSOUserIssuerContext(ctx, issuer, ssoUsernameWithSuffix(username, u.ID), role, u.ID, u.UserName, u.Email(), org)
 	}
 	if err != nil {
 		status, err := syncErrStatus(err, "failed to create user")
@@ -265,6 +323,8 @@ func (s *Server) deactivateAndRevoke(userID string) (int, error) {
 // syncErrStatus separates "try again" from "this cannot be applied here".
 func syncErrStatus(err error, what string) (int, error) {
 	switch {
+	case errors.Is(err, users.ErrKDFBusy):
+		return http.StatusServiceUnavailable, errors.New(what + ": account authority is busy; retry later")
 	case errors.Is(err, users.ErrLastActiveAdmin):
 		// Retrying forever will not conjure a second administrator. Say so
 		// once, loudly, so the sender stops and an operator intervenes.

@@ -54,6 +54,9 @@ func (s *Server) checkAccountOrg(ctx context.Context, u users.User, org string) 
 	if subject != org {
 		return tenancy.ErrOrgMismatch
 	}
+	if users.TableMode(s.configDir) {
+		return tenancy.BindUserAccount(ctx, s.tenancy, s.stateDir, u.ID, org, s.staffOrg)
+	}
 	return tenancy.BindUser(ctx, s.tenancy, u.ID, org)
 }
 
@@ -80,6 +83,9 @@ func (s *Server) subjectOrg(ctx context.Context, issuer, subject string) (string
 func (s *Server) bindNewAccount(ctx context.Context, u users.User) error {
 	if !s.multiTenant() {
 		return nil
+	}
+	if users.TableMode(s.configDir) {
+		return tenancy.BindUserAccount(ctx, s.tenancy, s.stateDir, u.ID, u.OrgID, s.staffOrg)
 	}
 	return tenancy.BindUser(ctx, s.tenancy, u.ID, u.OrgID)
 }
@@ -128,7 +134,7 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 	// A deleted org's subject, or a purged one, never gets an account again (K "Nothing is
 	// reused"): an active event applies as inactive, so removals still succeed.
 	gone, err := tenancy.Purged(ctx, s.tenancy, ev.OrgID, u.ID)
-	if err == nil && !gone {
+	if err == nil && !gone && ev.OrgID != s.staffOrg {
 		var o tenancy.Org
 		o, err = tenancy.LookupOrg(ctx, s.tenancy, ev.OrgID)
 		gone = o.Status == suitedir.OrgDeleted
