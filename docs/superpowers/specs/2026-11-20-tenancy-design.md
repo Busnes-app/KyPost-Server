@@ -1878,7 +1878,7 @@ so only tests run any of this.
   the poll, whether or not the poll succeeded (`api/tenancy_lifecycle.go:75`, `reportStorage`,
   `api/tenancy_storage.go:130`).
   - It covers every cached org that is not `deleted` and not the staff org. `want_bytes` is
-    the larger of 256 MiB and twice the growth since the last report.
+    the larger of 256 MiB and twice the growth since the last accepted measurement (`n - last.Reported`, never the reservation-inflated `last.Used`).
   - The expiry is the time the request was sent plus `min(ttl_seconds, 15 min)`.
   - `stale` keeps the current grant. `unknown_org` zeroes it.
   - A failed batch logs one line naming no org and is retried at the next poll. The grant

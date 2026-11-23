@@ -175,7 +175,7 @@ func (s *Server) reportStorage(ctx context.Context) error {
 				continue
 			}
 			used[org] = tenancy.Grant{Used: n, Admitted: snapshot.Admitted}
-			batch = append(batch, tenancy.StorageReport{OrgID: org, UsedBytes: n, Seq: seq, WantBytes: max(minStorageWant, 2*(n-last.Used))})
+			batch = append(batch, tenancy.StorageReport{OrgID: org, UsedBytes: n, Seq: seq, WantBytes: max(minStorageWant, 2*(n-last.Reported))})
 			if len(batch) == tenancy.MaxStorageReports {
 				if err := flush(); err != nil {
 					return err

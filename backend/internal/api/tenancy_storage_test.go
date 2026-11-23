@@ -473,3 +473,51 @@ func TestOrgStorageConcurrentWriters(t *testing.T) {
 		t.Fatalf("%d writers spent one message of headroom", accepted)
 	}
 }
+
+// Imports consume cached Used immediately; only Reported is the previous measurement.
+// Successive real imports must therefore grow want_bytes even when reservations have
+// already caught up with every stored byte. An idle report must not repeat that growth.
+func TestOrgStorageWantTracksReportedGrowth(t *testing.T) {
+	fx, _ := newOrgFixture(t)
+	srv, ctx := fx.srv, context.Background()
+	idp := newStorageIdP(t)
+	idp.room = func(org string, _ int64) int64 { return idp.reports[org].WantBytes }
+	check(fx, srv.ssoStore.Save(sso.SSOSettings{Enabled: true, IssuerURL: idp.URL, ClientID: "kypost", ClientSecret: "suite-secret"}))
+	box := fx.openMailbox(fx.a)
+	client, err := mailbox.NewClient(box, "a@example.test")
+	check(fx, err)
+	mailbox.SetPoolCheck(srv.StoragePoolCheck)
+	t.Cleanup(func() { mailbox.SetPoolCheck(nil) })
+	check(fx, srv.reportStorage(ctx))
+	initial, _ := idp.report(orgA)
+	if initial.WantBytes != minStorageWant {
+		t.Fatalf("initial want %d", initial.WantBytes)
+	}
+	const size = 4 << 20
+	raw := bytes.Repeat([]byte("x"), size)
+	next := 0
+	for _, count := range []int{33, 34} {
+		before, err := tenancy.StorageGrant(ctx, srv.tenancy, orgA)
+		check(fx, err)
+		for range count {
+			copy(raw, fmt.Sprintf("From: a@example.test\r\nSubject: growth-%03d\r\n\r\n", next))
+			next++
+			check(fx, client.ImportMessage(ctx, "Drafts", raw, mailbox.ImportMeta{}))
+		}
+		cached, err := tenancy.StorageGrant(ctx, srv.tenancy, orgA)
+		check(fx, err)
+		growth := int64(count * size)
+		if cached.Used != before.Used+growth || cached.Reported != before.Reported {
+			t.Fatalf("import did not separate cached and reported usage: %+v -> %+v", before, cached)
+		}
+		check(fx, srv.reportStorage(ctx))
+		rep, _ := idp.report(orgA)
+		if rep.UsedBytes != cached.Used || rep.WantBytes != 2*growth {
+			t.Fatalf("after %d imported bytes: report %+v; want usage %d, headroom %d", growth, rep, cached.Used, 2*growth)
+		}
+	}
+	check(fx, srv.reportStorage(ctx))
+	if rep, _ := idp.report(orgA); rep.WantBytes != minStorageWant {
+		t.Fatalf("idle report repeated old growth: %+v", rep)
+	}
+}
