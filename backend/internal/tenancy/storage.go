@@ -40,7 +40,9 @@ const maxBytes = 1 << 53
 type Grant struct {
 	Used, Ceiling      int64
 	Admitted, Reported int64
-	Expires            time.Time
+	// Revision changes when a report answer is applied, not when its seq is drawn.
+	Revision int64
+	Expires  time.Time
 	// PoolBytes is the org's pool; OrgUsed is every app's usage, KyPost's last report
 	// included; OverSince is KyIdentity's start of the overrun.
 	PoolBytes, OrgUsed int64
@@ -68,8 +70,8 @@ func timeOrZero(n int64) time.Time {
 func StorageGrant(ctx context.Context, db *sql.DB, org string) (Grant, error) {
 	var g Grant
 	var expires, over, first, end int64
-	err := db.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes, pool_bytes, org_used_bytes, over_since, first_over, grace_end FROM org_storage WHERE org_id = ?`, org).
-		Scan(&g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported, &g.PoolBytes, &g.OrgUsed, &over, &first, &end)
+	err := db.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes, pool_bytes, org_used_bytes, over_since, first_over, grace_end, grant_revision FROM org_storage WHERE org_id = ?`, org).
+		Scan(&g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported, &g.PoolBytes, &g.OrgUsed, &over, &first, &end, &g.Revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Grant{}, nil
 	}
@@ -83,7 +85,7 @@ func NextStorageSeq(ctx context.Context, db *sql.DB, org string) (int64, Grant, 
 	var seq, expires int64
 	var g Grant
 	err := db.QueryRowContext(ctx, `INSERT INTO org_storage(org_id, seq, used_bytes, ceiling_bytes, expires_at) VALUES(?, 1, 0, 0, 0)
-ON CONFLICT(org_id) DO UPDATE SET seq = org_storage.seq + 1 RETURNING seq, used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes`, org).Scan(&seq, &g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported)
+ON CONFLICT(org_id) DO UPDATE SET seq = org_storage.seq + 1 RETURNING seq, used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes, grant_revision`, org).Scan(&seq, &g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported, &g.Revision)
 	g.Expires = time.Unix(expires, 0)
 	return seq, g, err
 }
@@ -99,7 +101,7 @@ func SetGrant(ctx context.Context, db *sql.DB, org string, seq int64, g Grant) e
 	if g.OverSince.IsZero() && g.OrgUsed <= g.PoolBytes {
 		within = 1
 	}
-	_, err := db.ExecContext(ctx, `UPDATE org_storage SET used_bytes = ? + admitted_bytes - ?, reported_bytes = ?, ceiling_bytes = ?, expires_at = ?, pool_bytes = ?, org_used_bytes = ?, over_since = ?,
+	_, err := db.ExecContext(ctx, `UPDATE org_storage SET grant_revision = grant_revision + 1, used_bytes = ? + admitted_bytes - ?, reported_bytes = ?, ceiling_bytes = ?, expires_at = ?, pool_bytes = ?, org_used_bytes = ?, over_since = ?,
  first_over = CASE WHEN ? = 1 THEN 0 ELSE first_over END, grace_end = CASE WHEN ? = 1 THEN 0 ELSE grace_end END
 WHERE org_id = ? AND seq = ?`,
 		g.Used, g.Admitted, g.Used, g.Ceiling, g.Expires.Unix(), g.PoolBytes, g.OrgUsed, unixOrZero(g.OverSince), within, within, org, seq)
@@ -108,13 +110,15 @@ WHERE org_id = ? AND seq = ?`,
 
 // MarkOverrun writes KyPost's first sighting of org's overrun and the end of its
 // receiving overage, each only if unset (zero arguments write nothing), so every
-// replica keeps the first value.
-func MarkOverrun(ctx context.Context, db *sql.DB, org string, firstOver, graceEnd time.Time) error {
+// replica keeps the first value. revision must be the applied grant read by the probe;
+// a report that clears/replaces it makes this a no-op. seq alone is insufficient: a
+// pending report can be applied after the read without drawing another sequence.
+func MarkOverrun(ctx context.Context, db *sql.DB, org string, revision int64, firstOver, graceEnd time.Time) error {
 	if firstOver.IsZero() && graceEnd.IsZero() {
 		return nil
 	}
 	_, err := db.ExecContext(ctx, `UPDATE org_storage SET first_over = CASE WHEN first_over = 0 THEN ? ELSE first_over END,
- grace_end = CASE WHEN grace_end = 0 THEN ? ELSE grace_end END WHERE org_id = ?`, unixOrZero(firstOver), unixOrZero(graceEnd), org)
+ grace_end = CASE WHEN grace_end = 0 THEN ? ELSE grace_end END WHERE org_id = ? AND grant_revision = ?`, unixOrZero(firstOver), unixOrZero(graceEnd), org, revision)
 	return err
 }
 
@@ -226,8 +230,8 @@ func ReserveMail(ctx context.Context, db *sql.DB, reservations []MailReservation
 	for _, r := range reservations {
 		var g Grant
 		var expires, over, first, end int64
-		err := tx.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, reported_bytes, pool_bytes, org_used_bytes, over_since, first_over, grace_end FROM org_storage WHERE org_id = ?`, r.Org).
-			Scan(&g.Used, &g.Ceiling, &expires, &g.Reported, &g.PoolBytes, &g.OrgUsed, &over, &first, &end)
+		err := tx.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, reported_bytes, pool_bytes, org_used_bytes, over_since, first_over, grace_end, grant_revision FROM org_storage WHERE org_id = ?`, r.Org).
+			Scan(&g.Used, &g.Ceiling, &expires, &g.Reported, &g.PoolBytes, &g.OrgUsed, &over, &first, &end, &g.Revision)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return PoolMailTemporary, err
 		}

@@ -2021,8 +2021,15 @@ receiving grace, limited to max(10% of the pool, 2 GB) over; then 452 4.2.2 for 
 then 552 5.2.2 (hosted exit 14). Only confirmed reported usage exhausting overage ends grace early. Cached reservations can include failed/in-flight writes: they bound admission but cannot end grace. Confirming new stored bytes may therefore wait until the next periodic report.
 `first_over` and `grace_end` are write-once per overrun; a fresh report confirming the org
 back within its pool clears them. Missing pools fail closed with 452; staff is exempt.
-`pool_bytes`, `org_used_bytes`, `over_since`, `first_over`, `grace_end` extend the new,
+`pool_bytes`, `org_used_bytes`, `over_since`, `first_over`, `grace_end`, `grant_revision` extend the new,
 unreleased `org_storage` table: multi startup is still refused, so there is no prior shape.
+
+`grant_revision` advances with each applied report answer, independently of the sequence
+allocated before its HTTP request. `MarkOverrun` writes only if that applied revision
+still matches the probe's snapshot. Thus a stale RCPT probe cannot restore dates cleared
+by recovery, even if the recovering report's sequence was allocated before the probe.
+`TestStaleOverrunProbeCannotUndoRecovery` deterministically interleaves that answer and
+checks that the next genuine overrun receives a fresh seven-day grace window.
 
 RCPT uses the cached grant as a probe. DATA reserves bytes once per org (all distinct
 mailbox copies), in one shared tenancy writer transaction before holding acceptance.

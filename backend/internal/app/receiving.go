@@ -137,7 +137,7 @@ func (r *receivingRuntime) poolRoom(ctx context.Context, org string, add int64) 
 		return err
 	}
 	answer, firstOver, graceEnd := g.Mail(g.Used, add, time.Now())
-	if err := tenancy.MarkOverrun(ctx, r.tenancy, org, firstOver, graceEnd); err != nil {
+	if err := tenancy.MarkOverrun(ctx, r.tenancy, org, g.Revision, firstOver, graceEnd); err != nil {
 		return err
 	}
 	switch answer {

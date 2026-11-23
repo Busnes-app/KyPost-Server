@@ -41,7 +41,7 @@ func TestStorageGrant(t *testing.T) {
 	if s, _, err := NextStorageSeq(ctx, db, orgTwo); err != nil || s != 1 {
 		t.Fatalf("another org's first seq %d %v", s, err)
 	}
-	want := Grant{Used: 10, Reported: 10, Ceiling: 50, Expires: time.Unix(now.Add(time.Minute).Unix(), 0)}
+	want := Grant{Used: 10, Reported: 10, Revision: 1, Ceiling: 50, Expires: time.Unix(now.Add(time.Minute).Unix(), 0)}
 	// The answer to the older report arrives late: it changes nothing.
 	if err := SetGrant(ctx, db, orgOne, s1, Grant{Used: 99, Ceiling: 1 << 40, Expires: want.Expires}); err != nil {
 		t.Fatal(err)
@@ -294,10 +294,10 @@ func TestOverrunMarks(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, later := time.Unix(1_800_000_000, 0), time.Unix(1_800_000_600, 0)
-	if err := MarkOverrun(ctx, db, orgOne, first, time.Time{}); err != nil {
+	if err := MarkOverrun(ctx, db, orgOne, 0, first, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := MarkOverrun(ctx, db, orgOne, later, later); err != nil {
+	if err := MarkOverrun(ctx, db, orgOne, 0, later, later); err != nil {
 		t.Fatal(err)
 	}
 	g, err := StorageGrant(ctx, db, orgOne)
@@ -556,5 +556,81 @@ func TestStorageMailPostgresSeparateConnections(t *testing.T) {
 	}
 	if g, err := StorageGrant(ctx, first, orgOne); err != nil || g.Used != 10 {
 		t.Fatalf("org overshot its grant: %+v %v", g, err)
+	}
+}
+
+// Deterministically interleave a pending report's answer between an RCPT probe's
+// grant read and date write. The sequence was drawn BEFORE the probe, so checking
+// only that sequence would not protect against the answer clearing the overrun.
+func TestStaleOverrunProbeCannotUndoRecovery(t *testing.T) {
+	ctx, db := context.Background(), openCache(t).DB
+	now := time.Unix(1_800_000_000, 0)
+	const pool = 20_000_000_000
+	seq, _, err := NextStorageSeq(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetGrant(ctx, db, orgOne, seq, Grant{PoolBytes: pool, OrgUsed: pool + PoolOverage(pool), OverSince: now.Add(-24 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// Recovery HTTP request is already in flight when the RCPT probe reads the cache.
+	seq, _, err = NextStorageSeq(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := StorageGrant(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, first, end := snapshot.Mail(snapshot.Used, 1, now)
+	if answer != PoolMailTemporary || end.IsZero() {
+		t.Fatalf("old probe did not exhaust grace: %v %v", answer, end)
+	}
+	// Its response confirms recovery and clears the dates, using the very same seq.
+	if err := SetGrant(ctx, db, orgOne, seq, Grant{PoolBytes: pool, OrgUsed: pool - 1, Ceiling: 100, Expires: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkOverrun(ctx, db, orgOne, snapshot.Revision, first, end); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := StorageGrant(ctx, db, orgOne)
+	if err != nil || !recovered.FirstOver.IsZero() || !recovered.GraceEnd.IsZero() {
+		t.Fatalf("stale probe restored cleared overrun: %+v %v", recovered, err)
+	}
+	// A genuine later overrun must get a fresh seven days, not the old grace_end.
+	seq, _, err = NextStorageSeq(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetGrant(ctx, db, orgOne, seq, Grant{PoolBytes: pool, OrgUsed: pool + 1}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := StorageGrant(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := now.Add(5 * 24 * time.Hour)
+	answer, first, end = current.Mail(current.Used, 1, later)
+	if answer != PoolMailAccept || !first.Equal(later) || !end.IsZero() {
+		t.Fatalf("new overrun lost fresh grace: %v first %v end %v", answer, first, end)
+	}
+	if err := MarkOverrun(ctx, db, orgOne, current.Revision, first, end); err != nil {
+		t.Fatal(err)
+	}
+	current, err = StorageGrant(ctx, db, orgOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		at   time.Time
+		want PoolMail
+	}{
+		{later.Add(GracePeriod - time.Second), PoolMailAccept},
+		{later.Add(GracePeriod), PoolMailTemporary},
+		{later.Add(GracePeriod + TemporaryAfter), PoolMailRefuse},
+	} {
+		if got, _, _ := current.Mail(current.Used, 1, c.at); got != c.want {
+			t.Fatalf("at %v: got %v want %v", c.at, got, c.want)
+		}
 	}
 }
