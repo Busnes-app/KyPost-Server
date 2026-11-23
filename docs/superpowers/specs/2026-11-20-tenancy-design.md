@@ -99,7 +99,7 @@ drive the design:
 | Couple | 2 | 40 GB | the shared install |
 | Family | up to 6 | 100 GB | the shared install |
 | Business | N seats (small teams) | 30 GB per seat, pooled across the team | the shared install |
-| Enterprise | its own directory | custom | a dedicated single-tenant install, cloud or on premises; SQLite is fine |
+| Enterprise | its own directory | no pool: a custom per-mailbox size (Quotas, single-tenant) | a dedicated single-tenant install, cloud or on premises; SQLite is fine |
 
 Every plan sells all seven apps (email, contacts, calendar, tasks, notes, drive, messages), so
 KyPost is in every one.
@@ -826,7 +826,9 @@ limits"), and names the pool, not the mailbox, as what is full.
 
 *Single-tenant* (self-hosted and Enterprise) has no pool: there is no `tenancy.db`, so every check
 above is skipped, as `orgRoom` skips today (`app/receiving.go:99-101`). Enterprise's custom size
-is the install's `KYPOST_MAILBOX_QUOTA_BYTES`.
+is the install's `KYPOST_MAILBOX_QUOTA_BYTES`, a per-mailbox limit. An Enterprise contract
+sold as a pooled figure cannot be enforced by KyPost as written: that would need the pool on a
+single-tenant install, which is not designed.
 
 *Negative tests the build must carry:* wrong org (a report or a check never counts another org's
 mailbox), a wrong client (KyIdentity refuses a report signed by another app), a replayed or older

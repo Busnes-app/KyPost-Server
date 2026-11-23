@@ -378,8 +378,13 @@ drafts and Sent copies, because they are `messages` rows too.
 
 **One seam.** The bucket is a third implementation of MH1's `vol.Vol` (`vol/vol.go:16-24`),
 `vol.Object`, beside `File` and `Table`. No second interface is added. Bodies are written once
-and never changed (an expunge sets `raw` to NULL, `mailbox/store.go:677`), so the object
-implementation needs only part of the contract:
+and never changed, so the object implementation needs only part of the contract. In
+`mailbox.db`, `raw` is only ever set to NULL in place: an expunge does it
+(`mailbox/store.go:677`), and incoming encryption inserts its replacement as a new row
+(`mailbox/incoming_encryption.go:163`) and then sets the original's `raw` to NULL (`:170`). In
+both cases a moved body's `bodies` row is deleted and its object tombstoned (below), and a
+replacement over the threshold gets a new object and its own row. MH11 keeps this true with a
+test that fails on any `UPDATE` setting `raw` to a value. The contract needed:
 - **Write** with revision 0 creates with a conditional put (`If-None-Match: *`), so two replicas
   can never overwrite one key. A write at any other revision is refused. Whether every target
   provider honours conditional puts is unverified, and MH11 tests it against the chosen one.
@@ -1110,7 +1115,8 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
     `raw`; `usage` is equal either way; a conditional put that loses a race is refused; a tampered,
     missing or other-org object fails the read, never returns empty; a body copied to another
     mailbox's key fails to open; the purge leaves an empty prefix; an orphan is swept; a capsule taken
-    before an expunge and older than several sweep cycles restores with every body readable; no
+    before an expunge and older than several sweep cycles restores with every body readable;
+    incoming encryption of a moved body leaves a new object and tombstones the old one; no
     credential reaches a log; with object storage not configured every body stays in `raw`; and
     the single-tenant upgrade test is unchanged.
 
