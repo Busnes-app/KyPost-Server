@@ -144,6 +144,10 @@ func (s *Server) reportStorage(ctx context.Context) error {
 				case "ok":
 					g.Ceiling = r.CeilingBytes
 					g.Expires = sent.Add(time.Duration(min(r.TTLSeconds, int64(tenancy.GrantTTL/time.Second))) * time.Second)
+					g.PoolBytes, g.OrgUsed = r.PoolBytes, r.OrgUsedBytes
+					if r.OverSince != nil {
+						g.OverSince = time.Unix(*r.OverSince, 0)
+					}
 				}
 				if err := tenancy.SetGrant(ctx, s.tenancy, rep.OrgID, rep.Seq, g); err != nil {
 					return err

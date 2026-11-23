@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Hosted incoming mail: reserve every organisation's DATA copies atomically against its cached pool/grace budget, including concurrent deliveries to different mailboxes. RCPT and accepted replays do not spend storage headroom.
+
 - Hosted org storage: reserve cached headroom atomically for each new write, without rescanning mailboxes or photos per imported message. Periodic reports read only the org's member mailboxes and preserve concurrent reservations; deletions release room at the next report.
 
 - Native device hardening: multi-mode registrations use server-minted IDs, retaining an owner’s existing ID only after device-secret verification. Single-mode ID compatibility is preserved. Failed device authentication uses a uniform source-address budget.

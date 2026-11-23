@@ -80,11 +80,12 @@ One profile per deployment, chosen in setup (root `AGENTS.md` "Mail sources";
   What Maddy answers for an exit code the table does not list (for example 6 from `accept`) is
   unverified. No code path above raises one.
 
-  The hosted MX configuration adds two `bind` codes. Single-tenant configurations never contain
-  them, and codes 0–11 do not change:
+  The hosted MX configuration adds three codes: 12 and 13 at `bind`, and 14 at `bind` and
+  `accept`. Single-tenant configurations never contain them, and codes 0–11 do not change:
 
   | Exit | `bind` (RCPT) | Raised by |
   |---|---|---|
+  | 14 | `552 5.2.2` mailbox full, also at `accept` | The org storage pool, 3 days after its grace ended (K open question 16, decided 2026-11-23; K "Org storage pool as built") |
   | 12 | `451 4.2.1` mailbox temporarily unavailable | K's org check: the owner's org is `suspended`, or missing from the `orgs` cache (K "Inbound routing to the right org"). `deletion_scheduled` and `deleted` use exit 3, the unknown-address `550 5.1.1`. |
   | 13 | `450 4.7.1` try again later | The relay domain's per-source probe budget (below) |
 - **`bind`** (`app/receiving.go:404-483`), in order: sender shape (exit 7), sender blocks (8,

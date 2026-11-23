@@ -522,6 +522,14 @@ Org storage quotas: an org's `mailboxBytes` (per mailbox) and `storageBytes` (al
 mailboxes) from KyIdentity's entitlements are checked with the mailbox's own quota, mail waiting
 in the buffer counted. Past either, the recipient gets the same `452 4.2.2 Mailbox full` (exit 9).
 
+Org storage pool (KyIdentity's one pool per org across every app): mail within KyPost's grant
+is accepted. Once the org is past its pool, mail is still accepted for 7 days, or until the org
+is 10 % of its pool over (at least 2 GB), whichever comes first. Then the recipient gets
+`452 4.2.2 Mailbox full` (exit 9) for 3 days, and after that `552 5.2.2 Mailbox full` (exit
+14), so the sender's server bounces it. Freeing space in any app ends this at the next usage
+report, within about a minute. An org KyIdentity has reported no pool for gets exit 9 at once.
+The staff org is exempt, and the org status answers below come first.
+
 Org status at `RCPT`, from the replicas' org cache whatever its age: a suspended or disabled org,
 or one not in the cache, gets `451 4.2.1` (exit 12), so senders retry. `deletion_scheduled` and
 `deleted` get the unknown-address `550 5.1.1` (exit 3), and that mail is lost. The staff org

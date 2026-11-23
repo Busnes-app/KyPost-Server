@@ -35,25 +35,47 @@ const maxStorageAnswer = 1 << 20
 // maxBytes is the largest byte figure either side may send (2^53).
 const maxBytes = 1 << 53
 
-// Grant is an org's last grant. A missing row is the zero Grant, which fits nothing.
+// Grant is an org's last grant, with the pool KyIdentity reported beside it. A missing row
+// is the zero Grant, which fits nothing and has no pool. Zero times are unset.
 type Grant struct {
-	Used, Ceiling int64
-	// Admitted is a monotonic watermark of locally reserved growth, never reset by a report.
-	Admitted int64
-	// Reported is the measured usage in the last accepted report, before reservations.
-	Reported int64
+	Used, Ceiling      int64
+	Admitted, Reported int64
+	// Revision changes when a report answer is applied, not when its seq is drawn.
+	Revision int64
 	Expires  time.Time
+	// PoolBytes is the org's pool; OrgUsed is every app's usage, KyPost's last report
+	// included; OverSince is KyIdentity's start of the overrun.
+	PoolBytes, OrgUsed int64
+	OverSince          time.Time
+	// FirstOver is KyPost's own first sighting of the overrun, GraceEnd the moment the
+	// receiving overage ran out (PoolMail); both are written once per overrun.
+	FirstOver, GraceEnd time.Time
+}
+
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
+}
+
+func timeOrZero(n int64) time.Time {
+	if n <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(n, 0)
 }
 
 // StorageGrant reads org's grant.
 func StorageGrant(ctx context.Context, db *sql.DB, org string) (Grant, error) {
 	var g Grant
-	var expires int64
-	err := db.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes FROM org_storage WHERE org_id = ?`, org).Scan(&g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported)
+	var expires, over, first, end int64
+	err := db.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes, pool_bytes, org_used_bytes, over_since, first_over, grace_end, grant_revision FROM org_storage WHERE org_id = ?`, org).
+		Scan(&g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported, &g.PoolBytes, &g.OrgUsed, &over, &first, &end, &g.Revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Grant{}, nil
 	}
-	g.Expires = time.Unix(expires, 0)
+	g.Expires, g.OverSince, g.FirstOver, g.GraceEnd = time.Unix(expires, 0), timeOrZero(over), timeOrZero(first), timeOrZero(end)
 	return g, err
 }
 
@@ -63,24 +85,109 @@ func NextStorageSeq(ctx context.Context, db *sql.DB, org string) (int64, Grant, 
 	var seq, expires int64
 	var g Grant
 	err := db.QueryRowContext(ctx, `INSERT INTO org_storage(org_id, seq, used_bytes, ceiling_bytes, expires_at) VALUES(?, 1, 0, 0, 0)
-ON CONFLICT(org_id) DO UPDATE SET seq = org_storage.seq + 1 RETURNING seq, used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes`, org).Scan(&seq, &g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported)
+ON CONFLICT(org_id) DO UPDATE SET seq = org_storage.seq + 1 RETURNING seq, used_bytes, ceiling_bytes, expires_at, admitted_bytes, reported_bytes, grant_revision`, org).Scan(&seq, &g.Used, &g.Ceiling, &expires, &g.Admitted, &g.Reported, &g.Revision)
 	g.Expires = time.Unix(expires, 0)
 	return seq, g, err
 }
 
-// SetGrant records the answer to report seq. g.Admitted is the watermark read BEFORE
-// measuring usage; growth reserved since then is retained, including while HTTP waited.
-// A scan can count some of that growth twice, conservatively, until the next report.
-// A reservation already in flight when that watermark was read can escape the scan:
-// at most one bounded write per mailbox writer or photo-directory lock, plus receiving
-// copies under its quota fences. This is the documented report-overlap bound.
-// Failed writes also stay charged until the next report.
-// A newer report drawn since wins: the write
-// applies only while seq is still the org's latest.
+// SetGrant preserves reservations since g.Admitted (the pre-scan watermark). See the
+// report-overlap bound in the tenancy design; failed writes stay charged until a report.
+// SetGrant records the answer to report seq: the grant and the pool. A newer report
+// drawn since wins: the write applies only while seq is still the org's latest. An
+// answer with the org back within its pool ends the overrun, so the next one gets a
+// fresh grace window.
 func SetGrant(ctx context.Context, db *sql.DB, org string, seq int64, g Grant) error {
-	_, err := db.ExecContext(ctx, `UPDATE org_storage SET used_bytes = ? + admitted_bytes - ?, reported_bytes = ?, ceiling_bytes = ?, expires_at = ? WHERE org_id = ? AND seq = ?`,
-		g.Used, g.Admitted, g.Used, g.Ceiling, g.Expires.Unix(), org, seq)
+	within := 0
+	if g.OverSince.IsZero() && g.OrgUsed <= g.PoolBytes {
+		within = 1
+	}
+	_, err := db.ExecContext(ctx, `UPDATE org_storage SET grant_revision = grant_revision + 1, used_bytes = ? + admitted_bytes - ?, reported_bytes = ?, ceiling_bytes = ?, expires_at = ?, pool_bytes = ?, org_used_bytes = ?, over_since = ?,
+ first_over = CASE WHEN ? = 1 THEN 0 ELSE first_over END, grace_end = CASE WHEN ? = 1 THEN 0 ELSE grace_end END
+WHERE org_id = ? AND seq = ?`,
+		g.Used, g.Admitted, g.Used, g.Ceiling, g.Expires.Unix(), g.PoolBytes, g.OrgUsed, unixOrZero(g.OverSince), within, within, org, seq)
 	return err
+}
+
+// MarkOverrun writes KyPost's first sighting of org's overrun and the end of its
+// receiving overage, each only if unset (zero arguments write nothing), so every
+// replica keeps the first value. revision must be the applied grant read by the probe;
+// a report that clears/replaces it makes this a no-op. seq alone is insufficient: a
+// pending report can be applied after the read without drawing another sequence.
+func MarkOverrun(ctx context.Context, db *sql.DB, org string, revision int64, firstOver, graceEnd time.Time) error {
+	if firstOver.IsZero() && graceEnd.IsZero() {
+		return nil
+	}
+	_, err := db.ExecContext(ctx, `UPDATE org_storage SET first_over = CASE WHEN first_over = 0 THEN ? ELSE first_over END,
+ grace_end = CASE WHEN grace_end = 0 THEN ? ELSE grace_end END WHERE org_id = ? AND grant_revision = ?`, unixOrZero(firstOver), unixOrZero(graceEnd), org, revision)
+	return err
+}
+
+// Incoming mail over the pool (K open question 16, owner decision of 2026-11-23): 7 days'
+// grace with up to PoolOverage(pool) more, whichever ends first; then a temporary refusal
+// for 3 days; then a permanent one.
+const (
+	GracePeriod    = 7 * 24 * time.Hour
+	TemporaryAfter = 3 * 24 * time.Hour
+	minOverage     = 2_000_000_000 // 2 GB, the overage of the smallest plan's 20 GB pool
+)
+
+// PoolOverage is how far past its pool an org's incoming mail may take it during grace:
+// 10 % of the pool, and at least 2 GB.
+func PoolOverage(pool int64) int64 { return max(pool/10, minOverage) }
+
+// PoolMail is what incoming mail gets from the pool.
+type PoolMail int
+
+const (
+	PoolMailAccept    PoolMail = iota
+	PoolMailTemporary          // 452 4.2.2, exit 9
+	PoolMailRefuse             // 552 5.2.2, exit 14
+)
+
+// Mail answers a delivery of add bytes when KyPost stores used bytes for the org now. It
+// fits the grant like any write, or else falls under the overrun rule, which starts at
+// the earlier of KyIdentity's OverSince and KyPost's FirstOver. Grace ends at 7 days or
+// once stored usage reaches the overage. firstOver and graceEnd
+// are the dates the caller must record (MarkOverrun), zero when there is nothing new. An
+// org with no pool (KyIdentity has not reported one) gets the temporary answer and no
+// grace (K open question 15).
+func (g Grant) Mail(used, add int64, now time.Time) (answer PoolMail, firstOver, graceEnd time.Time) {
+	if now.Before(g.Expires) && used >= 0 && add >= 0 && used <= g.Ceiling && add <= g.Ceiling-used {
+		return PoolMailAccept, time.Time{}, time.Time{}
+	}
+	if g.PoolBytes <= 0 {
+		return PoolMailTemporary, time.Time{}, time.Time{}
+	}
+	start := g.FirstOver
+	if !g.OverSince.IsZero() && (start.IsZero() || g.OverSince.Before(start)) {
+		start = g.OverSince
+	}
+	if start.IsZero() || start.After(now) {
+		start, firstOver = now, now
+	}
+	end := start.Add(GracePeriod)
+	if !g.GraceEnd.IsZero() && g.GraceEnd.Before(end) {
+		end = g.GraceEnd
+	}
+	if now.Before(end) {
+		// Every other app's last reported usage, plus KyPost's now.
+		total := max(g.OrgUsed-g.Reported, 0) + used
+		ceiling := g.PoolBytes + PoolOverage(g.PoolBytes)
+		if add >= 0 && total+add <= ceiling {
+			return PoolMailAccept, firstOver, time.Time{}
+		}
+		// Reservations can include failed/in-flight writes. They bound admission but
+		// cannot end grace: only the periodic report confirms stored usage. A refused
+		// oversized delivery or a failed holding write therefore cannot shorten grace.
+		if total < ceiling || g.OrgUsed < ceiling {
+			return PoolMailTemporary, firstOver, time.Time{}
+		}
+		end, graceEnd = now, now
+	}
+	if now.Before(end.Add(TemporaryAfter)) {
+		return PoolMailTemporary, firstOver, graceEnd
+	}
+	return PoolMailRefuse, firstOver, graceEnd
 }
 
 // ReserveStorage atomically spends org's cached headroom across mailboxes, processes
@@ -97,6 +204,65 @@ func ReserveStorage(ctx context.Context, db *sql.DB, org string, add int64, now 
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// MailReservation is all the copies a DATA delivery adds to one org. Limit is the
+// optional KyPost storage safety ceiling; the pool and grace still apply separately.
+type MailReservation struct {
+	Org   string
+	Bytes int64
+	Limit *int64
+}
+
+// ReserveMail admits every org's copies or none, under the shared tenancy writer
+// transaction. tenancy.Open uses SQLite immediate transactions or kypg, whose BeginTx
+// takes the schema writer advisory lock BEFORE any read (pgdialect/driver.go). Thus
+// separate PostgreSQL connections/replicas serialize admission, not just the UPDATE.
+// RCPT probes never call it. Refusals persist overrun dates without
+// spending bytes; failed holding writes remain charged until the next usage report.
+func ReserveMail(ctx context.Context, db *sql.DB, reservations []MailReservation, now time.Time) (PoolMail, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return PoolMailTemporary, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	answer := PoolMailAccept
+	for _, r := range reservations {
+		var g Grant
+		var expires, over, first, end int64
+		err := tx.QueryRowContext(ctx, `SELECT used_bytes, ceiling_bytes, expires_at, reported_bytes, pool_bytes, org_used_bytes, over_since, first_over, grace_end, grant_revision FROM org_storage WHERE org_id = ?`, r.Org).
+			Scan(&g.Used, &g.Ceiling, &expires, &g.Reported, &g.PoolBytes, &g.OrgUsed, &over, &first, &end, &g.Revision)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return PoolMailTemporary, err
+		}
+		g.Expires, g.OverSince, g.FirstOver, g.GraceEnd = timeOrZero(expires), timeOrZero(over), timeOrZero(first), timeOrZero(end)
+		if r.Limit != nil && (g.Used > *r.Limit || r.Bytes > *r.Limit-g.Used) {
+			return PoolMailTemporary, nil
+		}
+		decision, firstAt, endAt := g.Mail(g.Used, r.Bytes, now)
+		answer = max(answer, decision)
+		if _, err := tx.ExecContext(ctx, `UPDATE org_storage SET first_over = CASE WHEN first_over = 0 THEN ? ELSE first_over END,
+   grace_end = CASE WHEN grace_end = 0 THEN ? ELSE grace_end END WHERE org_id = ?`, unixOrZero(firstAt), unixOrZero(endAt), r.Org); err != nil {
+			return PoolMailTemporary, err
+		}
+	}
+	if answer == PoolMailAccept {
+		for _, r := range reservations {
+			result, err := tx.ExecContext(ctx, `UPDATE org_storage SET used_bytes = used_bytes + ?, admitted_bytes = admitted_bytes + ?
+    WHERE org_id = ? AND admitted_bytes <= 9223372036854775807 - ?`, r.Bytes, r.Bytes, r.Org, r.Bytes)
+			if err != nil {
+				return PoolMailTemporary, err
+			}
+			n, err := result.RowsAffected()
+			if err != nil {
+				return PoolMailTemporary, err
+			}
+			if n != 1 {
+				return PoolMailTemporary, nil
+			}
+		}
+	}
+	return answer, tx.Commit()
 }
 
 // ReportableOrgs lists the cached orgs KyPost reports for: every one not deleted.
@@ -132,6 +298,9 @@ type StorageResult struct {
 	Seq          int64  `json:"seq"`
 	CeilingBytes int64  `json:"ceiling_bytes"`
 	TTLSeconds   int64  `json:"ttl_seconds"`
+	PoolBytes    int64  `json:"pool_bytes"`
+	OrgUsedBytes int64  `json:"org_used_bytes"`
+	OverSince    *int64 `json:"over_since"`
 }
 
 // ErrStorageAnswer is a malformed answer; nothing of it is applied.
@@ -204,7 +373,8 @@ func matchResults(reports []StorageReport, results []StorageResult) ([]StorageRe
 	for _, r := range results {
 		_, seen := byOrg[r.OrgID]
 		switch {
-		case seen, r.Seq < 0, r.CeilingBytes < 0, r.CeilingBytes > maxBytes, r.TTLSeconds < 0:
+		case seen, r.Seq < 0, r.CeilingBytes < 0, r.CeilingBytes > maxBytes, r.TTLSeconds < 0,
+			r.PoolBytes < 0, r.PoolBytes > maxBytes, r.OrgUsedBytes < 0, r.OrgUsedBytes > maxBytes, r.OverSince != nil && *r.OverSince <= 0:
 			return nil, ErrStorageAnswer
 		case r.Result == "ok", r.Result == "stale", r.Result == "unknown_org":
 		default:

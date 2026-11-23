@@ -63,7 +63,7 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 		return err
 	}
 	if remote != nil {
-		return writeReceivingConfig(ctx, executable, config.StateDir(), address.String(), host, args[2], args[3], ` "{source_ip}" "{source_host}"`, hostedBindCodes, remote.destinations, output)
+		return writeReceivingConfig(ctx, executable, config.StateDir(), address.String(), host, args[2], args[3], ` "{source_ip}" "{source_host}"`, hostedBindCodes, hostedAcceptCodes, remote.destinations, output)
 	}
 	r, err := openReceivingRuntime(ctx, false)
 	if err != nil {
@@ -73,11 +73,17 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 	return r.writeConfig(ctx, executable, address.String(), host, args[2], args[3], spamArgs, output)
 }
 
-// hostedBindCodes are the hosted profile's extra bind answers (RX "Exit codes"). A
+// hostedBindCodes and hostedAcceptCodes are the hosted profile's extra answers (RX "Exit
+// codes"; 14 is the org storage pool's permanent refusal, K open question 16). A
 // single-tenant profile never has them.
-const hostedBindCodes = `
+const (
+	hostedBindCodes = `
             code 12 reject 451 4.2.1 "Mailbox temporarily unavailable"
-            code 13 reject 450 4.7.1 "Try again later"`
+            code 13 reject 450 4.7.1 "Try again later"` + poolRefusedCode
+	hostedAcceptCodes = poolRefusedCode
+	poolRefusedCode   = `
+            code 14 reject 552 5.2.2 "Mailbox full"`
+)
 
 // checkReceivingHost accepts a fully qualified lowercase ASCII DNS name.
 func checkReceivingHost(host string) error {
@@ -100,12 +106,12 @@ func checkReceivingHost(host string) error {
 // writeConfig renders the profile after the runtime's storage, TLS and fresh
 // domain checks. Every configured domain is a Maddy destination.
 func (r *receivingRuntime) writeConfig(ctx context.Context, executable, address, host, certPath, keyPath, spamArgs string, output io.Writer) error {
-	return writeReceivingConfig(ctx, executable, r.stateDir, address, host, certPath, keyPath, spamArgs, "", r.destinations, output)
+	return writeReceivingConfig(ctx, executable, r.stateDir, address, host, certPath, keyPath, spamArgs, "", "", r.destinations, output)
 }
 
 // writeReceivingConfig checks the local settings and TLS files, then renders the profile
 // around destinations' domains.
-func writeReceivingConfig(ctx context.Context, executable, stateDir, address, host, certPath, keyPath, spamArgs, bindCodes string, destinations func(context.Context) ([]string, error), output io.Writer) error {
+func writeReceivingConfig(ctx context.Context, executable, stateDir, address, host, certPath, keyPath, spamArgs, bindCodes, acceptCodes string, destinations func(context.Context) ([]string, error), output io.Writer) error {
 	concurrency, err := config.ReceivingConcurrency.Get()
 	if err != nil {
 		return err
@@ -206,13 +212,13 @@ smtp tcp://%s {
             code 5 reject 451 4.7.0 "Spam check temporarily deferred; retry later"
             code 9 reject 452 4.2.2 "Mailbox full"
             code 11 reject 554 5.6.0 "Message headers cannot be stored"
-            code 10 reject 452 4.3.1 "Insufficient system storage"
+            code 10 reject 452 4.3.1 "Insufficient system storage"%s
         }
     }
     destination %s { deliver_to dummy }
     default_destination { reject }
 }
-`, host, stateDir, stateDir, certPath, keyPath, address, concurrency, ipConcurrency, rate, ipRate, executable, bindSource, bindCodes, executable, spamArgs, strings.Join(domains, " "))
+`, host, stateDir, stateDir, certPath, keyPath, address, concurrency, ipConcurrency, rate, ipRate, executable, bindSource, bindCodes, executable, spamArgs, acceptCodes, strings.Join(domains, " "))
 	_, err = io.WriteString(output, config)
 	return err
 }

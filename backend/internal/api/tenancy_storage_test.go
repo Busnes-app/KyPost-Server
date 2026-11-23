@@ -36,6 +36,8 @@ type storageIdP struct {
 	result  string
 	room    func(org string, used int64) int64
 	ttl     int64
+	// overSince is the org's over_since in every answer, nil while within the pool.
+	overSince *int64
 }
 
 func newStorageIdP(t *testing.T) *storageIdP {
@@ -62,7 +64,8 @@ func newStorageIdP(t *testing.T) *storageIdP {
 		results := []tenancy.StorageResult{}
 		for _, rep := range body.Reports {
 			idp.reports[rep.OrgID] = rep
-			res := tenancy.StorageResult{OrgID: rep.OrgID, Result: "ok", Seq: rep.Seq, CeilingBytes: rep.UsedBytes + idp.room(rep.OrgID, rep.UsedBytes), TTLSeconds: idp.ttl}
+			res := tenancy.StorageResult{OrgID: rep.OrgID, Result: "ok", Seq: rep.Seq, CeilingBytes: rep.UsedBytes + idp.room(rep.OrgID, rep.UsedBytes), TTLSeconds: idp.ttl,
+				PoolBytes: 1 << 40, OrgUsedBytes: rep.UsedBytes + 5, OverSince: idp.overSince}
 			if idp.result != "" {
 				res.Result = idp.result
 			}
@@ -153,6 +156,18 @@ func TestOrgStoragePool(t *testing.T) {
 	if repA.UsedBytes != usedA || usedA < 2*int64(len(poolDraft)) {
 		t.Fatalf("org A reported %d, holds %d", repA.UsedBytes, usedA)
 	}
+	// The pool and every app's usage are recorded beside the grant (receiving reads them).
+	if g, _ := tenancy.StorageGrant(ctx, db, orgA); g.PoolBytes != 1<<40 || g.OrgUsed != repA.UsedBytes+5 || !g.OverSince.IsZero() {
+		t.Fatalf("pool not recorded: %+v", g)
+	}
+	since := time.Now().Add(-time.Hour).Unix()
+	idp.set(func(idp *storageIdP) { idp.overSince = &since })
+	check(fx, srv.reportStorage(ctx))
+	if g, _ := tenancy.StorageGrant(ctx, db, orgA); g.OverSince.Unix() != since {
+		t.Fatalf("over_since not recorded: %+v", g)
+	}
+	idp.set(func(idp *storageIdP) { idp.overSince = nil })
+	check(fx, srv.reportStorage(ctx))
 	// Org B's figure holds none of org A's mail.
 	if repB.UsedBytes != 0 {
 		t.Fatalf("org B reported %d bytes it does not hold", repB.UsedBytes)
