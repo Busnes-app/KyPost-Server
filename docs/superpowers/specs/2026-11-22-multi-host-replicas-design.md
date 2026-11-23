@@ -678,7 +678,9 @@ anything):
    documented R setup has neither (`docs/RUNNING.md:257-258,313`), so the guide reconfigures
    both first, while the install still runs on its files.
 2. Creates every missing key of the `SECRET_DIR` inventory once, on this host, as the lazy path
-   would have, then records MH5's key-set digest. From here on every host loads keys and never
+   would have, plus `documents.key`, which no file-mode path creates, and the install's
+   empty-`org_id` `doc_keys` row (Per-org encryption at rest). It then records MH5's key-set
+   digest. From here on every host loads keys and never
    creates them.
 3. Handles an existing `volumes.db` that has no `volume_stores` row. One with no completion mark
    (step 5) is a dead earlier run, so it is dropped and recreated. One **with** the mark holds a
@@ -686,7 +688,8 @@ anything):
    6), and may hold every write made since. The command refuses it and names
    `migrate-volumes-to-files`, which writes that data back.
 4. Copies each classified file into `documents` or `accounts`, one transaction per store, and
-   compares each row's SHA-256 with the file's.
+   compares each row's SHA-256 with the file's. A D row's body is sealed, so its digest is taken
+   after opening it.
 5. Writes a completion mark inside `volumes.db`.
 6. Writes `volume_stores=postgres` in `meta` last. A run that dies before this leaves the install
    on its files, unchanged.
@@ -695,9 +698,9 @@ anything):
    delete them once the install runs well. Until then they sit on the migrating host only.
 
 **`migrate-volumes-to-files`** (MH8) is the reverse, also offline, on one host with the shared
-volumes, refusing while an instance is live. It writes every document and account back to its
+volumes, refusing while an instance is live. It opens each sealed D body, writes every document and account back to its
 file (atomic writes at today's modes), removes a file the tables no longer hold, compares the
-digests, deletes the `volume_stores` row, and then drops `volumes.db`. It also accepts an install
+digests of the opened bodies with the files, deletes the `volume_stores` row, and then drops `volumes.db`. It also accepts an install
 whose `volumes.db` carries the completion mark but whose record is missing, so it can finish a
 reverse that died between those last two steps. The install is then an ordinary single-host R
 install again, with no `volumes.db`, and must run on one host. Deleting the row by hand is
@@ -751,7 +754,8 @@ migration. So the one invariant is: an install without the record has no complet
 - `TestCapsuleRecordNeedsItsVolumesStore`: a backup run with the record but no completed
   `volumes.db` refuses to seal, and a restore of such a capsule (built by hand) refuses.
 - `TestMigrateVolumesRoundTrip`: forward then reverse with no change in between leaves every
-  volume file's bytes and mode as they were, no record and no `volumes.db`.
+  volume file's bytes and mode as they were, no record and no `volumes.db`. Between the two, every
+  D row's body is sealed (no test name or address in a dump) and opens to the file's bytes.
 - `TestMigrateVolumesReverseCarriesWrites`: a contact added, a rule removed and a settings change
   made in table mode are in the files after the reverse.
 - The volume-free test and an in-process two-host test run in migrated single mode as well as in
