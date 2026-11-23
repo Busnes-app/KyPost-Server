@@ -23,7 +23,7 @@ Keep product identity policy in the existing store methods. Use the registered v
 
 ## Verification
 
-`go test -race -p 2 -count=1 ./internal/users` runs file behavior plus PostgreSQL account tests when `KYPOST_TEST_DATABASE_URL` is set. Table cases cover identity pairs/NULLs, uniqueness/admin races, fresh snapshots, corrupt columns, bounded serialization retry and durable restore-finalizer behavior. API `TestTablePurge*`, vol `TestPurgedOwner*`, and backup `TestTableDocumentsBackupRestore` cover cross-store lifecycle.
+`go test -race -p 2 -count=1 ./internal/users` runs file behavior plus PostgreSQL account tests when `KYPOST_TEST_DATABASE_URL` is set. Table cases cover identity pairs/NULLs, uniqueness/admin races, fresh snapshots, corrupt columns, bounded serialization retry, server-observed isolation, two admin writes held concurrently at their row updates, and durable restore-finalizer behavior. A controlled Go overlay that forces READ COMMITTED must fail the isolation/admin-overlap tests; never count a start-channel race alone as proof of overlapping writes. API `TestTablePurge*`, vol `TestPurgedOwner*`, and backup `TestTableDocumentsBackupRestore` cover cross-store lifecycle.
 
 ## Child DOX Index
 

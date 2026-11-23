@@ -63,6 +63,26 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Admission belongs to the signed event's handoff, before another helper
+	// receives its account ID. Table mode runs this whole boundary under the
+	// shared org fence; an erased member enters the exclusive purge separately.
+	apply := func(ctx context.Context) {
+		request := r.WithContext(ctx)
+		if s.multiTenant() {
+			org, status, err := s.bindDirectoryOrg(ctx, settings.IssuerURL, event.ID, body, &u)
+			if err != nil {
+				http.Error(w, err.Error(), status)
+				return
+			}
+			if erased {
+				s.eraseMember(w, request, settings.IssuerURL, event, u, body, org)
+				return
+			}
+		}
+
+		s.applyVerifiedSync(w, request, settings, event, u, body, revision)
+	}
+
 	if s.multiTenant() && users.TableMode(s.configDir) && !erased {
 		var identity struct {
 			Org string `json:"org_id"`
@@ -76,7 +96,7 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 			if _, err := tenancy.LookupOrg(ctx, s.tenancy, identity.Org); err != nil {
 				return err
 			}
-			s.applyVerifiedSync(w, r.WithContext(ctx), settings, event, u, body, revision, erased)
+			apply(ctx)
 			return nil
 		})
 		if err != nil {
@@ -84,22 +104,11 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.applyVerifiedSync(w, r, settings, event, u, body, revision, erased)
+	apply(r.Context())
 }
 
-func (s *Server) applyVerifiedSync(w http.ResponseWriter, r *http.Request, settings sso.SSOSettings, event syncauth.Event, u sso.DirectoryUser, body []byte, revision int64, erased bool) {
-	if s.multiTenant() {
-		org, status, err := s.bindDirectoryOrg(r.Context(), settings.IssuerURL, event.ID, body, &u)
-		if err != nil {
-			http.Error(w, err.Error(), status)
-			return
-		}
-		if erased {
-			s.eraseMember(w, r, settings.IssuerURL, event, u, body, org)
-			return
-		}
-	}
-
+// applyVerifiedSync receives only a verified, org-admitted directory event.
+func (s *Server) applyVerifiedSync(w http.ResponseWriter, r *http.Request, settings sso.SSOSettings, event syncauth.Event, u sso.DirectoryUser, body []byte, revision int64) {
 	status, err := s.ssoLifecycle.ApplyDirectoryUser(settings.IssuerURL, event, u, sso.EventDigest(event.Type, body), func() (bool, error) {
 		fence, err := s.applyDirectoryUserContext(r.Context(), settings.IssuerURL, u)
 		if err != nil || event.Type != "user.mfa_reset" {
@@ -137,7 +146,7 @@ func (s *Server) applyVerifiedSync(w http.ResponseWriter, r *http.Request, setti
 	s.logger.Info("directory event "+status, "event_id", event.ID, "revision", strconv.FormatInt(revision, 10))
 	if s.nativeMail {
 		reconcile := s.reconcileNativeSubject
-		if s.multiTenant() && users.TableMode(s.configDir) && !erased {
+		if s.multiTenant() && users.TableMode(s.configDir) {
 			reconcile = s.reconcileNativeSubjectHeld
 		}
 		if err := reconcile(r.Context(), settings.IssuerURL, u.ID); err != nil {

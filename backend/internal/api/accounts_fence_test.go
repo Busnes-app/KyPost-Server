@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -213,5 +215,44 @@ func TestTableStaffProvisioningKeepsMailboxlessCacheExemption(t *testing.T) {
 	staff := provisionMember(t, fx.srv, fx.srv.tenancy, "table-staff", staffOrg, "kypost.admin")
 	if staff.Role != users.RoleAdmin || staff.NativeMailboxIssuer != "" || staff.NativeMailboxSource != "" {
 		t.Fatal("staff account acquired ordinary mailbox authority", staff)
+	}
+}
+
+func TestTableSyncRejectsForeignOrgBeforeAccountMutation(t *testing.T) {
+	for _, eventType := range []string{"user.updated", "user.mfa_reset"} {
+		t.Run(eventType, func(t *testing.T) {
+			fx, _ := newOrgFixture(t)
+			id, secret := pairNativeDevice(t, fx.srv, fx.a.ID, "foreign-org-sync-device")
+			mountServerDocuments(t, fx.srv)
+			before, err := fx.srv.users.Get(fx.a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			directory, known, err := fx.srv.ssoLifecycle.Directory(before.SSOIssuer, before.SSOSub)
+			if err != nil || !known {
+				t.Fatal(known, err)
+			}
+			response := postDirectory(t, fx.srv, testSyncKey, eventType, "foreign-org-at-boundary", 2, orgUser(before.SSOSub, orgB, false))
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatal(response.Code, response.Body)
+			}
+			after, err := fx.srv.users.Get(before.ID)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatal("foreign event changed account", err)
+			}
+			current, known, err := fx.srv.ssoLifecycle.Directory(before.SSOIssuer, before.SSOSub)
+			if err != nil || !known || !reflect.DeepEqual(directory, current) {
+				t.Fatal("foreign event advanced directory state", err)
+			}
+			if got := userOrgRow(t, fx.srv.tenancy, before.ID); got != orgA {
+				t.Fatal("user binding changed", got)
+			}
+			if got := subjectOrgRow(t, fx.srv, fx.srv.tenancy, before.SSOSub); got != orgA {
+				t.Fatal("subject binding changed", got)
+			}
+			if _, _, ok, _ := fx.srv.deviceAuthFromRequest(deviceRequest(id, secret)); !ok {
+				t.Fatal("foreign event revoked the member's device")
+			}
+		})
 	}
 }

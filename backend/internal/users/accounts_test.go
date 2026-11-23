@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"os"
 	"path/filepath"
@@ -442,5 +443,167 @@ func TestTableAccountStalledAcrossMemberPurgeRetriesAndRefuses(t *testing.T) {
 	}
 	if _, err = a.Get("stalled"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("erased account survived", err)
+	}
+}
+
+func TestTableAccountTransactionIsolationAtServer(t *testing.T) {
+	a, _, _ := accountStores(t)
+	for _, tc := range []struct {
+		name  string
+		level sql.IsolationLevel
+		want  string
+	}{
+		{"serializable", sql.LevelSerializable, "serializable"},
+		{"repeatable-read", sql.LevelRepeatableRead, "repeatable read"},
+		{"read-committed", sql.LevelReadCommitted, "read committed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx, err := a.accounts.BeginTx(context.Background(), &sql.TxOptions{Isolation: tc.level})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback() }()
+			var isolation string
+			if err = tx.QueryRow(`SHOW transaction_isolation`).Scan(&isolation); err != nil || isolation != tc.want {
+				t.Fatal("server isolation", isolation, err)
+			}
+		})
+	}
+	a.mu.Lock()
+	err := a.accountWrite(context.Background(), func() error {
+		var isolation string
+		if err := a.activeAccounts.QueryRow(`SHOW transaction_isolation`).Scan(&isolation); err != nil {
+			return err
+		}
+		if isolation != "serializable" {
+			return fmt.Errorf("account writer isolation = %s", isolation)
+		}
+		return nil
+	})
+	a.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTableAccountDefaultIsolationUsesServerDefault(t *testing.T) {
+	a, _, _ := accountStores(t)
+	conn, err := a.accounts.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err = conn.ExecContext(context.Background(), `SET default_transaction_isolation='repeatable read'`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = conn.ExecContext(context.Background(), `RESET default_transaction_isolation`) }()
+	tx, err := conn.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var isolation string
+	if err = tx.QueryRow(`SHOW transaction_isolation`).Scan(&isolation); err != nil || isolation != "repeatable read" {
+		t.Fatal("default row-writer isolation", isolation, err)
+	}
+}
+
+// The trigger pauses both updates after their independent row locks. Both
+// transactions have read two admins before either may commit; a start-channel
+// race alone did not guarantee that overlap.
+func TestTableAccountOverlappingAdminDemotionsKeepOneAdministrator(t *testing.T) {
+	a, b, db := accountStores(t)
+	first, err := a.CreateSSOUser("overlap-admin-a", RoleAdmin, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := a.CreateSSOUser("overlap-admin-b", RoleAdmin, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	control, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	var pid int
+	if err = control.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	trigger := fmt.Sprintf(`CREATE FUNCTION pause_admin_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM set_config('lock_timeout','20s',true); PERFORM pg_advisory_xact_lock_shared(14519,%d); RETURN NEW; END $$`, pid)
+	if _, err = control.ExecContext(ctx, trigger); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = control.ExecContext(ctx, `CREATE TRIGGER pause_admin_update BEFORE UPDATE ON accounts FOR EACH ROW EXECUTE FUNCTION pause_admin_update()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = control.ExecContext(ctx, `SELECT pg_advisory_lock(14519,?)`, pid); err != nil {
+		t.Fatal(err)
+	}
+	held := true
+	unlock := func() {
+		if !held {
+			return
+		}
+		held = false
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if _, err := control.ExecContext(cleanup, `SELECT pg_advisory_unlock(14519,?)`, pid); err != nil {
+			t.Error(err)
+		}
+	}
+	defer unlock()
+	results := make(chan error, 2)
+	go func() { _, err := a.SetRole(first.ID, RoleUser); results <- err }()
+	go func() { _, err := b.SetRole(second.ID, RoleUser); results <- err }()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		select {
+		case err := <-results:
+			t.Fatalf("admin update escaped the overlap barrier: %v", err)
+		default:
+		}
+		var waiting int
+		if err = control.QueryRowContext(ctx, `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted AND classid=14519 AND objid=? AND objsubid=2`, pid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("both admin writes did not reach the barrier", waiting)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	unlock()
+	committed, refused := 0, 0
+	for range 2 {
+		select {
+		case err := <-results:
+			if err == nil {
+				committed++
+			} else if errors.Is(err, ErrLastActiveAdmin) {
+				refused++
+			} else {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	all, err := a.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeAdmins := 0
+	for _, u := range all {
+		if u.Active && u.Role == RoleAdmin {
+			activeAdmins++
+		}
+	}
+	if committed != 1 || refused != 1 || activeAdmins != 1 {
+		t.Fatal("last-admin invariant", committed, refused, activeAdmins)
 	}
 }
