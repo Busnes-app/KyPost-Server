@@ -1071,10 +1071,16 @@ func (s *Store) GetNativeDevice(deviceID string) (NativeDevice, bool) {
 // see enrollmentState, which does that for the enrollment columns exactly as
 // the lines above do for MFAApprover.
 func (s *Store) UpsertNativeDevice(device NativeDevice) error {
-	return s.tx(func(tx *sql.Tx) error { return s.upsertNativeDeviceTx(tx, device) })
+	return s.tx(func(tx *sql.Tx) error { return s.upsertNativeDeviceTx(tx, device, true) })
 }
 
-func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
+// UpsertNativeDeviceByID preserves only an exact ID match. Multi-tenant
+// registration uses this so a new server ID is never replaced by a token match.
+func (s *Store) UpsertNativeDeviceByID(device NativeDevice) error {
+	return s.tx(func(tx *sql.Tx) error { return s.upsertNativeDeviceTx(tx, device, false) })
+}
+
+func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice, mergeToken bool) error {
 	device.DeviceID = strings.TrimSpace(device.DeviceID)
 	device.Platform = strings.ToLower(strings.TrimSpace(device.Platform))
 	device.PushToken = strings.TrimSpace(device.PushToken)
@@ -1131,7 +1137,7 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 		return err
 	}
 
-	if device.PushToken != "" {
+	if mergeToken && device.PushToken != "" {
 		var matchID, matchRegistered, matchUserID string
 		var matchSeq sql.NullInt64
 		var match enrollmentState

@@ -602,40 +602,36 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 		return
 	}
 
-	// RE-BINDING AN EXISTING DEVICE ID IS NOT ORDINARY REGISTRATION.
-	//
-	// A pairing token proves someone held a live session; it does not prove
-	// possession of the device being rebound. Without this check, a stolen
-	// session could point register at a victim's live deviceId and
-	// upsertNativeDeviceTx would overwrite SecretHash and PushToken while
-	// PRESERVING MFAApprover and the enrollment columns — silently revoking the
-	// real phone, redirecting its push notifications, and inheriting its right
-	// to approve sign-ins. No new row appears, so the device list looks
-	// unchanged. That turns an ephemeral stolen cookie into a device credential
-	// with no TTL, which is precisely what pgp_stepup.go refuses to let a
-	// session do to key material.
-	//
-	// Step-up is not reachable here: this route is withTokenAuth and carries no
-	// AuthContext, so there is no session credential to re-prove. A legitimate
-	// device refreshing its push token still holds its current secret, so proof
-	// of possession is the check that fits.
-	if requested := strings.TrimSpace(req.DeviceID); requested != "" {
-		if existing, found := store.GetNativeDevice(requested); found {
+	// Multi mode retains a supplied ID only for a device in this owner's
+	// store whose current secret was proved. All other registrations get a
+	// server ID, independent of another replica's discovery hints.
+	deviceID := strings.TrimSpace(req.DeviceID)
+	keepID := false
+	if deviceID != "" {
+		if existing, found := store.GetNativeDevice(deviceID); found {
 			okSecret, secretErr := users.VerifyDeviceSecret(r.Context(), existing.SecretHash, r.Header.Get(headerDeviceSecret))
-			if secretErr != nil || !okSecret {
+			if secretErr != nil && s.multiTenant() {
+				writeKDFBusy(w)
+				return
+			}
+			keepID = okSecret
+			if !okSecret && !s.multiTenant() {
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error": "device id already registered; present its current secret to re-pair, or unpair it first",
 				})
 				return
 			}
-		} else if !validDeviceID(requested) {
-			// A NEW id must be portable across the three implementations that
-			// hash it. Checked only for new ids so that a device registered
-			// before this bound is not stranded on its next token refresh —
-			// it re-registers through the branch above, which proves possession.
+		} else if !s.multiTenant() && !validDeviceID(deviceID) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": "deviceId must be 1-128 characters of A-Z a-z 0-9 . _ : or -",
 			})
+			return
+		}
+	}
+	if s.multiTenant() && !keepID {
+		deviceID, err = fsutil.NewUUIDv4()
+		if err != nil {
+			http.Error(w, "failed to mint device id", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -660,7 +656,7 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	secretHash := users.HashDeviceSecret(rawSecret)
 
 	device := state.NativeDevice{
-		DeviceID:   strings.TrimSpace(req.DeviceID),
+		DeviceID:   deviceID,
 		Platform:   platform,
 		Transport:  transport,
 		P256DH:     webPushP256DH,
@@ -686,9 +682,11 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 			}
 			device.DeviceID = id
 		}
-		if owner, found := s.lookupUserByDevice(device.DeviceID); found && owner != ownerID {
-			http.Error(w, "device id already registered", http.StatusConflict)
-			return
+		if !s.multiTenant() {
+			if owner, found := s.lookupUserByDevice(device.DeviceID); found && owner != ownerID {
+				http.Error(w, "device id already registered", http.StatusConflict)
+				return
+			}
 		}
 		s.holdPendingDevice(w, r, ownerID, subscriberID, device, rawSecret, req)
 		return
@@ -716,23 +714,25 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 // and by approval of a pending device. On ok=false it has written the response.
 // Caller holds pairingMu.
 func (s *Server) persistNativeDevice(w http.ResponseWriter, r *http.Request, store *state.Store, ownerID string, device state.NativeDevice, encryptionEnrolled *bool) (string, int, bool) {
-	// A device id is global (the deviceIndex maps it to exactly one owner), but
-	// the id is client-supplied. Reserve it atomically (check-and-set under
-	// one lock, not a separate check followed by a later write) so a caller
-	// can't hijack a victim's device-index entry and deny that device
-	// service, even under concurrent registration requests.
-	// release is armed immediately and unconditionally: every return between
-	// here and commitDeviceID below is a path that reserved an ID and then did
-	// not write a device under it. See reserveDeviceID for what one of those
-	// costs if it survives.
+	// Reserve the ID in this process until persistence commits. Multi mode's
+	// server IDs do not depend on this hint for cross-replica uniqueness.
 	reservation, reserved := s.reserveDeviceID(ownerID, device.DeviceID)
 	if !reserved {
+		if s.multiTenant() {
+			writeUnavailable(w)
+			return "", 0, false
+		}
+		// Single mode keeps client-chosen IDs for existing clients.
 		http.Error(w, "device id already registered", http.StatusConflict)
 		return "", 0, false
 	}
 	defer reservation.Release()
 
-	if err := store.UpsertNativeDevice(device); err != nil {
+	upsert := store.UpsertNativeDevice
+	if s.multiTenant() {
+		upsert = store.UpsertNativeDeviceByID
+	}
+	if err := upsert(device); err != nil {
 		// See the same branch on the web-push subscription handler: at the cap
 		// the request is refused, not failed. Re-pairing a device that is
 		// already registered updates its row and never reaches this.
@@ -746,7 +746,7 @@ func (s *Server) persistNativeDevice(w http.ResponseWriter, r *http.Request, sto
 		return "", 0, false
 	}
 
-	// Resolve the canonical device ID by token: the upsert may have merged
+	// In single mode resolve the canonical ID by token: the upsert may have merged
 	// this registration into an existing row (same token + platform), whose
 	// ID wins over whatever the request carried.
 	devices, err := store.ListNativeDevicesStrict()
@@ -755,10 +755,12 @@ func (s *Server) persistNativeDevice(w http.ResponseWriter, r *http.Request, sto
 		return "", 0, false
 	}
 	registeredDeviceID := device.DeviceID
-	for i := len(devices) - 1; i >= 0; i-- {
-		if strings.TrimSpace(devices[i].PushToken) == device.PushToken && devices[i].Platform == device.Platform {
-			registeredDeviceID = devices[i].DeviceID
-			break
+	if !s.multiTenant() {
+		for i := len(devices) - 1; i >= 0; i-- {
+			if strings.TrimSpace(devices[i].PushToken) == device.PushToken && devices[i].Platform == device.Platform {
+				registeredDeviceID = devices[i].DeviceID
+				break
+			}
 		}
 	}
 

@@ -53,9 +53,9 @@ const (
 	passwordChangeMaxFailures = 10
 	passwordChangeLockoutFor  = 15 * time.Minute
 
-	// deviceMaxFailures/deviceLockoutFor guard per-device secret auth
+	// deviceMaxFailures/deviceLockoutFor guard device secret auth
 	// (deviceAuthFromRequest). Bounds guessing, not CPU; against a 192-bit
-	// random secret the threshold is generous. Keyed on deviceID+clientIP —
+	// random secret the threshold is generous. Keyed on client IP before resolving any device ID —
 	// see deviceLockoutKey, and do not change one without the other.
 	deviceMaxFailures = 10
 	deviceLockoutFor  = 15 * time.Minute

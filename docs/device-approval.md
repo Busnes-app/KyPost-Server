@@ -96,7 +96,7 @@ The prompt shows it.
 - Store `deviceId` and `deviceSecret` exactly as for a successful pairing, but mark
   the pairing as **not yet usable**. Do not start mail sync, App Pull or push
   handling.
-- `deviceId` is the id you sent, or a server-minted UUID if you sent none.
+- Always retain the returned `deviceId`. In multi-tenant mode a new registration gets a server-minted UUID. A supplied ID is retained only for an existing device in the pairing owner’s account whose current secret is presented in `X-Kypost-Device-Secret`. In single mode the supplied ID is retained, or a UUID is minted if omitted.
 - Show the user: "Approve this device on the web page that showed the code. Code: **048 213**".
   Show the `approvalCode` large. The web prompt shows the same code. That is
   how the user tells their own device apart from another app that redeemed the same link.
@@ -117,7 +117,7 @@ Errors (unchanged unless marked new):
 | 409 `pairing token already used` | **Someone else already redeemed this link** | Say so plainly: "This code was already used. If you did not use it, deny the request on the web page." Do not treat it as a transient error. |
 | 409 `a pairing request for this device is already waiting for approval` (new) | Same `deviceId` already pending | Keep polling the existing request, or wait for it to expire |
 | 409 `too many devices are waiting for approval…` (new) | 5 pending devices on the account | Ask the user to approve or deny them on the web |
-| 409 other | Device id taken or device limit reached | Show the message |
+| 409 other | Device limit reached (or a client-chosen ID conflict in single mode) | Show the message |
 | 503 | Pairing not configured | Show the message |
 
 ### 2. Poll for the outcome
@@ -135,7 +135,7 @@ and stop at `expiresAt` or on any final answer. Responses:
 | Code | Body | Meaning / action |
 |---|---|---|
 | 202 | `{"status":"pending","approvalCode","expiresAt","pollIntervalSeconds"}` | Keep polling |
-| 200 | `{"ok":true,"synced":true,"status":"approved","deviceId","deliveryMode","pullEndpoint","transport"}` | Paired. **Use the `deviceId` from this response.** It differs from the pending id when the server merged the registration into an existing row with the same push token. Then start sync exactly as after a pre-0.6.0 200 from register. |
+| 200 | `{"ok":true,"synced":true,"status":"approved","deviceId","deliveryMode","pullEndpoint","transport"}` | Paired. **Use the `deviceId` from this response.** In single mode it can differ from the pending id when the server merged the registration into an existing row with the same push token. Multi mode preserves the server-minted ID. Then start sync exactly as after a pre-0.6.0 200 from register. |
 | 410 | `{"status":"rejected","error":"this pairing was denied or has expired; scan a new pairing code"}` | Final. Delete the stored id and secret and return to the pairing screen with that message. |
 | 429 / 503 | `Retry-After` header | Back off as on every device route |
 
