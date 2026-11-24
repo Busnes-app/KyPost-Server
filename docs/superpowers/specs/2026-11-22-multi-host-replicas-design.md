@@ -1386,3 +1386,35 @@ case verifies the lock file and old-hint removal remain unchanged.
 This is only the idle-file part of MH4. Publication, remaining cross-store/job
 fences, table-mode backup restrictions, migration, regions, mandatory object
 storage and launch/startup gates remain separate. No hosted-readiness claim.
+
+
+## MH4 scheduled-job execution clock implementation (2026-11-23)
+
+The API scheduled sweeper's atomic claim remains its exclusivity boundary, but
+its due checks, retry timestamps and execution deadlines previously trusted each
+host's clock. An actual mounted-table regression reproduced a fast caller
+claiming a message whose database send time was still ten minutes away.
+
+Table claim and draft discovery now compare database statement time. Relative
+retry/cancel delays are written from that same statement clock through the
+existing status CAS; final transitions keep next_attempt zero. The sweeper reads
+database time for its per-row execution/retry and failed-draft age checks, send
+quota input and final-row retention. New table rows record their creation time
+from the database too. A failed clock read never becomes a host-clock fallback:
+execution backs off without sending, failed drafts retain their retry, and
+retention does not delete. Ordinary SQLite and unmigrated PostgreSQL retain the
+caller's clock and existing injected-clock tests.
+
+A real PostgreSQL pair proves future/retry refusal, exactly one due claimant,
+relative backoff, due draft discovery and canceled-clock refusal. The actual API
+sweeper with mounted account/documents and a loopback transient SMTP refusal
+proves that fast time neither sends future mail nor prematurely returns a due
+retry to Drafts, and slow time still finds and attempts a database-due retry.
+Existing claim, uncertain-send, interrupted-replica and restore rules remain.
+No schema, dependency or wire change is introduced.
+
+This is the scheduled-job execution boundary, not all request-time clocks.
+Scheduling/Send-delay admission and the remaining elected jobs still require
+their clock audit. Remaining MH4 publication/fences, key provisioning,
+volume-free startup, MH8, regions, mandatory object storage and launch/startup
+gates remain. No hosted-readiness claim is made.

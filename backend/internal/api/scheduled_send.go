@@ -334,7 +334,7 @@ func (s *Server) handleScheduledCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The delay keeps the sweeper off this row while it is saved here.
-	moved, err := s.globalStore.MoveScheduledSend(r.Context(), row.ID, state.ScheduledWaiting, state.ScheduledReturning, reasonCanceled, time.Now().Add(2*time.Minute).Unix())
+	moved, err := s.globalStore.DelayScheduledSend(r.Context(), row.ID, state.ScheduledWaiting, state.ScheduledReturning, reasonCanceled, 2*time.Minute, time.Now())
 	if err != nil {
 		http.Error(w, "scheduled send unavailable", http.StatusServiceUnavailable)
 		return
@@ -390,7 +390,9 @@ func (s *Server) sweepScheduledSends(ctx context.Context, now func() time.Time) 
 	}
 	// An idle server never touches the key: only scheduling creates it.
 	if pending, err := s.globalStore.HasScheduledWork(ctx); err != nil || !pending {
-		_ = s.globalStore.PruneScheduledSends(ctx, now().Add(-scheduledRetention).Unix())
+		if current, err := s.globalStore.ScheduledNow(ctx, now()); err == nil {
+			_ = s.globalStore.PruneScheduledSends(ctx, current.Add(-scheduledRetention).Unix())
+		}
 		return
 	}
 	key, err := s.scheduledSendKey()
@@ -433,13 +435,15 @@ func (s *Server) sweepScheduledSends(ctx context.Context, now func() time.Time) 
 		close(work)
 		wg.Wait()
 	}
-	_ = s.globalStore.PruneScheduledSends(ctx, now().Add(-scheduledRetention).Unix())
+	if current, err := s.globalStore.ScheduledNow(ctx, now()); err == nil {
+		_ = s.globalStore.PruneScheduledSends(ctx, current.Add(-scheduledRetention).Unix())
+	}
 }
 
 // runScheduled finishes one claimed row; it never leaves it in sending.
 func (s *Server) runScheduled(ctx context.Context, key []byte, row state.ScheduledSend, now func() time.Time) {
-	move := func(to, reason string, next int64) {
-		if _, err := s.globalStore.MoveScheduledSend(context.WithoutCancel(ctx), row.ID, state.ScheduledSending, to, reason, next); err != nil {
+	move := func(to, reason string, delay time.Duration) {
+		if _, err := s.globalStore.DelayScheduledSend(context.WithoutCancel(ctx), row.ID, state.ScheduledSending, to, reason, delay, now()); err != nil {
 			s.logger.Error("scheduled send state update failed", "correlation_id", row.ID, "error", err.Error())
 		}
 	}
@@ -455,12 +459,22 @@ func (s *Server) runScheduled(ctx context.Context, key []byte, row state.Schedul
 		late = row.Reason
 	}
 	next, reason := state.ScheduledReturning, late
-	if !now().After(deadline) {
+	current, err := s.globalStore.ScheduledNow(ctx, now())
+	if err != nil {
+		move(state.ScheduledWaiting, "", scheduledRetryDelay)
+		return
+	}
+	if !current.After(deadline) {
 		next, reason = s.dispatchScheduled(ctx, j, now)
 	}
 	if next == state.ScheduledWaiting {
-		if retry := now().Add(scheduledRetryDelay); retry.Before(deadline) {
-			move(state.ScheduledWaiting, reason, retry.Unix())
+		current, err := s.globalStore.ScheduledNow(ctx, now())
+		if err != nil {
+			move(state.ScheduledWaiting, reason, scheduledRetryDelay)
+			return
+		}
+		if retry := current.Add(scheduledRetryDelay); retry.Before(deadline) {
+			move(state.ScheduledWaiting, reason, scheduledRetryDelay)
 			return
 		}
 		next, reason = state.ScheduledReturning, cmp.Or(reason, reasonLate)
@@ -489,7 +503,11 @@ func (s *Server) dispatchScheduled(ctx context.Context, j scheduledJob, now func
 	for _, d := range j.Job.Deliveries {
 		recipients += len(d.Recipients)
 	}
-	switch _, err := s.chargeSend(ctx, j.ID, j.UserID, recipients, now()); {
+	current, err := s.globalStore.ScheduledNow(ctx, now())
+	if err != nil {
+		return retry, ""
+	}
+	switch _, err := s.chargeSend(ctx, j.ID, j.UserID, recipients, current); {
 	case errors.Is(err, state.ErrSendQuota):
 		s.logger.Warn("sending quota reached", "user_id", j.UserID, "correlation_id", j.ID)
 		return retry, reasonQuota
@@ -614,8 +632,8 @@ func (s *Server) saveScheduledDraft(ctx context.Context, key []byte, row state.S
 	if claimed, err := s.globalStore.ClaimScheduledReturn(ctx, row.ID, s.instanceID); err != nil || !claimed {
 		return false
 	}
-	move := func(to, reason string, next int64) {
-		if _, err := s.globalStore.MoveScheduledSend(context.WithoutCancel(ctx), row.ID, state.ScheduledDrafting, to, reason, next); err != nil {
+	move := func(to, reason string, delay time.Duration) {
+		if _, err := s.globalStore.DelayScheduledSend(context.WithoutCancel(ctx), row.ID, state.ScheduledDrafting, to, reason, delay, now()); err != nil {
 			s.logger.Error("scheduled send state update failed", "correlation_id", row.ID, "error", err.Error())
 		}
 	}
@@ -639,11 +657,12 @@ func (s *Server) saveScheduledDraft(ctx context.Context, key []byte, row state.S
 	}
 	if err != nil {
 		s.logger.Error("scheduled send draft not saved", "correlation_id", row.ID, "error", err.Error())
-		if row.ReturningSince > 0 && now().Sub(time.Unix(row.ReturningSince, 0)) > scheduledReturnFor {
+		current, clockErr := s.globalStore.ScheduledNow(ctx, now())
+		if clockErr == nil && row.ReturningSince > 0 && current.Sub(time.Unix(row.ReturningSince, 0)) > scheduledReturnFor {
 			move("failed", reasonNoDraft, 0)
 			return false
 		}
-		move(state.ScheduledReturning, row.Reason, now().Add(scheduledRetryDelay).Unix())
+		move(state.ScheduledReturning, row.Reason, scheduledRetryDelay)
 		return false
 	}
 	move("returned", row.Reason, 0)
