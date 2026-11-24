@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
@@ -333,7 +334,8 @@ func PurgeStorage(ctx context.Context, configDir, stateDir string, userIDs, mail
 	}()
 	if noReceiving == nil {
 		for _, id := range mailboxes {
-			release, err := fsutil.LockFileContext(ctx, filepath.Join(receiving, "quota-"+id))
+			var release func()
+			ctx, release, err = vol.Lock(ctx, filepath.Join(receiving, "quota-"+id), vol.FenceQuota+id, vol.Exclusive)
 			if err != nil {
 				return err
 			}

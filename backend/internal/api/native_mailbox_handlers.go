@@ -10,7 +10,6 @@ import (
 	"regexp"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -283,16 +282,19 @@ func (s *Server) extraMailboxOwner(id string) (string, error) {
 // withIncomingEncryptionOff runs change under the owner's settings lock once
 // incoming encryption is off and no replacement is pending, both read fresh.
 func (s *Server) withIncomingEncryptionOff(userID string, change func() error) error {
-	return fsutil.WithFileLock(s.userSettingsPath(userID), func() error {
-		u, err := s.users.Get(userID)
-		if err != nil {
-			return err
-		}
-		if err := s.refuseExtraBesideIncomingEncryption(u); err != nil {
-			return err
-		}
-		return change()
-	})
+	release, err := config.LockUserSettings(s.userSettingsPath(userID))
+	if err != nil {
+		return err
+	}
+	defer release()
+	u, err := s.users.Get(userID)
+	if err != nil {
+		return err
+	}
+	if err := s.refuseExtraBesideIncomingEncryption(u); err != nil {
+		return err
+	}
+	return change()
 }
 
 func (s *Server) refuseExtraBesideIncomingEncryption(u users.User) error {

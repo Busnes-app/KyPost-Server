@@ -68,7 +68,7 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 		return "", err
 	}
 	target := filepath.Join(root, owner.Mailbox)
-	release, err := fsutil.LockFileContext(ctx, target)
+	ctx, release, err := vol.Lock(ctx, target, vol.FenceMailbox+owner.Mailbox, vol.Exclusive)
 	if err != nil {
 		return "", err
 	}
@@ -644,7 +644,7 @@ func ConvergeLimits(ctx context.Context, dir string, owner Owner, limits Limits)
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	release, err := fsutil.LockFileContext(ctx, dir)
+	ctx, release, err := vol.Lock(ctx, dir, vol.FenceMailbox+owner.Mailbox, vol.Exclusive)
 	if err != nil {
 		return false, err
 	}

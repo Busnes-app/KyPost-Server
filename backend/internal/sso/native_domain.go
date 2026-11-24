@@ -18,7 +18,6 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
@@ -366,7 +365,7 @@ func (s *NativeDomainStore) configure(ctx context.Context, domain, issuer string
 	if err := ValidateNativeDomainSetup(domain, issuer); err != nil {
 		return NativeDomain{}, err
 	}
-	release, err := fsutil.LockFileGated(ctx, s.path)
+	ctx, release, err := vol.Lock(ctx, s.path, vol.FenceNativeDomains, vol.Gated)
 	if err != nil {
 		return NativeDomain{}, err
 	}
@@ -464,7 +463,7 @@ func (s *NativeDomainStore) VerifyDomain(ctx context.Context, domain string) (Na
 	if match && d.Established && d.VerifiedUntil-time.Now().Unix() >= int64(nativeProofReuse.Seconds()) {
 		return d, nil
 	}
-	release, err := fsutil.LockFileGated(ctx, s.path)
+	ctx, release, err := vol.Lock(ctx, s.path, vol.FenceNativeDomains, vol.Gated)
 	if err != nil {
 		return d, err
 	}
@@ -540,7 +539,7 @@ func (s *NativeDomainStore) RetireDomain(ctx context.Context, domain, stateRoot,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := fsutil.LockFileGated(ctx, s.path)
+	ctx, release, err := vol.Lock(ctx, s.path, vol.FenceNativeDomains, vol.Gated)
 	if err != nil {
 		return err
 	}
@@ -565,7 +564,7 @@ func (s *NativeDomainStore) RetireDomain(ctx context.Context, domain, stateRoot,
 			return ErrNativeDomainInUse
 		}
 		life := NewLifecycleStore(filepath.Dir(s.path))
-		releaseDirectory, err := life.LockDirectoryContext(ctx)
+		ctx, releaseDirectory, err := life.LockDirectoryContext(ctx)
 		if err != nil {
 			return err
 		}

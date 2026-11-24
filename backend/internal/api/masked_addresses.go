@@ -19,7 +19,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -173,13 +172,16 @@ func (s *Server) withMaskedSettings(userID string, fn func(st *config.UserSettin
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return fsutil.WithFileLock(path, func() error {
-		st, err := config.LoadUserSettings(path)
-		if err != nil {
-			return err
-		}
-		return fn(&st, func() error { return config.SaveUserSettings(path, st) })
-	})
+	release, err := config.LockUserSettings(path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	st, save, err := config.LoadUserSettingsForSave(path)
+	if err != nil {
+		return err
+	}
+	return fn(&st, func() error { return save(st) })
 }
 
 // maskedClose reserves address in the ledger unless it already is, the

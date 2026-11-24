@@ -114,7 +114,7 @@ func TestNativeAdmissionRefusesPromotedSubject(t *testing.T) {
 	admit := func() error {
 		_, err := life.AdmitNativeMailbox(ctx, root, nativeIssuer, u.ID, u.ID, accounts)
 		called := false
-		access := life.WithNativeMailAccess(ctx, root, nativeIssuer, accounts, []string{u.ID}, func(map[string]NativeAssignment) error { called = true; return nil })
+		access := life.WithNativeMailAccess(ctx, root, nativeIssuer, accounts, []string{u.ID}, func(context.Context, map[string]NativeAssignment) error { called = true; return nil })
 		if (err == nil) != (access == nil) || called != (access == nil) {
 			t.Fatal("admission paths disagree", err, access, called)
 		}

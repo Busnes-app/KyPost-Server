@@ -390,7 +390,7 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 		}
 		added := map[string]bool{}
 		if len(fresh) > 0 {
-			_ = r.withAuthority(ctx, false, []string{id}, fresh, freshProofs, func(current map[string]sso.NativeAssignment) error {
+			_ = r.withAuthority(ctx, false, []string{id}, fresh, freshProofs, func(ctx context.Context, current map[string]sso.NativeAssignment) error {
 				a := current[id]
 				if err := l.hit("routes-admitted"); err != nil {
 					return err
@@ -776,7 +776,7 @@ func (l *cfLoop) deleteCommitted(ctx context.Context, cur cfreceiving.Material, 
 // address moved, is inactive, or has a newer generation. Unreadable state
 // proves nothing.
 func (r *receivingRuntime) bindingsRetired(ctx context.Context, bindings []ingress.Binding) bool {
-	release, err := r.life.LockDirectoryContext(ctx)
+	ctx, release, err := r.life.LockDirectoryContext(ctx)
 	if err != nil {
 		return false
 	}

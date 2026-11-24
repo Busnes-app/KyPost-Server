@@ -114,7 +114,7 @@ func TestNativeExtraMailboxLifecycle(t *testing.T) {
 	}
 	access := func(ids ...string) (map[string]NativeAssignment, error) {
 		var got map[string]NativeAssignment
-		err := f.life.WithNativeMailAccess(ctx, f.root, nativeIssuer, f.accounts, ids, func(current map[string]NativeAssignment) error { got = current; return nil })
+		err := f.life.WithNativeMailAccess(ctx, f.root, nativeIssuer, f.accounts, ids, func(ctx context.Context, current map[string]NativeAssignment) error { got = current; return nil })
 		return got, err
 	}
 	if got, err := access(m.ID, one); err != nil || got[m.ID].Owner.Mailbox != m.ID || got[one].Owner.Mailbox != one {

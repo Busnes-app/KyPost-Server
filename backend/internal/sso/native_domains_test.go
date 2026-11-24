@@ -197,7 +197,7 @@ func TestNativeTwoDomainsAllocateLapseAndRetire(t *testing.T) {
 	}
 	// Reactivation in the directory does not reopen a retired domain.
 	nativeDesired(t, life, "two", "two@second.test", 3, true)
-	if err = life.WithNativeMailAccess(ctx, root, nativeIssuer, accounts, []string{two.ID}, func(map[string]NativeAssignment) error { return nil }); !errors.Is(err, ErrNativeProvisioning) {
+	if err = life.WithNativeMailAccess(ctx, root, nativeIssuer, accounts, []string{two.ID}, func(context.Context, map[string]NativeAssignment) error { return nil }); !errors.Is(err, ErrNativeProvisioning) {
 		t.Fatal("retired domain admitted", err)
 	}
 	list, err := accounts.List()

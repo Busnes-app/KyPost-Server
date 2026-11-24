@@ -221,7 +221,7 @@ func (s *LifecycleStore) ReleaseQuarantined(ctx context.Context, stateRoot, issu
 		stores[owner], sources[owner] = store, a.Source
 		ids = append(ids, owner.Mailbox)
 	}
-	err = s.WithNativeMailAccess(ctx, stateRoot, issuer, accounts, ids, func(current map[string]NativeAssignment) error {
+	err = s.WithNativeMailAccess(ctx, stateRoot, issuer, accounts, ids, func(ctx context.Context, current map[string]NativeAssignment) error {
 		for owner := range stores {
 			if a := current[owner.Mailbox]; a.Owner != owner || a.Source != sources[owner] {
 				return ErrQuarantineRelease

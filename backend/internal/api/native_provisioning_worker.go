@@ -51,7 +51,7 @@ func (s *Server) reconcileNativeSubjectHeld(ctx context.Context, issuer, subject
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
+	ctx, release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
 	if err != nil {
 		return err
 	}

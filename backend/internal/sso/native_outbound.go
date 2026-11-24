@@ -16,6 +16,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 var ErrNativeOutboundStale = errors.New("queued sender authority changed; retain the job and reconcile instead of resubmitting")
@@ -91,7 +92,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 		defer expire()
 	}
 	// Read-only use of the domain set: sends share the fence and exclude writers.
-	release, err := fsutil.LockFileShared(ctx, filepath.Join(s.ConfigDir, NativeDomainsFile))
+	ctx, release, err := vol.Lock(ctx, filepath.Join(s.ConfigDir, NativeDomainsFile), vol.FenceNativeDomains, vol.Shared)
 	if err != nil {
 		return err
 	}
@@ -113,7 +114,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 			return ErrNativeDomain
 		}
 		// Sends write only the mailbox outbound queue: share the directory fence.
-		release, err := life.lockDirectoryShared(ctx)
+		ctx, release, err := life.lockDirectoryShared(ctx)
 		if err != nil {
 			return err
 		}

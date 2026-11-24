@@ -17,6 +17,7 @@ import (
 type mount struct {
 	root   string
 	volume Vol
+	fence  FenceFunc
 }
 
 var mounts struct {
@@ -26,7 +27,11 @@ var mounts struct {
 
 // Mount attaches an already opened volume to one physical root. Store constructors
 // resolve that root once. The release function affects only this mount.
-func Mount(root string, volume Vol) (func(), error) {
+func Mount(root string, volume Vol) (func(), error) { return MountFenced(root, volume, nil) }
+
+// MountFenced is Mount whose cross-store locks (Lock) are fence's database fences. A mount
+// without one (offline capsule staging) keeps the host-local flocks.
+func MountFenced(root string, volume Vol, fence FenceFunc) (func(), error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -34,7 +39,7 @@ func Mount(root string, volume Vol) (func(), error) {
 	if volume == nil {
 		return nil, errors.New("vol: missing mounted volume")
 	}
-	m := &mount{root: abs, volume: volume}
+	m := &mount{root: abs, volume: volume, fence: fence}
 	mounts.Lock()
 	mounts.entries = append(mounts.entries, m)
 	mounts.Unlock()
@@ -60,9 +65,17 @@ type Document struct {
 }
 
 func OpenDocument(path string) *Document {
+	if m, rel := mounted(path); m != nil {
+		return &Document{volume: m.volume, path: rel}
+	}
+	return &Document{volume: File{Dir: filepath.Dir(path)}, path: filepath.Base(path), file: path}
+}
+
+// mounted is the newest mount below path, with path relative to its root.
+func mounted(path string) (*mount, string) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return &Document{volume: File{Dir: filepath.Dir(path)}, path: filepath.Base(path), file: path}
+		return nil, ""
 	}
 	mounts.RLock()
 	defer mounts.RUnlock()
@@ -70,10 +83,56 @@ func OpenDocument(path string) *Document {
 		m := mounts.entries[i]
 		rel, err := filepath.Rel(m.root, abs)
 		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return &Document{volume: m.volume, path: filepath.ToSlash(rel)}
+			return m, filepath.ToSlash(rel)
 		}
 	}
-	return &Document{volume: File{Dir: filepath.Dir(path)}, path: filepath.Base(path), file: path}
+	return nil, ""
+}
+
+// Fence names; a per-ID kind's name is its prefix plus the org, user or mailbox ID.
+// state.HoldFences takes the kinds in its fixed order.
+const (
+	FenceOrg             = "fence:org:"
+	FenceSettings        = "fence:settings:"
+	FenceNativeDomains   = "fence:native-domains"
+	FenceSSOLifecycle    = "fence:sso-lifecycle"
+	FenceMailbox         = "fence:mailbox:"
+	FenceQuota           = "fence:quota:"
+	FenceSSO             = "fence:sso"
+	FenceBackupOperation = "fence:backup-operation"
+)
+
+// FenceFunc holds the named fence (state.HoldFences), returning the context the fenced
+// work must use: it is cancelled if the fence is lost.
+type FenceFunc func(ctx context.Context, name string, shared bool) (context.Context, func(), error)
+
+// LockMode is the flock a Lock keeps outside a fenced mount.
+type LockMode int
+
+const (
+	Exclusive LockMode = iota // fsutil.LockFileContext
+	Gated                     // fsutil.LockFileGated
+	Shared                    // fsutil.LockFileShared
+)
+
+// Lock holds name's fence when path is under a fenced mount (table mode), shared for a
+// Shared mode, and otherwise path's original flock. Use the returned context for the
+// fenced work.
+func Lock(ctx context.Context, path, name string, mode LockMode) (context.Context, func(), error) {
+	if m, _ := mounted(path); m != nil && m.fence != nil {
+		return m.fence(ctx, name, mode == Shared)
+	}
+	var release func()
+	var err error
+	switch mode {
+	case Gated:
+		release, err = fsutil.LockFileGated(ctx, path)
+	case Shared:
+		release, err = fsutil.LockFileShared(ctx, path)
+	default:
+		release, err = fsutil.LockFileContext(ctx, path)
+	}
+	return ctx, release, err
 }
 
 // Mkdir preserves each file store's original directory mode. Table documents create

@@ -23,7 +23,7 @@ func (s *LifecycleStore) AdmitNativeMailbox(ctx context.Context, stateRoot, issu
 func (s *LifecycleStore) AdmitOpenMailbox(ctx context.Context, stateRoot, issuer, userID, mailboxID string, accounts *users.Store, held *mailbox.Prepared) (NativeAssignment, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := s.lockDirectoryShared(ctx)
+	ctx, release, err := s.lockDirectoryShared(ctx)
 	if err != nil {
 		return NativeAssignment{}, err
 	}
@@ -44,24 +44,24 @@ func (s *LifecycleStore) AdmitOpenMailbox(ctx context.Context, stateRoot, issuer
 // local receive/import commit. The action must not re-enter either authority
 // store or perform network I/O. Partial mailbox commits recover via receipts.
 // mailboxIDs name primary or extra mailboxes; each owner is admitted.
-func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
+func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(context.Context, map[string]NativeAssignment) error) error {
 	return s.withNativeMailAccess(ctx, s.LockDirectoryContext, stateRoot, issuer, accounts, mailboxIDs, action)
 }
 
 // WithNativeSharedAccess is WithNativeMailAccess for an action that writes
 // neither authority nor users (a receiving bind, accept or import): it shares
 // the directory fence like admission, so directory writers still wait for it.
-func (s *LifecycleStore) WithNativeSharedAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
+func (s *LifecycleStore) WithNativeSharedAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(context.Context, map[string]NativeAssignment) error) error {
 	return s.withNativeMailAccess(ctx, s.lockDirectoryShared, stateRoot, issuer, accounts, mailboxIDs, action)
 }
 
-func (s *LifecycleStore) withNativeMailAccess(ctx context.Context, lock func(context.Context) (func(), error), stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
+func (s *LifecycleStore) withNativeMailAccess(ctx context.Context, lock func(context.Context) (context.Context, func(), error), stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(context.Context, map[string]NativeAssignment) error) error {
 	if len(mailboxIDs) == 0 || len(mailboxIDs) > 100 || action == nil {
 		return ErrNativeProvisioning
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := lock(ctx)
+	ctx, release, err := lock(ctx)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (s *LifecycleStore) withNativeMailAccess(ctx context.Context, lock func(con
 		if err != nil {
 			return err
 		}
-		return action(assignments)
+		return action(ctx, assignments)
 	})
 }
 

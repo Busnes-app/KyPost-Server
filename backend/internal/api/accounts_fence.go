@@ -6,6 +6,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // The org fence spans provisioning's three stores and the purge snapshot.
@@ -18,5 +19,5 @@ func (s *Server) withAccountOrgFence(ctx context.Context, org string, shared boo
 	if s.globalStore == nil {
 		return errors.New("account org fence needs the root state store")
 	}
-	return s.globalStore.WithFences(ctx, []state.Fence{{Name: state.FenceOrg + org, Shared: shared}}, work)
+	return s.globalStore.WithFences(ctx, []state.Fence{{Name: vol.FenceOrg + org, Shared: shared}}, work)
 }
