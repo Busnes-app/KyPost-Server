@@ -10,6 +10,8 @@ All files in this package. Internal storage and complete `imap.Client` implement
 
 ## Local Contracts
 
+- Table-mode mailbox handles select the mounted document mode at open. Enqueue and completion never touch host-local `outbox-idle` hints or locks; PostgreSQL discovery reads shared outbox rows. Existing claim tokens and Sent reservations remain authoritative. Ordinary SQLite and un-migrated PostgreSQL retain their prior idle-file behavior. `TestTableOutboundIgnoresHostLocalIdleFiles` covers a refused local lock path, competing claims and Sent completion; `TestUnmigratedPostgresOutboundKeepsIdleLock` covers compatibility.
+
 - Prepared metadata reads resolve `native-mailbox.json` through `vol`, including authenticated SQLite restore staging. Physical directory/inode checks remain unchanged for file metadata. Creating/publishing preparations and their cross-store fences move in MH4; the accounts-row guard is MH3, and table-mode startup stays gated until both exist.
 
 - On Postgres each `mailbox.db` is its own schema (`pg_schema.go`, the usage triggers as plpgsql). Preparation stages the account's two schemas under the target's names, pending, in one transaction, publishes the directory, then settles them; a retry over a published directory settles what a crash left pending. The outbox idle mark (an inode) is SQLite-only.

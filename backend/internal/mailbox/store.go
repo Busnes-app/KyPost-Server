@@ -25,6 +25,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	_ "modernc.org/sqlite"
 )
 
@@ -112,6 +113,7 @@ type Store struct {
 	namespace           string
 	referenceGeneration string
 	postgres            bool
+	table               bool
 }
 
 const schema = `
@@ -202,7 +204,7 @@ func open(dir string, owner Owner, limits Limits, source string, pg bool) (*Stor
 		}
 		db.SetMaxOpenConns(1)
 	}
-	s := &Store{db: db, owner: owner, limits: limits, dir: dir, postgres: pg}
+	s := &Store{db: db, owner: owner, limits: limits, dir: dir, postgres: pg, table: pg && vol.OpenDocument(filepath.Join(dir, preparationFile)).IsTable()}
 	if source != "" {
 		var storedOwner Owner
 		var storedLimits Limits
