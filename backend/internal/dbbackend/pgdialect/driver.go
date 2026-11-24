@@ -43,12 +43,15 @@ func (Driver) Open(name string) (driver.Conn, error) {
 }
 
 func (Driver) OpenConnector(name string) (driver.Connector, error) {
-	return NewConnector(name, false)
+	return NewConnector(name, false, "")
 }
 
 // ErrBadURL is returned for a database URL pgx cannot parse. It never repeats the URL,
 // which carries a password.
 var ErrBadURL = errors.New("the database URL cannot be parsed (check KYPOST_DATABASE_URL)")
+
+// ErrSchemaGone refuses a stale store writer after its schema was dropped.
+var ErrSchemaGone = errors.New("database schema was removed; refusing a stale store writer")
 
 // Config parses a postgres:// URL and applies the store's connection rules: a 5 s connect
 // timeout, a writable primary (target_session_attrs=read-write unless the URL sets it),
@@ -89,19 +92,20 @@ func Describe(rawURL string) string {
 
 // NewConnector opens connections for one pool. A readOnly pool runs its transactions
 // READ ONLY at REPEATABLE READ, a snapshot as a SQLite read transaction is, and never
-// takes the writer lock.
-func NewConnector(rawURL string, readOnly bool) (driver.Connector, error) {
-	return newConnector(rawURL, readOnly, false)
+// takes the writer lock. requiredSchema is empty for catalog/administrative pools;
+// a store writer verifies its schema after locking, preventing public fallback after purge.
+func NewConnector(rawURL string, readOnly bool, requiredSchema string) (driver.Connector, error) {
+	return newConnector(rawURL, readOnly, false, requiredSchema)
 }
 
 // NewRowWriterConnector is for volumes.db accounts only. Account transactions
 // lock changed rows and use SERIALIZABLE for set invariants; they must not hold
 // the document writer lock while preparing a mailbox or recording a journal.
 func NewRowWriterConnector(rawURL string) (driver.Connector, error) {
-	return newConnector(rawURL, false, true)
+	return newConnector(rawURL, false, true, "")
 }
 
-func newConnector(rawURL string, readOnly, rowWrites bool) (driver.Connector, error) {
+func newConnector(rawURL string, readOnly, rowWrites bool, requiredSchema string) (driver.Connector, error) {
 	cfg, err := Config(rawURL)
 	if err != nil {
 		return nil, err
@@ -119,7 +123,7 @@ func newConnector(rawURL string, readOnly, rowWrites bool) (driver.Connector, er
 		c.TypeMap().RegisterType(&pgtype.Type{Name: "timestamptz", OID: pgtype.TimestamptzOID, Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC}})
 		return nil
 	}))
-	return &connector{base: base, readOnly: readOnly, lockKey: writer, rowWrites: rowWrites}, nil
+	return &connector{base: base, readOnly: readOnly, lockKey: writer, rowWrites: rowWrites, requiredSchema: requiredSchema}, nil
 }
 
 // LockKeys returns the writer lock key and the migration lock key for a search_path: the
@@ -135,10 +139,11 @@ func LockKeys(schema string) (writer, migration int64) {
 }
 
 type connector struct {
-	base      driver.Connector
-	readOnly  bool
-	lockKey   int64
-	rowWrites bool
+	base           driver.Connector
+	readOnly       bool
+	lockKey        int64
+	rowWrites      bool
+	requiredSchema string
 }
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -146,7 +151,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &conn{inner: inner.(*stdlib.Conn), readOnly: c.readOnly, lockKey: c.lockKey, rowWrites: c.rowWrites}, nil
+	return &conn{inner: inner.(*stdlib.Conn), readOnly: c.readOnly, lockKey: c.lockKey, rowWrites: c.rowWrites, requiredSchema: c.requiredSchema}, nil
 }
 
 // A row-writer handle must not pass vol.NewTable's schema-writer driver check.
@@ -160,16 +165,31 @@ func (c *connector) Driver() driver.Driver {
 }
 
 type conn struct {
-	inner     *stdlib.Conn
-	readOnly  bool
-	lockKey   int64
-	inTx      bool
-	rowWrites bool
+	inner          *stdlib.Conn
+	readOnly       bool
+	lockKey        int64
+	inTx           bool
+	rowWrites      bool
+	requiredSchema string
 }
 
 func (c *conn) lock(ctx context.Context) error {
-	_, err := c.inner.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", []driver.NamedValue{{Ordinal: 1, Value: c.lockKey}})
-	return err
+	if _, err := c.inner.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", []driver.NamedValue{{Ordinal: 1, Value: c.lockKey}}); err != nil {
+		return err
+	}
+	if c.requiredSchema != "" {
+		var present bool
+		// Resolve the effective write namespace, not an MVCC catalog row:
+		// REPEATABLE READ/SERIALIZABLE may still see a dropped pg_namespace row.
+		// Keep this after the lock; a stale waiter must observe its new target.
+		if err := c.inner.Conn().QueryRow(ctx, `SELECT COALESCE(current_schema()=$1,false)`, c.requiredSchema).Scan(&present); err != nil {
+			return err
+		}
+		if !present {
+			return ErrSchemaGone
+		}
+	}
+	return nil
 }
 
 func (c *conn) Prepare(query string) (driver.Stmt, error) {

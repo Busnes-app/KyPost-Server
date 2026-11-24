@@ -318,8 +318,8 @@ func (s *Server) purgeStorage(ctx context.Context, snap tenancy.PurgeSnapshot) e
 // PurgeStorage is purge step 3's storage: each mailbox's under its receiving quota lock,
 // which fences an import write; then the users' directories (paired devices, CardDAV
 // passwords, sealed IMAP and CardDAV client credentials, every per-user file).
-func PurgeStorage(ctx context.Context, configDir, stateDir string, users, mailboxes []string) error {
-	dirs, err := purgeDirs(configDir, stateDir, users, mailboxes)
+func PurgeStorage(ctx context.Context, configDir, stateDir string, userIDs, mailboxes []string) error {
+	dirs, err := purgeDirs(configDir, stateDir, userIDs, mailboxes)
 	if err != nil {
 		return err
 	}
@@ -342,7 +342,11 @@ func PurgeStorage(ctx context.Context, configDir, stateDir string, users, mailbo
 	}
 	for _, dir := range dirs {
 		if dbbackend.Postgres() {
-			if err := dbbackend.Remove(dir); err != nil {
+			if users.TableMode(configDir) {
+				if err := dbbackend.TombstoneDir(ctx, dir); err != nil {
+					return err
+				}
+			} else if err := dbbackend.Remove(dir); err != nil {
 				return err
 			}
 		}
@@ -433,6 +437,7 @@ func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone
 	note("root-state", n, err)
 	dirs, err := purgeDirs(s.configDir, s.stateDir, snap.Users, snap.Mailboxes)
 	note("directories", 0, err)
+	storageDirCount := len(dirs)
 	for _, id := range snap.Mailboxes {
 		dirs = append(dirs, filepath.Join(s.stateDir, "receiving", "quota-"+id+".lock"))
 	}
@@ -446,6 +451,16 @@ func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone
 	if dbbackend.Postgres() {
 		stores, err := dbbackend.Stores(ctx)
 		note("schemas", 0, err)
+		if users.TableMode(s.configDir) {
+			for _, dir := range dirs[:storageDirCount] {
+				held, err := dbbackend.DirectoryTombstoned(ctx, dir)
+				n := 0
+				if !held {
+					n = 1
+				}
+				note("schemas", n, err)
+			}
+		}
 		for _, st := range stores {
 			for _, dir := range dirs {
 				if strings.HasPrefix(st.LivePath(), dir+string(filepath.Separator)) {

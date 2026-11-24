@@ -351,7 +351,7 @@ func relayedStore(t *testing.T, dir string) (*Store, *pgtest.Relay) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := pgdialect.NewConnector(dbbackend.WithSearchPath(relay.URL(t, raw), schema), false)
+	c, err := pgdialect.NewConnector(dbbackend.WithSearchPath(relay.URL(t, raw), schema), false, schema)
 	if err != nil {
 		t.Fatal(err)
 	}
