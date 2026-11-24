@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // Shared security state for PostgreSQL replicas. NewServer keeps everything in process
@@ -50,6 +51,19 @@ func (s *Server) UseSharedState(st *state.Store) {
 		"office-login-params": s.officeLoginParams, "office-login": s.officeLogin,
 	} {
 		l.shared, l.name = st, "budget:"+name
+	}
+	// MH6: in table mode (multi, or migrated volumes) every meter that sends a push or mail
+	// to a person, probes outward or serves unauthenticated callers is one window across
+	// replicas, which may run on several hosts. Per-account load shedding stays per replica.
+	if !users.TableMode(s.configDir) {
+		return
+	}
+	for name, l := range map[string]*keyedLimiter{
+		"mfa-push": s.mfaPushLimiter, "send-as": s.sendAsCooldown, "kypulse-confirm": s.kypulseConfirmCooldown,
+		"notification-test": s.notificationTestCooldown, "native-relay-check": s.nativeRelayCheckCooldown,
+		"deliverability": s.deliverabilityCooldown, "pow-challenges": s.powChallenges, "login-params": s.loginParamsLimiter,
+	} {
+		l.shared, l.name = st, "meter:"+name
 	}
 }
 
