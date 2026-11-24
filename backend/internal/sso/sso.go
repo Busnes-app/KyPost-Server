@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"net"
 	"net/http"
@@ -79,8 +80,9 @@ func (s SSOSettings) SuiteDirectory() (dir suitedir.Client, ok bool) {
 
 // Store handles persisting SSOSettings to disk.
 type Store struct {
-	path  string
-	loads atomic.Int64
+	path     string
+	stateDir string
+	loads    atomic.Int64
 }
 
 // Loads counts calls to Load, each of which reads the file. It exists so a
@@ -89,9 +91,13 @@ func (s *Store) Loads() int64 { return s.loads.Load() }
 
 // NewStore constructs an SSO settings store.
 func NewStore(configDir string) *Store {
-	return &Store{
-		path: filepath.Join(configDir, "sso.json"),
-	}
+	return NewStoreWithState(configDir, config.StateDir())
+}
+
+// NewStoreWithState binds table-mode settings to the instance's logical fence
+// namespace. Explicit-root API servers use their supplied state root.
+func NewStoreWithState(configDir, stateDir string) *Store {
+	return &Store{path: filepath.Join(configDir, "sso.json"), stateDir: stateDir}
 }
 
 // Load reads SSO settings from disk, returning default values if not configured.
@@ -125,6 +131,9 @@ func (s *Store) Save(cfg SSOSettings) error {
 	}
 
 	doc := vol.OpenDocument(s.path)
+	if doc.IsTable() {
+		return s.withSettingsFence(context.Background(), func(context.Context) error { return doc.Replace(data) })
+	}
 	release, err := doc.Lock()
 	if err != nil {
 		return err

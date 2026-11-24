@@ -1419,3 +1419,35 @@ Scheduling/Send-delay admission and the remaining elected jobs still require
 their clock audit. Remaining MH4 publication/fences, key provisioning,
 volume-free startup, MH8, regions, mandatory object storage and launch/startup
 gates remain. No hosted-readiness claim is made.
+
+## MH4 SSO current-settings fence as built (2026-11-23)
+
+Table-mode SSO Save and WithCurrentSettings now share the existing probed
+`fence:sso` in the logical instance state namespace. The fence opener reads the
+existing instance state; it creates no state/schema or settings lock file. API
+servers bind their supplied state root explicitly with NewStoreWithState;
+other existing constructors retain the configured root. Load remains lock-free
+to avoid settings/directory lock inversion, and ordinary file-mode save/commit
+locking and settings bytes stay unchanged.
+
+WithCurrentSettings now passes the owned context to its callback. Native
+outbound and recovery/relay callers retain that context through their downstream
+authority work. Table read/decode/fence errors refuse before callback rather
+than becoming empty authority. A truly absent settings row retains the original
+unconfigured default, and stored JSON with omitted fields keeps the file parser's
+meaning. Ownership loss cannot return success even if a callback returns nil.
+
+The negative regression reproduced another host's save crossing a held authority
+commit. The fixed test observes its PostgreSQL advisory wait before release,
+checks the later version is visible, and creates no host-local settings lock. It
+also covers corrupt JSON, a missing instance without fallback/creation, canceled
+admission, legacy omitted fields and forced session loss canceling the callback
+within ProbeBound before another host saves. Existing file settings ordering and
+lock-free read/deadlock tests remain unchanged apart from the owned-context
+callback signature.
+
+This is only the SSO settings part of MH4. Combining the remaining domain,
+directory, per-user settings, quota and mailbox boundaries must retain the
+specified ordered fence set on one request session; those boundaries are not
+claimed complete here. Elected-job/key/volume-free/MH8/region/object-storage and
+startup/launch gates remain. No hosted-readiness claim is made.

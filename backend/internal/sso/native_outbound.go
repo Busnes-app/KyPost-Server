@@ -108,7 +108,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 	if unproven == nil && !current.CurrentProof(proof) {
 		return ErrNativeDomain
 	}
-	return s.Settings.WithCurrentSettings(ctx, func(settings SSOSettings) error {
+	return s.Settings.WithCurrentSettings(ctx, func(ctx context.Context, settings SSOSettings) error {
 		if !settings.Enabled || settings.IssuerURL != current.Issuer {
 			return ErrNativeDomain
 		}
