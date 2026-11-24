@@ -27,6 +27,8 @@ non-prerelease version.
 
 - Refuse table-mode local backup copies and select table/account authority before backup CLI operations; retain sealed export, scheduler backoff, historical-account safety and hosted startup refusal.
 
+- Keep table-mode photo cleanup from deleting a newly referenced photo and refuse contact publication after pending bytes were swept; preserve ordinary file behavior and hosted startup gates.
+
 - Base hosted receiving import leases on database time so a replica clock cannot steal a live mailbox lease; keep multi startup gated.
 - Fence table-mode directory deletion with atomic catalog tombstones and stale schema-writer refusal; keep normal single-mode removal and hosted startup gates.
 

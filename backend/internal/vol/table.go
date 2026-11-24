@@ -128,7 +128,7 @@ func (t *Table) Write(ctx context.Context, path string, body []byte, rev int64) 
 	return t.write(ctx, path, body, rev, 0)
 }
 
-func (t *Table) write(ctx context.Context, path string, body []byte, rev, limit int64) (int64, error) {
+func (t *Table) write(ctx context.Context, path string, body []byte, rev, limit int64, references ...string) (int64, error) {
 	if err := checkWrite(path, body, rev); err != nil {
 		return 0, err
 	}
@@ -190,6 +190,24 @@ func (t *Table) write(ctx context.Context, path string, body []byte, rev, limit 
 			}
 			if json.Unmarshal(record, &account) != nil || account.ID != own || account.Org != org {
 				return 0, errOwner
+			}
+		}
+		if len(references) > 0 {
+			var present int
+			if t.snapshot {
+				encoded, encodeErr := json.Marshal(references)
+				if encodeErr != nil {
+					return 0, encodeErr
+				}
+				err = tx.QueryRowContext(ctx, `SELECT count(*) FROM documents WHERE root=? AND owner=? AND path IN (SELECT value FROM json_each(?))`, t.root, own, string(encoded)).Scan(&present)
+			} else {
+				err = tx.QueryRowContext(ctx, `SELECT count(*) FROM documents WHERE root=? AND owner=? AND path=ANY(?)`, t.root, own, references).Scan(&present)
+			}
+			if err != nil {
+				return 0, err
+			}
+			if present != len(references) {
+				return 0, ErrStale
 			}
 		}
 		key, err := t.dataKey(ctx, tx, org, true)

@@ -1276,7 +1276,7 @@ func (s *Server) StartContactPhotoSweeper(ctx context.Context) {
 				continue
 			}
 			for _, u := range users {
-				if err := s.sweepContactPhotos(u.ID); err != nil {
+				if err := s.sweepContactPhotos(ctx, u.ID); err != nil {
 					s.logger.Error("contact photo sweep failed",
 						"user_id", u.ID, "error", err.Error())
 				}

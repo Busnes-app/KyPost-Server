@@ -36,6 +36,8 @@ derived from it must be invalidated by a mechanism the daemon can reach — see
 
 ## Local Contracts
 
+- Every table-mode persistence checks all live photo references in the document writer transaction. A reference must be a safe server-owned filename with a present photo row for this owner; missing bytes refuse the contact mutation. This shared sink covers JSON upload, CardDAV/import/sync and other contact writers. Table `SweepPhotos(ctx)` snapshots references, conditionally removes each observed photo only while that contact-document revision still matches, retries the whole snapshot on CAS conflict, and checks cancellation between operations. A pending upload swept before publication cannot commit a broken reference. Ordinary file persistence and the existing API file sweep stay unchanged. MH8 must validate missing/unsafe historical photo references before migration; preserve data and refuse rather than omit them.
+
 - Storage is selected through `vol.OpenDocument` at construction. File mode retains the file behavior below; table mode reloads the row and CAS-retries the complete mutation. Keep new writers on that seam, including key-generation and privacy updates. Shared contracts: [../vol/AGENTS.md](../vol/AGENTS.md).
 
 - `Store` is instantiated per user directory (`contacts.New(userStateDir)`),
@@ -115,6 +117,8 @@ derived from it must be invalidated by a mechanism the daemon can reach — see
   `api/contacts_handlers.go`.
 
 ## Verification
+
+- PostgreSQL `TestTablePhotoSweepRetainsConcurrentlyReferencedPhoto` pauses cleanup after its reference snapshot, commits another handle's new reference, then proves cleanup keeps the photo and reclaims the actual orphan. `TestTableContactRefusesPhotoRemovedBeforeReferenceCommit` checks byte-identical contact state on failed publication; cancellation preserves orphan bytes. API photo/quota/isolation tests and the sealed table capsule test cover the consuming paths.
 
 - `go vet ./internal/contacts/...` must pass.
 - Unit tests should cover: readers refusing to answer from memory while

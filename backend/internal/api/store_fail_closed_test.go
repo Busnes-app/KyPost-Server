@@ -174,7 +174,7 @@ func TestContactPhotoSweepStopsWhenTheAddressBookIsUnreadable(t *testing.T) {
 	if _, err := os.Stat(photoPath); err != nil {
 		t.Fatalf("precondition: photo not on disk: %v", err)
 	}
-	if err := srv.sweepContactPhotos(userID); err != nil {
+	if err := srv.sweepContactPhotos(context.Background(), userID); err != nil {
 		t.Fatalf("precondition: sweep failed while the address book was intact: %v", err)
 	}
 	if _, err := os.Stat(photoPath); err != nil {
@@ -183,7 +183,7 @@ func TestContactPhotoSweepStopsWhenTheAddressBookIsUnreadable(t *testing.T) {
 
 	corruptContactsFile(t, srv, userID)
 
-	if err := srv.sweepContactPhotos(userID); err == nil {
+	if err := srv.sweepContactPhotos(context.Background(), userID); err == nil {
 		t.Error("sweep reported success with an unreadable address book")
 	}
 	if _, err := os.Stat(photoPath); err != nil {
