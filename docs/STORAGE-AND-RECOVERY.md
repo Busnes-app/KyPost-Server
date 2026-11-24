@@ -197,3 +197,12 @@ than capsule database members, and ordinary single-mode removal is unchanged.
 Sealed recovery continues to require stopped/fenced sources and fresh erasure
 reconciliation before any release; a runtime worker cannot carry its old handle
 across a restore. Hosted startup remains refused.
+
+Table-mode services refuse a nonempty `KYPOST_BACKUP_DIR`: unset it and pair
+KyRecovery for backup deposits. Without that destination, a run fails explicitly
+and keeps its normal retry interval. Explicit capsule export remains available
+without leaving a scheduled capsule copy on a replica. Backup CLI verbs select
+the same table/account authority as runtime before opening the backup service;
+historical retained accounts still require the offline migration. Ordinary
+unmigrated single-tenant installs keep their existing local-copy behavior.
+Hosted startup and the remaining multi-host launch gates stay in place.

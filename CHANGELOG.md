@@ -22,6 +22,8 @@ non-prerelease version.
 
 - Serialize table-mode SSO settings saves with authority commits across hosts, propagate fence ownership context and refuse unreadable authority; preserve ordinary file behavior and hosted startup gates.
 
+- Refuse table-mode local backup copies and select table/account authority before backup CLI operations; retain sealed export, scheduler backoff, historical-account safety and hosted startup refusal.
+
 - Base hosted receiving import leases on database time so a replica clock cannot steal a live mailbox lease; keep multi startup gated.
 - Fence table-mode directory deletion with atomic catalog tombstones and stale schema-writer refusal; keep normal single-mode removal and hosted startup gates.
 
