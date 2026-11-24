@@ -1366,3 +1366,23 @@ the remaining cross-store/elected-job fences and table-mode backup restrictions
 remain prerequisites. The lease-clock substep merged separately in #712. Startup `multi`
 refusal, MH5/MH7/MH8, regions, mandatory object storage and all release gates stay.
 No SaaS-readiness claim is made.
+
+## MH4 table-mode outbox idle files as built (2026-11-23)
+
+Mailbox handles select mounted table mode once at open. Enqueue and delivery
+completion then bypass the host-local `outbox-idle` lock/removal. Discovery
+already reads PostgreSQL directly; claims, retries and Sent reservations keep
+their existing database transactions and tokens. Ordinary SQLite and unmigrated
+single-mode PostgreSQL retain the prior idle-file behavior.
+
+The negative regression uses an actual mounted PostgreSQL document adapter and
+a directory occupying the old lock path: before the fix enqueue refuses that
+local file; afterwards enqueue and completion succeed, two handles yield one
+claim, the submitting delivery is not replayed, accepted delivery keeps its
+Sent reservation, and filing Sent clears the pending work. The old hint stays
+byte-identical and no temporary hint appears. A separate unmigrated PostgreSQL
+case verifies the lock file and old-hint removal remain unchanged.
+
+This is only the idle-file part of MH4. Publication, remaining cross-store/job
+fences, table-mode backup restrictions, migration, regions, mandatory object
+storage and launch/startup gates remain separate. No hosted-readiness claim.

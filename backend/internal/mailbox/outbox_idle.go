@@ -44,6 +44,11 @@ func lockOutboundIdle(dir string, how int) (release func(), err error) {
 // the caller holds release until it commits or rolls back. The removal is
 // synced so a power loss cannot bring an old mark back after the commit.
 func (s *Store) clearOutboundIdle() (release func(), err error) {
+	// Table-mode discovery reads PostgreSQL directly. A host-local hint cannot
+	// describe another replica's queue and must not gate a shared write.
+	if s.table {
+		return func() {}, nil
+	}
 	if release, err = lockOutboundIdle(s.dir, syscall.LOCK_SH); err != nil {
 		return nil, err
 	}
