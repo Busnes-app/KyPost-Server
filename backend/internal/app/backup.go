@@ -62,6 +62,18 @@ func runBackupCommand(name string, rest []string, stdin io.Reader, stdout io.Wri
 	if name == "restore" {
 		return runRestore(rest, stdin, stdout)
 	}
+	mode, _, err := config.Tenancy()
+	if err != nil {
+		return err
+	}
+	if mode == config.TenancyMulti {
+		return config.ErrMultiTenancyUnavailable
+	}
+	releaseDocuments, err := startDocuments(context.Background(), config.ConfigDir(), config.StateDir(), config.SecretDir(), mode)
+	if err != nil {
+		return err
+	}
+	defer releaseDocuments()
 	st, err := state.New(config.StateDir())
 	if err != nil {
 		return fmt.Errorf("open state: %w", err)

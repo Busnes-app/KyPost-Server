@@ -25,6 +25,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // AppName is the service_name claimed at pairing and named in every manifest.
@@ -86,6 +87,9 @@ func New(d Dirs, bc config.BackupConfig, store *state.Store, appVersion string) 
 		if !filepath.IsAbs(root) {
 			return nil, errors.New("backup data directories must be absolute")
 		}
+	}
+	if bc.Dir != "" && vol.OpenDocument(filepath.Join(d.Config, "config.yaml")).IsTable() {
+		return nil, errors.New("table-mode backups refuse KYPOST_BACKUP_DIR; unset it and pair KyRecovery for backup deposits")
 	}
 	if bc.Dir != "" {
 		for _, root := range []string{d.Config, d.Secret, d.State} {
