@@ -48,7 +48,8 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Single Sign-On is not configured or disabled", http.StatusServiceUnavailable)
 		return
 	}
-	if s.ssoMetered(w, r) { // the identity provider calling, not an office sign-in
+	limited, gen := s.ssoMeter(w, r) // the identity provider calling, not an office sign-in
+	if limited {
 		return
 	}
 
@@ -116,7 +117,7 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 	}
 	revoked += again
 	if s.loginParamsLimiter != nil {
-		s.loginParamsLimiter.settleCost(lockoutKeyForIP(clientIP(r)), -1)
+		s.loginParamsLimiter.refund(lockoutKeyForIP(clientIP(r)), gen)
 	}
 	s.logger.Info("SSO back-channel logout applied", "jti", claims.JWTID, "sessions", strconv.Itoa(revoked))
 	writeJSON(w, http.StatusOK, map[string]any{"status": "logged_out"})

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"net/http"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -66,6 +68,31 @@ func TestTableMetersAreSharedAcrossReplicas(t *testing.T) {
 		l.shared = down
 		if ok, wait := l.allow("fresh-" + name); ok || wait <= 0 {
 			t.Fatal("a failed database admitted", name)
+		}
+	}
+}
+
+// A shared login-params window still refunds every accepted back-channel logout, so a burst
+// of real logouts across two table-mode replicas is never throttled.
+func TestTableBackchannelLogoutsAreRefundedAcrossReplicas(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	a, idp := setupSSOTestServer(t)
+	a.configPath = filepath.Join(a.configDir, "config.yaml")
+	if err := config.Save(a.configPath, a.cfg); err != nil {
+		t.Fatal(err)
+	}
+	mountServerDocuments(t, a)
+	b := replicaOf(t, a)
+	b.serverBaseURL = a.serverBaseURL
+	a.UseSharedState(a.globalStore)
+	b.UseSharedState(b.globalStore)
+	if a.loginParamsLimiter.shared == nil {
+		t.Fatal("login-params is not shared in table mode")
+	}
+	for i := range loginParamsBurst + 5 {
+		rec := postLogout([]*Server{a, b}[i%2], logoutForm(idp.LogoutToken(t, "alice", "sid-"+strconv.Itoa(i), nil)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("delivery %d: status = %d, want 200: %s", i, rec.Code, rec.Body.String())
 		}
 	}
 }
