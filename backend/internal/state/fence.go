@@ -63,9 +63,11 @@ func fencePool(baseDir string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Keyed by server and database too: a test may point the process at a new database.
+	key := dbbackend.Describe() + "|" + schema
 	fencePools.Lock()
 	defer fencePools.Unlock()
-	if db := fencePools.bySchema[schema]; db != nil {
+	if db := fencePools.bySchema[key]; db != nil {
 		return db, nil
 	}
 	db, err := dbbackend.Pool(schema, false)
@@ -77,7 +79,7 @@ func fencePool(baseDir string) (*sql.DB, error) {
 	if fencePools.bySchema == nil {
 		fencePools.bySchema = map[string]*sql.DB{}
 	}
-	fencePools.bySchema[schema] = db
+	fencePools.bySchema[key] = db
 	return db, nil
 }
 
