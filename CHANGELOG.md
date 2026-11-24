@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Preserve a scheduled message's quota/held reason when either database-clock read fails; keep its sealed contents and database retry delay intact.
+
 - Stop table-mode outbox enqueue/completion from depending on a host-local idle lock; preserve shared claim/Sent fencing and ordinary single-mode hints.
 
 - Serialize table-mode SSO settings saves with authority commits across hosts, propagate fence ownership context and refuse unreadable authority; preserve ordinary file behavior and hosted startup gates.

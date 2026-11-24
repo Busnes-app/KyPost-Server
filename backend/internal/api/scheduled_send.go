@@ -468,6 +468,7 @@ func (s *Server) runScheduled(ctx context.Context, key []byte, row state.Schedul
 		next, reason = s.dispatchScheduled(ctx, j, now)
 	}
 	if next == state.ScheduledWaiting {
+		reason = cmp.Or(reason, row.Reason)
 		current, err := s.globalStore.ScheduledNow(ctx, now())
 		if err != nil {
 			move(state.ScheduledWaiting, reason, scheduledRetryDelay)

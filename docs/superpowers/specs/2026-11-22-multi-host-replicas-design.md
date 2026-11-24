@@ -1407,7 +1407,10 @@ delete. Ordinary SQLite and unmigrated PostgreSQL retain the
 caller's clock and existing injected-clock tests.
 
 A real PostgreSQL pair proves future/retry refusal, exactly one due claimant,
-relative backoff, due draft discovery and canceled-clock refusal. The actual API
+relative backoff, due draft discovery and canceled-clock refusal. Cancellation
+before either the initial or dispatch clock read preserves existing quota and
+held reasons, byte-identical sealed job/summary and bounded database backoff,
+without submitting SMTP or saving a draft. The actual API
 sweeper with mounted account/documents and a loopback transient SMTP refusal
 proves that fast time neither sends future mail nor prematurely returns a due
 retry to Drafts, and slow time still finds and attempts a database-due retry.
