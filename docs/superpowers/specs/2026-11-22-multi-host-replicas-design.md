@@ -1603,13 +1603,15 @@ nothing changes there. The per-account load-shedding meters stay per replica, as
 **Changed from the design: a failed store refuses with a retry, not `503`.** These meters
 answer through `allow`, whose callers return their usual refusal (`429` with `Retry-After`) when
 it says no. A store that cannot answer says no with `Retry-After` of `sharedTimeout`, so it
-never falls back to memory, but the status is the meter's refusal, not `unavailable`. The
-`login-params` refund after a sign-out (`settleCost`) does not reach a shared window, so a
-logged-out caller's next draw counts: stricter, never looser.
+never falls back to memory, but the status is the meter's refusal, not `unavailable`. An accepted back-channel logout
+refunds its `login-params` hit to the window it was counted in (`allowGen`, then `refund`
+through `ReleaseAttempt`), so a burst of real logouts is never throttled.
 
-Test: `TestTableMetersAreSharedAcrossReplicas` (PostgreSQL: a single pair keeps every meter in
+Tests: `TestTableMetersAreSharedAcrossReplicas` (PostgreSQL: a single pair keeps every meter in
 memory; a table-mode pair admits exactly each meter's window in total, alternating replicas,
-and refuses the next hit on both; another key has its own window; a closed store refuses).
+and refuses the next hit on both; another key has its own window; a closed store refuses) and
+`TestTableBackchannelLogoutsAreRefundedAcrossReplicas` (more accepted logouts than the window,
+alternating two table-mode replicas, all succeed).
 
 **Not built in MH6 yet:** the proof-of-work escalation (`powEscalation`, its own per-IP map,
 not a `keyedLimiter`), the per-org import and export lease, and the two-replica variant of
