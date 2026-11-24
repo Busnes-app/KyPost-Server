@@ -21,6 +21,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 var ErrOutbound = errors.New("native outbox unavailable or conflicting; preserve queued mail and reconcile ownership, relay and delivery evidence")
@@ -352,15 +353,29 @@ func (s *Store) ClaimOutbound(ctx context.Context, master []byte, id string, seq
 		return OutboundDelivery{}, "", ErrOutbound
 	}
 	status := statuses[sequence]
-	if (status.State != "queued" && status.State != "retryable") || status.NextAttempt > time.Now().Unix() || status.Attempts >= 6 {
+	if (status.State != "queued" && status.State != "retryable") || (!s.table && status.NextAttempt > time.Now().Unix()) || status.Attempts >= 6 {
 		return OutboundDelivery{}, "", ErrOutbound
 	}
 	claim, err := fsutil.NewUUIDv4()
 	if err != nil {
 		return OutboundDelivery{}, "", err
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE outbox_deliveries SET state='submitting',claim=?,attempts=attempts+1,next_attempt=0 WHERE job=? AND sequence=?", claim, id, sequence); err != nil {
+	query := "UPDATE outbox_deliveries SET state='submitting',claim=?,attempts=attempts+1,next_attempt=0 WHERE job=? AND sequence=?"
+	if s.table {
+		query += " AND next_attempt<=unixepoch()"
+	}
+	result, err := tx.ExecContext(ctx, query, claim, id, sequence)
+	if err != nil {
 		return OutboundDelivery{}, "", err
+	}
+	if s.table {
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return OutboundDelivery{}, "", err
+		}
+		if changed != 1 {
+			return OutboundDelivery{}, "", ErrOutbound
+		}
 	}
 	return job.Deliveries[sequence], claim, tx.Commit()
 }
@@ -389,7 +404,7 @@ func (s *Store) CompleteOutbound(ctx context.Context, master []byte, id string, 
 		return ErrOutbound
 	}
 	outcome := "uncertain"
-	var retryAt int64
+	var retryAt, retryDelay int64
 	if submission == nil || errors.Is(submission, mailmsg.ErrSMTPAcceptedThenFailed) {
 		outcome = "accepted"
 	} else if !errors.Is(submission, mailmsg.ErrSMTPAcceptanceUncertain) {
@@ -398,11 +413,19 @@ func (s *Store) CompleteOutbound(ctx context.Context, master []byte, id string, 
 			outcome = "failed"
 			if response.Code < 500 && attempts < 6 {
 				outcome = "retryable"
-				retryAt = time.Now().Add(time.Duration(30*(1<<(attempts-1))) * time.Second).Unix()
+				retryDelay = int64(30 * (1 << (attempts - 1)))
+				if !s.table {
+					retryAt = time.Now().Add(time.Duration(retryDelay) * time.Second).Unix()
+				}
 			}
 		}
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE outbox_deliveries SET state=?,next_attempt=? WHERE job=? AND sequence=?", outcome, retryAt, id, sequence); err != nil {
+	nextAttempt := "?"
+	if s.table && outcome == "retryable" {
+		nextAttempt = "unixepoch()+?"
+		retryAt = retryDelay
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE outbox_deliveries SET state=?,next_attempt="+nextAttempt+" WHERE job=? AND sequence=?", outcome, retryAt, id, sequence); err != nil {
 		return err
 	}
 	if outcome == "accepted" || outcome == "failed" {
@@ -672,7 +695,11 @@ func HasPendingOutbound(ctx context.Context, dir string) (bool, error) {
 		}
 		defer func() { _ = db.Close() }()
 		var pending bool
-		err = db.QueryRowContext(ctx, "SELECT EXISTS ("+pendingOutboundSQL+")", now.Unix(), 1).Scan(&pending)
+		if vol.OpenDocument(filepath.Join(dir, preparationFile)).IsTable() {
+			err = db.QueryRowContext(ctx, "SELECT EXISTS ("+tablePendingOutboundSQL+")", 1).Scan(&pending)
+		} else {
+			err = db.QueryRowContext(ctx, "SELECT EXISTS ("+pendingOutboundSQL+")", now.Unix(), 1).Scan(&pending)
+		}
 		return pending, err
 	}
 	info, err := os.Stat(path)
@@ -703,9 +730,12 @@ func HasPendingOutbound(ctx context.Context, dir string) (bool, error) {
 	return pending, err
 }
 
-const pendingOutboundSQL = `SELECT DISTINCT o.id,o.created_at FROM outbox o JOIN outbox_deliveries d ON d.job=o.id
- WHERE (d.state IN ('queued','retryable') AND d.next_attempt<=? AND (EXISTS (SELECT 1 FROM outbox_independent i WHERE i.job=o.id) OR d.sequence=0 OR EXISTS (SELECT 1 FROM outbox_deliveries p WHERE p.job=o.id AND p.sequence=0 AND p.state='accepted'))) OR (d.state='accepted' AND o.sent_reserved=1)
+const pendingOutboundSelect = `SELECT DISTINCT o.id,o.created_at FROM outbox o JOIN outbox_deliveries d ON d.job=o.id
+ WHERE (d.state IN ('queued','retryable') AND d.next_attempt<=`
+const pendingOutboundRest = ` AND (EXISTS (SELECT 1 FROM outbox_independent i WHERE i.job=o.id) OR d.sequence=0 OR EXISTS (SELECT 1 FROM outbox_deliveries p WHERE p.job=o.id AND p.sequence=0 AND p.state='accepted'))) OR (d.state='accepted' AND o.sent_reserved=1)
  ORDER BY o.created_at,o.id LIMIT ?`
+const pendingOutboundSQL = pendingOutboundSelect + "?" + pendingOutboundRest
+const tablePendingOutboundSQL = pendingOutboundSelect + "unixepoch()" + pendingOutboundRest
 
 // PendingOutbound finds bounded local work in oldest-first order. Crashed or
 // uncertain submissions are deliberately excluded; Sent retry is independent.
@@ -714,7 +744,11 @@ func (s *Store) PendingOutbound(ctx context.Context, limit int) ([]string, error
 	if limit < 1 || limit > 1000 {
 		return nil, ErrOutbound
 	}
-	rows, err := s.db.QueryContext(ctx, pendingOutboundSQL, time.Now().Unix(), limit)
+	query, args := pendingOutboundSQL, []any{time.Now().Unix(), limit}
+	if s.table {
+		query, args = tablePendingOutboundSQL, []any{limit}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -85,7 +86,7 @@ func TestSweepContactPhotosRemovesUnreferencedFiles(t *testing.T) {
 		t.Fatalf("photo files before sweep = %d, want 2", got)
 	}
 
-	if err := srv.sweepContactPhotos(userID); err != nil {
+	if err := srv.sweepContactPhotos(context.Background(), userID); err != nil {
 		t.Fatalf("sweepContactPhotos: %v", err)
 	}
 
@@ -129,7 +130,7 @@ func TestSweepContactPhotosKeepsFileSharedByTwoContacts(t *testing.T) {
 	if _, _, err := store.SetPhotoRef(uids[0], ""); err != nil {
 		t.Fatalf("SetPhotoRef: %v", err)
 	}
-	if err := srv.sweepContactPhotos(userID); err != nil {
+	if err := srv.sweepContactPhotos(context.Background(), userID); err != nil {
 		t.Fatalf("sweepContactPhotos: %v", err)
 	}
 
@@ -163,7 +164,7 @@ func TestSweepContactPhotosReclaimsDeletedContactsPhoto(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	if err := srv.sweepContactPhotos(userID); err != nil {
+	if err := srv.sweepContactPhotos(context.Background(), userID); err != nil {
 		t.Fatalf("sweepContactPhotos: %v", err)
 	}
 	if _, err := os.Stat(srv.userContactPhotoPath(userID, ref)); !os.IsNotExist(err) {
@@ -181,7 +182,7 @@ func TestSweepContactPhotosIgnoresSubdirectories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "nested"), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	if err := srv.sweepContactPhotos(userID); err != nil {
+	if err := srv.sweepContactPhotos(context.Background(), userID); err != nil {
 		t.Fatalf("sweepContactPhotos: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "nested")); err != nil {

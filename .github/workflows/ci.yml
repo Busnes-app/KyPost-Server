@@ -326,7 +326,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$LEG" = stores ]; then
-            go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/... ./internal/worker/... ./internal/replica/... ./internal/mfa/... ./internal/captcha/... ./internal/kycalendar/... ./internal/suitepair/... ./internal/tenancy/... ./internal/vol/... ./internal/volumes/... ./internal/users/...
+            go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/... ./internal/worker/... ./internal/replica/... ./internal/mfa/... ./internal/captcha/... ./internal/kycalendar/... ./internal/suitepair/... ./internal/tenancy/... ./internal/vol/... ./internal/volumes/... ./internal/users/... ./internal/contacts/...
             exit
           fi
           go test -race -list . ./internal/api/ | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > "$RUNNER_TEMP/all"

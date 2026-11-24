@@ -20,11 +20,16 @@ non-prerelease version.
 
 - Preserve a scheduled message's quota/held reason when either database-clock read fails; keep its sealed contents and database retry delay intact.
 
+- Use database statement time for table-mode outbox retry backoff, claim admission and discovery; preserve immutable claims, retry limits, ordinary-mode timing and hosted startup gates.
+
 - Stop table-mode outbox enqueue/completion from depending on a host-local idle lock; preserve shared claim/Sent fencing and ordinary single-mode hints.
+- Fence table-mode backup operations across hosts with ownership probing and bounded busy refusal; preserve ordinary-mode file locking and existing run/pin guards.
 
 - Serialize table-mode SSO settings saves with authority commits across hosts, propagate fence ownership context and refuse unreadable authority; preserve ordinary file behavior and hosted startup gates.
 
 - Refuse table-mode local backup copies and select table/account authority before backup CLI operations; retain sealed export, scheduler backoff, historical-account safety and hosted startup refusal.
+
+- Keep table-mode photo cleanup from deleting a newly referenced photo and refuse contact publication after pending bytes were swept; preserve ordinary file behavior and hosted startup gates.
 
 - Base hosted receiving import leases on database time so a replica clock cannot steal a live mailbox lease; keep multi startup gated.
 - Fence table-mode directory deletion with atomic catalog tombstones and stale schema-writer refusal; keep normal single-mode removal and hosted startup gates.
@@ -68,6 +73,8 @@ non-prerelease version.
 ### Fixed
 
 - Table-mode scheduled mail now uses the shared database clock for execution, retry and draft-return windows, preventing fast replicas from claiming future mail and slow replicas from hiding due work. Clock-read refusal keeps the prior quota/held reason and sealed mail. Ordinary single-tenant timing is preserved.
+
+- Preserve document contention (503) and size refusal (413) when a contact has no photo references; verify publication and cleanup share the existing PostgreSQL writer transaction through commit.
 
 - Enable Rspamd's settings module so Cloudflare receiving's request-level SPF,
   DMARC and ARC exclusions take effect with Rspamd 4.3.0. Direct SMTP keeps its

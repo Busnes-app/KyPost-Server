@@ -1476,5 +1476,115 @@ The CLI regression separately reproduced bypassing table selection and beginning
 backup audit. Fixed tests cover both, plus a real table-account/document sealed
 export and held native restore, missing-destination refusal, scheduler backoff,
 retained historical account bytes and ordinary local backup/restore/drill.
-Remaining backup-operation fencing and other MH4 publication/job fences are
-separate; this policy does not finish MH4 or authorize hosted readiness.
+This section covers delivery policy; the operation-fence boundary is described
+below. Other MH4 publication/job fences remain separate, and neither boundary
+authorizes hosted readiness.
+
+## MH4 outbox retry window clock as built (2026-11-23)
+
+Table-mode delivery completion now sets a retryable row's deadline with database
+`unixepoch()+backoff` in the same update. Claim admission compares that deadline
+with database time in its conditional update and requires one affected row. Both
+PendingOutbound and the read-only HasPendingOutbound hint compare database time
+too. Ordinary mode retains its host-clock expressions and idle hints; only a
+handle/path selected by the existing table mount uses the new expressions.
+
+This adds no time-query round trip, schema, interface or dependency. Backoff and
+the six-attempt limit stay unchanged. The immutable claim token still fences
+completion; submitting/crashed and uncertain work is never reclaimed on time.
+Sent reservation discovery remains independent of delivery retries.
+
+The pre-fix regression completed a retry on a year-2000 replica and recorded its
+deadline in 2000, making it immediately expired for other hosts. The fixed test
+bounds the stored deadline between database observations, refuses stealing before
+that deadline, advances another replica decades ahead without admitting/discovering a
+future database retry, then proves a year-2000 replica discovers and claims a
+database-due row. Wrong/stale completion does not change the next attempt, and
+refused claims consume no attempt. Each bubble opens/closes its own connections.
+A separate unmigrated PostgreSQL case retains the original host-clock result.
+
+This closes this outbox shared retry-window boundary only. Other MH4 fences,
+publication/elected-job coverage, key/volume-free/MH8/region/object-storage and
+startup/launch gates remain. No hosted-readiness claim is made.
+
+## MH4 cross-host backup-operation fence as built (2026-11-23)
+
+A backup service selects mounted table mode once at construction. Its shared
+operation wrapper then uses the existing probed `fence:backup-operation` for
+Run/RunIfDue, Export, Pair/PairIfMissing, PinKey, Unpair, SetIntervalSeconds,
+Status and Drill. No table operation opens `backup-operation.lock`. Ordinary
+mode retains the original nonblocking flock. Table-mode contention uses the
+existing bounded 10-second fence wait and returns the same busy error; caller
+cancellation remains cancellation. Run/export/drill/pair receive the owned
+context, and the wrapper refuses a success result after ownership loss. The
+existing inner `backup-run` and `recovery-pin` guards remain unchanged.
+
+The negative regression held a real scheduled run on one host and reproduced a
+schedule change on a second host with a separate filesystem. The fixed test
+contests all ten public entry points concurrently, requires busy refusal and
+unchanged pin/schedule/attempt state, and checks neither host created the local
+lock. It also proves canceled admission never enters, kills the only fence
+session in an isolated test database, observes cancellation within ProbeBound,
+rejects a callback's nil result after loss, then admits another host.
+
+This completes this operation-lock boundary only. Native preparation and the
+remaining domain/directory/settings/quota/SSO and elected-job fences, key-set
+provisioning, volume-free startup, MH8 migration, regions, mandatory object
+storage and launch gates remain. No SaaS-readiness claim is made.
+
+## MH4 elected photo cleanup and reference publication as built (2026-11-23)
+
+The elected API photo sweeper had two cross-store gaps in table mode: deleting
+from an earlier contacts snapshot could remove a newly referenced photo, and a
+photo stored before its contact update could be swept before reference commit.
+The latter cannot be fixed by a cleanup lock or a contacts revision check alone.
+
+Every table contacts persistence now supplies its live photo dependencies to
+`Document.WriteWithReferences`. The existing document writer transaction checks
+same-volume/same-owner reference rows after its retained-account guard and before
+key creation/sealing. Shared references are deduplicated into one bounded SQL
+query. Missing bytes return ErrStale and commit neither the contact body nor a
+new org key. All ingest paths retain their existing API parsing and serialization;
+contacts own reference extraction, and the volume seam stays format-agnostic.
+
+Table `contacts.Store.SweepPhotos(ctx)` reloads the reference set per attempt and
+removes an observed photo only while both its global revision and the owning
+contacts-document revision match. Conflict retries the whole snapshot. It checks
+role cancellation between operations. A newer reference either commits first and
+invalidates deletion, or finds the photo already gone and refuses publication;
+a stale remover cannot delete a recreated photo incarnation. Ordinary file
+persistence and cleanup retain their prior behavior.
+
+Both pre-fix failures were reproduced. Deterministic regressions pause cleanup
+after snapshot while another handle references an orphan; the referenced bytes
+survive and the actual old orphan is removed. Publication after a sweep refuses
+with byte-identical contact state. Further tests cover cancellation, shared refs,
+foreign owners, deletion/recreation, no key/body on missing dependencies, and a
+sealed table capsule restoring a live contact reference with its photo bytes.
+The existing PostgreSQL CI stores leg now includes the contacts package, so these
+PostgreSQL-only regressions execute rather than skipping in both file-profile legs.
+MH8 must validate missing/unsafe historical photo references before migration,
+preserving them and refusing explicit conversion rather than discarding data.
+
+This closes the photo-cleanup job's data-safety boundary, not every elected job
+or cross-store fence. Other MH4 fences/publication, key provisioning, volume-free
+startup, MH8, regions, mandatory object storage and launch gates remain. No
+hosted-readiness claim is made.
+
+### Photo boundary driver/error contract verification
+
+An empty reference list delegates to the existing Vol.Write seam, preserving
+CAS retry and size-error mapping through test/custom volumes. The original API
+contention/oversize assertions remain unchanged (503/five writes and 413/one
+write); rejecting a non-Table adapter before delegation had incorrectly returned
+500 and is corrected.
+
+Publication and cleanup already share the normal PostgreSQL schema writer key:
+Table.write starts its writer transaction before validation, and the driver's
+Exec auto-wrap takes that same key for the conditional DELETE. NewTable refuses
+the accounts row-writer driver. A new deterministic regression pauses publication
+in an UPDATE trigger after dependency validation but before commit, observes
+cleanup waiting on that exact key, then requires stale cleanup refusal after the
+new contact revision commits. A controlled Go overlay disabling only DELETE
+auto-wrap fails with cleanup escaping the pending publication. No extra lock or
+weakened assertion is introduced.

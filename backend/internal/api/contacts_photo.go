@@ -235,10 +235,13 @@ func (s *Server) contactPhotoBytesUsed(userID string) (int64, error) {
 // A contact tombstone (Deleted) holds no reference — its photo is exactly the
 // kind that should come back. Subdirectories are left alone, and one
 // unremovable file does not abort the rest of the sweep.
-func (s *Server) sweepContactPhotos(userID string) error {
+func (s *Server) sweepContactPhotos(ctx context.Context, userID string) error {
 	store, err := s.userContactsStore(userID)
 	if err != nil {
 		return err
+	}
+	if vol.OpenDocument(filepath.Join(s.userStateDir(userID), "contacts.json")).IsTable() {
+		return store.SweepPhotos(ctx)
 	}
 	// The sweep deletes every photo file this set does not name, so a failed
 	// read must abort it: an empty set means "nothing is referenced", and the

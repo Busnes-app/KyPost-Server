@@ -10,6 +10,8 @@ All files in this package. Internal storage and complete `imap.Client` implement
 
 ## Local Contracts
 
+- Table-mode outbox retry completion stores database `unixepoch()+backoff`; admission checks `next_attempt<=unixepoch()` inside the claim update, and both discovery paths compare database time. Rejected future retries consume no attempt, and submitting/uncertain work never gains a time-based reclaim. Existing backoff, claim tokens, Sent reservations and ordinary-mode host-clock behavior remain unchanged. `TestTableOutboxRetryWindowUsesDatabaseClock` opens/closes sessions inside each synctest bubble, tests year-2000 and year-2080 replicas against database deadlines, and checks stale completion/no consumed attempts. `TestUnmigratedOutboxRetryKeepsReplicaClock` preserves the old path.
+
 - Table-mode mailbox handles select the mounted document mode at open. Enqueue and completion never touch host-local `outbox-idle` hints or locks; PostgreSQL discovery reads shared outbox rows. Existing claim tokens and Sent reservations remain authoritative. Ordinary SQLite and un-migrated PostgreSQL retain their prior idle-file behavior. `TestTableOutboundIgnoresHostLocalIdleFiles` covers a refused local lock path, competing claims and Sent completion; `TestUnmigratedPostgresOutboundKeepsIdleLock` covers compatibility.
 
 - Prepared metadata reads resolve `native-mailbox.json` through `vol`, including authenticated SQLite restore staging. Physical directory/inode checks remain unchanged for file metadata. Creating/publishing preparations and their cross-store fences move in MH4; the accounts-row guard is MH3, and table-mode startup stays gated until both exist.
