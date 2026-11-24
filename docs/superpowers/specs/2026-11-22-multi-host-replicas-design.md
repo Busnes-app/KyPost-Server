@@ -1495,3 +1495,60 @@ This completes this operation-lock boundary only. Native preparation and the
 remaining domain/directory/settings/quota/SSO and elected-job fences, key-set
 provisioning, volume-free startup, MH8 migration, regions, mandatory object
 storage and launch gates remain. No SaaS-readiness claim is made.
+
+## MH4 elected photo cleanup and reference publication as built (2026-11-23)
+
+The elected API photo sweeper had two cross-store gaps in table mode: deleting
+from an earlier contacts snapshot could remove a newly referenced photo, and a
+photo stored before its contact update could be swept before reference commit.
+The latter cannot be fixed by a cleanup lock or a contacts revision check alone.
+
+Every table contacts persistence now supplies its live photo dependencies to
+`Document.WriteWithReferences`. The existing document writer transaction checks
+same-volume/same-owner reference rows after its retained-account guard and before
+key creation/sealing. Shared references are deduplicated into one bounded SQL
+query. Missing bytes return ErrStale and commit neither the contact body nor a
+new org key. All ingest paths retain their existing API parsing and serialization;
+contacts own reference extraction, and the volume seam stays format-agnostic.
+
+Table `contacts.Store.SweepPhotos(ctx)` reloads the reference set per attempt and
+removes an observed photo only while both its global revision and the owning
+contacts-document revision match. Conflict retries the whole snapshot. It checks
+role cancellation between operations. A newer reference either commits first and
+invalidates deletion, or finds the photo already gone and refuses publication;
+a stale remover cannot delete a recreated photo incarnation. Ordinary file
+persistence and cleanup retain their prior behavior.
+
+Both pre-fix failures were reproduced. Deterministic regressions pause cleanup
+after snapshot while another handle references an orphan; the referenced bytes
+survive and the actual old orphan is removed. Publication after a sweep refuses
+with byte-identical contact state. Further tests cover cancellation, shared refs,
+foreign owners, deletion/recreation, no key/body on missing dependencies, and a
+sealed table capsule restoring a live contact reference with its photo bytes.
+The existing PostgreSQL CI stores leg now includes the contacts package, so these
+PostgreSQL-only regressions execute rather than skipping in both file-profile legs.
+MH8 must validate missing/unsafe historical photo references before migration,
+preserving them and refusing explicit conversion rather than discarding data.
+
+This closes the photo-cleanup job's data-safety boundary, not every elected job
+or cross-store fence. Other MH4 fences/publication, key provisioning, volume-free
+startup, MH8, regions, mandatory object storage and launch gates remain. No
+hosted-readiness claim is made.
+
+### Photo boundary driver/error contract verification
+
+An empty reference list delegates to the existing Vol.Write seam, preserving
+CAS retry and size-error mapping through test/custom volumes. The original API
+contention/oversize assertions remain unchanged (503/five writes and 413/one
+write); rejecting a non-Table adapter before delegation had incorrectly returned
+500 and is corrected.
+
+Publication and cleanup already share the normal PostgreSQL schema writer key:
+Table.write starts its writer transaction before validation, and the driver's
+Exec auto-wrap takes that same key for the conditional DELETE. NewTable refuses
+the accounts row-writer driver. A new deterministic regression pauses publication
+in an UPDATE trigger after dependency validation but before commit, observes
+cleanup waiting on that exact key, then requires stale cleanup refusal after the
+new contact revision commits. A controlled Go overlay disabling only DELETE
+auto-wrap fails with cleanup escaping the pending publication. No extra lock or
+weakened assertion is introduced.

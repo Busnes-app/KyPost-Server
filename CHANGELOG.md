@@ -27,6 +27,8 @@ non-prerelease version.
 
 - Refuse table-mode local backup copies and select table/account authority before backup CLI operations; retain sealed export, scheduler backoff, historical-account safety and hosted startup refusal.
 
+- Keep table-mode photo cleanup from deleting a newly referenced photo and refuse contact publication after pending bytes were swept; preserve ordinary file behavior and hosted startup gates.
+
 - Base hosted receiving import leases on database time so a replica clock cannot steal a live mailbox lease; keep multi startup gated.
 - Fence table-mode directory deletion with atomic catalog tombstones and stale schema-writer refusal; keep normal single-mode removal and hosted startup gates.
 
@@ -67,6 +69,8 @@ non-prerelease version.
 - Refresh compatible dependency versions and lockfiles. Rebuild or install the updated application; no database, configuration, account or key migration is required.
 
 ### Fixed
+
+- Preserve document contention (503) and size refusal (413) when a contact has no photo references; verify publication and cleanup share the existing PostgreSQL writer transaction through commit.
 
 - Enable Rspamd's settings module so Cloudflare receiving's request-level SPF,
   DMARC and ARC exclusions take effect with Rspamd 4.3.0. Direct SMTP keeps its

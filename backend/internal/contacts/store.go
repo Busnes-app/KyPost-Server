@@ -1,6 +1,7 @@
 package contacts
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,10 +25,8 @@ import (
 const defaultTombstoneRetention = 30 * 24 * time.Hour
 
 // Store is one user's address book, persisted as contacts.json alongside
-// state.json and decisions.json in the user's state directory. The API and
-// daemon processes share no memory, so every read and mutation re-reads the
-// file from disk first (matching state.Store's convention), even though only
-// the API process touches contacts today.
+// state.db in the user's state directory. Both API and daemon mutate contacts,
+// so every read and mutation refreshes the persisted document before acting.
 type Store struct {
 	mu             sync.Mutex
 	baseDir        string
@@ -96,7 +95,27 @@ func (s *Store) persistLocked() error {
 		GCHighWaterRev: s.gcHighWaterRev,
 		PGPKeyGen:      s.pgpKeyGen,
 	}
-	if err := vol.PersistJSON(s.document, cf); err != nil {
+	var err error
+	if s.document.IsTable() {
+		references := make([]string, 0)
+		for _, c := range s.contacts {
+			if c.Deleted || c.PhotoRef == "" {
+				continue
+			}
+			if !fsutil.SafePathComponent(c.PhotoRef) {
+				return vol.ErrPath
+			}
+			references = append(references, filepath.Join(s.baseDir, "contact-photos", c.PhotoRef))
+		}
+		var body []byte
+		body, err = json.MarshalIndent(cf, "", "  ")
+		if err == nil {
+			err = s.document.WriteWithReferences(body, references)
+		}
+	} else {
+		err = vol.PersistJSON(s.document, cf)
+	}
+	if err != nil {
 		return fmt.Errorf("write contacts: %w", err)
 	}
 	return nil

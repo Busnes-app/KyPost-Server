@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -239,6 +240,17 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	contactStore, err := contacts.New(filepath.Dir(filepath.Dir(photoPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contactStore.Upsert(contacts.Contact{UID: "photo-contact", FormattedName: "Photo contact"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := contactStore.SetPhotoRef("photo-contact", "test.jpg"); err != nil || !ok {
+		t.Fatal("photo reference", ok, err)
+	}
 	key := pinTestKey(t, s)
 	p, err := s.Collect()
 	if err != nil {
@@ -298,6 +310,21 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := vol.OpenDocument(filepath.Join(dir, "state", "users", u.ID, "contact-photos", "test.jpg")).Read()
+	restoredContacts, contactErr := contacts.New(filepath.Join(dir, "state", "users", u.ID))
+	if contactErr != nil {
+		release()
+		t.Fatal(contactErr)
+	}
+	restoredContact, ok, contactErr := restoredContacts.Get("photo-contact")
+	if contactErr != nil || !ok || restoredContact.PhotoRef != "test.jpg" {
+		release()
+		t.Fatal("restored photo reference", restoredContact, ok, contactErr)
+	}
+	restoredContact.FormattedName = "Restored photo contact"
+	if _, err := restoredContacts.Upsert(restoredContact); err != nil {
+		release()
+		t.Fatal("restored snapshot reference write", err)
+	}
 	release()
 	if err != nil || string(data) != "private-photo" {
 		t.Fatal("restored photo", err)
