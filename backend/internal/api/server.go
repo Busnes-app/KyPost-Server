@@ -559,7 +559,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		officeLogin:              newOfficeLoginBudget(),
 		globalStore:              globalStore,
 		wkdStore:                 wkdStore,
-		ssoStore:                 sso.NewStore(configDir),
+		ssoStore:                 sso.NewStoreWithState(configDir, stateDir),
 		nativeDomains:            sso.NewNativeDomainStore(configDir),
 		ssoLifecycle:             sso.NewLifecycleStore(configDir),
 	}

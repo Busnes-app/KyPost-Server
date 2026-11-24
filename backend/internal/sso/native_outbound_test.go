@@ -164,7 +164,7 @@ func TestNativeOutboundSettingsFence(t *testing.T) {
 	}
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- s.WithCurrentSettings(context.Background(), func(settings SSOSettings) error {
+		done <- s.WithCurrentSettings(context.Background(), func(ctx context.Context, settings SSOSettings) error {
 			if !settings.Enabled {
 				return errors.New("missing settings")
 			}
@@ -236,7 +236,7 @@ func TestNativeOutboundSettingsReadDoesNotInvertDirectoryFence(t *testing.T) {
 	defer directoryRelease()
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- s.WithCurrentSettings(ctx, func(SSOSettings) error { close(entered); <-release; return nil })
+		done <- s.WithCurrentSettings(ctx, func(context.Context, SSOSettings) error { close(entered); <-release; return nil })
 	}()
 	<-entered
 	saved := make(chan error, 1)

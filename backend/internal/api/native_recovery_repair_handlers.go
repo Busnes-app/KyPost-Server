@@ -29,7 +29,7 @@ func (s *Server) handleNativeRecoveryRepair(w http.ResponseWriter, r *http.Reque
 		return err
 	})
 	if err == nil {
-		err = s.ssoStore.WithCurrentSettings(ctx, func(settings sso.SSOSettings) error {
+		err = s.ssoStore.WithCurrentSettings(ctx, func(ctx context.Context, settings sso.SSOSettings) error {
 			if settings != operator.settings {
 				return sso.ErrNativeRecovery
 			}

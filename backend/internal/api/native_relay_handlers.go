@@ -284,7 +284,7 @@ func (s *Server) nativeRelayCheckProfile(ctx context.Context, generation string,
 		return mailmsg.DomainRelay{}, nil, refused
 	}
 	defer release()
-	err = s.ssoStore.WithCurrentSettings(ctx, func(settings sso.SSOSettings) error {
+	err = s.ssoStore.WithCurrentSettings(ctx, func(ctx context.Context, settings sso.SSOSettings) error {
 		if !settings.Enabled || settings.IssuerURL != profile.Issuer {
 			return refused
 		}

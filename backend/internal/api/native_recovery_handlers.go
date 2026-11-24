@@ -120,7 +120,7 @@ func (s *Server) lockNativeRecoveryOperator(operator nativeRecoveryOperator, cur
 }
 
 func (s *Server) withNativeRecoveryOperator(ctx context.Context, operator nativeRecoveryOperator, action func(context.Context, sso.SSOSettings, []users.User) error) error {
-	return s.ssoStore.WithCurrentSettings(ctx, func(current sso.SSOSettings) error {
+	return s.ssoStore.WithCurrentSettings(ctx, func(ctx context.Context, current sso.SSOSettings) error {
 		if current != operator.settings {
 			return sso.ErrNativeRecovery
 		}
@@ -332,7 +332,7 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 		if err != nil || !slices.ContainsFunc(proofs, current.CurrentProof) {
 			return &sso.NativeRestoreRefusedError{Reasons: []string{"P8: no configured mail domain has a fresh DNS proof; publish the challenge record and retry"}}
 		}
-		return s.ssoStore.WithCurrentSettings(ctx, func(settings sso.SSOSettings) error {
+		return s.ssoStore.WithCurrentSettings(ctx, func(ctx context.Context, settings sso.SSOSettings) error {
 			if settings != operator.settings {
 				return sso.ErrNativeRecovery
 			}

@@ -20,6 +20,8 @@ non-prerelease version.
 
 - Stop table-mode outbox enqueue/completion from depending on a host-local idle lock; preserve shared claim/Sent fencing and ordinary single-mode hints.
 
+- Serialize table-mode SSO settings saves with authority commits across hosts, propagate fence ownership context and refuse unreadable authority; preserve ordinary file behavior and hosted startup gates.
+
 - Base hosted receiving import leases on database time so a replica clock cannot steal a live mailbox lease; keep multi startup gated.
 - Fence table-mode directory deletion with atomic catalog tombstones and stale schema-writer refusal; keep normal single-mode removal and hosted startup gates.
 
