@@ -7,8 +7,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // Scheduled send states. scheduled, sending and returning are pending; the rest
@@ -43,6 +46,11 @@ func scheduledFinal(status string) bool {
 // pending rows or maxBytes of pending sealed data; the checks and the insert
 // are one statement.
 func (s *Store) AddScheduledSend(ctx context.Context, r ScheduledSend, limit int, maxBytes int64) error {
+	created, err := s.ScheduledNow(ctx, time.Unix(r.CreatedAt, 0))
+	if err != nil {
+		return err
+	}
+	r.CreatedAt = created.Unix()
 	res, err := s.db.ExecContext(ctx, dbbackend.SQL(`INSERT INTO scheduled_sends(id,user_id,mailbox,send_at,status,sealed,summary,created_at)
 		SELECT ?1,?2,?3,?4,'scheduled',?5,?6,?7 FROM (SELECT count(*) AS n, coalesce(sum(length(sealed)),0) AS bytes
 			FROM scheduled_sends WHERE user_id=?2 AND status IN ('scheduled','sending','returning'))
@@ -61,16 +69,41 @@ func (s *Store) AddScheduledSend(ctx context.Context, r ScheduledSend, limit int
 	return nil
 }
 
+// scheduledTableMode only resolves the mount; state.db remains a SQL store.
+func (s *Store) scheduledTableMode() bool {
+	return vol.OpenDocument(filepath.Join(s.baseDir, "state.db")).IsTable()
+}
+
+// ScheduledNow reads the shared job clock in table mode. Ordinary installs keep
+// the caller's clock, including existing deterministic scheduler checks.
+func (s *Store) ScheduledNow(ctx context.Context, ordinary time.Time) (time.Time, error) {
+	if !s.scheduledTableMode() {
+		return ordinary, nil
+	}
+	var now int64
+	if err := s.db.QueryRowContext(ctx, `SELECT unixepoch()`).Scan(&now); err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(now, 0), nil
+}
+
 // ClaimScheduledSend moves one due waiting row to sending. The single UPDATE is
 // the exclusivity: across goroutines and processes only one caller gets a row.
 // A user with a row already sending is skipped, so one account's slow relay
 // holds at most one worker; fresh rows go before retries.
 func (s *Store) ClaimScheduledSend(ctx context.Context, now int64, claimant string) (ScheduledSend, bool, error) {
 	r := ScheduledSend{Status: ScheduledSending}
-	err := s.db.QueryRowContext(ctx, `UPDATE scheduled_sends SET status='sending', claimant=?2
+	query := `UPDATE scheduled_sends SET status='sending', claimant=?2
 		WHERE id=(SELECT id FROM scheduled_sends WHERE status='scheduled' AND send_at<=?1 AND next_attempt<=?1
 			AND user_id NOT IN (SELECT user_id FROM scheduled_sends WHERE status='sending') ORDER BY next_attempt, send_at LIMIT 1) AND status='scheduled'
-		RETURNING id,user_id,mailbox,send_at,reason,sealed,summary,created_at`, now, claimant).
+		RETURNING id,user_id,mailbox,send_at,reason,sealed,summary,created_at`
+	args := []any{now, claimant}
+	if s.scheduledTableMode() {
+		query = strings.ReplaceAll(query, "<=?1", "<=unixepoch()")
+		query = strings.ReplaceAll(query, "claimant=?2", "claimant=?1")
+		args = []any{claimant}
+	}
+	err := s.db.QueryRowContext(ctx, query, args...).
 		Scan(&r.ID, &r.UserID, &r.Mailbox, &r.SendAt, &r.Reason, &r.Sealed, &r.Summary, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ScheduledSend{}, false, nil
@@ -78,11 +111,22 @@ func (s *Store) ClaimScheduledSend(ctx context.Context, now int64, claimant stri
 	return r, err == nil, err
 }
 
-// MoveScheduledSend changes status only from the expected one, clearing the
-// sealed job when the new status is final. nextAttempt delays the next claim
-// or draft attempt.
-func (s *Store) MoveScheduledSend(ctx context.Context, id, from, to, reason string, nextAttempt int64) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status=?, reason=?, next_attempt=?, sealed=CASE WHEN ? THEN NULL ELSE sealed END,
+// DelayScheduledSend anchors relative retry/draft delays to the committing
+// database statement in table mode; ordinary timestamps retain their old clock.
+func (s *Store) DelayScheduledSend(ctx context.Context, id, from, to, reason string, delay time.Duration, ordinary time.Time) (bool, error) {
+	expression, next := "?", int64(0)
+	if delay > 0 {
+		if s.scheduledTableMode() {
+			expression, next = "unixepoch()+?", int64(delay/time.Second)
+		} else {
+			next = ordinary.Add(delay).Unix()
+		}
+	}
+	return s.moveScheduledSend(ctx, id, from, to, reason, expression, next)
+}
+
+func (s *Store) moveScheduledSend(ctx context.Context, id, from, to, reason, nextExpression string, nextAttempt int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE scheduled_sends SET status=?, reason=?, next_attempt=`+nextExpression+`, sealed=CASE WHEN ? THEN NULL ELSE sealed END,
 		returning_since=CASE WHEN ? THEN unixepoch() ELSE returning_since END WHERE id=? AND status=?`,
 		to, reason, nextAttempt, scheduledFinal(to), to == ScheduledReturning && from != ScheduledReturning && from != ScheduledDrafting, id, from)
 	if err != nil {
@@ -164,11 +208,15 @@ func (s *Store) HasScheduledWork(ctx context.Context) (bool, error) {
 // ScheduledReturns lists returning rows whose draft is due to be saved, the
 // earliest per user, so one account's unreachable mailbox cannot fill a sweep.
 func (s *Store) ScheduledReturns(ctx context.Context, now int64) ([]ScheduledSend, error) {
-	return s.scheduledRows(ctx, dbbackend.SQL(`SELECT id,user_id,mailbox,min(send_at),status,reason,sealed,summary,created_at,returning_since
+	query := dbbackend.SQL(`SELECT id,user_id,mailbox,min(send_at),status,reason,sealed,summary,created_at,returning_since
 		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? GROUP BY user_id LIMIT 100`,
 		// SQLite's min() with bare columns reads the earliest row of each group; DISTINCT ON is that.
 		`SELECT DISTINCT ON (user_id) id,user_id,mailbox,send_at,status,reason,sealed,summary,created_at,returning_since
-		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? ORDER BY user_id, send_at, id LIMIT 100`), now)
+		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? ORDER BY user_id, send_at, id LIMIT 100`)
+	if s.scheduledTableMode() {
+		return s.scheduledRows(ctx, strings.ReplaceAll(query, "next_attempt<=?", "next_attempt<=unixepoch()"))
+	}
+	return s.scheduledRows(ctx, query, now)
 }
 
 // ListScheduledSends returns one mailbox's rows, newest send time first, without the sealed job.

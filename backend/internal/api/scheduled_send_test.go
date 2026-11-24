@@ -513,7 +513,7 @@ func TestScheduledCancelRacesClaim(t *testing.T) {
 			t.Fatalf("cancel %d %s, claimed %v", rec.Code, rec.Body.String(), claimed)
 		}
 		if claimed {
-			_, _ = f.srv.globalStore.MoveScheduledSend(context.Background(), id, state.ScheduledSending, "sent", "", 0)
+			_, _ = f.srv.globalStore.DelayScheduledSend(context.Background(), id, state.ScheduledSending, "sent", "", 0, time.Time{})
 		}
 	}
 }

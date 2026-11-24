@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
@@ -76,7 +77,7 @@ func TestScheduledClaimWaitsForSendTimeAndRetry(t *testing.T) {
 	if err != nil || !ok || string(row.Sealed) != "job" {
 		t.Fatal(row, ok, err)
 	}
-	if moved, _ := s.MoveScheduledSend(ctx, "row", ScheduledSending, ScheduledWaiting, "", 400); !moved {
+	if moved, _ := s.DelayScheduledSend(ctx, "row", ScheduledSending, ScheduledWaiting, "", 300*time.Second, time.Unix(100, 0)); !moved {
 		t.Fatal("retry not recorded")
 	}
 	if _, ok, _ := s.ClaimScheduledSend(ctx, 399, ""); ok {
@@ -85,10 +86,10 @@ func TestScheduledClaimWaitsForSendTimeAndRetry(t *testing.T) {
 	if _, ok, _ := s.ClaimScheduledSend(ctx, 400, ""); !ok {
 		t.Fatal("retry not claimed")
 	}
-	if moved, _ := s.MoveScheduledSend(ctx, "row", ScheduledWaiting, "returning", "late", 0); moved {
+	if moved, _ := s.DelayScheduledSend(ctx, "row", ScheduledWaiting, "returning", "late", 0, time.Time{}); moved {
 		t.Fatal("moved from a status the row is not in")
 	}
-	if moved, _ := s.MoveScheduledSend(ctx, "row", ScheduledSending, "sent", "", 0); !moved {
+	if moved, _ := s.DelayScheduledSend(ctx, "row", ScheduledSending, "sent", "", 0, time.Time{}); !moved {
 		t.Fatal("not finished")
 	}
 	got, _, _ := s.GetScheduledSend(ctx, "row")
@@ -142,7 +143,7 @@ func TestScheduledPendingCapIsPerUser(t *testing.T) {
 	if err := s.AddScheduledSend(ctx, ScheduledSend{ID: "y", UserID: "u2", Mailbox: "u2", SendAt: 100, Summary: []byte{}}, 2, 1<<30); err != nil {
 		t.Fatal("another user's cap shared", err)
 	}
-	if moved, _ := s.MoveScheduledSend(ctx, "0", ScheduledWaiting, "returned", "", 0); !moved {
+	if moved, _ := s.DelayScheduledSend(ctx, "0", ScheduledWaiting, "returned", "", 0, time.Time{}); !moved {
 		t.Fatal("not moved")
 	}
 	if err := s.AddScheduledSend(ctx, ScheduledSend{ID: "x", UserID: "u1", Mailbox: "u1", SendAt: 100, Summary: []byte{}}, 2, 1<<30); err != nil {
@@ -248,7 +249,7 @@ func TestInterruptionSparesLiveClaimants(t *testing.T) {
 		t.Fatal("no claim")
 	}
 	addScheduled(t, a, "row-draft", "u2", 100)
-	if moved, _ := a.MoveScheduledSend(ctx, "row-draft", ScheduledWaiting, ScheduledReturning, "cancelled", 0); !moved {
+	if moved, _ := a.DelayScheduledSend(ctx, "row-draft", ScheduledWaiting, ScheduledReturning, "cancelled", 0, time.Time{}); !moved {
 		t.Fatal("no return")
 	}
 	if claimed, _ := a.ClaimScheduledReturn(ctx, "row-draft", "api-a"); !claimed {
@@ -284,7 +285,7 @@ func TestReturnToDraftsIsClaimedOnce(t *testing.T) {
 	for round := range 10 {
 		id := "ret-" + strconv.Itoa(round)
 		addScheduled(t, a, id, "u-"+id, 100)
-		if moved, _ := a.MoveScheduledSend(ctx, id, ScheduledWaiting, ScheduledReturning, "cancelled", 0); !moved {
+		if moved, _ := a.DelayScheduledSend(ctx, id, ScheduledWaiting, ScheduledReturning, "cancelled", 0, time.Time{}); !moved {
 			t.Fatal("no return")
 		}
 		var wins atomic.Int32

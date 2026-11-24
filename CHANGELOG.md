@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Preserve a scheduled message's quota/held reason when either database-clock read fails; keep its sealed contents and database retry delay intact.
+
 - Use database statement time for table-mode outbox retry backoff, claim admission and discovery; preserve immutable claims, retry limits, ordinary-mode timing and hosted startup gates.
 
 - Stop table-mode outbox enqueue/completion from depending on a host-local idle lock; preserve shared claim/Sent fencing and ordinary single-mode hints.
@@ -69,6 +71,8 @@ non-prerelease version.
 - Refresh compatible dependency versions and lockfiles. Rebuild or install the updated application; no database, configuration, account or key migration is required.
 
 ### Fixed
+
+- Table-mode scheduled mail now uses the shared database clock for execution, retry and draft-return windows, preventing fast replicas from claiming future mail and slow replicas from hiding due work. Clock-read refusal keeps the prior quota/held reason and sealed mail. Ordinary single-tenant timing is preserved.
 
 - Preserve document contention (503) and size refusal (413) when a contact has no photo references; verify publication and cleanup share the existing PostgreSQL writer transaction through commit.
 
