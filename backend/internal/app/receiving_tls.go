@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -162,6 +163,9 @@ func receivingServerKey() (ed25519.PrivateKey, error) {
 	path := filepath.Join(config.SecretDir(), receivingServerKeyFile)
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		return readReceivingKey(path)
+	}
+	if err := cryptutil.RefuseCreate(path); err != nil {
+		return nil, err
 	}
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

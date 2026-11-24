@@ -237,11 +237,19 @@ func (s *Service) SyncRecoveryKey() error {
 	if n, e2 := strconv.Atoi(f.vals["kyrecovery_total_shares"]); e2 != nil || n != k.TotalShares {
 		return fmt.Errorf("%w: the pinned topology differs from the record", ErrAnchor)
 	}
-	if _, err := os.Stat(recoveryclient.RecoveryKeyPath(s.dirs.State)); err == nil {
-		if _, err := recoveryclient.LoadRecoveryKey(s.dirs.State, f); err != nil {
-			return fmt.Errorf("%w: %s names another key", ErrAnchor, recoveryclient.RecoveryKeyPath(s.dirs.State))
+	path := recoveryclient.RecoveryKeyPath(s.dirs.State)
+	if _, err := os.Stat(path); err == nil {
+		if _, err := recoveryclient.LoadRecoveryKey(s.dirs.State, f); err == nil {
+			return nil
+		} else if !s.table {
+			return fmt.Errorf("%w: %s names another key", ErrAnchor, path)
 		}
-		return nil
+		// Table mode (MH5): every host keeps its own recovery.pub, so a re-pin on another
+		// host leaves this one stale. The record opened above under the provisioned
+		// totp-secret.key decides; a record that does not open refused before this.
+		if err := os.Remove(path); err != nil {
+			return err
+		}
 	}
 	// Missing on this replica: write it from the record, write-once, as a pin would.
 	return recoveryclient.StoreRecoveryKey(s.dirs.State, f, k)

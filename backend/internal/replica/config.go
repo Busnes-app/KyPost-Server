@@ -118,8 +118,10 @@ func networks(v string) string {
 
 // Fingerprint maps each shared setting's name to HMAC-SHA256 of its canonical value under an
 // HKDF subkey of totp-secret.key, so reading the database reveals no value. KeyField holds
-// the key's own check value.
-func Fingerprint(totpKeyPath string, getenv func(string) string) (map[string]string, error) {
+// the key's own check value. keys (table mode, MH5: name to path) adds each provisioned key
+// file under its name, as the HMAC of the file's SHA-256, so every host must hold the same
+// bytes; single mode passes none and its record is unchanged.
+func Fingerprint(totpKeyPath string, getenv func(string) string, keys map[string]string) (map[string]string, error) {
 	master, err := cryptutil.LoadKey(totpKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("replica configuration check: %s: %w", KeyField, err)
@@ -136,6 +138,14 @@ func Fingerprint(totpKeyPath string, getenv func(string) string) (map[string]str
 	out := map[string]string{KeyField: sum(KeyField, "")}
 	for name, canon := range Shared {
 		out[name] = sum(name, canon(getenv(name)))
+	}
+	for name, path := range keys {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("replica configuration check: %s: %w", name, err)
+		}
+		digest := sha256.Sum256(b)
+		out[name] = sum(name, hex.EncodeToString(digest[:]))
 	}
 	return out, nil
 }
@@ -164,8 +174,8 @@ var ErrConfigMismatch = errors.New("this replica's shared settings differ from t
 // later start whose shared settings differ, naming the settings only. A setting the record
 // lacks (added by an upgrade) is merged in. It runs under the replica-config lock, so two
 // first starts with different settings record one and refuse the other.
-func CheckConfig(ctx context.Context, st *state.Store, totpKeyPath string) error {
-	current, err := Fingerprint(totpKeyPath, os.Getenv)
+func CheckConfig(ctx context.Context, st *state.Store, totpKeyPath string, keys map[string]string) error {
+	current, err := Fingerprint(totpKeyPath, os.Getenv, keys)
 	if err != nil {
 		return err
 	}
@@ -209,8 +219,8 @@ func mismatch(fields []string) error {
 // Accept rewrites the record from this process's settings after a deliberate change and
 // returns the names that changed. It refuses a different totp-secret.key. The caller makes
 // sure no replica is live.
-func Accept(ctx context.Context, st *state.Store, totpKeyPath string) ([]string, error) {
-	current, err := Fingerprint(totpKeyPath, os.Getenv)
+func Accept(ctx context.Context, st *state.Store, totpKeyPath string, keys map[string]string) ([]string, error) {
+	current, err := Fingerprint(totpKeyPath, os.Getenv, keys)
 	if err != nil {
 		return nil, err
 	}

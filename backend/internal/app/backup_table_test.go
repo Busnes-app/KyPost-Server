@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
-	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -38,9 +37,7 @@ func TestTableBackupCLISelectsDocumentsBeforeService(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err = cryptutil.LoadOrCreateKey(filepath.Join(secretDir, "documents.key")); err != nil {
-		t.Fatal(err)
-	}
+	provisionTableKeys(t, secretDir)
 	releaseAccounts, err := users.MountAccounts(configDir, stateDir)
 	if err != nil {
 		t.Fatal(err)

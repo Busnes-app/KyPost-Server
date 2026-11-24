@@ -90,13 +90,13 @@ func env(m map[string]string) func(string) string { return func(k string) string
 func TestEverySharedFieldIsCompared(t *testing.T) {
 	key := fingerprintKey(t)
 	base := map[string]string{}
-	stored, err := Fingerprint(key, env(base))
+	stored, err := Fingerprint(key, env(base), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name := range Shared {
 		changed := map[string]string{name: "a-different-value-7f3a"}
-		cur, _ := Fingerprint(key, env(changed))
+		cur, _ := Fingerprint(key, env(changed), nil)
 		if got := Diff(stored, cur); !slices.Equal(got, []string{name}) {
 			t.Errorf("changing %s: diff %v", name, got)
 		}
@@ -105,24 +105,24 @@ func TestEverySharedFieldIsCompared(t *testing.T) {
 		}
 	}
 	for _, name := range PerHost {
-		cur, _ := Fingerprint(key, env(map[string]string{name: "per-host-value"}))
+		cur, _ := Fingerprint(key, env(map[string]string{name: "per-host-value"}), nil)
 		if got := Diff(stored, cur); len(got) != 0 {
 			t.Errorf("per-host %s differs: %v", name, got)
 		}
 	}
-	a, _ := Fingerprint(key, env(map[string]string{"RATE_LIMIT_EXEMPT_CIDRS": "10.0.0.1/8, 192.168.1.0/24,10.0.0.0/8", "TRUSTED_PROXY_CIDRS": "::1"}))
-	b, _ := Fingerprint(key, env(map[string]string{"RATE_LIMIT_EXEMPT_CIDRS": "192.168.1.0/24 10.0.0.0/8", "TRUSTED_PROXY_CIDRS": "::1/128"}))
+	a, _ := Fingerprint(key, env(map[string]string{"RATE_LIMIT_EXEMPT_CIDRS": "10.0.0.1/8, 192.168.1.0/24,10.0.0.0/8", "TRUSTED_PROXY_CIDRS": "::1"}), nil)
+	b, _ := Fingerprint(key, env(map[string]string{"RATE_LIMIT_EXEMPT_CIDRS": "192.168.1.0/24 10.0.0.0/8", "TRUSTED_PROXY_CIDRS": "::1/128"}), nil)
 	if got := Diff(a, b); len(got) != 0 {
 		t.Errorf("canonical networks differ: %v", got)
 	}
 	other := fingerprintKey(t)
-	cur, _ := Fingerprint(other, env(map[string]string{"SERVER_BASE_URL": "x"}))
+	cur, _ := Fingerprint(other, env(map[string]string{"SERVER_BASE_URL": "x"}), nil)
 	if got := Diff(stored, cur); !slices.Equal(got, []string{KeyField}) {
 		t.Errorf("a different key: diff %v, want the key alone", got)
 	}
 	// A setting an upgrade added is no difference.
 	delete(cur, "SERVER_BASE_URL")
-	same, _ := Fingerprint(key, env(base))
+	same, _ := Fingerprint(key, env(base), nil)
 	delete(same, "SERVER_BASE_URL")
 	if got := Diff(same, stored); len(got) != 0 {
 		t.Errorf("a field missing from the record differs: %v", got)
@@ -147,29 +147,29 @@ func TestReplicaConfigRecordsAndRefuses(t *testing.T) {
 	st := globalStore(t, dir)
 	t.Setenv("SERVER_BASE_URL", "https://mail.example.org")
 	t.Setenv("WEB_PORT", "5866")
-	if err := CheckConfig(ctx, st, key); err != nil {
+	if err := CheckConfig(ctx, st, key, nil); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("WEB_PORT", "6000")
-	if err := CheckConfig(ctx, globalStore(t, dir), key); err != nil {
+	if err := CheckConfig(ctx, globalStore(t, dir), key, nil); err != nil {
 		t.Fatalf("a per-host difference refused: %v", err)
 	}
 	t.Setenv("SERVER_BASE_URL", "https://other.example.org")
-	err := CheckConfig(ctx, globalStore(t, dir), key)
+	err := CheckConfig(ctx, globalStore(t, dir), key, nil)
 	if !errors.Is(err, ErrConfigMismatch) || !strings.Contains(err.Error(), "SERVER_BASE_URL") || strings.Contains(err.Error(), "other.example") {
 		t.Fatalf("shared difference: %v", err)
 	}
-	if err := CheckConfig(ctx, st, fingerprintKey(t)); err == nil || !strings.Contains(err.Error(), KeyField) || strings.Contains(err.Error(), "SERVER_BASE_URL") {
+	if err := CheckConfig(ctx, st, fingerprintKey(t), nil); err == nil || !strings.Contains(err.Error(), KeyField) || strings.Contains(err.Error(), "SERVER_BASE_URL") {
 		t.Fatalf("different key: %v", err)
 	}
-	changed, err := Accept(ctx, st, key)
+	changed, err := Accept(ctx, st, key, nil)
 	if err != nil || !slices.Equal(changed, []string{"SERVER_BASE_URL"}) {
 		t.Fatalf("Accept = %v, %v", changed, err)
 	}
-	if err := CheckConfig(ctx, st, key); err != nil {
+	if err := CheckConfig(ctx, st, key, nil); err != nil {
 		t.Fatalf("after accept: %v", err)
 	}
-	if _, err := Accept(ctx, st, fingerprintKey(t)); err == nil {
+	if _, err := Accept(ctx, st, fingerprintKey(t), nil); err == nil {
 		t.Fatal("Accept took a different key")
 	}
 }
@@ -185,7 +185,7 @@ func TestFirstStartsRaceThroughTheRecord(t *testing.T) {
 	var wg sync.WaitGroup
 	for i, st := range []*state.Store{a, b} {
 		wg.Go(func() {
-			cur, err := Fingerprint(key, env(map[string]string{"SERVER_BASE_URL": []string{"https://a", "https://b"}[i]}))
+			cur, err := Fingerprint(key, env(map[string]string{"SERVER_BASE_URL": []string{"https://a", "https://b"}[i]}), nil)
 			if err != nil {
 				errs[i] = err
 				return
@@ -275,4 +275,51 @@ func TestTopologyGuard(t *testing.T) {
 		t.Fatalf("after every instance stopped, another boot ID: %v", err)
 	}
 	third()
+}
+
+// Table mode (MH5) records each provisioned key's digest: a host holding a different key is
+// refused naming that key only, a key rotation is accepted offline, and single mode's record
+// carries no key entry.
+func TestProvisionedKeysAreFingerprinted(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	ctx := context.Background()
+	key := fingerprintKey(t)
+	dir := t.TempDir()
+	st := globalStore(t, dir)
+	pow := filepath.Join(t.TempDir(), "pow.key")
+	write := func(b byte) {
+		if err := os.WriteFile(pow, []byte(strings.Repeat(string(rune('A'+b)), 44)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keys := map[string]string{"pow.key": pow}
+	write(0)
+	single, err := Fingerprint(key, env(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := single["pow.key"]; ok {
+		t.Fatal("single mode fingerprinted a key")
+	}
+	if err := CheckConfig(ctx, st, key, keys); err != nil {
+		t.Fatal(err)
+	}
+	write(1)
+	err = CheckConfig(ctx, globalStore(t, dir), key, keys)
+	if !errors.Is(err, ErrConfigMismatch) || !strings.Contains(err.Error(), "pow.key") || strings.Contains(err.Error(), "BBBB") {
+		t.Fatalf("different key on one host: %v", err)
+	}
+	changed, err := Accept(ctx, st, key, keys)
+	if err != nil || !slices.Equal(changed, []string{"pow.key"}) {
+		t.Fatalf("rotation Accept = %v, %v", changed, err)
+	}
+	if err := CheckConfig(ctx, st, key, keys); err != nil {
+		t.Fatalf("after rotation: %v", err)
+	}
+	if err := os.Remove(pow); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckConfig(ctx, st, key, keys); err == nil || !strings.Contains(err.Error(), "pow.key") {
+		t.Fatalf("missing key: %v", err)
+	}
 }

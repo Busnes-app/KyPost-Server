@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
-	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -46,9 +45,7 @@ func TestTableModeSelectionAndProvisionedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	if _, err := cryptutil.LoadOrCreateKey(filepath.Join(secretDir, "documents.key")); err != nil {
-		t.Fatal(err)
-	}
+	provisionTableKeys(t, secretDir)
 	releaseAccountFixture, err := users.MountAccounts(configDir, stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -95,9 +92,7 @@ func TestTableModeRefusesHistoricalFileAccountAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err = cryptutil.LoadOrCreateKey(filepath.Join(secretDir, "documents.key")); err != nil {
-		t.Fatal(err)
-	}
+	provisionTableKeys(t, secretDir)
 	if err = os.MkdirAll(configDir, 0700); err != nil {
 		t.Fatal(err)
 	}

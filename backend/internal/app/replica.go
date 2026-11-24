@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/replica"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/worker"
 )
 
@@ -44,7 +45,11 @@ func startReplica(ctx context.Context, d runDeps, role string) (id string, relea
 	}
 	totp := config.SecretFile("TOTP_SECRET_KEY_FILE", "totp-secret.key")
 	if _, err = cryptutil.LoadOrCreateKey(totp); err == nil {
-		err = replica.CheckConfig(ctx, d.store, totp)
+		var keys map[string]string
+		if users.TableMode(d.configDir) {
+			keys = provisionedKeys(config.SecretDir())
+		}
+		err = replica.CheckConfig(ctx, d.store, totp, keys)
 	}
 	if err == nil {
 		err = api.CheckSharedPoWKey()
@@ -167,7 +172,16 @@ func runAcceptReplicaConfig(args []string, stdout io.Writer) error {
 	if len(live) > 0 {
 		return fmt.Errorf("%d replica process(es) are running; stop every replica first (docker compose stop kypost-server), then run this again", len(live))
 	}
-	changed, err := replica.Accept(ctx, st, config.SecretFile("TOTP_SECRET_KEY_FILE", "totp-secret.key"))
+	mode, _, _ := config.Tenancy()
+	table, err := documentTableMode(ctx, config.StateDir(), mode)
+	if err != nil {
+		return err
+	}
+	var keys map[string]string
+	if table {
+		keys = provisionedKeys(config.SecretDir())
+	}
+	changed, err := replica.Accept(ctx, st, config.SecretFile("TOTP_SECRET_KEY_FILE", "totp-secret.key"), keys)
 	if err != nil {
 		return err
 	}

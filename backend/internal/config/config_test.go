@@ -5,10 +5,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 )
 
 // TestLoadOrCreateNotificationPrivateKey_WritesWithOwnerOnlyPermissions
@@ -196,5 +199,18 @@ func TestUserPathLayout(t *testing.T) {
 		if c[0] != c[1] {
 			t.Errorf("got %q, want %q", c[0], c[1])
 		}
+	}
+}
+
+// Table mode (MH5) provisions the notification key; it is never generated at runtime.
+func TestLoadOrCreateNotificationPrivateKey_RefusesAProvisionedPath(t *testing.T) {
+	dir := t.TempDir()
+	defer cryptutil.ProvisionKeys(dir)()
+	path := filepath.Join(dir, "notifications-vapid-private.pem")
+	if _, err := loadOrCreateNotificationPrivateKey(path); !errors.Is(err, cryptutil.ErrKeyNotProvisioned) {
+		t.Fatal("generated a provisioned notification key", err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("refusal wrote the key")
 	}
 }

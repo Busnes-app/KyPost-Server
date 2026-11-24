@@ -51,7 +51,7 @@ func TestAcceptReplicaConfig(t *testing.T) {
 	}
 	defer st.Close()
 	t.Setenv("SERVER_BASE_URL", "https://mail.example.org")
-	if err := replica.CheckConfig(ctx, st, key); err != nil {
+	if err := replica.CheckConfig(ctx, st, key, nil); err != nil {
 		t.Fatal(err)
 	}
 	release, err := st.RegisterInstance(ctx, state.Instance{ID: "api-live", BootID: "b", VolumeID: "v", Role: "api"})
@@ -70,7 +70,7 @@ func TestAcceptReplicaConfig(t *testing.T) {
 	if !strings.Contains(out.String(), "SERVER_BASE_URL") || strings.Contains(out.String(), "new.example") || regexp.MustCompile(`[0-9a-f]{32}`).MatchString(out.String()) {
 		t.Fatalf("output names a value or a digest: %q", out.String())
 	}
-	if err := replica.CheckConfig(ctx, st, key); err != nil {
+	if err := replica.CheckConfig(ctx, st, key, nil); err != nil {
 		t.Fatalf("after accepting: %v", err)
 	}
 	if err := os.WriteFile(key, []byte(base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))), 0o600); err != nil {
