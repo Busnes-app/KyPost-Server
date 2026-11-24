@@ -1534,3 +1534,21 @@ This closes the photo-cleanup job's data-safety boundary, not every elected job
 or cross-store fence. Other MH4 fences/publication, key provisioning, volume-free
 startup, MH8, regions, mandatory object storage and launch gates remain. No
 hosted-readiness claim is made.
+
+### Photo boundary driver/error contract verification
+
+An empty reference list delegates to the existing Vol.Write seam, preserving
+CAS retry and size-error mapping through test/custom volumes. The original API
+contention/oversize assertions remain unchanged (503/five writes and 413/one
+write); rejecting a non-Table adapter before delegation had incorrectly returned
+500 and is corrected.
+
+Publication and cleanup already share the normal PostgreSQL schema writer key:
+Table.write starts its writer transaction before validation, and the driver's
+Exec auto-wrap takes that same key for the conditional DELETE. NewTable refuses
+the accounts row-writer driver. A new deterministic regression pauses publication
+in an UPDATE trigger after dependency validation but before commit, observes
+cleanup waiting on that exact key, then requires stale cleanup refusal after the
+new contact revision commits. A controlled Go overlay disabling only DELETE
+auto-wrap fails with cleanup escaping the pending publication. No extra lock or
+weakened assertion is introduced.

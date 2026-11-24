@@ -70,6 +70,8 @@ non-prerelease version.
 
 ### Fixed
 
+- Preserve document contention (503) and size refusal (413) when a contact has no photo references; verify publication and cleanup share the existing PostgreSQL writer transaction through commit.
+
 - Enable Rspamd's settings module so Cloudflare receiving's request-level SPF,
   DMARC and ARC exclusions take effect with Rspamd 4.3.0. Direct SMTP keeps its
   authentication checks; content and DKIM scanning remain enabled for both.

@@ -8,7 +8,7 @@ import (
 // WriteWithReferences commits the body only while every referenced document
 // exists for the same owner in this volume. File writes retain their behavior.
 func (d *Document) WriteWithReferences(body []byte, references []string) error {
-	if d.file != "" {
+	if d.file != "" || len(references) == 0 {
 		return d.Write(body)
 	}
 	table, ok := d.volume.(*Table)

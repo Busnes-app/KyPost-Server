@@ -10,6 +10,7 @@ File and PostgreSQL document I/O for the multi-host design. Store packages retai
 
 ## Local Contracts
 
+- An empty dependency set delegates to the existing `Vol.Write` path, preserving its CAS retries and error classes (including the unchanged API 503/413 regressions). Nonempty dependency validation remains table-only.
 - `Document.WriteWithReferences` validates same-volume/same-owner paths and checks deduplicated reference rows in the existing writer transaction, after the account guard and before key creation/sealing. Missing references return ErrStale and commit no body/key. Ordinary file writes keep their prior behavior. `RemoveIfUnchanged` compares the target incarnation and its owner's guard-document revision in one conditional delete; mismatch retries the whole decision, never only the delete. Contacts own photo-reference parsing; this seam remains format-agnostic.
 
 - Ordinary installs resolve to files. Preserve each caller's directory modes, atomic file bytes and inter-process locks. Table mode is multi, or the explicit `volume_stores=postgres` state record; only startup installs mounts.
@@ -25,6 +26,8 @@ File and PostgreSQL document I/O for the multi-host design. Store packages retai
 Use the existing seam for a document adapter. Keep wire parsing and product policy in its owning store.
 
 ## Verification
+
+- `TestReferencePublicationAndCleanupShareWriterTransaction` blocks publication in an actual UPDATE trigger after dependency validation and before commit, observes cleanup waiting on the same schema writer key, then requires stale cleanup refusal. A Go overlay disabling only DELETE auto-wrap must fail it. Publication uses `Table.write` BeginTx and cleanup uses the normal driver's auto-wrapped DELETE; keep both paths on the shared transaction writer key. NewTable refuses the separate accounts row-writer driver.
 
 - `TestDocumentReferencesAndGuardedRemoval` covers shared references, missing/foreign-owner dependencies, stale reference snapshots, deletion/recreation and unchanged body on refusal. `TestMissingReferenceCreatesNoBodyOrOrgKey` proves failed dependency validation creates neither ciphertext nor a wrapped data key. Contacts/API tests exercise the actual photo sweep and publication paths; sealed table restore retains the reference and its bytes.
 
