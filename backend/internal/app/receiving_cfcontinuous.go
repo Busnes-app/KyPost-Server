@@ -776,7 +776,7 @@ func (l *cfLoop) deleteCommitted(ctx context.Context, cur cfreceiving.Material, 
 // address moved, is inactive, or has a newer generation. Unreadable state
 // proves nothing.
 func (r *receivingRuntime) bindingsRetired(ctx context.Context, bindings []ingress.Binding) bool {
-	ctx, release, err := r.life.LockDirectoryContext(ctx)
+	_, release, err := r.life.LockDirectoryContext(ctx)
 	if err != nil {
 		return false
 	}
