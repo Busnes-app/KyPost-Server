@@ -22,12 +22,19 @@ func TestTableRePinReplacesAnotherHostsStaleKey(t *testing.T) {
 	first, second := newKey(t), newKey(t)
 	must(t, pin(a, first, 2, 3))
 	must(t, b.SyncRecoveryKey())
+	pinKeys := []string{"kyrecovery_key_id", "kyrecovery_threshold", "kyrecovery_total_shares", anchorSetting}
+	retired := map[string]string{}
+	for _, k := range pinKeys {
+		v, err := a.store.Setting(k)
+		must(t, err)
+		retired[k] = v
+	}
 	stalePub := recoveryclient.RecoveryKeyPath(b.dirs.State)
 	stale, err := os.ReadFile(stalePub)
 	must(t, err)
 	// The operator's rotation on host A: clear the pin and its file, pin the new key.
 	must(t, os.Remove(recoveryclient.RecoveryKeyPath(a.dirs.State)))
-	for _, k := range []string{"kyrecovery_key_id", "kyrecovery_threshold", "kyrecovery_total_shares", anchorSetting} {
+	for _, k := range pinKeys {
 		must(t, a.store.DeleteSetting(k))
 	}
 	must(t, pin(a, second, 2, 3))
@@ -40,8 +47,26 @@ func TestTableRePinReplacesAnotherHostsStaleKey(t *testing.T) {
 	if k, err := recoveryclient.LoadRecoveryKey(b.dirs.State, f); err != nil || k.Public.ID() != second.Public().ID() {
 		t.Fatal("host b would seal to another key", err)
 	}
-	sealed, err := a.store.Setting(anchorSetting)
-	must(t, err)
+	// A database writer replays the retired first pin: neither host moves back to it.
+	current := map[string]string{}
+	for _, k := range pinKeys {
+		v, err := a.store.Setting(k)
+		must(t, err)
+		current[k] = v
+		must(t, a.store.SetSetting(k, retired[k]))
+	}
+	for name, host := range map[string]*Service{"a": a, "b": b} {
+		if err := host.SyncRecoveryKey(); !errors.Is(err, ErrAnchor) {
+			t.Fatalf("host %s accepted a replayed retired pin: %v", name, err)
+		}
+		if got, err := os.ReadFile(recoveryclient.RecoveryKeyPath(host.dirs.State)); err != nil || string(got) != string(second.Public().Bytes()) {
+			t.Fatalf("host %s moved recovery.pub back to the retired key: %v", name, err)
+		}
+	}
+	for k, v := range current {
+		must(t, a.store.SetSetting(k, v))
+	}
+	sealed := current[anchorSetting]
 	raw, _ := base64.StdEncoding.DecodeString(sealed)
 	raw[len(raw)-1] ^= 1
 	must(t, a.store.SetSetting(anchorSetting, base64.StdEncoding.EncodeToString(raw)))

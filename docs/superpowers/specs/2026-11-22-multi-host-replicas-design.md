@@ -1644,8 +1644,12 @@ selects table mode. Single mode passes no keys, so its record is unchanged.
 **Changed from the design: a stale `recovery.pub` is replaced.** Every host keeps its own
 `recovery.pub` in STATE_DIR, so a re-pin on host A leaves host B's file naming the old key,
 which `SyncRecoveryKey` refused. In table mode a record that opens under the provisioned
-`totp-secret.key` now replaces the file before B seals; an unopenable record still refuses and
-leaves the file. Single mode keeps refusing a file that names another key.
+`totp-secret.key` now replaces the file before B seals, but only for a strictly newer pin: the
+sealed record carries `pinnedAt` (Unix ns, table mode), and each host keeps the newest one it
+accepted in STATE_DIR `recovery-pin.at`. A database writer can replay a retired record with
+its key ID and topology, but cannot forge `pinnedAt`, so no host moves back to a key the
+operator rotated away from. An unopenable record still refuses and leaves the file. Single
+mode keeps refusing a file that names another key and writes no `recovery-pin.at`.
 
 Tests: `TestTableModeRequiresProvisionedKeysAndCreatesNone` (app, PostgreSQL: each key
 removed in turn refuses the start by name with no file created and no mount left; a lazy key
