@@ -1442,3 +1442,30 @@ export and held native restore, missing-destination refusal, scheduler backoff,
 retained historical account bytes and ordinary local backup/restore/drill.
 Remaining backup-operation fencing and other MH4 publication/job fences are
 separate; this policy does not finish MH4 or authorize hosted readiness.
+
+## MH4 outbox retry window clock as built (2026-11-23)
+
+Table-mode delivery completion now sets a retryable row's deadline with database
+`unixepoch()+backoff` in the same update. Claim admission compares that deadline
+with database time in its conditional update and requires one affected row. Both
+PendingOutbound and the read-only HasPendingOutbound hint compare database time
+too. Ordinary mode retains its host-clock expressions and idle hints; only a
+handle/path selected by the existing table mount uses the new expressions.
+
+This adds no time-query round trip, schema, interface or dependency. Backoff and
+the six-attempt limit stay unchanged. The immutable claim token still fences
+completion; submitting/crashed and uncertain work is never reclaimed on time.
+Sent reservation discovery remains independent of delivery retries.
+
+The pre-fix regression completed a retry on a year-2000 replica and recorded its
+deadline in 2000, making it immediately expired for other hosts. The fixed test
+bounds the stored deadline between database observations, refuses stealing before
+that deadline, advances another replica decades ahead without admitting/discovering a
+future database retry, then proves a year-2000 replica discovers and claims a
+database-due row. Wrong/stale completion does not change the next attempt, and
+refused claims consume no attempt. Each bubble opens/closes its own connections.
+A separate unmigrated PostgreSQL case retains the original host-clock result.
+
+This closes this outbox shared retry-window boundary only. Other MH4 fences,
+publication/elected-job coverage, key/volume-free/MH8/region/object-storage and
+startup/launch gates remain. No hosted-readiness claim is made.
