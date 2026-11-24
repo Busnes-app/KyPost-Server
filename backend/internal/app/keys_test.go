@@ -23,13 +23,17 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
-// provisionTableKeys writes every key table mode requires, as an operator would.
+// provisionTableKeys writes every key table mode requires that is not there yet, as an
+// operator would.
 func provisionTableKeys(t *testing.T, secretDir string) {
 	t.Helper()
 	if err := os.MkdirAll(secretDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for name, path := range provisionedKeys(secretDir) {
+		if _, err := os.Lstat(path); err == nil {
+			continue
+		}
 		body := []byte(base64.StdEncoding.EncodeToString(bytes.Repeat([]byte(name[:1]), 32)))
 		if strings.HasSuffix(name, ".pem") {
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

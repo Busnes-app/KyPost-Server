@@ -163,6 +163,7 @@ func TestHistoricalDocumentCapsuleRetainsAccountsThroughStartupRefusal(t *testin
 	if err = os.Rename(filepath.Join(configDir, "users.json"), filepath.Join(configDir, "users.json.retained")); err != nil {
 		t.Fatal(err)
 	}
+	provisionTableKeys(t, secretDir)
 	release, err := startDocuments(ctx, configDir, stateDir, secretDir, config.TenancySingle)
 	if err != nil {
 		t.Fatal("retry after explicit conversion", err)
