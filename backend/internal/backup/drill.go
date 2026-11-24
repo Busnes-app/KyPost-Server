@@ -21,11 +21,16 @@ import (
 )
 
 func (s *Service) Drill(ctx context.Context) (*recoveryclient.DrillResult, error) {
-	release, err := s.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer release()
+	var result *recoveryclient.DrillResult
+	err := s.withOperation(ctx, func(ctx context.Context) error {
+		var err error
+		result, err = s.drillHeld(ctx)
+		return err
+	})
+	return result, err
+}
+
+func (s *Service) drillHeld(ctx context.Context) (*recoveryclient.DrillResult, error) {
 	p, err := s.collect(ctx)
 	if err != nil {
 		return nil, err

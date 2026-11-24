@@ -65,6 +65,7 @@ type Service struct {
 	settings settings
 	client   *recoveryclient.Client
 	version  string
+	table    bool
 	logger   *kylog.Logger
 	// collectedBulk is the bulk snapshot of the payload being sealed, under the lock.
 	collectedBulk *BulkSnapshot
@@ -88,7 +89,8 @@ func New(d Dirs, bc config.BackupConfig, store *state.Store, appVersion string) 
 			return nil, errors.New("backup data directories must be absolute")
 		}
 	}
-	if bc.Dir != "" && vol.OpenDocument(filepath.Join(d.Config, "config.yaml")).IsTable() {
+	table := vol.OpenDocument(filepath.Join(d.Config, "config.yaml")).IsTable()
+	if bc.Dir != "" && table {
 		return nil, errors.New("table-mode backups refuse KYPOST_BACKUP_DIR; unset it and pair KyRecovery for backup deposits")
 	}
 	if bc.Dir != "" {
@@ -130,7 +132,7 @@ func New(d Dirs, bc config.BackupConfig, store *state.Store, appVersion string) 
 	return &Service{
 		dirs: d, cfg: bc, store: store, settings: settings{store}, logger: logger,
 		client:  recoveryclient.NewClient(recoveryclient.Options{AllowPrivate: bc.AllowPrivateRecovery}),
-		version: appVersion,
+		version: appVersion, table: table,
 	}, nil
 }
 
@@ -191,88 +193,82 @@ func (s *Service) RunIfDue(ctx context.Context, started func() error) (recoveryc
 }
 
 func (s *Service) run(ctx context.Context, dueOnly bool, started func() error) (recoveryclient.Result, error) {
-	release, err := s.lock()
-	if err != nil {
-		return recoveryclient.Result{}, err
-	}
-	defer release()
 	var res recoveryclient.Result
-	err = s.withRunLock(ctx, func(ctx context.Context) error {
-		if err := s.SyncRecoveryKey(); err != nil {
-			return err
-		}
-		f, err := s.snapshot()
-		if err != nil {
-			return err
-		}
-		if dueOnly {
-			next, on, err := recoveryclient.NextRun(s.cfg.DepositInterval, f)
+	err := s.withOperation(ctx, func(ctx context.Context) error {
+		return s.withRunLock(ctx, func(ctx context.Context) error {
+			if err := s.SyncRecoveryKey(); err != nil {
+				return err
+			}
+			f, err := s.snapshot()
 			if err != nil {
 				return err
 			}
-			if !on || time.Now().Before(next) {
-				return ErrNotDue
+			if dueOnly {
+				next, on, err := recoveryclient.NextRun(s.cfg.DepositInterval, f)
+				if err != nil {
+					return err
+				}
+				if !on || time.Now().Before(next) {
+					return ErrNotDue
+				}
 			}
-		}
-		if started != nil {
-			if err := started(); err != nil {
+			if started != nil {
+				if err := started(); err != nil {
+					return err
+				}
+			}
+			if err := f.Set("backup_last_attempt", time.Now().UTC().Format(time.RFC3339)); err != nil {
 				return err
 			}
-		}
-		if err := f.Set("backup_last_attempt", time.Now().UTC().Format(time.RFC3339)); err != nil {
+			if _, err := pairingConfigured(f); err != nil {
+				return err
+			}
+			sealer, err := s.loadSealer()
+			if err != nil {
+				return err
+			}
+			if _, err = s.loadKey(f); err != nil {
+				return err
+			}
+			res, err = recoveryclient.Run(ctx, s.runConfig(sealer), f, func() (recoveryclient.Payload, error) { return s.collect(ctx) }, s.client)
+			if res.LocalPath != "" || res.Receipt != nil {
+				s.recordBulk()
+			}
+			if err == nil && ctx.Err() != nil {
+				err = context.Cause(ctx)
+			}
 			return err
-		}
-		if _, err := pairingConfigured(f); err != nil {
-			return err
-		}
-		sealer, err := s.loadSealer()
-		if err != nil {
-			return err
-		}
-		if _, err = s.loadKey(f); err != nil {
-			return err
-		}
-		res, err = recoveryclient.Run(ctx, s.runConfig(sealer), f, func() (recoveryclient.Payload, error) { return s.collect(ctx) }, s.client)
-		if res.LocalPath != "" || res.Receipt != nil {
-			s.recordBulk()
-		}
-		if err == nil && ctx.Err() != nil {
-			err = context.Cause(ctx)
-		}
-		return err
+		})
 	})
 	return res, err
 }
 
 // Export seals once for download; nothing is delivered and nothing is stamped.
 func (s *Service) Export(ctx context.Context) ([]byte, capsule.Manifest, error) {
-	release, err := s.lock()
-	if err != nil {
-		return nil, capsule.Manifest{}, err
-	}
-	defer release()
 	var out []byte
 	var manifest capsule.Manifest
-	err = s.withRunLock(ctx, func(ctx context.Context) error {
-		if err := s.SyncRecoveryKey(); err != nil {
+	err := s.withOperation(ctx, func(ctx context.Context) error {
+		return s.withRunLock(ctx, func(ctx context.Context) error {
+			if err := s.SyncRecoveryKey(); err != nil {
+				return err
+			}
+			f, err := s.snapshot()
+			if err != nil {
+				return err
+			}
+			key, err := s.loadKey(f)
+			if err != nil {
+				return err
+			}
+			p, err := s.collect(ctx)
+			if err != nil {
+				return err
+			}
+			if out, manifest, err = recoveryclient.Seal(p, key); err == nil && ctx.Err() != nil {
+				err = context.Cause(ctx)
+			}
 			return err
-		}
-		f, err := s.snapshot()
-		if err != nil {
-			return err
-		}
-		key, err := s.loadKey(f)
-		if err != nil {
-			return err
-		}
-		p, err := s.collect(ctx)
-		if err != nil {
-			return err
-		}
-		if out, manifest, err = recoveryclient.Seal(p, key); err == nil && ctx.Err() != nil {
-			err = context.Cause(ctx)
-		}
-		return err
+		})
 	})
 	if err != nil {
 		return nil, capsule.Manifest{}, err
@@ -292,11 +288,16 @@ func (s *Service) PairIfMissing(ctx context.Context, rawURL, code string) (recov
 }
 
 func (s *Service) pair(ctx context.Context, rawURL, code string, onlyMissing bool) (recoveryclient.RecoveryKey, error) {
-	release, err := s.lock()
-	if err != nil {
-		return recoveryclient.RecoveryKey{}, err
-	}
-	defer release()
+	var key recoveryclient.RecoveryKey
+	err := s.withOperation(ctx, func(ctx context.Context) error {
+		var err error
+		key, err = s.pairHeld(ctx, rawURL, code, onlyMissing)
+		return err
+	})
+	return key, err
+}
+
+func (s *Service) pairHeld(ctx context.Context, rawURL, code string, onlyMissing bool) (recoveryclient.RecoveryKey, error) {
 	if onlyMissing {
 		f, err := s.snapshot()
 		if err != nil {
@@ -374,12 +375,7 @@ func (s *Service) PinKey(publicKeyB64 string, k, n int) error {
 	if err != nil {
 		return err
 	}
-	release, err := s.lock()
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.storePin(key, nil)
+	return s.withOperation(context.Background(), func(context.Context) error { return s.storePin(key, nil) })
 }
 
 func pinErr(err error) error {
@@ -391,22 +387,14 @@ func pinErr(err error) error {
 
 // Unpair removes the URL and sealed token rows and nothing else.
 func (s *Service) Unpair() error {
-	release, err := s.lock()
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.withPinLock(func() error { return s.store.BackupSettingsTransaction(recoveryclient.ClearPairing) })
+	return s.withOperation(context.Background(), func(context.Context) error {
+		return s.withPinLock(func() error { return s.store.BackupSettingsTransaction(recoveryclient.ClearPairing) })
+	})
 }
 
 // SetIntervalSeconds stores the admin's schedule; the library bounds it.
 func (s *Service) SetIntervalSeconds(sec int64) error {
-	release, err := s.lock()
-	if err != nil {
-		return err
-	}
-	defer release()
-	return recoveryclient.SetInterval(s.settings, sec)
+	return s.withOperation(context.Background(), func(context.Context) error { return recoveryclient.SetInterval(s.settings, sec) })
 }
 
 // NextRun is what the daemon loop polls.
@@ -444,12 +432,13 @@ type Status struct {
 }
 
 func (s *Service) Status() (Status, error) {
-	release, err := s.lock()
-	if err != nil {
-		return Status{}, err
-	}
-	defer release()
-	return s.InspectStatus()
+	var status Status
+	err := s.withOperation(context.Background(), func(context.Context) error {
+		var err error
+		status, err = s.InspectStatus()
+		return err
+	})
+	return status, err
 }
 
 // InspectStatus is an advisory snapshot: no operation lock is created and no pairing, pin or audit is written.
@@ -521,8 +510,33 @@ func (s *Service) InspectStatus() (Status, error) {
 	return st, nil
 }
 
-// The API and daemon must not mutate a pairing or prune local copies under an
-// in-flight backup. A busy caller retries; no request queues behind a long upload.
+// withOperation keeps the original file lock in ordinary mode. Table-mode
+// operations share one probed fence across hosts, acquired within the fence wait
+// bound. The callback's context ends if ownership is lost.
+func (s *Service) withOperation(ctx context.Context, work func(context.Context) error) error {
+	if !s.table {
+		release, err := s.lock()
+		if err != nil {
+			return err
+		}
+		defer release()
+		return work(ctx)
+	}
+	err := s.store.WithFences(ctx, []state.Fence{{Name: state.FenceBackupOperation}}, func(owned context.Context) error {
+		err := work(owned)
+		if err == nil && owned.Err() != nil {
+			return context.Cause(owned)
+		}
+		return err
+	})
+	if errors.Is(err, state.ErrFenceWait) {
+		return recoveryclient.ErrInProgress
+	}
+	return err
+}
+
+// Ordinary-mode API and daemon operations retain their nonblocking flock.
+// A busy caller retries rather than waiting behind a long local-copy operation.
 func (s *Service) lock() (func(), error) {
 	// Read-only: flock needs no write access and the lock file holds no data.
 	f, err := os.OpenFile(filepath.Join(s.dirs.State, "backup-operation.lock"), os.O_CREATE|os.O_RDONLY, 0600)

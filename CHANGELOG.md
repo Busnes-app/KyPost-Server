@@ -21,6 +21,7 @@ non-prerelease version.
 - Use database statement time for table-mode outbox retry backoff, claim admission and discovery; preserve immutable claims, retry limits, ordinary-mode timing and hosted startup gates.
 
 - Stop table-mode outbox enqueue/completion from depending on a host-local idle lock; preserve shared claim/Sent fencing and ordinary single-mode hints.
+- Fence table-mode backup operations across hosts with ownership probing and bounded busy refusal; preserve ordinary-mode file locking and existing run/pin guards.
 
 - Serialize table-mode SSO settings saves with authority commits across hosts, propagate fence ownership context and refuse unreadable authority; preserve ordinary file behavior and hosted startup gates.
 

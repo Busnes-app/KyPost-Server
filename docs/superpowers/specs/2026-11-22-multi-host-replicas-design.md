@@ -1440,8 +1440,9 @@ The CLI regression separately reproduced bypassing table selection and beginning
 backup audit. Fixed tests cover both, plus a real table-account/document sealed
 export and held native restore, missing-destination refusal, scheduler backoff,
 retained historical account bytes and ordinary local backup/restore/drill.
-Remaining backup-operation fencing and other MH4 publication/job fences are
-separate; this policy does not finish MH4 or authorize hosted readiness.
+This section covers delivery policy; the operation-fence boundary is described
+below. Other MH4 publication/job fences remain separate, and neither boundary
+authorizes hosted readiness.
 
 ## MH4 outbox retry window clock as built (2026-11-23)
 
@@ -1469,3 +1470,28 @@ A separate unmigrated PostgreSQL case retains the original host-clock result.
 This closes this outbox shared retry-window boundary only. Other MH4 fences,
 publication/elected-job coverage, key/volume-free/MH8/region/object-storage and
 startup/launch gates remain. No hosted-readiness claim is made.
+
+## MH4 cross-host backup-operation fence as built (2026-11-23)
+
+A backup service selects mounted table mode once at construction. Its shared
+operation wrapper then uses the existing probed `fence:backup-operation` for
+Run/RunIfDue, Export, Pair/PairIfMissing, PinKey, Unpair, SetIntervalSeconds,
+Status and Drill. No table operation opens `backup-operation.lock`. Ordinary
+mode retains the original nonblocking flock. Table-mode contention uses the
+existing bounded 10-second fence wait and returns the same busy error; caller
+cancellation remains cancellation. Run/export/drill/pair receive the owned
+context, and the wrapper refuses a success result after ownership loss. The
+existing inner `backup-run` and `recovery-pin` guards remain unchanged.
+
+The negative regression held a real scheduled run on one host and reproduced a
+schedule change on a second host with a separate filesystem. The fixed test
+contests all ten public entry points concurrently, requires busy refusal and
+unchanged pin/schedule/attempt state, and checks neither host created the local
+lock. It also proves canceled admission never enters, kills the only fence
+session in an isolated test database, observes cancellation within ProbeBound,
+rejects a callback's nil result after loss, then admits another host.
+
+This completes this operation-lock boundary only. Native preparation and the
+remaining domain/directory/settings/quota/SSO and elected-job fences, key-set
+provisioning, volume-free startup, MH8 migration, regions, mandatory object
+storage and launch gates remain. No SaaS-readiness claim is made.
