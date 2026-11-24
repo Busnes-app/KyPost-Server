@@ -1,7 +1,6 @@
 package fsutil
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,31 +38,28 @@ func TestPersistLoadJSONFileRoundTrip(t *testing.T) {
 	}
 }
 
-func TestWithFileLockExcludesOtherHolders(t *testing.T) {
+func TestLockFileExcludesOtherHolders(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	release, err := LockFile(path)
 	if err != nil {
 		t.Fatalf("LockFile: %v", err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- WithFileLock(path, func() error { return nil }) }()
+	go func() {
+		second, err := LockFile(path)
+		if err == nil {
+			second()
+		}
+		done <- err
+	}()
 	select {
 	case err := <-done:
 		release()
-		t.Fatalf("WithFileLock ran while another holder had the lock (err=%v)", err)
+		t.Fatalf("a second holder locked while another held the lock (err=%v)", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	release()
 	if err := <-done; err != nil {
-		t.Fatalf("WithFileLock after release: %v", err)
-	}
-
-	sentinel := errors.New("fn failed")
-	if err := WithFileLock(path, func() error { return sentinel }); err != sentinel {
-		t.Fatalf("WithFileLock = %v, want fn's error", err)
-	}
-	// The lock is released after fn returns, even on error.
-	if err := WithFileLock(path, func() error { return nil }); err != nil {
-		t.Fatalf("relock: %v", err)
+		t.Fatalf("LockFile after release: %v", err)
 	}
 }

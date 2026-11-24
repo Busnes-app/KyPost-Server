@@ -526,7 +526,7 @@ type usersFile struct {
 // enrollment, recovery-code consumption) and daemon
 // (processor/sendas_check.go's SetPGPIdentity). mu only serializes goroutines
 // within one process, so every mutator additionally takes an inter-process file
-// lock for the whole cycle — see fsutil.WithFileLock. Without it two
+// lock for the whole cycle — see fsutil.LockFile. Without it two
 // overlapping mutations each read the same starting state and the second write
 // silently discards the first: a lost password change, or a recovery code that
 // stays usable after being consumed.
@@ -896,7 +896,7 @@ func (s *Store) WithCurrentUsers(ctx context.Context, action func([]User) error)
 	return action(snapshot)
 }
 
-// withWriteLock is fsutil.WithFileLock through the gate, so a stream of
+// withWriteLock is fsutil.LockFile through the gate, so a stream of
 // WithCurrentUsers readers sharing the lock cannot starve a writer.
 func withWriteLock(path string, fn func() error) error {
 	release, err := fsutil.LockFileGated(context.Background(), path)

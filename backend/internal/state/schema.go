@@ -25,7 +25,7 @@ import (
 //
 // SQLite removes all of that: writes touch a row, readers see committed data,
 // and WAL plus busy_timeout gives real multi-process concurrency instead of a
-// hand-rolled advisory lock. fsutil.WithFileLock is no longer used here.
+// hand-rolled advisory lock. fsutil.LockFile is no longer used here.
 //
 // The driver is modernc.org/sqlite (pure Go, no cgo) — the Docker build has no
 // C toolchain in the final stage and cross-compiles, so a cgo driver would

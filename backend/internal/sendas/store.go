@@ -93,7 +93,7 @@ func (s *Store) persistLocked() error {
 // deletes aliases from the settings UI, and the daemon process verifies and
 // expires them (processor/sendas_check.go). Without the file lock, a
 // verification landing at the same moment as a user deleting a different
-// alias loses one of the two writes. See fsutil.WithFileLock.
+// alias loses one of the two writes. See fsutil.LockFile.
 func (s *Store) update(mutate func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

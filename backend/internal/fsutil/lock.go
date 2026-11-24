@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// WithFileLock runs fn while holding an exclusive advisory lock covering
-// path, serializing a whole read-modify-write cycle against every other
-// process using this helper for the same path.
+// LockFile holds an exclusive advisory lock covering path, serializing a whole
+// read-modify-write cycle against every other process using it for the same
+// path. The caller must defer the returned release immediately.
 //
 // A sync.Mutex is not enough: supervisord runs `--mode server` and
 // `--mode daemon` as two processes that both write users.json, every per-user
@@ -26,19 +26,6 @@ import (
 //
 // Readers do not need this. Rename-publish means a reader sees either the
 // whole previous file or the whole next one.
-func WithFileLock(path string, fn func() error) error {
-	release, err := LockFile(path)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return fn()
-}
-
-// LockFile is WithFileLock for callers whose return signature does not fit a
-// func() error closure. The caller must defer the returned release
-// immediately. Prefer WithFileLock where the closure form fits; it cannot be
-// misused by forgetting the defer.
 func LockFile(path string) (release func(), err error) {
 	return LockFileContext(context.Background(), path)
 }

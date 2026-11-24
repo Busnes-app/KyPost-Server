@@ -21,7 +21,7 @@ import (
 // the individual reads and writes.
 //
 // dirMu alone is a within-process lock, so Update pairs it with an
-// inter-process file lock (fsutil.WithFileLock). The previous note here said
+// inter-process file lock (fsutil.LockFile). The previous note here said
 // a process-local lock was sufficient because every writer lives in the api
 // process; that is a property of today's call sites, not of the file, and it
 // is exactly the kind of assumption that rots silently the first time the
