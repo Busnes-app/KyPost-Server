@@ -461,7 +461,7 @@ func (s *Server) runScheduled(ctx context.Context, key []byte, row state.Schedul
 	next, reason := state.ScheduledReturning, late
 	current, err := s.globalStore.ScheduledNow(ctx, now())
 	if err != nil {
-		move(state.ScheduledWaiting, "", scheduledRetryDelay)
+		move(state.ScheduledWaiting, row.Reason, scheduledRetryDelay)
 		return
 	}
 	if !current.After(deadline) {

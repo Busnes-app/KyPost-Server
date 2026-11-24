@@ -61,7 +61,7 @@ non-prerelease version.
 
 ### Fixed
 
-- Table-mode scheduled mail now uses the shared database clock for execution, retry and draft-return windows, preventing fast replicas from claiming future mail and slow replicas from hiding due work. Ordinary single-tenant timing is preserved.
+- Table-mode scheduled mail now uses the shared database clock for execution, retry and draft-return windows, preventing fast replicas from claiming future mail and slow replicas from hiding due work. Clock-read refusal keeps the prior quota/held reason and sealed mail. Ordinary single-tenant timing is preserved.
 
 - Enable Rspamd's settings module so Cloudflare receiving's request-level SPF,
   DMARC and ARC exclusions take effect with Rspamd 4.3.0. Direct SMTP keeps its

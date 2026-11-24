@@ -1401,8 +1401,9 @@ existing status CAS; final transitions keep next_attempt zero. The sweeper reads
 database time for its per-row execution/retry and failed-draft age checks, send
 quota input and final-row retention. New table rows record their creation time
 from the database too. A failed clock read never becomes a host-clock fallback:
-execution backs off without sending, failed drafts retain their retry, and
-retention does not delete. Ordinary SQLite and unmigrated PostgreSQL retain the
+execution backs off without sending and retains its prior quota/held reason
+and sealed job/summary, failed drafts retain their retry, and retention does not
+delete. Ordinary SQLite and unmigrated PostgreSQL retain the
 caller's clock and existing injected-clock tests.
 
 A real PostgreSQL pair proves future/retry refusal, exactly one due claimant,
