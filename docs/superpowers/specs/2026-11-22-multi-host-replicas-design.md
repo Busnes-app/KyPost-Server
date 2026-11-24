@@ -1454,3 +1454,27 @@ directory, per-user settings, quota and mailbox boundaries must retain the
 specified ordered fence set on one request session; those boundaries are not
 claimed complete here. Elected-job/key/volume-free/MH8/region/object-storage and
 startup/launch gates remain. No hosted-readiness claim is made.
+
+## MH4 table-mode backup delivery policy as built (2026-11-23)
+
+After document mounts select table mode, `backup.New` refuses a nonempty
+`KYPOST_BACKUP_DIR` with an explicit instruction to unset it and pair KyRecovery.
+The existing library already refuses a run with no local destination and no
+pairing; its failed-attempt stamp preserves the normal retry interval rather
+than retrying every scheduler tick. Explicit export continues returning sealed
+bytes, with no automatic local capsule copy. Ordinary SQLite and unmigrated
+PostgreSQL retain their local-copy behavior.
+
+Non-restore backup CLI commands now install the runtime account/document mounts
+before constructing the service or writing an intent audit. They keep the
+historical `users.json` migration refusal, remove mounts on failure, and refuse
+hosted execution while the existing startup gate remains. Restore retains its
+separate offline capsule flow.
+
+The constructor regression reproduced acceptance of a forbidden local destination.
+The CLI regression separately reproduced bypassing table selection and beginning a
+backup audit. Fixed tests cover both, plus a real table-account/document sealed
+export and held native restore, missing-destination refusal, scheduler backoff,
+retained historical account bytes and ordinary local backup/restore/drill.
+Remaining backup-operation fencing and other MH4 publication/job fences are
+separate; this policy does not finish MH4 or authorize hosted readiness.

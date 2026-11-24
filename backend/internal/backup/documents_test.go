@@ -14,6 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
@@ -228,6 +232,13 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 	if err := dbbackend.TombstoneDir(t.Context(), purgedDir); err != nil {
 		t.Fatal(err)
 	}
+	// Open the runtime service only after the table mounts, as startup does.
+	// A table-mode backup has no host-local capsule destination.
+	localDir := s.cfg.Dir
+	s, err = New(s.dirs, config.BackupConfig{DepositInterval: time.Hour, Keep: 1}, s.store, s.version)
+	if err != nil {
+		t.Fatal(err)
+	}
 	key := pinTestKey(t, s)
 	p, err := s.Collect()
 	if err != nil {
@@ -241,14 +252,24 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 			t.Fatal("sealed stale file beside table", f.Path)
 		}
 	}
-	result, err := s.Run(t.Context())
-	if err != nil {
-		t.Fatal(err)
+	if _, err := s.Run(t.Context()); !errors.Is(err, recoveryclient.ErrNoDestination) {
+		t.Fatal("unpaired table backup succeeded", err)
 	}
 	if held, err := dbbackend.DirectoryTombstoned(t.Context(), purgedDir); err != nil || !held {
 		t.Fatal("backup changed catalog tombstone", held, err)
 	}
-	raw, err := os.ReadFile(result.LocalPath)
+	if at, err := s.store.Setting("backup_last_attempt"); err != nil || at == "" {
+		t.Fatal("failed attempt lost scheduler backoff", at, err)
+	}
+	started := false
+	if _, err := s.RunIfDue(t.Context(), func() error { started = true; return nil }); !errors.Is(err, ErrNotDue) || started {
+		t.Fatal("unpaired backup retried before next interval", started, err)
+	}
+	entries, err := os.ReadDir(localDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("table run left local capsules", entries, err)
+	}
+	raw, _, err := s.Export(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
