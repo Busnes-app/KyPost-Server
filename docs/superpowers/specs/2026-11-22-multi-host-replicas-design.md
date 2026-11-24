@@ -1652,8 +1652,9 @@ removed in turn refuses the start by name with no file created and no mount left
 is refused while running and created again after release), `TestProvisionedKeysAreFingerprinted`
 (replica: single mode adds no key entry, a different key is refused by name, a rotation is
 accepted, a missing key is named), `TestTableRePinReplacesAnotherHostsStaleKey` (backup, two
-hosts with separate filesystems: B exports to the re-pinned key; a tampered record refuses and
-leaves B's file), `TestProvisionedPathsCreateNoKey` (cryptutil) and
+hosts with separate filesystems: B's sync, which every run and export performs first, replaces
+its stale file with the re-pinned key; a tampered record refuses and leaves B's file; a deposit
+from B is not exercised, since the fixture's second host has no `volumes.db` to seal), `TestProvisionedPathsCreateNoKey` (cryptutil) and
 `TestLoadOrCreateNotificationPrivateKey_RefusesAProvisionedPath` (config).
 
 MH6's shared meters, MH7's host checks and every startup gate remain.

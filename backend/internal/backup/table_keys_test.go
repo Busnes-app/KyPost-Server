@@ -11,8 +11,8 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 )
 
-// MH5: a re-pin on host A leaves host B's own recovery.pub stale. B's next sealing replaces
-// it from the sealed record and seals to the new key; a record that does not open still
+// MH5: a re-pin on host A leaves host B's own recovery.pub stale. The sync every sealing
+// operation runs first replaces it from the sealed record with the new key; a record that does not open still
 // refuses and leaves the file alone.
 func TestTableRePinReplacesAnotherHostsStaleKey(t *testing.T) {
 	a, b := tableBackupReplicas(t)
@@ -31,12 +31,14 @@ func TestTableRePinReplacesAnotherHostsStaleKey(t *testing.T) {
 		must(t, a.store.DeleteSetting(k))
 	}
 	must(t, pin(a, second, 2, 3))
-	_, manifest, err := b.Export(t.Context())
-	if err != nil {
+	// Every sealing operation syncs first; the fixture's host B has no volumes.db to seal.
+	if err := b.SyncRecoveryKey(); err != nil {
 		t.Fatal("host b refused the re-pinned key", err)
 	}
-	if manifest.RecoveryKeyID != second.Public().ID() {
-		t.Fatalf("host b sealed to %s, want %s", manifest.RecoveryKeyID, second.Public().ID())
+	f, err := b.snapshot()
+	must(t, err)
+	if k, err := recoveryclient.LoadRecoveryKey(b.dirs.State, f); err != nil || k.Public.ID() != second.Public().ID() {
+		t.Fatal("host b would seal to another key", err)
 	}
 	sealed, err := a.store.Setting(anchorSetting)
 	must(t, err)
