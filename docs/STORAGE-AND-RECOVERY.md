@@ -206,3 +206,9 @@ the same table/account authority as runtime before opening the backup service;
 historical retained accounts still require the offline migration. Ordinary
 unmigrated single-tenant installs keep their existing local-copy behavior.
 Hosted startup and the remaining multi-host launch gates stay in place.
+
+Table-mode backup operations share a PostgreSQL ownership fence across hosts
+instead of a host-local lock file. Contention returns busy within the existing
+10-second fence wait. Losing the fence cancels the operation context; run/export,
+pairing and drill retain that context. Ordinary mode keeps its existing
+nonblocking file lock. This does not complete the other multi-host launch gates.
