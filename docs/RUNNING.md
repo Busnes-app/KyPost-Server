@@ -257,6 +257,33 @@ volumes it is unproven. So KyPost refuses, at startup and before listening:
 Compose itself refuses `TLS_CERT_FILE` with the overlay: HAProxy publishes cleartext and
 speaks plain HTTP to the replicas, so TLS ends in a proxy in front of HAProxy.
 
+**Table mode (multi-host, not startable yet).** A multi install, or one migrated to
+PostgreSQL documents (MH8), keeps nothing shared on a volume, so it skips the volume-ID and
+boot-ID checks: each host mounts its own empty volumes and writes no `replica-volume.id`.
+Before any listener or worker starts it instead refuses:
+
+- a store still written to the host's disk (the volume-free assertion; the error names each
+  store), or a config or state root that is not on the documents table;
+- a plain listener: set `TLS_CERT_FILE` and `TLS_KEY_FILE` to the host's certificate and key,
+  and have the proxy verify it (the api listens on every interface, so plain HTTP is always
+  off loopback);
+- a database URL without `sslmode=verify-full`, unless every host in it is loopback or a Unix
+  socket. Off loopback the connection must also bound a dead socket: `tcp_keepalives_idle`
+  + `tcp_keepalives_interval` x `tcp_keepalives_count` at most 60 s, and `tcp_user_timeout`
+  at most 30000 ms, set on the server (`postgres -c tcp_keepalives_idle=10 -c
+  tcp_keepalives_interval=5 -c tcp_keepalives_count=4 -c tcp_user_timeout=30000`) or in the
+  URL's query. Otherwise PostgreSQL holds a partitioned replica's role locks for hours. Use
+  `verify-full` on both legs of PgBouncer and on replication connections
+  (`primary_conninfo` with `sslmode=verify-full` and `sslrootcert`) too;
+- `OLLAMA_BASE_URL` (or `CLASSIFIER_BASE_URL`) over http to another host: use https, or run
+  Ollama on each host's loopback;
+- `ALLOW_INSECURE_SMTP=true`, an http `PUSH_RELAY_URL` or `APNS_RELAY_URL` off loopback, and an
+  http KyIdentity issuer or `allowInsecureIssuer`.
+
+The peer apps (`KYPOST_KYCALENDAR_URL`, `KYPOST_KYDRIVE_URL`, `KYPOST_KYMESSAGE_URL`, directory
+pairing), KyRecovery and the native outbound relay (implicit TLS, verified; direct delivery
+requires STARTTLS) already refuse clear text in every mode.
+
 **Replicas have no native receiving.** Cloudflare pickup requires `KYPOST_RECEIVING_RSPAMD=true`
 and the Rspamd sidecar, and `docker-compose.rspamd.yml` shares one container's network, so
 Compose refuses it with the replicas overlay. With replicas, receive through an external IMAP

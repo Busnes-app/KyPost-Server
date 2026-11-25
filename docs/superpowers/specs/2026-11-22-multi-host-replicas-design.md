@@ -1841,3 +1841,84 @@ handles the message; B leaves it), state's `TestLeaseHasOneHolder`,
 `TestLeasedWriteAfterTakeoverWritesNothing` (a record and a decision under a lease another
 holder took over write nothing) and `TestCreateAutoRecordsOneProbeAcrossHandles`
 (sendas: two handles on one store record one probe; a user's own request is not refused).
+
+## MH7 start checks and transport as built (2026-11-25)
+
+Startup still refuses `multi` (K PR 7), and no migration selects table mode yet (MH8), so
+these checks run only in tests. Single mode keeps every check, file and refusal byte for
+byte. Paths are under `backend/internal/`.
+
+- **Host checks.** `replica.Process.Table` (set by `app.startReplica` from
+  `users.TableMode`) skips the volume-ID and boot-ID checks and writes no `replica-volume.id`.
+  The instance row records meta `replica_volume_id`, minted in the database on first use, so
+  `replica_instances` keeps one schema. `ErrReceiver` stays. `TestTableModeLiftsHostChecks`
+  beside the unchanged `TestTopologyGuard`.
+- **The volume-free assertion.** `tenancy.Targets` gives every `fileClass` name its table-mode
+  target (database, documents, key, fence, absent, host, or file), and `tenancy.HostFiles` is
+  the per-host pattern list (`state/imports/*/upload-*`, `state/mail-bulk.json`,
+  `state/recovery.pub`, `state/recovery-pin.generation`). `TestEveryStoreIsClassified` keeps
+  the three in step: every class has a target, every per-host store has a pattern, and every
+  pattern names a per-host store. In table mode, `startReplica` refuses before it registers or
+  writes anything (`tenancy.ErrHostFiles`) when the config or state root is not on the
+  documents table, or when any store's target is `file`. **It refuses today.** These stores
+  are still written to the host's disk in table mode:
+  - `native-mailbox.json` and the published mailbox directory (`mailbox/prepare.go:139,687`).
+    Reads go through vol (`:479`), so a fresh table-mode mailbox also fails its own check.
+  - `push_relay_key` and `apns_relay_key` (`processor/native_sender.go:197,241,682`),
+    `bulk-backup.repo` (`backup/bulk.go:231`) and the Cloudflare receiving files
+    (`cfreceiving/state.go:69`). All are in SECRET_DIR, and none calls `RefuseCreate`.
+  - `tuning.md`, copied raw by `migrateLegacySingleUserData` (`app/migrate.go:62-68,114-126`).
+  - `admin.env` and `first-run-password.txt` (`app/bootstrap.go:83,100`), in a migrated
+    single install only, since bootstrap refuses multi.
+
+  Each of these must move or be refused before multi starts. That is MH4 or MH8 work, and
+  K PR 7's gate.
+- **The volume-free test.** `api.TestTableModeWritesNothingOnTheHostsDisk` (PostgreSQL) mounts
+  table documents on the cross-org fixture and runs every org-bound route's cases:
+  contacts, groups, rules, settings, masked addresses, send-as, PGP, devices, agent tokens
+  and the mailbox routes. It then diffs every file under the three roots. Only `HostFiles`
+  matches may change, plus `file` targets (already refused at start) and key files (the
+  fixture provisions none; MH5's `RefuseCreate` refuses creating one in table mode).
+  Directories are not compared: an empty per-user or `imports/` directory carries no data.
+  The flows this test does not run are **unproven** here: provisioning through the
+  directory, mail receipt and send, DKIM rotation, a scheduled send, a pickup link, an
+  import and a backup. The in-process two-host test and the container harness also remain.
+- **Encryption in transit** (`app.checkTableTransport`, run by `app.Run` right after
+  `startDocuments` in table mode, before any store opens for work or anything listens; MH8's
+  migration must call the same function). It refuses each of these, and
+  `TestTableTransportRefusesEachCleartextHop` covers each one:
+  - no `TLS_CERT_FILE` or `TLS_KEY_FILE`, or a pair that does not load. The api binds every
+    interface (`api/server.go:1104`), so a plain listener is always off loopback.
+  - `ALLOW_INSECURE_SMTP=true`.
+  - an http `OLLAMA_BASE_URL` or `CLASSIFIER_BASE_URL` that is not loopback.
+  - a push or APNs relay URL failing `processor.ValidateRelayURL`.
+  - an http KyIdentity issuer, or `allowInsecureIssuer`.
+  - `dbbackend.CheckTableTransport`: off loopback and Unix sockets, `sslmode` (URL, else
+    `PGSSLMODE`, else pgx's `prefer`) must be `verify-full`. The session's
+    `tcp_keepalives_idle + interval x count` must be at most 60 s and its `tcp_user_timeout`
+    in (0, 30000] ms (`TestTableTransportNeedsVerifyFull`, `TestDeadConnectionBounds`,
+    `TestSessionBoundsReadTheServer`).
+- **Rows this note left unverified, settled by reading the code:**
+  - **PostgreSQL TLS:** the code set no TLS mode (no `sslmode` handling in
+    dbbackend/pgdialect), and pgx defaults to `prefer`. It is now refused as above.
+  - **Ollama:** http to any private address was allowed and only logged
+    (`app/app.go:908-917`, `classifier.ValidateBaseURL`). Table mode now allows https, or http
+    on loopback only.
+  - **Peer apps:** `KYPOST_KYCALENDAR_URL`, `KYPOST_KYDRIVE_URL` and `KYPOST_KYMESSAGE_URL` already
+    refuse anything but https, and loopback (`kycalendar/kycalendar.go:107-112`,
+    `kydrive/kydrive.go:123-128`, `suitepair/suitepair.go:99-110`). Directory pairing refuses
+    non-https (ky-primitives `suitedir/client.go:302`). No change.
+  - **KyRecovery:** `recoveryclient.ValidateURL` is https only and refuses loopback. No change.
+  - **Push relays:** http was allowed only to a loopback IP, and a bad URL disabled push
+    (`processor/native_sender.go:102-143`). Table mode now refuses the start instead.
+  - **Outbound SMTP relay:** relay mode always uses implicit TLS with a verified certificate
+    (`mailmsg/smtp_send.go:401-408`). Direct delivery requires STARTTLS against the system
+    roots (`mailmsg/direct_mx.go:149-152`). Plain text cannot be configured. The only clear-text
+    switch is the user-account `ALLOW_INSECURE_SMTP`, now refused.
+  - **`mail-bulk.json`:** a run never writes it to the live root (`backup/collect.go:341`
+    builds it in the capsule). A restore leaves it in STATE_DIR (`app/backup.go:244`), so it
+    stays per host.
+- **Docs.** `docs/RUNNING.md` ("Why one host") gains the table-mode refusals: the server and
+  URL keepalive settings, and `verify-full` on PgBouncer's legs and on replication
+  `primary_conninfo`. `replica/AGENTS.md` describes `Process.Table`. The multi-host Compose
+  profile is not built here. It joins RX PR 5's hosted profile when multi can start.

@@ -100,6 +100,7 @@ var fileClass = map[string]string{
 	"native-restore-released.json": platform, "mfa-clear-all.done": platform, "mfa-clear-all.progress": platform,
 	"backups": platform, "mail-bulk.json": platform, "backup-operation.lock": platform,
 	"replica-volume.id": platform, "server-instance.lock": platform,
+	"recovery.pub": platform, "recovery-pin.generation": platform,
 	// Keys (SECRET_DIR): one per install.
 	"documents.key": platform, "native-relay.key": platform, "imap-config.key": platform, "totp-secret.key": platform,
 	"pgp-private-key.key": platform, "pickup-store.key": platform, "pairing.key": platform, "pow.key": platform,
@@ -125,7 +126,7 @@ var notStores = map[string]string{
 // fileName is a quoted file-like literal; extras are store names without an extension.
 var (
 	fileName = regexp.MustCompile(`"([A-Za-z0-9_.<>*%-]*\.(?:json|yaml|yml|key|env|txt|pem|conf|repo|db|md|lock|id))"`)
-	extras   = []string{"contact-photos", "quota-", "outbox-idle", "pickup", "imports", "mfa-clear-all.done", "mfa-clear-all.progress", "backups", "push_relay_key", "apns_relay_key"}
+	extras   = []string{"contact-photos", "quota-", "outbox-idle", "pickup", "imports", "mfa-clear-all.done", "mfa-clear-all.progress", "backups", "push_relay_key", "apns_relay_key", "recovery.pub", "recovery-pin.generation"}
 	ddlTable = regexp.MustCompile(`(?i)CREATE TABLE (?:IF NOT EXISTS )?(?:kypost_catalog\.)?([a-z_]+)`)
 )
 
@@ -211,6 +212,31 @@ func TestEveryStoreIsClassified(t *testing.T) {
 	for n := range notStores {
 		if !named[n] {
 			t.Errorf("unclassified name %s is named nowhere", n)
+		}
+	}
+	checkTargets(t)
+}
+
+// checkTargets keeps the volume-free assertion's list (Targets) in step with fileClass, and
+// every per-host pattern tied to a per-host store.
+func checkTargets(t *testing.T) {
+	t.Helper()
+	for n := range fileClass {
+		if _, ok := Targets[n]; !ok {
+			t.Errorf("file %s has no table-mode target in Targets (hosts.go)", n)
+		}
+	}
+	for n, target := range Targets {
+		if _, ok := fileClass[n]; !ok {
+			t.Errorf("Targets names %s, which fileClass does not", n)
+		}
+		if target == TargetHost && !NamesHostFile(n) {
+			t.Errorf("per-host store %s has no HostFiles pattern", n)
+		}
+	}
+	for _, p := range HostFiles {
+		if !slices.ContainsFunc(slices.Collect(maps.Keys(Targets)), func(n string) bool { return Targets[n] == TargetHost && slices.Contains(strings.Split(p, "/"), n) }) {
+			t.Errorf("HostFiles pattern %s names no per-host store", p)
 		}
 	}
 }

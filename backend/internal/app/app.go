@@ -173,6 +173,11 @@ func Run(args []string) error {
 		return err
 	}
 	defer releaseDocuments()
+	if users.TableMode(config.ConfigDir()) {
+		if err := checkTableTransport(context.Background(), os.Getenv, sso.NewStore(config.ConfigDir()).Load()); err != nil {
+			return err
+		}
+	}
 
 	// Capture legacy notification prefs before LoadOrInit rewrites
 	// config.yaml with the trimmed multi-user schema (which drops the old

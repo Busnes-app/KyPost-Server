@@ -277,6 +277,42 @@ func TestTopologyGuard(t *testing.T) {
 	third()
 }
 
+// Table mode (MH7) admits a replica on another kernel with its own disks, writes no volume ID
+// file and records the deployment's volume ID; the Maddy refusal stays.
+func TestTableModeLiftsHostChecks(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	ctx := context.Background()
+	st := globalStore(t, t.TempDir())
+	noEnv := env(nil)
+	_, first, err := Start(ctx, Process{Store: st, Role: "api", Roots: roots(t), BootID: "host-a", Getenv: noEnv, Table: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first()
+	other := roots(t)
+	_, second, err := Start(ctx, Process{Store: st, Role: "daemon", Roots: other, BootID: "host-b", Getenv: noEnv, Table: true})
+	if err != nil {
+		t.Fatalf("another host with its own volumes in table mode: %v", err)
+	}
+	defer second()
+	for _, root := range other {
+		if _, err := os.Stat(filepath.Join(root, VolumeIDFile)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("table mode wrote %s into %s: %v", VolumeIDFile, root, err)
+		}
+	}
+	live, err := st.LiveInstances(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := st.Setting(volumeSetting)
+	if err != nil || len(live) != 2 || live[0].VolumeID != recorded || live[1].VolumeID != recorded {
+		t.Fatalf("instances %+v, recorded volume %q (%v)", live, recorded, err)
+	}
+	if _, _, err := Start(ctx, Process{Store: st, Role: "api", Roots: other, BootID: "host-c", Getenv: env(map[string]string{"KYPOST_NATIVE_RECEIVER": "true"}), Table: true}); !errors.Is(err, ErrReceiver) {
+		t.Fatalf("receiver in table mode: %v", err)
+	}
+}
+
 // Table mode (MH5) records each provisioned key's digest: a host holding a different key is
 // refused naming that key only, a key rotation is accepted offline, and single mode's record
 // carries no key entry.
