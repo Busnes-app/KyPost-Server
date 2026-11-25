@@ -182,7 +182,7 @@ func (s *Store) WithLock(ctx context.Context, name string, work func(context.Con
 		}
 		return false, err
 	}
-	defer unlockAndDiscard(conn, spaceLock, name)
+	defer s.unlockAndDiscard(conn, spaceLock, name)
 	owned, cancel := context.WithCancelCause(ctx)
 	probeDone := make(chan struct{})
 	go func() {
@@ -269,8 +269,8 @@ func probe(owned context.Context, conn *sql.Conn, cancel context.CancelCauseFunc
 }
 
 // discard closes conn's physical connection instead of pooling it: closing the session
-// releases every lock it holds, even if an unlock would fail. A variable for a test.
-var discard = func(conn *sql.Conn) {
+// releases every lock it holds, even if an unlock would fail.
+func discard(conn *sql.Conn) {
 	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 	_ = conn.Close()
 }
@@ -301,16 +301,19 @@ func (s *Store) Hold(ctx context.Context, name string) (release func(), err erro
 		discard(conn)
 		return nil, err
 	}
-	return func() { unlockAndDiscard(conn, spaceLock, name) }, nil
+	return func() { s.unlockAndDiscard(conn, spaceLock, name) }, nil
 }
 
 // unlockAndDiscard unlocks before discarding: PostgreSQL drops a closed session's locks only
 // once it has reaped the backend, so a lock released by close alone can still refuse the
 // next taker. A failed or stalled unlock (bounded by lockProbeTimeout) falls back to close.
-func unlockAndDiscard(conn *sql.Conn, space int, name string) {
+func (s *Store) unlockAndDiscard(conn *sql.Conn, space int, name string) {
 	ctx, cancel := context.WithTimeout(context.Background(), lockProbeTimeout)
 	defer cancel()
 	_, _ = conn.ExecContext(ctx, `SELECT pg_advisory_unlock(`+advisoryKey(space)+`)`, name)
+	if s.unlocked != nil {
+		s.unlocked()
+	}
 	discard(conn)
 }
 

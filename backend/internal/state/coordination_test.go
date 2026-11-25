@@ -257,17 +257,14 @@ func TestReleasedLockIsFreeAtOnce(t *testing.T) {
 	a, b := twoReplicas(t)
 	ctx := context.Background()
 	var discards int
-	orig := discard
-	discard = func(conn *sql.Conn) {
+	a.unlocked = func() {
 		var n int
 		if err := b.db.QueryRowContext(ctx, `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objsubid=2
  AND classid=3 AND objid=hashtext(current_schema() || ':' || 'backup-run')::oid`).Scan(&n); err != nil || n != 0 {
 			t.Errorf("lock connection discarded with the lock still held: %d %v", n, err)
 		}
 		discards++
-		orig(conn)
 	}
-	t.Cleanup(func() { discard = orig })
 	if won, err := a.WithLock(ctx, "backup-run", func(context.Context) error { return nil }); !won || err != nil {
 		t.Fatalf("WithLock: won=%v err=%v", won, err)
 	}

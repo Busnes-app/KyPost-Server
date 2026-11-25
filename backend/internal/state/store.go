@@ -25,6 +25,8 @@ import (
 type Store struct {
 	baseDir string
 	db      *sql.DB
+	// unlocked, in tests, runs as a named lock's connection is about to be discarded.
+	unlocked func()
 }
 
 // Native notification delivery modes. "push" (the default) sends via the
