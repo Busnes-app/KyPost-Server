@@ -249,6 +249,38 @@ func TestLockLossCancelsTheOwner(t *testing.T) {
 	}
 }
 
+// A released lock is free when WithLock or Hold returns, not once PostgreSQL has reaped the
+// closed session: a backup run straight after another one is not "already in progress"
+// (CI flake, post 8148). Checked as each lock connection is discarded, so it is deterministic.
+func TestReleasedLockIsFreeAtOnce(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	a, b := twoReplicas(t)
+	ctx := context.Background()
+	var discards int
+	orig := discard
+	discard = func(conn *sql.Conn) {
+		var n int
+		if err := b.db.QueryRowContext(ctx, `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objsubid=2
+ AND classid=3 AND objid=hashtext(current_schema() || ':' || 'backup-run')::oid`).Scan(&n); err != nil || n != 0 {
+			t.Errorf("lock connection discarded with the lock still held: %d %v", n, err)
+		}
+		discards++
+		orig(conn)
+	}
+	t.Cleanup(func() { discard = orig })
+	if won, err := a.WithLock(ctx, "backup-run", func(context.Context) error { return nil }); !won || err != nil {
+		t.Fatalf("WithLock: won=%v err=%v", won, err)
+	}
+	release, err := a.Hold(ctx, "backup-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if discards != 2 {
+		t.Fatalf("%d lock connections discarded, want 2", discards)
+	}
+}
+
 func TestInstancesAreLiveWhileRegistered(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	a, b := twoReplicas(t)

@@ -304,3 +304,29 @@ func TestLostRunLockCancelsTheRun(t *testing.T) {
 		t.Fatal("the run kept going after its lock was lost")
 	}
 }
+
+// Two fixtures on one database never refuse each other's backup-run: its key is scoped to
+// the fixture's schema. Back-to-back runs within each are state's TestReleasedLockIsFreeAtOnce.
+func TestTwoFixturesRunAtOnceOnOneDatabase(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	a, b := validService(t), validService(t)
+	inside := make(chan struct{})
+	leave := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- a.withRunLock(context.Background(), func(context.Context) error {
+			close(inside)
+			<-leave
+			return nil
+		})
+	}()
+	<-inside
+	err := b.withRunLock(context.Background(), func(context.Context) error { return nil })
+	close(leave)
+	if err != nil {
+		t.Fatalf("second fixture refused while the first runs: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
