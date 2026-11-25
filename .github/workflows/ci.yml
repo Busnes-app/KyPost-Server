@@ -16,6 +16,8 @@ on:
   # draft ready is what runs its CI.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # The merge queue tests each PR on top of the queue before it merges.
+  merge_group:
 
 permissions:
   contents: read
