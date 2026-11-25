@@ -18,6 +18,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- In table mode, claim each incoming message across hosts before the poller works on it, so a daemon resuming after a freeze and the new owner never both label, record and push one message; the own-address send-as probe is mailed once. Ordinary installs are unchanged.
 - Release PostgreSQL named locks (`backup-run`, daemon roles, pairing, replica config) with an explicit unlock before closing their session, so a backup straight after another is no longer refused as already in progress while the server reaps the old session.
 - Count the MFA push, send-as and KyPulse confirmation, notification test, relay check, deliverability, proof-of-work challenge and login-parameter meters once across replicas in table mode; ordinary installs keep them per process.
 - Require every key to be provisioned in table mode: startup names a missing key, nothing creates one at runtime, each host's key files are compared against the deployment's record by digest, and a re-pin on one host replaces another host's stale `recovery.pub` from the sealed record. Ordinary installs still create keys on first use.

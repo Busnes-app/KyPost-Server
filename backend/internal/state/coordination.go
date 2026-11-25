@@ -1,6 +1,7 @@
 package state
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -108,6 +109,45 @@ RETURNING id`, id, attempt, window.Milliseconds()).Scan(&got)
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// TakeLease holds key for holder until window from now (database time) unless another
+// holder's lease is live; its own holder renews it. UndoReplay(key, holder) gives it back.
+func (s *Store) TakeLease(ctx context.Context, key, holder string, window time.Duration) (bool, error) {
+	if key == "" || len(key) > 400 || holder == "" {
+		return false, errInvalidKey
+	}
+	now := nowMillis()
+	var got string
+	err := s.db.QueryRowContext(ctx, `INSERT INTO replay_ids (id, attempt, expires_at) VALUES (?, ?, `+now+` + ?)
+ON CONFLICT (id) DO UPDATE SET expires_at = excluded.expires_at, attempt = excluded.attempt
+WHERE replay_ids.expires_at <= `+now+` OR replay_ids.attempt = excluded.attempt
+RETURNING id`, key, holder, window.Milliseconds()).Scan(&got)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Lease is a TakeLease lease a write must still hold: the write renews it in its own
+// transaction, so a holder that lost it writes nothing, and a takeover, itself a write,
+// cannot fall between the check and the write.
+type Lease struct {
+	Key, Holder string
+	Window      time.Duration
+}
+
+// ErrLeaseLost is a write refused because its lease is another holder's, or gone.
+var ErrLeaseLost = errors.New("state: lease lost")
+
+func renewLease(ctx context.Context, e interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, l *Lease) error {
+	res, err := e.ExecContext(ctx, `UPDATE replay_ids SET expires_at = `+nowMillis()+` + ? WHERE id = ? AND attempt = ?`, l.Window.Milliseconds(), l.Key, l.Holder)
+	if ok, err := oneRow(res, err); err != nil || !ok {
+		return cmp.Or(err, ErrLeaseLost)
+	}
+	return nil
 }
 
 // UndoReplay releases id only if attempt wrote its record: an attempt whose outcome is

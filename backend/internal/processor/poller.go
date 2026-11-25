@@ -134,6 +134,9 @@ type mailClientEntry struct {
 
 // userCtx bundles one user's per-tick dependencies.
 type userCtx struct {
+	// claim, in table mode, is this host's claim on the message being handled: every
+	// decision write renews it in its own transaction (message_claims.go). nil otherwise.
+	claim    *state.Lease
 	id       string
 	username string
 	// store is the polled mailbox's state (processed, decisions, checkpoint);
@@ -1131,6 +1134,8 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 		p.retryForwards(ctx, uc.id)
 	}
 	var res tickResult
+	claimed := p.messageClaims()
+	defer claimed.release()
 	for i, msg := range messages {
 		seen, err := uc.store.Seen(msg.ID)
 		if err != nil {
@@ -1146,6 +1151,25 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 			res.skippedSeen++
 			continue
 		}
+		lease, ok := claimed.take(uc.store, uc.id, msg.ID)
+		if !ok {
+			// Another host works on it (or the claim cannot be read): hold it, uncounted.
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
+			res.skippedSeen++
+			continue
+		}
+		if lease != nil {
+			// Read again under the claim: another host may have finished it since.
+			if seen, err = uc.store.Seen(msg.ID); err != nil || seen {
+				if err != nil {
+					res.deferredIDs = append(res.deferredIDs, msg.ID)
+				}
+				res.skippedSeen++
+				continue
+			}
+		}
+		uc := uc
+		uc.claim = lease
 		// Anti-phishing runs ahead of everything below: a security verdict must
 		// not be rationed by the rate limit, nor skipped by a rule that moves,
 		// deletes or stops, or by a classifier failure. Flagging first also means
@@ -1203,6 +1227,8 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 		switch {
 		case errors.Is(err, errIncomingRateLimited):
 			res.rateLimited++
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
+		case errors.Is(err, state.ErrLeaseLost):
 			res.deferredIDs = append(res.deferredIDs, msg.ID)
 		case err != nil:
 			res.failed++
@@ -1471,7 +1497,7 @@ func (p *Poller) recordMessageFailure(store *state.Store, userID string, uc user
 	// unmarked so the next tick retries it.
 	var writeErr error
 	if retire {
-		writeErr = store.RecordProcessedDecision(decision)
+		writeErr = store.RecordProcessedDecisionUnder(uc.claim, decision)
 	} else {
 		p.log.Info("transient failure; leaving message unmarked so it is retried next poll tick", "user_id", userID, "message_id", msg.ID)
 		// Record and notify ONCE per message, not once per attempt. A deferred
@@ -1490,7 +1516,10 @@ func (p *Poller) recordMessageFailure(store *state.Store, userID string, uc user
 		if reported || readErr != nil {
 			return
 		}
-		writeErr = store.AddDecision(decision)
+		writeErr = store.AddDecisionUnder(uc.claim, decision)
+	}
+	if errors.Is(writeErr, state.ErrLeaseLost) {
+		return // another host took the message over; it reports the outcome
 	}
 	// This is already the failure path, so there is nothing above to abort;
 	// logged rather than swallowed because a dropped write here means the
@@ -1523,7 +1552,7 @@ func (p *Poller) rejectOversizedMessage(uc userCtx, msg imapadapter.Message) err
 		p.log.Error("failed to send too-large rejection notice", "user_id", uc.id, "message_id", msg.ID, "error", err.Error())
 		detail += "; rejection notice could not be sent: " + err.Error()
 	}
-	return uc.store.RecordProcessedDecision(state.Decision{
+	return uc.record(state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,
@@ -1692,7 +1721,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		selected = classifier.SelectLabelFromText(allowlist, label)
 		if selected == "" {
 			p.log.Info("classification skipped", "user_id", uc.id, "message_id", msg.ID, "reason", "no known label returned", "raw_label", clipForLog(label), "allowlist_count", strconv.Itoa(len(allowlist)))
-			if err := uc.store.RecordProcessedDecision(state.Decision{
+			if err := uc.record(state.Decision{
 				MessageID: msg.ID,
 				Sender:    msg.Sender,
 				SentTo:    msg.SentTo,
@@ -1725,7 +1754,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		return &retryableErr{err: err}
 	}
 	p.log.Info("label applied", "user_id", uc.id, "message_id", msg.ID, "selected_label", selected, "keywords", strings.Join(keywords, ","))
-	if err := uc.store.RecordProcessedDecision(state.Decision{
+	if err := uc.record(state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,
@@ -1801,12 +1830,12 @@ func (p *Poller) applyFilterRules(ctx context.Context, uc userCtx, msg imapadapt
 	// it, so only the decision is recorded here. A failed write is retryable:
 	// the actions happened and only the bookkeeping lost a lock race.
 	if !outcome.Stopped {
-		if err := uc.store.AddDecision(decision); err != nil {
+		if err := uc.store.AddDecisionUnder(uc.claim, decision); err != nil {
 			return false, &retryableErr{err: err}
 		}
 		return false, nil
 	}
-	if err := uc.store.RecordProcessedDecision(decision); err != nil {
+	if err := uc.record(decision); err != nil {
 		return false, &retryableErr{err: err}
 	}
 	p.maybeSendPushNotification(uc, msg, "", nil)
@@ -2290,7 +2319,7 @@ func (p *Poller) tagWithLabel(ctx context.Context, uc userCtx, msg imapadapter.M
 		p.log.Error("label apply failed", "user_id", uc.id, "message_id", msg.ID, "selected_label", defaultLabel, "error", err.Error())
 		return &retryableErr{err: err}
 	}
-	if err := uc.store.RecordProcessedDecision(state.Decision{
+	if err := uc.record(state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,

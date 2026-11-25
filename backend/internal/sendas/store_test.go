@@ -1,6 +1,7 @@
 package sendas
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -477,5 +478,27 @@ func TestConfirmThenMarkVerifiedUpgradesProof(t *testing.T) {
 	got, _, _ = s.Get(a.ID)
 	if got.VerifiedBy != VerifiedByDKIM || !got.DomainProven() {
 		t.Fatalf("after MarkVerified: %+v, want upgraded to dkim", got)
+	}
+}
+
+// Two hosts that both saw the own-address probe due record, and so mail, one probe.
+func TestCreateAutoRecordsOneProbeAcrossHandles(t *testing.T) {
+	dir := t.TempDir()
+	a, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.CreateAuto("u1", "Me@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.CreateAuto("u1", "me@example.com"); !errors.Is(err, ErrProbeOnRecord) {
+		t.Fatalf("second probe: %v, want ErrProbeOnRecord", err)
+	}
+	if _, err := b.Create("u1", "me@example.com", ""); err != nil {
+		t.Fatalf("a user's own request is not refused: %v", err)
 	}
 }
