@@ -229,7 +229,7 @@ func TestNativeOutboundSettingsReadDoesNotInvertDirectoryFence(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	directoryRelease, err := life.LockDirectoryContext(ctx)
+	_, directoryRelease, err := life.LockDirectoryContext(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestNativeOutboundSharesTheDirectoryFence(t *testing.T) {
 		t.Fatal("send did not wait for a directory writer:", err)
 	}
 	writer()
-	reader, err := life.lockDirectoryShared(context.Background())
+	_, reader, err := life.lockDirectoryShared(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

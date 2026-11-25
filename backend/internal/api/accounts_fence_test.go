@@ -66,7 +66,7 @@ func TestTablePurgeRechecksLateAccountAfterOrgFenceLoss(t *testing.T) {
 	defer control.Close()
 	var pid int
 
-	if err = control.QueryRow(orgFencePIDQuery, state.FenceOrg+orgA).Scan(&pid); err != nil {
+	if err = control.QueryRow(orgFencePIDQuery, vol.FenceOrg+orgA).Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
 	var killed bool
@@ -164,7 +164,7 @@ func TestTablePurgeSnapshotWaitsForThreeRecordProvisioning(t *testing.T) {
 	}
 	defer control.Close()
 	var holder int
-	if err = control.QueryRow(orgFencePIDQuery, state.FenceOrg+orgA).Scan(&holder); err != nil {
+	if err = control.QueryRow(orgFencePIDQuery, vol.FenceOrg+orgA).Scan(&holder); err != nil {
 		t.Fatal(err)
 	}
 	snapshotted := make(chan error, 1)
@@ -342,7 +342,7 @@ func TestTableStaffWebhookKeepsOrgFenceWhenCacheIsUnavailable(t *testing.T) {
 	entered, resume := make(chan struct{}), make(chan struct{})
 	holderDone := make(chan error, 1)
 	go func() {
-		holderDone <- s.globalStore.WithFences(ctx, []state.Fence{{Name: state.FenceOrg + staffOrg}}, func(ctx context.Context) error {
+		holderDone <- s.globalStore.WithFences(ctx, []state.Fence{{Name: vol.FenceOrg + staffOrg}}, func(ctx context.Context) error {
 			close(entered)
 			select {
 			case <-resume:
@@ -369,7 +369,7 @@ func TestTableStaffWebhookKeepsOrgFenceWhenCacheIsUnavailable(t *testing.T) {
 	}
 	defer control.Close()
 	var holder int
-	if err = control.QueryRow(orgFencePIDQuery, state.FenceOrg+staffOrg).Scan(&holder); err != nil {
+	if err = control.QueryRow(orgFencePIDQuery, vol.FenceOrg+staffOrg).Scan(&holder); err != nil {
 		t.Fatal(err)
 	}
 	response := make(chan *httptest.ResponseRecorder, 1)

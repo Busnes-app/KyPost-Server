@@ -17,6 +17,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
@@ -136,12 +137,13 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 		db.Close()
 		return nil, err
 	}
-	releaseConfig, err := vol.Mount(configDir, configVol)
+	fence := state.VolFence(stateDir)
+	releaseConfig, err := vol.MountFenced(configDir, configVol, fence)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	releaseState, err := vol.Mount(stateDir, stateVol)
+	releaseState, err := vol.MountFenced(stateDir, stateVol, fence)
 	if err != nil {
 		releaseConfig()
 		db.Close()

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // ReserveHRAddress assigns an address before an HR-sourced identity exists.
@@ -25,7 +26,7 @@ func (s *LifecycleStore) ReserveHRAddress(ctx context.Context, root, issuer, sub
 	if _, err := nativeAddress(preferred+"@"+domain, domain); err != nil {
 		return "", err
 	}
-	releaseDomain, err := fsutil.LockFileContext(ctx, domains.path)
+	ctx, releaseDomain, err := vol.Lock(ctx, domains.path, vol.FenceNativeDomains, vol.Exclusive)
 	if err != nil {
 		return "", err
 	}
@@ -37,7 +38,7 @@ func (s *LifecycleStore) ReserveHRAddress(ctx context.Context, root, issuer, sub
 	if _, ok := set.Domains[domain]; !ok {
 		return "", ErrNativeAddressDomain
 	}
-	release, err := s.LockDirectoryContext(ctx)
+	ctx, release, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return "", err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // AllocateNativeAccount prepares new accounts for the opt-in native runtime.
@@ -76,7 +77,7 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 		ctx, proofCancel = context.WithDeadline(ctx, time.Unix(proof.VerifiedUntil, 0))
 		defer proofCancel()
 	}
-	release, err := fsutil.LockFileContext(ctx, domains.path)
+	ctx, release, err := vol.Lock(ctx, domains.path, vol.FenceNativeDomains, vol.Exclusive)
 	if err != nil {
 		return users.User{}, err
 	}
@@ -88,7 +89,7 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	if _, nowConfigured := current.Domains[domain]; configured != nowConfigured || eligible && !current.CurrentProof(proof) {
 		return users.User{}, ErrNativeDomain
 	}
-	releaseDirectory, err := s.LockDirectoryContext(ctx)
+	ctx, releaseDirectory, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return users.User{}, err
 	}

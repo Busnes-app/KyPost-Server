@@ -1671,3 +1671,71 @@ from B is not exercised, since the fixture's second host has no `volumes.db` to 
 `TestLoadOrCreateNotificationPrivateKey_RefusesAProvisionedPath` (config).
 
 MH6's shared meters, MH7's host checks and every startup gate remain.
+## MH4 cross-store fences as built (2026-11-24)
+
+The remaining host-local locks of "Every host-local lock" now become fences in table mode
+through one seam, `vol.Lock(ctx, path, name, mode)`. Table startup mounts the config and
+state roots with `vol.MountFenced` and `state.VolFence(stateDir)`; under such a mount the
+call takes the named fence, and anywhere else it takes exactly the flock it replaced
+(`Exclusive`, `Gated` or `Shared`), so ordinary installs are unchanged. The fence names moved
+to `vol` so `config` can name the settings fence; `state` still validates and orders them.
+
+| Lock | Fence | Call sites |
+|---|---|---|
+| `native-domains.json` | `fence:native-domains` (shared for outbound admission and receiving) | `sso/native_domain.go` (configure, verify, retire), `native_mailbox.go`, `native_address.go`, `native_allocate.go`, `hr_mailbox.go`, `native_outbound.go`; `api/native_relay_handlers.go` (2), `native_recovery_handlers.go`; `app/receiving.go`, `receiving_config.go`; `mailmsg/dkim_rotation.go` (`r.Fence`) |
+| `sso-lifecycle.json` | `fence:sso-lifecycle` | `LockDirectory`, `LockDirectoryContext`, `lockDirectoryShared` (every caller) |
+| per-user `config.yaml` | `fence:settings:<user>` | `config.UpdateUserSettings`, `config.LockUserSettings` (masked addresses, incoming-encryption checks) |
+| `quota-<mailbox>` | `fence:quota:<mailbox>` | `app/receiving.go` `quotaFence`, `api/tenancy_purge.go` |
+| mailbox target directory | `fence:mailbox:<mailbox>` | `mailbox/prepare.go` (preparation, `ConvergeLimits`) |
+
+`app/migrate_native.go`, `sso/native_migrate.go`, `sso/authority_migrate.go` and
+`app/setup.go` keep their flocks: offline migration and the installer are not reached in
+table mode. The relay file lock (`native-relay.json`) keeps its flock under the domain fence;
+its document CAS is MH2's.
+
+**One session per request.** `state.HoldFences` is the release-style form of `WithFences`.
+Its context carries the session, and a set taken under it joins that session (re-entrant
+there) instead of opening a second one; its release unlocks only that set, and the outermost
+release discards the session. A nested set must not rank before a fence already held, so an
+order inversion is an error (`errFence`), not a cycle. The fixed order is confirmed against
+every call site: org, settings, native-domains, sso, sso-lifecycle, mailbox, quota,
+backup-operation. MH1 placed `sso` after `quota`; native outbound, the relay save and native
+recovery take `WithCurrentSettings` after the domains and the directory under it, so `sso`
+now sits between them. Call sites rebind `ctx` to the returned context for a section held to
+the end of the function, and the receiving callbacks (`withAuthority`, `frozenAuthority`,
+`quotaFence`, `WithNativeMailAccess`, `WithNativeSharedAccess`) now receive it, so a lost
+fence cancels their work. A section released before the function goes on keeps the returned
+context under its own name (`reconcileNativeSubjectHeld`'s `held`): later work resumes on the
+parent, which neither the release cancels nor the released fence's rank constrains.
+
+**A nested wait is not a lost fence.** A nested set waits on the held session, which would
+block the probe's ping and read as a loss after `lockProbeTimeout`. The session's mutex is
+held during that wait and the probe skips its tick; the waiting holder writes nothing. A
+nested wait runs one second past `lock_timeout`, so PostgreSQL ends it with `55P03` and the
+session survives as `ErrFenceWait`. Every unlock (a nested release, or the cleanup of a set
+acquired part way) runs within `lockProbeTimeout`, so a stalled connection cannot hold the
+session mutex, and with it the probe, indefinitely. An unlock that fails leaves its fence held
+by the session, so it ends ownership at once (`ErrOwnershipLost`); the outermost release then
+discards the session.
+
+**Changed from the design: the settings fence is a second session.** Its callers
+(masked addresses, mailbox state) deliberately run their ledger work on
+`context.WithoutCancel(r.Context())`, so the settings fence is taken on a background
+context and the domain and directory fences under it take a second session, in order. Safety
+under a lost settings fence rests on the save: `config.LoadUserSettingsForSave` returns a
+save at the loaded revision, so a masked-address save refuses (`vol.ErrStale`) settings
+changed since its read instead of overwriting them. Before this, `SaveUserSettings`
+replaced the document blindly, and in table mode `UpdateUserSettings` took no lock at all.
+
+Tests (PostgreSQL): `TestNestedFencesJoinTheHeldSession` (one backend holds both fences, a
+nested release admits another replica while the outer fence stays, order inversion refused,
+outer release ends the nested context), `TestNestedWaitIsNotALostFence` (a nested wait of 25
+probe intervals keeps ownership; killing the session still cancels the nested holder),
+`TestTableLocksFenceAcrossHosts` (two hosts with separate roots over one table: host B's
+`UpdateUserSettings` queues on the database fence while host A holds it, both writes
+survive, a stale fenced save is refused, no local lock file is created, an unmounted path
+keeps its flock). The API table-mode fixture (`mountServerDocuments`) now mounts fenced, so
+the table-mode API suite runs every converted site through real fences.
+
+This completes the cross-store fence part of MH4. The elected-job audit, MH5's provisioned
+keys, MH7's host checks and every startup gate remain.

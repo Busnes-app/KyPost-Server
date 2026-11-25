@@ -33,7 +33,7 @@ func (s *Server) handleNativeRecoveryRepair(w http.ResponseWriter, r *http.Reque
 			if settings != operator.settings {
 				return sso.ErrNativeRecovery
 			}
-			release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
+			ctx, release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
 			if err != nil {
 				return err
 			}

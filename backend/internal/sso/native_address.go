@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 var (
@@ -177,7 +177,7 @@ func nativeMailboxes(f nativeAssignments, keep func(user string) bool) []NativeM
 // from the rule (for example after a retired domain is re-added), so a
 // healthy ledger is not rewritten; it always retries routes_pending.
 func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
-	release, err := s.LockDirectoryContext(ctx)
+	ctx, release, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -315,12 +315,12 @@ func (s *LifecycleStore) changeNativeAddress(ctx context.Context, stateRoot, add
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := fsutil.LockFileGated(ctx, filepath.Join(filepath.Dir(s.path), NativeDomainsFile))
+	ctx, release, err := vol.Lock(ctx, filepath.Join(filepath.Dir(s.path), NativeDomainsFile), vol.FenceNativeDomains, vol.Gated)
 	if err != nil {
 		return NativeAddress{}, err
 	}
 	defer release()
-	releaseDirectory, err := s.LockDirectoryContext(ctx)
+	ctx, releaseDirectory, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return NativeAddress{}, err
 	}

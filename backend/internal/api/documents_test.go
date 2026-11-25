@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
@@ -108,7 +109,7 @@ func mountServerDocuments(t *testing.T, s *Server) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		release, err := vol.Mount(root.path, table)
+		release, err := vol.MountFenced(root.path, table, state.VolFence(s.stateDir))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -14,8 +14,8 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // AdminAppRole is the KySignOn application role that makes a subject a
@@ -284,18 +284,20 @@ func (s *LifecycleStore) syncNativeDirectory(w authorityWriter, key string, d Di
 // the lock is not reentrant. It is a flock shared by every lifecycle write in
 // every process, so hold it briefly: local disk work only, never network I/O.
 func (s *LifecycleStore) LockDirectory() (release func(), err error) {
-	return s.LockDirectoryContext(context.Background())
+	_, release, err = s.LockDirectoryContext(context.Background())
+	return release, err
 }
 
-func (s *LifecycleStore) LockDirectoryContext(ctx context.Context) (release func(), err error) {
-	return fsutil.LockFileGated(ctx, s.path)
+// LockDirectoryContext returns the context the fenced work must use (vol.Lock).
+func (s *LifecycleStore) LockDirectoryContext(ctx context.Context) (context.Context, func(), error) {
+	return vol.Lock(ctx, s.path, vol.FenceSSOLifecycle, vol.Gated)
 }
 
 // lockDirectoryShared is the directory fence for a read-only decision such as
 // admission: it excludes every writer but not other readers. Nothing under it
 // may write authority or users; mailbox writes commit in their own SQLite.
-func (s *LifecycleStore) lockDirectoryShared(ctx context.Context) (release func(), err error) {
-	return fsutil.LockFileShared(ctx, s.path)
+func (s *LifecycleStore) lockDirectoryShared(ctx context.Context) (context.Context, func(), error) {
+	return vol.Lock(ctx, s.path, vol.FenceSSOLifecycle, vol.Shared)
 }
 
 // Directory returns the last applied state for a subject, and whether the
@@ -316,7 +318,7 @@ func (s *LifecycleStore) Directory(issuer, subject string) (st DirectoryState, o
 // access; every returned subject still needs fresh reconciliation. Nothing is
 // retained across passes, and discovery never replays access over local revocation.
 func (s *LifecycleStore) NativeDirectoryRepairSubjects(ctx context.Context, issuer string, accounts *users.Store) ([]string, error) {
-	release, err := s.LockDirectoryContext(ctx)
+	ctx, release, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return nil, err
 	}

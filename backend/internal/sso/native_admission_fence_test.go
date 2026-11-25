@@ -24,7 +24,7 @@ func TestNativeAdmissionSharesTheDirectoryFence(t *testing.T) {
 		_, err := f.life.AdmitNativeMailbox(ctx, f.root, nativeIssuer, id, id, f.accounts)
 		return err
 	}
-	reader, err := f.life.lockDirectoryShared(context.Background())
+	_, reader, err := f.life.lockDirectoryShared(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,12 +58,12 @@ func TestNativeAdmissionSharesTheDirectoryFence(t *testing.T) {
 func TestNativeSharedAccessSharesTheDirectoryFence(t *testing.T) {
 	f := newAddressFixture(t, "one")
 	id := f.ids["one"]
-	access := func(with func(context.Context, string, string, *users.Store, []string, func(map[string]NativeAssignment) error) error, d time.Duration) error {
+	access := func(with func(context.Context, string, string, *users.Store, []string, func(context.Context, map[string]NativeAssignment) error) error, d time.Duration) error {
 		ctx, cancel := context.WithTimeout(context.Background(), d)
 		defer cancel()
-		return with(ctx, f.root, nativeIssuer, f.accounts, []string{id}, func(map[string]NativeAssignment) error { return nil })
+		return with(ctx, f.root, nativeIssuer, f.accounts, []string{id}, func(context.Context, map[string]NativeAssignment) error { return nil })
 	}
-	reader, err := f.life.lockDirectoryShared(context.Background())
+	_, reader, err := f.life.lockDirectoryShared(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

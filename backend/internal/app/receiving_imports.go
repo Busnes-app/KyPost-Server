@@ -230,7 +230,7 @@ func (r *receivingRuntime) writeMailbox(ctx context.Context, holder string, d in
 	for _, b := range mine {
 		addresses = append(addresses, b.Address)
 	}
-	return r.withAuthority(ctx, true, []string{owner.Mailbox}, addresses, nil, func(current map[string]sso.NativeAssignment) error {
+	return r.withAuthority(ctx, true, []string{owner.Mailbox}, addresses, nil, func(ctx context.Context, current map[string]sso.NativeAssignment) error {
 		admitted := current[owner.Mailbox]
 		if admitted.Owner != owner {
 			return errBindingRetired
@@ -247,7 +247,7 @@ func (r *receivingRuntime) writeMailbox(ctx context.Context, holder string, d in
 		if admitted.Source != source {
 			return sso.ErrNativeProvisioning
 		}
-		return r.quotaFence(ctx, map[string]sso.NativeAssignment{owner.Mailbox: admitted}, func() error {
+		return r.quotaFence(ctx, map[string]sso.NativeAssignment{owner.Mailbox: admitted}, func(ctx context.Context) error {
 			imp, err := tenancy.MailboxImport(ctx, r.tenancy, owner.Issuer, owner.Subject)
 			if err != nil {
 				return err

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // ErrNativeMailboxUnknown refuses an unknown, foreign or disabled mailbox
@@ -141,12 +142,12 @@ func (s *LifecycleStore) withNativeMailboxes(ctx context.Context, stateRoot stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := fsutil.LockFileGated(ctx, filepath.Join(filepath.Dir(s.path), NativeDomainsFile))
+	ctx, release, err := vol.Lock(ctx, filepath.Join(filepath.Dir(s.path), NativeDomainsFile), vol.FenceNativeDomains, vol.Gated)
 	if err != nil {
 		return err
 	}
 	defer release()
-	releaseDirectory, err := s.LockDirectoryContext(ctx)
+	ctx, releaseDirectory, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return err
 	}

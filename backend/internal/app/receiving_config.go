@@ -20,8 +20,8 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 func runReceivingConfig(args []string, output io.Writer) (result error) {
@@ -239,7 +239,7 @@ func (r *receivingRuntime) destinations(ctx context.Context) ([]string, error) {
 			proofs = append(proofs, proof)
 		}
 	}
-	release, err := fsutil.LockFileGated(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
+	ctx, release, err := vol.Lock(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile), vol.FenceNativeDomains, vol.Gated)
 	if err != nil {
 		return nil, err
 	}

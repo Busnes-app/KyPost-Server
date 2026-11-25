@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
@@ -186,7 +187,7 @@ func (s *Store) WithLock(ctx context.Context, name string, work func(context.Con
 	probeDone := make(chan struct{})
 	go func() {
 		defer close(probeDone)
-		probe(owned, conn, cancel)
+		probe(owned, conn, cancel, nil)
 	}()
 	err = work(owned)
 	cancel(nil)
@@ -234,7 +235,8 @@ func (s *Store) tryLock(ctx context.Context, space int, name string) (*sql.Conn,
 	}
 }
 
-func probe(owned context.Context, conn *sql.Conn, cancel context.CancelCauseFunc) {
+// busy, if set, is held by a fence set waiting on conn: that tick is skipped.
+func probe(owned context.Context, conn *sql.Conn, cancel context.CancelCauseFunc, busy *sync.Mutex) {
 	ticker := time.NewTicker(lockProbeInterval)
 	defer ticker.Stop()
 	for {
@@ -242,6 +244,9 @@ func probe(owned context.Context, conn *sql.Conn, cancel context.CancelCauseFunc
 		case <-owned.Done():
 			return
 		case <-ticker.C:
+		}
+		if busy != nil && !busy.TryLock() {
+			continue
 		}
 		ping, stop := context.WithTimeout(owned, lockProbeTimeout)
 		res := make(chan error, 1)
@@ -253,6 +258,9 @@ func probe(owned context.Context, conn *sql.Conn, cancel context.CancelCauseFunc
 			err = ping.Err()
 		}
 		stop()
+		if busy != nil {
+			busy.Unlock()
+		}
 		if err != nil && owned.Err() == nil {
 			cancel(fmt.Errorf("%w: %v", ErrOwnershipLost, err))
 			return

@@ -17,9 +17,9 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 const maxNativeRecoveryUploadBytes = 384 << 10
@@ -124,7 +124,7 @@ func (s *Server) withNativeRecoveryOperator(ctx context.Context, operator native
 		if current != operator.settings {
 			return sso.ErrNativeRecovery
 		}
-		release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
+		ctx, release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
 		if err != nil {
 			return err
 		}
@@ -323,7 +323,7 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 	var refused *sso.NativeRestoreRefusedError
 	errAudit := errors.New("release audit unavailable")
 	err = func() error {
-		release, err := fsutil.LockFileGated(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
+		ctx, release, err := vol.Lock(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile), vol.FenceNativeDomains, vol.Gated)
 		if err != nil {
 			return err
 		}
@@ -336,7 +336,7 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 			if settings != operator.settings {
 				return sso.ErrNativeRecovery
 			}
-			release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
+			ctx, release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
 			if err != nil {
 				return err
 			}

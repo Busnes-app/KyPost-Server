@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	crand "crypto/rand"
@@ -485,6 +486,27 @@ func loadUserSettings(doc *vol.Document) (UserSettings, error) {
 	return s, nil
 }
 
+// LoadUserSettingsForSave is LoadUserSettings with a save that, in table mode, refuses
+// (vol.ErrStale) settings changed since this load. File mode writes as SaveUserSettings.
+func LoadUserSettingsForSave(path string) (UserSettings, func(UserSettings) error, error) {
+	doc := vol.OpenDocument(path)
+	settings, err := loadUserSettings(doc)
+	return settings, func(s UserSettings) error {
+		b, err := yaml.Marshal(s)
+		if err != nil {
+			return err
+		}
+		return doc.Write(b)
+	}, err
+}
+
+// LockUserSettings holds the user's settings lock (vol.Lock), the one UpdateUserSettings
+// takes: before the domain fence. path is UserSettingsPath's.
+func LockUserSettings(path string) (func(), error) {
+	_, release, err := vol.Lock(context.Background(), path, vol.FenceSettings+filepath.Base(filepath.Dir(path)), vol.Exclusive)
+	return release, err
+}
+
 func SaveUserSettings(path string, s UserSettings) error {
 	b, err := yaml.Marshal(s)
 	if err != nil {
@@ -524,7 +546,7 @@ func UpdateUserSettings(path string, mutate func(*UserSettings) error) error {
 		return fmt.Errorf("mkdir user settings dir: %w", err)
 	}
 	return vol.Retry(func() error {
-		release, err := doc.Lock()
+		release, err := LockUserSettings(path)
 		if err != nil {
 			return err
 		}

@@ -15,6 +15,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // relayStatus is the GET /api/admin/mail-relay body. Neither relay
@@ -121,7 +122,7 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "relay setup requires fresh issuer-bound proof of at least one relay domain; verify the current TXT records", http.StatusConflict)
 		return
 	}
-	release, err := fsutil.LockFileGated(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
+	ctx, release, err := vol.Lock(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile), vol.FenceNativeDomains, vol.Gated)
 	if err != nil {
 		http.Error(w, "relay setup busy or cancelled; retry without deleting configuration", http.StatusServiceUnavailable)
 		return
@@ -279,7 +280,7 @@ func (s *Server) nativeRelayCheckProfile(ctx context.Context, generation string,
 	if len(proofs) == 0 {
 		return mailmsg.DomainRelay{}, nil, refused
 	}
-	release, err := fsutil.LockFileGated(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
+	ctx, release, err := vol.Lock(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile), vol.FenceNativeDomains, vol.Gated)
 	if err != nil {
 		return mailmsg.DomainRelay{}, nil, refused
 	}

@@ -51,7 +51,7 @@ func (s *Store) withSettingsFence(ctx context.Context, action func(context.Conte
 		return err
 	}
 	defer root.Close()
-	return root.WithFences(ctx, []state.Fence{{Name: state.FenceSSO}}, func(owned context.Context) error {
+	return root.WithFences(ctx, []state.Fence{{Name: vol.FenceSSO}}, func(owned context.Context) error {
 		err := action(owned)
 		if err == nil && owned.Err() != nil {
 			return context.Cause(owned)

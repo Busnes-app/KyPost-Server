@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 func shortFenceWait(t *testing.T, d time.Duration) {
@@ -72,8 +73,8 @@ func TestFenceSetsRefuseBadNames(t *testing.T) {
 		{{Name: "fence:settings"}},
 		{{Name: "fence:settings:"}},
 		{{Name: "fence:native-domains:x"}},
-		{{Name: FenceSettings + strings.Repeat("u", 400)}},
-		{{Name: FenceSSO}, {Name: FenceSSO, Shared: true}},
+		{{Name: vol.FenceSettings + strings.Repeat("u", 400)}},
+		{{Name: vol.FenceSSO}, {Name: vol.FenceSSO, Shared: true}},
 	} {
 		if err := s.WithFences(context.Background(), set, nop); !errors.Is(err, errFence) {
 			t.Errorf("%v: %v, want errFence", set, err)
@@ -88,7 +89,7 @@ func TestFencesNeedPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.WithFences(context.Background(), []Fence{{Name: FenceSSO}}, nop); !errors.Is(err, errFencePG) {
+	if err := s.WithFences(context.Background(), []Fence{{Name: vol.FenceSSO}}, nop); !errors.Is(err, errFencePG) {
 		t.Fatal(err)
 	}
 }
@@ -99,7 +100,7 @@ func TestFenceExclusiveAgainstShared(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	shortFenceWait(t, 500*time.Millisecond)
 	a, b := twoReplicas(t)
-	name := FenceSettings + "user-7f3a"
+	name := vol.FenceSettings + "user-7f3a"
 	inside, leave, done := hold(a, []Fence{{Name: name, Shared: true}})
 	<-inside
 	if err := b.WithFences(context.Background(), []Fence{{Name: name, Shared: true}}, nop); err != nil {
@@ -135,7 +136,7 @@ func TestFenceExclusiveAgainstShared(t *testing.T) {
 func TestFenceWriterNotStarvedByReaders(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	a, b := twoReplicas(t)
-	name := FenceNativeDomains
+	name := vol.FenceNativeDomains
 	r1in, r1leave, r1done := hold(a, []Fence{{Name: name, Shared: true}})
 	<-r1in
 	var mu sync.Mutex
@@ -203,11 +204,11 @@ func TestFenceWriterNotStarvedByReaders(t *testing.T) {
 func TestFenceLossCancelsTheHolderAndOnlyThenAdmitsAnother(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	a, b := twoReplicas(t)
-	name := FenceQuota + "mbx-1"
+	name := vol.FenceQuota + "mbx-1"
 	ainside := make(chan struct{})
 	cancelled := make(chan time.Time, 1)
 	go func() {
-		_ = a.WithFences(context.Background(), []Fence{{Name: FenceSettings + "u1"}, {Name: name}}, func(owned context.Context) error {
+		_ = a.WithFences(context.Background(), []Fence{{Name: vol.FenceSettings + "u1"}, {Name: name}}, func(owned context.Context) error {
 			close(ainside)
 			<-owned.Done()
 			if !errors.Is(context.Cause(owned), ErrOwnershipLost) {
@@ -264,14 +265,14 @@ func TestFenceCollisions(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	shortFenceWait(t, 700*time.Millisecond)
 	a, b := twoReplicas(t)
-	collide(t, map[string]string{FenceQuota + "m2": FenceSettings + "u1", FenceSettings + "u3": FenceSettings + "u1"})
-	set := []Fence{{Name: FenceSettings + "u1"}, {Name: FenceQuota + "m2", Shared: true}, {Name: FenceSettings + "u3"}}
+	collide(t, map[string]string{vol.FenceQuota + "m2": vol.FenceSettings + "u1", vol.FenceSettings + "u3": vol.FenceSettings + "u1"})
+	set := []Fence{{Name: vol.FenceSettings + "u1"}, {Name: vol.FenceQuota + "m2", Shared: true}, {Name: vol.FenceSettings + "u3"}}
 	if err := a.WithFences(context.Background(), set, nop); err != nil {
 		t.Fatalf("colliding fences in one set: %v", err)
 	}
-	inside, leave, done := hold(a, []Fence{{Name: FenceSettings + "u1"}})
+	inside, leave, done := hold(a, []Fence{{Name: vol.FenceSettings + "u1"}})
 	<-inside
-	if err := b.WithFences(context.Background(), []Fence{{Name: FenceQuota + "m2"}}, nop); !errors.Is(err, ErrFenceWait) {
+	if err := b.WithFences(context.Background(), []Fence{{Name: vol.FenceQuota + "m2"}}, nop); !errors.Is(err, ErrFenceWait) {
 		t.Fatalf("a colliding fence on another request: %v", err)
 	}
 	close(leave)
@@ -284,17 +285,17 @@ func TestFenceCycleEndsInABoundedWait(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	shortFenceWait(t, 700*time.Millisecond)
 	a, b := twoReplicas(t)
-	collide(t, map[string]string{FenceSettings + "a2": FenceSettings + "a", FenceSettings + "b2": FenceSettings + "b"})
+	collide(t, map[string]string{vol.FenceSettings + "a2": vol.FenceSettings + "a", vol.FenceSettings + "b2": vol.FenceSettings + "b"})
 	var both sync.WaitGroup
 	both.Add(2)
 	run := func(s *Store, mine, theirs string) chan error {
 		out := make(chan error, 1)
 		go func() {
 			var inner error
-			err := s.WithFences(context.Background(), []Fence{{Name: FenceSettings + mine}}, func(context.Context) error {
+			err := s.WithFences(context.Background(), []Fence{{Name: vol.FenceSettings + mine}}, func(context.Context) error {
 				both.Done()
 				both.Wait()
-				inner = s.WithFences(context.Background(), []Fence{{Name: FenceSettings + theirs}}, nop)
+				inner = s.WithFences(context.Background(), []Fence{{Name: vol.FenceSettings + theirs}}, nop)
 				return nil
 			})
 			out <- errors.Join(err, inner)
@@ -321,7 +322,7 @@ func TestFenceSessionsDoNotStarveTheStore(t *testing.T) {
 	a, b := twoReplicas(t)
 	var leaves []chan struct{}
 	for i := range maxFenceSessions {
-		inside, leave, _ := hold(a, []Fence{{Name: FenceMailbox + "m" + strings.Repeat("x", i+1)}})
+		inside, leave, _ := hold(a, []Fence{{Name: vol.FenceMailbox + "m" + strings.Repeat("x", i+1)}})
 		<-inside
 		leaves = append(leaves, leave)
 	}
@@ -331,7 +332,7 @@ func TestFenceSessionsDoNotStarveTheStore(t *testing.T) {
 		}
 	}()
 	for _, s := range []*Store{a, b} {
-		if err := s.WithFences(context.Background(), []Fence{{Name: FenceSSO}}, nop); !errors.Is(err, ErrFenceWait) {
+		if err := s.WithFences(context.Background(), []Fence{{Name: vol.FenceSSO}}, nop); !errors.Is(err, ErrFenceWait) {
 			t.Fatalf("a set past the process's session cap: %v", err)
 		}
 	}

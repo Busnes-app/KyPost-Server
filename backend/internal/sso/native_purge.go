@@ -40,7 +40,9 @@ func (s *LifecycleStore) v3(ctx context.Context, write bool, fn func(*sqliteTx) 
 		return ErrNoNativeLedger
 	}
 	if write {
-		release, err := s.LockDirectoryContext(ctx)
+		var release func()
+		var err error
+		ctx, release, err = s.LockDirectoryContext(ctx)
 		if err != nil {
 			return err
 		}

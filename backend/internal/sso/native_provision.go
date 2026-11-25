@@ -534,7 +534,7 @@ func (l nativeLedger) desiredActive(address, mailboxID string, directory map[str
 // ensureNativeLedger creates an empty version-2 ledger when none exists. A
 // fenced (initialized) deployment with a lost ledger still refuses.
 func (s *LifecycleStore) ensureNativeLedger(ctx context.Context) error {
-	release, err := s.LockDirectoryContext(ctx)
+	_, release, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -643,7 +643,7 @@ func (s *LifecycleStore) reconcileNativeMailboxContext(ctx context.Context, stat
 	// ponytail: instance-wide directory lock covers local preparation,
 	// never network work. Split locks only after measuring contention and keeping
 	// the same revision/revocation fence across publication.
-	release, err := s.LockDirectoryContext(ctx)
+	ctx, release, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return result, err
 	}

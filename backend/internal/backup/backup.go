@@ -522,7 +522,7 @@ func (s *Service) withOperation(ctx context.Context, work func(context.Context) 
 		defer release()
 		return work(ctx)
 	}
-	err := s.store.WithFences(ctx, []state.Fence{{Name: state.FenceBackupOperation}}, func(owned context.Context) error {
+	err := s.store.WithFences(ctx, []state.Fence{{Name: vol.FenceBackupOperation}}, func(owned context.Context) error {
 		err := work(owned)
 		if err == nil && owned.Err() != nil {
 			return context.Cause(owned)

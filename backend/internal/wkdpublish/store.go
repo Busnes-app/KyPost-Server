@@ -39,7 +39,7 @@ type Claim struct {
 //
 // Every read re-reads the file from disk first, and every mutation
 // additionally holds an inter-process file lock across the whole
-// read-modify-write cycle (see fsutil.WithFileLock). That lock is what makes
+// read-modify-write cycle (see fsutil.LockFile). That lock is what makes
 // concurrent mutation safe, and it is required: an admin request runs in the
 // api process while the periodic claim re-check runs in the daemon process
 // (supervisord starts `--mode server` and `--mode daemon` separately), so a

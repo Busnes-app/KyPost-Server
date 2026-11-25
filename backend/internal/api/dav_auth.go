@@ -337,7 +337,7 @@ func (s *Server) davAccountActive(u users.User) (bool, error) {
 // re-derivation of the OLD password.
 //
 // The generation check catches a writer that finished BEFORE the re-read. What
-// closes the rest is fsutil.WithFileLock: the re-read and the write are one
+// closes the rest is fsutil.LockFile: the re-read and the write are one
 // critical section, and all three writers take the same lock, so there is no
 // longer a window between "the file still holds the hash I verified" and the
 // rename that replaces it. That window was not microseconds — writeDAVPassword
