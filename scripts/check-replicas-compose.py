@@ -62,7 +62,7 @@ assert db["environment"]["POSTGRES_INITDB_ARGS"] == "--locale=C --encoding=UTF8"
 # PostgreSQL 18, moving a 17 volume on the first up (scripts/postgres-17-to-18.sh, the shared
 # Ky kit, byte for byte; scripts/test-postgres-17-to-18.sh runs it).
 kit = "/ky/postgres-17-to-18.sh"
-assert hashlib.sha256((root / "scripts/postgres-17-to-18.sh").read_bytes()).hexdigest() == "a800e026af73d9304aa970c2c3919caecd4c52eb8d9b702f3447e632bdc21214", \
+assert hashlib.sha256((root / "scripts/postgres-17-to-18.sh").read_bytes()).hexdigest() == "2992644109716cd34297fbcb76eba8907f4a5e3031a12c05aade010e5ea2b571", \
     "scripts/postgres-17-to-18.sh differs from the shared Ky kit"
 mounts = lambda svc: sorted((v.get("source", "").rsplit("/scripts/", 1)[-1], v["target"], bool(v.get("read_only"))) for v in svc["volumes"])
 assert db["image"] == "postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71", db["image"]
@@ -72,6 +72,8 @@ assert db["entrypoint"] == ["bash", kit, "restore"] and db["command"][0] == "pos
 assert db["depends_on"]["postgres-17-dump"]["condition"] == "service_completed_successfully", "18 starts before the 17 dump finished"
 assert db["healthcheck"]["start_period"] == "1h0m0s", "a long restore would mark PostgreSQL unhealthy"
 dump = services["postgres-17-dump"]
+# A SIGKILLed 17 leaves postmaster.pid, which the kit's dump refuses.
+assert db.get("stop_grace_period") == dump.get("stop_grace_period") == "2m0s", "PostgreSQL or the 17 dump can be SIGKILLed mid-shutdown"
 assert dump["image"] == "postgres:17.12-alpine3.24@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73", dump["image"]
 assert dump["entrypoint"] == ["bash", kit, "dump"] and dump["network_mode"] == "none" and dump["restart"] == "no", "the 17 dump is not an offline one-shot"
 assert dump["environment"] == {"POSTGRES_USER": db["environment"]["POSTGRES_USER"], "OLD": "/var/lib/postgresql/data", "NEW": "/pg18"}, dump["environment"]

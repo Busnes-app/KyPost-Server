@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Proves the replica overlay's PostgreSQL 17 -> 18 move (docs/RUNNING.md, "PostgreSQL 18") on
-# real data: an install seeded with the previous, PostgreSQL 17 compose files comes up on 18
-# with its rows, roles, passwords and C locale; the 17 volume still starts 17 (rollback); a
+# real data: a dump beside a running 17 refuses and writes nothing; the next `up -d` over a
+# running 17 stack, seeded with the previous compose files, comes up on 18 with its rows, roles,
+# passwords (a wrong one refused) and C locale; the 17 volume still starts 17 (rollback); a
 # second `up` is a no-op; a dump that fails to restore never yields a cluster; the documented
 # clean-up leaves 18 running; a fresh install initialises. Starts only the database services
 # of its own Compose projects and removes them, their volumes and networks on exit.
@@ -50,8 +51,10 @@ old=("${compose[@]}" -p "$project" -f "$work/old-base.yml" -f "$work/old-replica
 new=("${compose[@]}" -p "$project" -f docker-compose.yml -f docker-compose.replicas.yml)
 up() { "$@" up -d --wait --wait-timeout 600 postgres >/dev/null 2>"$work/up.err" || { cat "$work/up.err" >&2; return 1; }; }
 down_db() { "$@" stop postgres >/dev/null 2>&1; "$@" rm -f postgres >/dev/null 2>&1; }
-# Over TCP with a password, as the replicas connect.
-q() { "${new[@]}" exec -T -e PGPASSWORD="${3:-$pg_pw}" postgres psql -h 127.0.0.1 -U "${2:-kypost}" -d kypost -XAtc "$1"; }
+# From another container on the database network, as the replicas connect: inside the server
+# container loopback is trust, so only this proves the password.
+client() { docker run --rm --network "$1_database" -e PGPASSWORD="$2" "$P18" psql -h postgres -U "$3" -d kypost -XAtc "$4"; }
+q() { client "$project" "${3:-$pg_pw}" "${2:-kypost}" "$1"; }
 in_vol() { docker run --rm --network none -v "${project}_$1:/v" "$P18" sh -c "$2"; }
 
 echo "== 1. PostgreSQL 17 data, from the previous compose files"
@@ -65,13 +68,22 @@ insert into c values ('a'), ('B'), ('é');
 grant select on c to reader;
 SQL
 
-echo "== 2. The next up, with 17 still running, moves it to 18"
+echo "== 1b. A dump beside the running 17 refuses and writes nothing"
+out=$("${new[@]}" run --rm postgres-17-dump 2>&1) && fail "the dump ran beside a live 17: $out"
+grep -q 'postmaster.pid exists' <<<"$out" || fail "no live-server message: $out"
+in_vol kypost_postgres 'test ! -e /v/upgrade-from-17 && test ! -e /v/18' || fail "the dump beside a live 17 wrote to the 18 volume"
+[ "$("${old[@]}" exec -T postgres psql -U kypost -d kypost -XAtc 'select count(*) from t')" = 50000 ] || fail "17 is not still serving"
+
+echo "== 2. The next up -d, with the 17 stack still running (no down), moves it to 18"
 up "${new[@]}" || fail "18 did not start after the move"
-# Compose recreates (stops) 17 before it starts the dump: never two servers on one directory.
-"${new[@]}" logs postgres-17-dump 2>&1 | grep -q 'another server might be running' && fail "the dump ran beside a live 17"
+# Compose recreates (stops) 17 before it starts the dump, so the dump ran and found no server.
+"${new[@]}" logs postgres-17-dump 2>&1 | grep -q 'dumped /var/lib/postgresql/data' || fail "the dump did not run on up"
+"${new[@]}" logs postgres 2>&1 | grep -q 'restored' || fail "18 did not restore the dump"
 [ "$(q 'show server_version_num' | cut -c1-2)" = 18 ] || fail "not PostgreSQL 18"
 [ "$(q "select count(*) || ',' || max(id) || ',' || sum((j->>'g')::int) from t")" = "50000,50000,1250025000" ] || fail "rows"
 [ "$(q "select string_agg(x, ',' order by x) from c" reader readerpass)" = "B,a,é" ] || fail "reader password or C collation"
+q 'select 1' kypost wrong-password >/dev/null 2>&1 && fail "a wrong password logged in"
+q 'select 1' reader wrong-password >/dev/null 2>&1 && fail "a wrong reader password logged in"
 [ "$(q "select datcollate || ',' || pg_encoding_to_char(encoding) from pg_database where datname = 'kypost'")" = C,UTF8 ] || fail "database locale"
 [ "$(q 'show data_directory')" = /var/lib/postgresql/18/docker ] || fail "data directory"
 [ "$(in_vol kypost_pgdata 'cat /v/PG_VERSION')" = 17 ] || fail "the 17 volume changed"
@@ -119,8 +131,8 @@ sed -i "s/^KYPOST_NETWORK=.*/KYPOST_NETWORK=${fresh}-net/; s/^KYPOST_SUBNET=10.1
 up "${fresh_new[@]}" || fail "a fresh 18 did not start"
 "${fresh_new[@]}" logs postgres-17-dump 2>&1 | grep -q 'nothing to move' || fail "a fresh install did not skip the dump"
 "${fresh_new[@]}" logs postgres 2>&1 | grep -q 'restored' && fail "a fresh install restored something"
-[ "$("${fresh_new[@]}" exec -T -e PGPASSWORD="$pg_pw" postgres psql -h 127.0.0.1 -U kypost -d kypost -XAtc \
-  "select current_setting('data_directory') || ',' || datcollate from pg_database where datname = 'kypost'")" = /var/lib/postgresql/18/docker,C ] ||
+[ "$(client "$fresh" "$pg_pw" kypost "select current_setting('data_directory') || ',' || datcollate from pg_database where datname = 'kypost'")" = /var/lib/postgresql/18/docker,C ] ||
   fail "fresh data directory or locale"
+client "$fresh" wrong-password kypost 'select 1' >/dev/null 2>&1 && fail "a fresh install let a wrong password in"
 
-echo "PASS postgres 17 -> 18: move on up, rows, roles, passwords, C locale, rollback to 17, rerun, bad dump, clean-up, fresh install"
+echo "PASS postgres 17 -> 18: dump beside a live 17 refused, move on up -d over a running 17, rows, roles, passwords, C locale, rollback to 17, rerun, bad dump, clean-up, fresh install"

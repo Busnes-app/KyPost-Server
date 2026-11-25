@@ -26,6 +26,12 @@ dump)
   if [ "$(cat "$old/PG_VERSION")" != 17 ]; then
     echo "postgres-17-to-18: $old holds PostgreSQL $(cat "$old/PG_VERSION"), expected 17" >&2; exit 1
   fi
+  # PostgreSQL's own lock check cannot see a server in another container (its PID 1 looks
+  # like our grandparent), so a 17 still running on OLD would get a second postmaster.
+  if [ -e "$old/postmaster.pid" ]; then
+    echo "postgres-17-to-18: $old/postmaster.pid exists: PostgreSQL 17 is running on it, or did not stop cleanly; stop it (start it once with the previous setup and stop it, if it crashed), then start again" >&2
+    exit 1
+  fi
   # The dump and the restored cluster each take at most about the size of the 17 data.
   need=$(( $(du -sk "$old" | cut -f1) * 2 ))
   free=$(df -Pk "$new" | awk 'NR == 2 { print $4 }')
@@ -53,6 +59,7 @@ dump)
 restore)
   final=${PGDATA:?}
   if [ ! -s "$final/PG_VERSION" ] && [ -s "$dump_dir/dump.sql" ]; then
+    # shellcheck source=/dev/null # the image's entrypoint, only inside the postgres image
     source /usr/local/bin/docker-entrypoint.sh
     # initdb's superuser is the 17 cluster's bootstrap role, so the dump's roles map one to one.
     POSTGRES_USER=$(cat "$dump_dir/superuser")

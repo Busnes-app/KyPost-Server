@@ -61,6 +61,8 @@ services:
     image: postgres:17.12-alpine3.24@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
     restart: "no"
     network_mode: none
+    # A SIGKILLed 17 leaves postmaster.pid, which the dump then refuses.
+    stop_grace_period: 2m
     entrypoint: ["bash", "/ky/postgres-17-to-18.sh", "dump"]
     environment:
       POSTGRES_USER: kypost
@@ -74,6 +76,7 @@ services:
   postgres:
     image: postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71
     restart: unless-stopped
+    stop_grace_period: 2m
     # Restores the 17 dump once, if there is one, then runs the image's own entrypoint.
     entrypoint: ["bash", "/ky/postgres-17-to-18.sh", "restore"]
     environment:

@@ -492,14 +492,9 @@ jobs:
             if head -n1 "$f" | grep -q '^#!/bin/sh'; then sh -n "$f"; else bash -n "$f"; fi
           done
 
-      # shellcheck ships on the ubuntu runner image. postgres-17-to-18.sh is the shared Ky
-      # kit, kept byte for byte (check-replicas-compose.py): its one info finding, sourcing the
-      # postgres image's entrypoint, which does not exist here, is excluded for it alone.
+      # shellcheck ships on the ubuntu runner image.
       - name: shellcheck
-        run: |
-          shopt -s extglob
-          shellcheck scripts/!(postgres-17-to-18).sh
-          shellcheck -e SC1091 scripts/postgres-17-to-18.sh
+        run: shellcheck scripts/*.sh
 
       - run: scripts/check-no-binaries.sh
 
@@ -775,7 +770,8 @@ jobs:
         run: bash scripts/check-replica-cutover.sh kypost-server:ci
 
       # The replica overlay's PostgreSQL, seeded on 17 with the previous compose files, moves
-      # to 18 on the next up; rollback, rerun, a bad dump and a fresh install. Needs no image.
+      # to 18 on the next up -d over the running 17; a dump beside a live 17 refuses; passwords
+      # from another container; rollback, rerun, a bad dump and a fresh install. Needs no image.
       - name: replica PostgreSQL 17 -> 18 upgrade
         run: bash scripts/test-postgres-17-to-18.sh
 

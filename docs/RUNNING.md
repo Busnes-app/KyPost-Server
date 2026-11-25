@@ -419,7 +419,10 @@ to move and initialises 18 directly (the `kypost_pgdata` volume then stays empty
   allows an hour before a failure counts; follow it with `docker compose logs -f postgres`.
 - **If it fails:** the 18 service never starts on an empty or half-restored database. A
   restore cut short is redone from the start on the next start. The logs name the error, and
-  `kypost_pgdata` is unchanged, so you can roll back.
+  `kypost_pgdata` is unchanged, so you can roll back. If 17 is still running on
+  `kypost_pgdata`, or was killed without a clean stop, the dump finds its `postmaster.pid`
+  and refuses: `up` stops 17 itself first, and both services get two minutes to shut down.
+  After a crash, start 17 once with the previous release and stop it, then `up` again.
 - **Rollback:** stop every replica and `docker compose stop postgres`, check out the release
   you came from (its `docker-compose.replicas.yml` runs 17 on `kypost_pgdata`) and
   `docker compose up -d --wait`. Anything written on 18 is not in the 17 data. To move again
