@@ -1651,7 +1651,10 @@ generation (meta `kyrecovery_pin_generation`, read and raised under the `recover
 and the pinning host's own mark, so no host clock decides the order. A database writer can
 replay a retired record with its key ID and topology, or reset the counter, but cannot forge a
 sealed generation, so no host moves back to a key the operator rotated away from (a reset
-counter can only make a new pin refused, never accept an old one). An unopenable record still refuses and leaves the file. Only an
+counter can only make a new pin refused, never accept an old one). A table-mode capsule carries
+`recovery-pin.generation` with `recovery.pub`, so a restored host keeps its mark; a host that
+holds a `recovery.pub` but no mark (a capsule from before generations) never replaces it
+automatically and needs an explicit re-pin. An unopenable record still refuses and leaves the file. Only an
 explicit pin seals a record in table mode: a pin with no sealed record refuses until the
 operator pins again, because recording it from a host's `recovery.pub` would let a host still
 holding a retired key mint a newest record for it. Single mode keeps refusing a file that names

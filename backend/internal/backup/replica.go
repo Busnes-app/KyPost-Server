@@ -310,8 +310,9 @@ func (s *Service) SyncRecoveryKey() error {
 		// Table mode (MH5): every host keeps its own recovery.pub, so a re-pin on another
 		// host leaves this one stale. Only a strictly newer pin than this host accepted may
 		// replace it: a database writer can replay a retired record, never forge Generation.
-		if at <= mark {
-			return fmt.Errorf("%w: %s names another key and the record is not a newer pin", ErrAnchor, path)
+		// No mark (a capsule from before pin generations): nothing proves the record newer.
+		if mark == 0 || at <= mark {
+			return fmt.Errorf("%w: %s names another key and the record is not a newer pin than this host accepted; pin the key again", ErrAnchor, path)
 		}
 		if err := os.Remove(path); err != nil {
 			return err
