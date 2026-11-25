@@ -77,7 +77,7 @@ jobs:
       # step falls back to whatever `go` is on PATH and the extraction is
       # partial — which shows up as an analysis that finds nothing rather than
       # as a failure, so it is worth installing explicitly.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         if: matrix.language == 'go'
         with:
           go-version-file: backend/go.mod
