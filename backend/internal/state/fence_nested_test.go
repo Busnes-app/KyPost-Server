@@ -67,9 +67,10 @@ func TestNestedFencesJoinTheHeldSession(t *testing.T) {
 		t.Fatal("outer release left the nested context live")
 	}
 	releaseAgain()
-	if fenceLocks(t, b, vol.FenceNativeDomains, true)+fenceLocks(t, b, vol.FenceQuota+"m1", true) != 0 {
-		t.Fatal("fences outlived the outer release")
-	}
+	// The session is closed; PostgreSQL drops its locks when the backend exits.
+	eventually(t, "fences to end with the outer release", func() bool {
+		return fenceLocks(t, b, vol.FenceNativeDomains, true)+fenceLocks(t, b, vol.FenceQuota+"m1", true) == 0
+	})
 }
 
 // A nested set waiting on the session blocks the probe's ping; the probe must skip, not
