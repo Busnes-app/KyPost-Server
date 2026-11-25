@@ -202,3 +202,30 @@ func TestTableLocksFenceAcrossHosts(t *testing.T) {
 		t.Fatal("an unmounted path did not keep its flock", err)
 	}
 }
+
+// A nested release whose unlock stalls on the server returns within lockProbeTimeout and
+// ends ownership at once: the session still holds that fence, so its owners must stop.
+func TestStalledNestedReleaseIsBoundedAndEndsOwnership(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	a, _ := twoReplicas(t)
+	owned, release, err := a.HoldFences(context.Background(), []Fence{{Name: vol.FenceNativeDomains}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	_, releaseInner, err := a.HoldFences(owned, []Fence{{Name: vol.FenceSSOLifecycle}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := fenceUnlockSQL
+	fenceUnlockSQL = func(bool) string { return `SELECT pg_sleep(30), $1::text` }
+	t.Cleanup(func() { fenceUnlockSQL = old })
+	start := time.Now()
+	releaseInner()
+	if d := time.Since(start); d > lockProbeTimeout+2*time.Second {
+		t.Fatalf("a stalled nested release took %v", d)
+	}
+	if !errors.Is(context.Cause(owned), ErrOwnershipLost) {
+		t.Fatal("a fence left held did not end ownership", context.Cause(owned))
+	}
+}

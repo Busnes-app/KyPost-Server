@@ -1712,7 +1712,11 @@ parent, which neither the release cancels nor the released fence's rank constrai
 block the probe's ping and read as a loss after `lockProbeTimeout`. The session's mutex is
 held during that wait and the probe skips its tick; the waiting holder writes nothing. A
 nested wait runs one second past `lock_timeout`, so PostgreSQL ends it with `55P03` and the
-session survives as `ErrFenceWait`.
+session survives as `ErrFenceWait`. Every unlock (a nested release, or the cleanup of a set
+acquired part way) runs within `lockProbeTimeout`, so a stalled connection cannot hold the
+session mutex, and with it the probe, indefinitely. An unlock that fails leaves its fence held
+by the session, so it ends ownership at once (`ErrOwnershipLost`); the outermost release then
+discards the session.
 
 **Changed from the design: the settings fence is a second session.** Its callers
 (masked addresses, mailbox state) deliberately run their ledger work on

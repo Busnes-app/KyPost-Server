@@ -120,6 +120,7 @@ type fenceSession struct {
 	schema string
 	conn   *sql.Conn
 	mu     sync.Mutex
+	lost   context.CancelCauseFunc // ends ownership: a fence a failed unlock left held
 }
 
 // heldFences is what an owned context carries: its session and the highest kind rank held.
@@ -191,8 +192,8 @@ func (s *Store) HoldFences(ctx context.Context, fences []Fence) (context.Context
 		}
 		return nil, nil, err
 	}
-	session := &fenceSession{schema: schema, conn: conn}
 	owned, cancel := context.WithCancelCause(ctx)
+	session := &fenceSession{schema: schema, conn: conn, lost: cancel}
 	probeDone := make(chan struct{})
 	go func() {
 		defer close(probeDone)
@@ -216,6 +217,9 @@ func (f *fenceSession) nest(ctx context.Context, set []Fence, rank int) (context
 	f.mu.Lock()
 	err := lockFences(ctx, wait, f.conn, set)
 	f.mu.Unlock()
+	if errors.Is(err, errFenceStuck) {
+		f.lost(fmt.Errorf("%w: %v", ErrOwnershipLost, err))
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -224,13 +228,10 @@ func (f *fenceSession) nest(ctx context.Context, set []Fence, rank int) (context
 		once.Do(func() {
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			// A failed unlock leaves the fence to the outermost release's discard.
-			for _, fence := range slices.Backward(set) {
-				fn := "pg_advisory_unlock"
-				if fence.Shared {
-					fn = "pg_advisory_unlock_shared"
-				}
-				_, _ = f.conn.ExecContext(context.Background(), `SELECT `+fn+`(`+fenceKey+`)`, fenceName(fence.Name))
+			// A fence a failed unlock left held is released only by the outermost discard,
+			// so the owners stop now rather than working past a fence they still hold.
+			if err := unlockFences(f.conn, set); err != nil {
+				f.lost(fmt.Errorf("%w: fence release: %v", ErrOwnershipLost, err))
 			}
 		})
 	}, nil
@@ -249,13 +250,33 @@ func lockFences(ctx, wait context.Context, conn *sql.Conn, set []Fence) error {
 			if wait.Err() != nil && ctx.Err() == nil || errors.As(err, &pg) && (pg.Code == "55P03" || pg.Code == "40P01") {
 				err = fmt.Errorf("%w: %s", ErrFenceWait, fenceKind(f.Name))
 			}
-			for _, taken := range slices.Backward(set[:i]) {
-				fn := "pg_advisory_unlock"
-				if taken.Shared {
-					fn = "pg_advisory_unlock_shared"
-				}
-				_, _ = conn.ExecContext(context.Background(), `SELECT `+fn+`(`+fenceKey+`)`, fenceName(taken.Name))
+			if uerr := unlockFences(conn, set[:i]); uerr != nil {
+				return errors.Join(err, errFenceStuck, uerr)
 			}
+			return err
+		}
+	}
+	return nil
+}
+
+// errFenceStuck is a partly acquired set whose cleanup failed: the session still holds part.
+var errFenceStuck = errors.New("state: fence cleanup failed")
+
+// fenceUnlockSQL is one unlock statement; a variable so a test can stall it on the server.
+var fenceUnlockSQL = func(shared bool) string {
+	if shared {
+		return `SELECT pg_advisory_unlock_shared(` + fenceKey + `)`
+	}
+	return `SELECT pg_advisory_unlock(` + fenceKey + `)`
+}
+
+// unlockFences releases set on conn, newest first, within lockProbeTimeout in all: a stalled
+// connection must not hold the session mutex (and so the probe) indefinitely.
+func unlockFences(conn *sql.Conn, set []Fence) error {
+	ctx, cancel := context.WithTimeout(context.Background(), lockProbeTimeout)
+	defer cancel()
+	for _, f := range slices.Backward(set) {
+		if _, err := conn.ExecContext(ctx, fenceUnlockSQL(f.Shared), fenceName(f.Name)); err != nil {
 			return err
 		}
 	}
