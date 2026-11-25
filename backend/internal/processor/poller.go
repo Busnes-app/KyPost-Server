@@ -134,6 +134,9 @@ type mailClientEntry struct {
 
 // userCtx bundles one user's per-tick dependencies.
 type userCtx struct {
+	// claim, in table mode, re-asserts this host's claim on the message being handled
+	// (message_claims.go); nil otherwise.
+	claim    func() error
 	id       string
 	username string
 	// store is the polled mailbox's state (processed, decisions, checkpoint);
@@ -1148,12 +1151,25 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 			res.skippedSeen++
 			continue
 		}
-		if !claimed.take(uc.id, msg.ID) {
+		check, ok := claimed.take(uc.id, msg.ID)
+		if !ok {
 			// Another host works on it (or the claim cannot be read): hold it, uncounted.
 			res.deferredIDs = append(res.deferredIDs, msg.ID)
 			res.skippedSeen++
 			continue
 		}
+		if check != nil {
+			// Read again under the claim: another host may have finished it since.
+			if seen, err = uc.store.Seen(msg.ID); err != nil || seen {
+				if err != nil {
+					res.deferredIDs = append(res.deferredIDs, msg.ID)
+				}
+				res.skippedSeen++
+				continue
+			}
+		}
+		uc := uc
+		uc.claim = check
 		// Anti-phishing runs ahead of everything below: a security verdict must
 		// not be rationed by the rate limit, nor skipped by a rule that moves,
 		// deletes or stops, or by a classifier failure. Flagging first also means
@@ -1211,6 +1227,8 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 		switch {
 		case errors.Is(err, errIncomingRateLimited):
 			res.rateLimited++
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
+		case errors.Is(err, errMessageClaimLost):
 			res.deferredIDs = append(res.deferredIDs, msg.ID)
 		case err != nil:
 			res.failed++
@@ -1465,6 +1483,9 @@ func clipForLog(s string) string {
 // notification for one email.
 func (p *Poller) recordMessageFailure(store *state.Store, userID string, uc userCtx, msg imapadapter.Message, err error, retire bool) {
 	p.log.Error("message processing failed", "user_id", userID, "message_id", msg.ID, "error", err.Error())
+	if uc.claim != nil && uc.claim() != nil {
+		return // another host took the message over; it reports the outcome
+	}
 	decision := state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
@@ -1531,7 +1552,7 @@ func (p *Poller) rejectOversizedMessage(uc userCtx, msg imapadapter.Message) err
 		p.log.Error("failed to send too-large rejection notice", "user_id", uc.id, "message_id", msg.ID, "error", err.Error())
 		detail += "; rejection notice could not be sent: " + err.Error()
 	}
-	return uc.store.RecordProcessedDecision(state.Decision{
+	return uc.record(state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,
@@ -1700,7 +1721,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		selected = classifier.SelectLabelFromText(allowlist, label)
 		if selected == "" {
 			p.log.Info("classification skipped", "user_id", uc.id, "message_id", msg.ID, "reason", "no known label returned", "raw_label", clipForLog(label), "allowlist_count", strconv.Itoa(len(allowlist)))
-			if err := uc.store.RecordProcessedDecision(state.Decision{
+			if err := uc.record(state.Decision{
 				MessageID: msg.ID,
 				Sender:    msg.Sender,
 				SentTo:    msg.SentTo,
@@ -1733,7 +1754,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		return &retryableErr{err: err}
 	}
 	p.log.Info("label applied", "user_id", uc.id, "message_id", msg.ID, "selected_label", selected, "keywords", strings.Join(keywords, ","))
-	if err := uc.store.RecordProcessedDecision(state.Decision{
+	if err := uc.record(state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,
@@ -1814,7 +1835,7 @@ func (p *Poller) applyFilterRules(ctx context.Context, uc userCtx, msg imapadapt
 		}
 		return false, nil
 	}
-	if err := uc.store.RecordProcessedDecision(decision); err != nil {
+	if err := uc.record(decision); err != nil {
 		return false, &retryableErr{err: err}
 	}
 	p.maybeSendPushNotification(uc, msg, "", nil)
@@ -2298,7 +2319,7 @@ func (p *Poller) tagWithLabel(ctx context.Context, uc userCtx, msg imapadapter.M
 		p.log.Error("label apply failed", "user_id", uc.id, "message_id", msg.ID, "selected_label", defaultLabel, "error", err.Error())
 		return &retryableErr{err: err}
 	}
-	if err := uc.store.RecordProcessedDecision(state.Decision{
+	if err := uc.record(state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,

@@ -110,6 +110,31 @@ RETURNING id`, id, attempt, window.Milliseconds()).Scan(&got)
 	return err == nil, err
 }
 
+// TakeLease holds key for holder until window from now (database time) unless another
+// holder's lease is live; its own holder renews it. UndoReplay(key, holder) gives it back.
+func (s *Store) TakeLease(ctx context.Context, key, holder string, window time.Duration) (bool, error) {
+	if key == "" || len(key) > 400 || holder == "" {
+		return false, errInvalidKey
+	}
+	now := nowMillis()
+	var got string
+	err := s.db.QueryRowContext(ctx, `INSERT INTO replay_ids (id, attempt, expires_at) VALUES (?, ?, `+now+` + ?)
+ON CONFLICT (id) DO UPDATE SET expires_at = excluded.expires_at, attempt = excluded.attempt
+WHERE replay_ids.expires_at <= `+now+` OR replay_ids.attempt = excluded.attempt
+RETURNING id`, key, holder, window.Milliseconds()).Scan(&got)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// RenewLease extends key's lease only while holder still holds it: once another holder took
+// it, or it was released, the old holder cannot take it back.
+func (s *Store) RenewLease(ctx context.Context, key, holder string, window time.Duration) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE replay_ids SET expires_at = `+nowMillis()+` + ? WHERE id = ? AND attempt = ?`, window.Milliseconds(), key, holder)
+	return oneRow(res, err)
+}
+
 // UndoReplay releases id only if attempt wrote its record: an attempt whose outcome is
 // unknown never releases an earlier request's record.
 func (s *Store) UndoReplay(ctx context.Context, id, attempt string) error {

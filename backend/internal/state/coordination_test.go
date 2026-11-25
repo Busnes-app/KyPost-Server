@@ -483,3 +483,40 @@ func TestInstanceRunningNamesTheService(t *testing.T) {
 		t.Fatalf("ErrInstanceRunning = %q", ErrInstanceRunning)
 	}
 }
+
+// A lease has one live holder across replicas; its holder renews it, and it frees on release
+// or expiry.
+func TestLeaseHasOneHolder(t *testing.T) {
+	a, b := twoReplicas(t)
+	ctx := context.Background()
+	take := func(s *Store, holder string, window time.Duration) bool {
+		t.Helper()
+		ok, err := s.TakeLease(ctx, "org-transfer:o1", holder, window)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if !take(a, "h1", time.Minute) || take(b, "h2", time.Minute) || !take(b, "h1", time.Minute) {
+		t.Fatal("a live lease must refuse another holder and renew for its own")
+	}
+	if err := b.UndoReplay(ctx, "org-transfer:o1", "h2"); err != nil {
+		t.Fatal(err)
+	}
+	if take(b, "h2", time.Minute) {
+		t.Fatal("another holder's release freed the lease")
+	}
+	if err := a.UndoReplay(ctx, "org-transfer:o1", "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := a.RenewLease(ctx, "org-transfer:o1", "h1", time.Minute); ok || err != nil {
+		t.Fatalf("a released lease renewed for its old holder: %v %v", ok, err)
+	}
+	if !take(b, "h2", time.Millisecond) {
+		t.Fatal("a released lease refused")
+	}
+	time.Sleep(5 * time.Millisecond)
+	if !take(a, "h3", time.Minute) {
+		t.Fatal("an expired lease refused")
+	}
+}

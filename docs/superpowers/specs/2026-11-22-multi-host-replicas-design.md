@@ -1774,11 +1774,18 @@ every write.
 **The poller's per-message claim.** The processed row is written only when a message is
 done, so a frozen owner and the new one both labelled, recorded and pushed it, and the new
 owner's warmup resets every checkpoint on takeover. In table mode `processBatch` now claims
-each unprocessed message before any work, as a replay record (`RecordReplay`) on database time
-keyed by a hash of user and message. A message another host has claimed is held below the
-checkpoint without counting as a deferral, and the next tick finds it processed. Claims are
-released when the batch ends, and expire after `perMessageTimeout` plus a minute if their
-host died. A store that cannot answer reads as "claimed". Ordinary installs take no claims.
+each unprocessed message before any work: a lease in `replay_ids` on database time
+(`TakeLease`), keyed by a hash of user and message, after which it reads `Seen` again, since
+another host may have finished the message in between. A message another host has claimed is
+held below the checkpoint without counting as a deferral, and the next tick finds it
+processed. Every record (`RecordProcessedDecision`, the commit point every push follows)
+first renews the claim with `RenewLease`, which succeeds only while this batch still holds
+it. A host frozen past the claim's TTL (`perMessageTimeout` plus a minute), whose claim
+another host took, therefore records and pushes nothing when it resumes, and the message is
+held for the taker. Claims are released when the batch ends. A store that cannot answer
+reads as "claimed" or "lost". Ordinary installs take no claims. What a resumed host can still
+repeat is the label write it was frozen in, which is the same keyword unless the classifier
+answers differently.
 
 **Residual, accepted:** a scheduled message's draft can be saved twice if its host freezes
 after `ClaimScheduledReturn` long enough for PostgreSQL to drop its instance lock: the other
@@ -1789,5 +1796,8 @@ every write in them is CAS-checked or an idempotent delete.
 
 Tests: `TestTwoHostsHandleAMessageOnce` (processor: host A pauses inside its label write,
 host B ticks the same mailbox and labels nothing; after A finishes, B's next tick finds the
-message processed, with one decision) and `TestCreateAutoRecordsOneProbeAcrossHandles`
+message processed, with one decision), `TestExpiredClaimHolderRecordsNothing` (A pauses past
+the claim's TTL, B takes the message over and handles it, A resumes and records nothing),
+`TestClaimRereadsProcessedState` (B pauses between its first `Seen` and its claim while A
+handles the message; B leaves it), state's `TestLeaseHasOneHolder` and `TestCreateAutoRecordsOneProbeAcrossHandles`
 (sendas: two handles on one store record one probe; a user's own request is not refused).
