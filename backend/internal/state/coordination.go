@@ -182,7 +182,7 @@ func (s *Store) WithLock(ctx context.Context, name string, work func(context.Con
 		}
 		return false, err
 	}
-	defer discard(conn)
+	defer s.unlockAndDiscard(conn, spaceLock, name)
 	owned, cancel := context.WithCancelCause(ctx)
 	probeDone := make(chan struct{})
 	go func() {
@@ -301,7 +301,20 @@ func (s *Store) Hold(ctx context.Context, name string) (release func(), err erro
 		discard(conn)
 		return nil, err
 	}
-	return func() { discard(conn) }, nil
+	return func() { s.unlockAndDiscard(conn, spaceLock, name) }, nil
+}
+
+// unlockAndDiscard unlocks before discarding: PostgreSQL drops a closed session's locks only
+// once it has reaped the backend, so a lock released by close alone can still refuse the
+// next taker. A failed or stalled unlock (bounded by lockProbeTimeout) falls back to close.
+func (s *Store) unlockAndDiscard(conn *sql.Conn, space int, name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), lockProbeTimeout)
+	defer cancel()
+	_, _ = conn.ExecContext(ctx, `SELECT pg_advisory_unlock(`+advisoryKey(space)+`)`, name)
+	if s.unlocked != nil {
+		s.unlocked()
+	}
+	discard(conn)
 }
 
 // withFlock holds an exclusive flock on a persistent file beside the database for name.
