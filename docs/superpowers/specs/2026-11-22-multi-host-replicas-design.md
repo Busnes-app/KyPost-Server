@@ -1613,9 +1613,40 @@ and refuses the next hit on both; another key has its own window; a closed store
 `TestTableBackchannelLogoutsAreRefundedAcrossReplicas` (more accepted logouts than the window,
 alternating two table-mode replicas, all succeed).
 
-**Not built in MH6 yet:** the proof-of-work escalation (`powEscalation`, its own per-IP map,
-not a `keyedLimiter`), the per-org import and export lease, and the two-replica variant of
-`TestOrgQuotas`. Per-org quotas already read PostgreSQL only.
+**MH6 remainder as built (2026-11-24).**
+
+- **Proof-of-work escalation.** In table mode `UseSharedState` also gives `powEscalation` the
+  shared store. Each failed login counts in one database window per address and account
+  (`meter:pow-escalation:<sha256(address)>:<sha256(account)>`, 15 minutes on database time,
+  capped at 32 hits). The difficulty is `AttemptHitsUnder`, a key-range sum over the address's
+  windows that the primary key serves. A successful sign-in clears only its own account's
+  window, as in memory. A store that cannot answer prices the address at the ceiling, never at
+  base. **Changed from memory:** each account's failures decay 15 minutes after that account's
+  first failure, not the address's first. The per-address cap of 256 accounts does not apply
+  to the rows; they expire with their window and are swept like the lockout rows, which a
+  sprayed username already creates.
+- **One import or export per org** (K "Abuse limits"). `takeOrgTransfer` holds a lease in
+  `replay_ids` on database time (`TakeLease`: free, expired, or already this holder's), keyed
+  by a hash of the org. It runs for 2 minutes, is renewed every 30 s while the transfer runs,
+  and is given back when the transfer ends. An import claim takes it before `ClaimImport` and
+  hands it back when the job stops being active. An export download takes it before the grant
+  is spent, so a busy org keeps its link and is sent back with `busy&retry`. A second transfer
+  in the org is `409` on every replica, and a replica that dies frees the org within the lease.
+  It applies only to a multi-tenant server and an account with an org, so single installs,
+  PostgreSQL replicas included, are unchanged. A renewal that fails is logged, not enforced:
+  the cap bounds load, it is not a safety fence.
+- **Two-replica quotas.** `TestTwoReplicasShareOrgQuotas` runs org A's `sendPerHour` cap
+  through two servers on one database, with sends from two members spread over both. It
+  admits exactly the cap, refuses the next send on both, and does not cap org B.
+
+Tests (PostgreSQL): `TestTablePoWEscalationIsSharedAcrossReplicas` (a single pair stays in
+memory; failures on either replica price the address alike; a success forgives only its
+account; another address is at base; a closed store prices at the ceiling),
+`TestTwoReplicasHoldOneOrgTransfer` (a second transfer and an import claim in the org on the
+other replica are refused; another org is not; release is idempotent; a dead holder's lease
+expires), `TestTwoReplicasShareOrgQuotas`, and in state `TestAttemptHitsUnderSumsOnePrefix`
+and `TestLeaseHasOneHolder`. Not covered end to end: the export download handler's use of the
+lease (the export suite runs a single install).
 ## MH5 provisioned keys as built (2026-11-24)
 
 **No key is created at runtime in table mode.** `app.provisionedKeys` lists, by name, every

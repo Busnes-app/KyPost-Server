@@ -141,9 +141,14 @@ func (s *Server) claimImport(job *importJob) (status int, refusal string, undo f
 	if s.shared == nil {
 		return s.claimImportHere(job)
 	}
+	release, status, refusal := s.takeOrgTransfer(job.user)
+	if status != 0 {
+		return status, refusal, nil
+	}
 	ctx, cancel := sharedContext()
 	defer cancel()
 	if status, refusal := importBusyRefusal(s.shared.ClaimImport(ctx, job.user, s.instanceID, encodeImportRow(*job), maxImports)); status != 0 {
+		release()
 		return status, refusal, nil
 	}
 	s.importMu.Lock()
@@ -152,12 +157,13 @@ func (s *Server) claimImport(job *importJob) (status int, refusal string, undo f
 	}
 	s.imports[job.user] = job
 	s.importMu.Unlock()
-	go s.followImport(job)
+	go func() { defer release(); s.followImport(job) }()
 	return 0, "", func() {
 		s.importMu.Lock()
 		job.State = "idle"
 		s.importMu.Unlock()
 		s.publishImport(job)
+		release()
 	}
 }
 
