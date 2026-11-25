@@ -65,14 +65,14 @@ type Document struct {
 }
 
 func OpenDocument(path string) *Document {
-	if m, rel := mounted(path); m != nil {
+	if m, rel := mounted(path, func(m *mount) bool { return m.volume != nil }); m != nil {
 		return &Document{volume: m.volume, path: rel}
 	}
 	return &Document{volume: File{Dir: filepath.Dir(path)}, path: filepath.Base(path), file: path}
 }
 
-// mounted is the newest mount below path, with path relative to its root.
-func mounted(path string) (*mount, string) {
+// mounted is the newest mount below path that use accepts, with path relative to its root.
+func mounted(path string, use func(*mount) bool) (*mount, string) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, ""
@@ -82,7 +82,7 @@ func mounted(path string) (*mount, string) {
 	for i := len(mounts.entries) - 1; i >= 0; i-- {
 		m := mounts.entries[i]
 		rel, err := filepath.Rel(m.root, abs)
-		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if use(m) && err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return m, filepath.ToSlash(rel)
 		}
 	}
@@ -119,7 +119,7 @@ const (
 // Shared mode, and otherwise path's original flock. Use the returned context for the
 // fenced work.
 func Lock(ctx context.Context, path, name string, mode LockMode) (context.Context, func(), error) {
-	if m, _ := mounted(path); m != nil && m.fence != nil {
+	if m, _ := mounted(path, func(m *mount) bool { return m.fence != nil }); m != nil {
 		return m.fence(ctx, name, mode == Shared)
 	}
 	var release func()

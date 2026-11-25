@@ -1698,10 +1698,15 @@ Its context carries the session, and a set taken under it joins that session (re
 there) instead of opening a second one; its release unlocks only that set, and the outermost
 release discards the session. A nested set must not rank before a fence already held, so an
 order inversion is an error (`errFence`), not a cycle. The fixed order is confirmed against
-every call site: org, settings, native-domains, sso-lifecycle, mailbox, quota, sso,
-backup-operation. Call sites rebind `ctx` to the returned context, and the receiving
-callbacks (`withAuthority`, `frozenAuthority`, `quotaFence`, `WithNativeMailAccess`,
-`WithNativeSharedAccess`) now receive it, so a lost fence cancels their work.
+every call site: org, settings, native-domains, sso, sso-lifecycle, mailbox, quota,
+backup-operation. MH1 placed `sso` after `quota`; native outbound, the relay save and native
+recovery take `WithCurrentSettings` after the domains and the directory under it, so `sso`
+now sits between them. Call sites rebind `ctx` to the returned context for a section held to
+the end of the function, and the receiving callbacks (`withAuthority`, `frozenAuthority`,
+`quotaFence`, `WithNativeMailAccess`, `WithNativeSharedAccess`) now receive it, so a lost
+fence cancels their work. A section released before the function goes on keeps the returned
+context under its own name (`reconcileNativeSubjectHeld`'s `held`): later work resumes on the
+parent, which neither the release cancels nor the released fence's rank constrains.
 
 **A nested wait is not a lost fence.** A nested set waits on the held session, which would
 block the probe's ping and read as a loss after `lockProbeTimeout`. The session's mutex is

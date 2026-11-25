@@ -51,7 +51,9 @@ func (s *Server) reconcileNativeSubjectHeld(ctx context.Context, issuer, subject
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	ctx, release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
+	// held is the directory section's context only: after release, allocation resumes on ctx,
+	// so it neither runs on a cancelled context nor ranks after the released directory fence.
+	held, release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -89,7 +91,7 @@ func (s *Server) reconcileNativeSubjectHeld(ctx context.Context, issuer, subject
 	}
 	if lookupErr != nil && d.Active && sso.HasAdminRole(d.Resource.Roles) {
 		defer release()
-		return s.provisionDirectoryUser(ctx, issuer, *d.Resource, users.RoleAdmin)
+		return s.provisionDirectoryUser(held, issuer, *d.Resource, users.RoleAdmin)
 	}
 	a, reserved, err := s.ssoLifecycle.NativeAssignment(issuer, subject)
 	if err != nil {

@@ -27,11 +27,10 @@ type Fence struct {
 	Shared bool
 }
 
-// fenceOrder is the fixed acquisition order by kind. settings -> native-domains ->
-// sso-lifecycle -> quota is today's flock order (api/masked_addresses.go,
-// sso/native_mailbox.go, app/receiving.go); where org, mailbox, sso and backup-operation
-// sit is MH4's to confirm.
-var fenceOrder = []string{"org", "settings", "native-domains", "sso-lifecycle", "mailbox", "quota", "sso", "backup-operation"}
+// fenceOrder is the fixed acquisition order by kind, confirmed against every call site
+// (MH4): the org fence is outermost; native outbound, relay and recovery take the SSO
+// settings fence after the domains and before the directory.
+var fenceOrder = []string{"org", "settings", "native-domains", "sso", "sso-lifecycle", "mailbox", "quota", "backup-operation"}
 
 // fencePools holds one pool of fence sessions per schema, shared by every Store in the
 // process. A held fence keeps its connection for the whole section, so the store's own small
