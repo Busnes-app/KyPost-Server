@@ -5,8 +5,9 @@
 # passwords (a wrong one refused) and C locale; the 17 volume still starts 17 (rollback); back
 # on 18 after writing on 17, the dump refuses and 18 stays down; the documented "move again"
 # brings that row to 18 and keeps the replaced 18, and "keep 18" is accepted; a further `up`
-# is a no-op; a dump that fails to restore never yields a cluster; the documented clean-up
-# leaves 18 running; a fresh install initialises. Starts only the database services
+# is a no-op; a dump that fails to restore never yields a cluster; after the documented clean-up
+# of the dump (17 kept) 18 still starts and a later rollback is still refused; removing the 17
+# volume leaves 18 running; a fresh install initialises. Starts only the database services
 # of its own Compose projects and removes them, their volumes and networks on exit.
 #
 # Usage: scripts/test-postgres-17-to-18.sh [commit whose compose files run PostgreSQL 17]
@@ -109,7 +110,8 @@ echo "== 3c. Move again as documented: rename 18/ and upgrade-from-17/; 18 gets 
     mv /var/lib/postgresql/upgrade-from-17 /var/lib/postgresql/upgrade-from-17.replaced' >/dev/null 2>&1 || fail "the move-again renames failed"
 up "${new[@]}" || fail "18 did not start after moving again"
 [ "$(q 'select count(*) from t')" = 50001 ] || fail "moving again lost the row written on 17"
-in_vol kypost_postgres 'test -s /v/18.replaced/docker/PG_VERSION && test -s /v/upgrade-from-17.replaced/dump.sql' || fail "the replaced 18 cluster or dump is gone"
+in_vol kypost_postgres 'test -s /v/18.replaced/docker/PG_VERSION && test -s /v/18.replaced/moved-from-17.checkpoint && test -s /v/upgrade-from-17.replaced/dump.sql' ||
+  fail "the replaced 18 cluster, its checkpoint or the dump is gone"
 
 echo "== 4. Another up is a no-op"
 seen=$("${new[@]}" logs postgres-17-dump 2>&1 | wc -l)
@@ -120,13 +122,13 @@ dumps=$("${new[@]}" logs postgres-17-dump 2>&1 | tail -n +"$((seen + 1))")
 "${new[@]}" logs postgres 2>&1 | grep -q 'restored' && fail "the second up restored again"
 [ "$(q 'select count(*) from t')" = 50001 ] || fail "rows after the second up"
 
-echo "== 4b. Keep 18 after a rollback: delete source-checkpoint, and it sticks"
+echo "== 4b. Keep 18 after a rollback: delete 18/moved-from-17.checkpoint, and it sticks"
 down_db "${new[@]}"
 up "${old[@]}" || fail "17 did not start for the keep-18 check"
 down_db "${old[@]}"
 up "${new[@]}" 2>/dev/null && fail "18 started after 17 ran again (keep-18 check)"
 "${new[@]}" down >/dev/null 2>&1
-"${new[@]}" run --rm --no-deps --entrypoint rm postgres /var/lib/postgresql/upgrade-from-17/source-checkpoint >/dev/null 2>&1 || fail "the keep-18 rm failed"
+"${new[@]}" run --rm --no-deps --entrypoint rm postgres /var/lib/postgresql/18/moved-from-17.checkpoint >/dev/null 2>&1 || fail "the keep-18 rm failed"
 up "${new[@]}" || fail "keep 18 was not accepted"
 down_db "${new[@]}"
 up "${new[@]}" || fail "keep 18 did not stick"
@@ -147,14 +149,33 @@ in_vol kypost_postgres 'test ! -e /v/18/docker' || fail "a bad dump produced a c
 down_db "${new[@]}"
 in_vol kypost_postgres 'rm -rf /v/18/docker.part && mv /v/18/docker.saved /v/18/docker && mv /v/dump.good /v/upgrade-from-17/dump.sql'
 
-echo "== 6. The documented clean-up: the 17 volume and the dump go, 18 keeps running"
+echo "== 6. The documented clean-up of the dump (17 kept): 18 still starts"
+"${new[@]}" down >/dev/null 2>&1
+"${new[@]}" run --rm --no-deps --entrypoint rm postgres -r /var/lib/postgresql/upgrade-from-17 >/dev/null 2>&1 || fail "the dump clean-up rm failed"
+up "${new[@]}" || fail "18 did not start after removing upgrade-from-17"
+"${new[@]}" logs postgres-17-dump 2>&1 | tail -n 1 | grep -q 'already done' || fail "the dump did not accept the clean-up"
+[ "$(q 'select count(*) from t')" = 50001 ] || fail "rows after the dump clean-up"
+
+echo "== 6b. A rollback after that clean-up is still refused on the way back to 18"
+down_db "${new[@]}"
+up "${old[@]}" || fail "17 did not start after the dump clean-up"
+"${old[@]}" exec -T postgres psql -U kypost -d kypost -XAtqc "insert into t(s) values ('written on 17 after the clean-up')"
+down_db "${old[@]}"
+seen=$("${new[@]}" logs postgres-17-dump 2>&1 | wc -l)
+up "${new[@]}" 2>/dev/null && fail "18 started after a rollback that followed the dump clean-up"
+"${new[@]}" logs postgres-17-dump 2>&1 | tail -n +"$((seen + 1))" | grep -q 'has run on .* since it was moved to 18' || fail "no rollback message after the clean-up"
+[ -z "$("${new[@]}" ps -q postgres)" ] || fail "18 is running after the refusal (clean-up)"
+"${new[@]}" down >/dev/null 2>&1
+"${new[@]}" run --rm --no-deps --entrypoint rm postgres /var/lib/postgresql/18/moved-from-17.checkpoint >/dev/null 2>&1 || fail "the keep-18 rm failed (clean-up)"
+up "${new[@]}" || fail "keep 18 was not accepted after the clean-up"
+
+echo "== 6c. Removing the 17 volume too leaves 18 running"
 "${new[@]}" down >/dev/null 2>&1
 docker volume rm "${project}_kypost_pgdata" >/dev/null
-"${new[@]}" run --rm --no-deps --entrypoint rm postgres -r /var/lib/postgresql/upgrade-from-17 >/dev/null 2>&1
 up "${new[@]}" || fail "18 did not start after the clean-up"
 [ "$(q 'select count(*) from t')" = 50001 ] || fail "rows after the clean-up"
-in_vol kypost_postgres 'test ! -e /v/upgrade-from-17' || fail "the dump is still there"
-"${new[@]}" logs postgres-17-dump 2>&1 | grep -q 'already done' || fail "the dump ran again after the clean-up"
+in_vol kypost_postgres 'test ! -e /v/upgrade-from-17' || fail "the dump is back"
+"${new[@]}" logs postgres-17-dump 2>&1 | tail -n 1 | grep -q 'already done' || fail "the dump ran again after the clean-up"
 
 echo "== 7. A fresh install initialises 18"
 "${new[@]}" down >/dev/null 2>&1 # frees its database network
@@ -167,4 +188,4 @@ up "${fresh_new[@]}" || fail "a fresh 18 did not start"
   fail "fresh data directory or locale"
 client "$fresh" wrong-password kypost 'select 1' >/dev/null 2>&1 && fail "a fresh install let a wrong password in"
 
-echo "PASS postgres 17 -> 18: dump beside a live 17 refused, move on up -d over a running 17, rows, roles, passwords, C locale, rollback to 17, re-upgrade refused, move again, keep 18, rerun, bad dump, clean-up, fresh install"
+echo "PASS postgres 17 -> 18: dump beside a live 17 refused, move on up -d over a running 17, rows, roles, passwords, C locale, rollback to 17, re-upgrade refused, move again, keep 18, rerun, bad dump, clean-up of the dump then a refused rollback, 17 volume removed, fresh install"

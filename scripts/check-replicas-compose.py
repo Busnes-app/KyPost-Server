@@ -62,7 +62,7 @@ assert db["environment"]["POSTGRES_INITDB_ARGS"] == "--locale=C --encoding=UTF8"
 # PostgreSQL 18, moving a 17 volume on the first up (scripts/postgres-17-to-18.sh, the shared
 # Ky kit, byte for byte; scripts/test-postgres-17-to-18.sh runs it).
 kit = "/ky/postgres-17-to-18.sh"
-assert hashlib.sha256((root / "scripts/postgres-17-to-18.sh").read_bytes()).hexdigest() == "65632931413f9ddca0bce3ad5a13cd7db70860156c402c8d40c027f3c16abf15", \
+assert hashlib.sha256((root / "scripts/postgres-17-to-18.sh").read_bytes()).hexdigest() == "195ae8684e34dd515158a88b1f76b918cf6e3f3c854ce83fe4fb190a5178cf06", \
     "scripts/postgres-17-to-18.sh differs from the shared Ky kit"
 mounts = lambda svc: sorted((v.get("source", "").rsplit("/scripts/", 1)[-1], v["target"], bool(v.get("read_only"))) for v in svc["volumes"])
 assert db["image"] == "postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71", db["image"]

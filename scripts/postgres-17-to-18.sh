@@ -10,6 +10,9 @@ set -Eeuo pipefail
 mode=${1:-}; shift || true
 new=${NEW:-/var/lib/postgresql}
 dump_dir=$new/upgrade-from-17
+# 17's checkpoint as the dump left it. Beside the 18 cluster, so removing the dump keeps it, and
+# renaming 18/ to move again takes it along.
+moved=$new/18/moved-from-17.checkpoint
 as_pg() { if [ "$(id -u)" = 0 ]; then gosu postgres "$@"; else "$@"; fi; }
 sock=$(mktemp -d)
 [ "$(id -u)" != 0 ] || chown postgres "$sock"
@@ -27,12 +30,12 @@ dump)
   if [ -s "$new/18/docker/PG_VERSION" ] || [ -s "$dump_dir/dump.sql" ]; then
     if [ ! -s "$old/PG_VERSION" ]; then echo "postgres-17-to-18: already done"; exit 0; fi
     [ ! -e "$old/postmaster.pid" ] || refuse_running
-    # Kit v2 kept no checkpoint: take the current one as the moved state.
-    [ -s "$dump_dir/source-checkpoint" ] || checkpoint > "$dump_dir/source-checkpoint"
+    # Moved by kit v2, which kept no checkpoint: take the current one as the moved state.
+    [ -s "$moved" ] || { mkdir -p "$(dirname "$moved")"; checkpoint > "$moved"; }
     # Every start of 17 writes a new checkpoint. A changed one means 17 ran after the move (a
     # rollback), so 18 lacks what 17 wrote since: never start 18 on it silently.
-    if [ "$(checkpoint)" = "$(cat "$dump_dir/source-checkpoint")" ]; then echo "postgres-17-to-18: already done"; exit 0; fi
-    echo "postgres-17-to-18: PostgreSQL 17 has run on $old since it was moved to 18, so 18 lacks what 17 wrote since then. To move 17 again: stop everything, rename $new/18 and $dump_dir with a suffix such as .replaced (nothing is deleted), then start again. To keep 18 as it is: delete $dump_dir/source-checkpoint, then start again." >&2
+    if [ "$(checkpoint)" = "$(cat "$moved")" ]; then echo "postgres-17-to-18: already done"; exit 0; fi
+    echo "postgres-17-to-18: PostgreSQL 17 has run on $old since it was moved to 18, so 18 lacks what 17 wrote since then. To move 17 again: stop everything, rename $new/18 (and $dump_dir, if it is there) with a suffix such as .replaced (nothing is deleted), then start again. To keep 18 as it is: delete $moved, then start again." >&2
     exit 1
   fi
   if [ ! -s "$old/PG_VERSION" ]; then
@@ -64,8 +67,9 @@ dump)
   as_pg sync "$dump_dir/dump.sql.part"
   trap - EXIT
   as_pg pg_ctl -D "$old" -m fast -w stop
-  # 17 as the dump left it; a later start of 17 (a rollback) changes this.
-  checkpoint > "$dump_dir/source-checkpoint"
+  mkdir -p "$new/18"
+  [ "$(id -u)" != 0 ] || chown postgres "$new/18"
+  checkpoint > "$moved"
   mv "$dump_dir/dump.sql.part" "$dump_dir/dump.sql"
   sync "$dump_dir"
   echo "postgres-17-to-18: dumped $old into $dump_dir/dump.sql; the 17 data is kept"

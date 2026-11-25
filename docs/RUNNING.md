@@ -429,22 +429,24 @@ to move and initialises 18 directly (the `kypost_pgdata` volume then stays empty
   `docker compose up -d --wait`. Anything written on 18 is not in the 17 data.
 - **Back to 18 after a rollback:** once 17 has run, the next `up` with this release stops
   before 18 starts: the dump (`docker compose logs postgres-17-dump`) says 17 has run since
-  the move, because 18 lacks what 17 wrote since. Nothing is deleted. Choose one, then
-  `docker compose down` (keeps volumes) and `up` again:
+  the move, because 18 lacks what 17 wrote since. This holds after the clean-up of the dump
+  too: the move's record, `18/moved-from-17.checkpoint`, sits beside the 18 cluster. Nothing
+  is deleted. Choose one, then `docker compose down` (keeps volumes) and `up` again:
   - **Move 17 again** (keeps what 17 wrote, loses what was written on 18 before the
-    rollback): rename the old 18 cluster and dump aside, `docker compose run --rm --no-deps
+    rollback): rename the old 18 cluster aside, `docker compose run --rm --no-deps
     --entrypoint sh postgres -c 'mv /var/lib/postgresql/18 /var/lib/postgresql/18.replaced &&
-    mv /var/lib/postgresql/upgrade-from-17 /var/lib/postgresql/upgrade-from-17.replaced'`.
-    The next `up` dumps and restores 17 as the first time did.
+    mv /var/lib/postgresql/upgrade-from-17 /var/lib/postgresql/upgrade-from-17.replaced'`
+    (leave out the second `mv` if you already removed the dump). The next `up` dumps and
+    restores 17 as the first time did.
   - **Keep 18 as it is** (what 17 wrote since stays only in `kypost_pgdata`):
-    `docker compose run --rm --no-deps --entrypoint rm postgres /var/lib/postgresql/upgrade-from-17/source-checkpoint`.
+    `docker compose run --rm --no-deps --entrypoint rm postgres /var/lib/postgresql/18/moved-from-17.checkpoint`.
 - **Clean-up**, your choice, once 18 has checked out (sign in, read mail, run **Back up
-  now**): stop the stack (`docker compose down`, which keeps volumes), then remove the 17
-  volume (`docker volume rm <project>_kypost_pgdata`) and the dump:
-  `docker compose run --rm --no-deps --entrypoint rm postgres -r /var/lib/postgresql/upgrade-from-17`.
-  Nothing removes either automatically, nor the `18.replaced` and `upgrade-from-17.replaced`
-  directories a second move leaves (`rm -r` them the same way). Once the 17 volume is gone,
-  rollback means restoring a backup.
+  now**): stop the stack (`docker compose down`, which keeps volumes), then remove the dump,
+  `docker compose run --rm --no-deps --entrypoint rm postgres -r /var/lib/postgresql/upgrade-from-17`,
+  which is safe and keeps rollback. Removing the 17 volume (`docker volume rm
+  <project>_kypost_pgdata`) is a separate step; once it is gone, rollback means restoring a
+  backup. Nothing removes either automatically, nor the `18.replaced` and
+  `upgrade-from-17.replaced` directories a second move leaves (`rm -r` them the same way).
 
 ### Restoring a replica deployment
 
