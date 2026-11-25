@@ -393,6 +393,61 @@ change: stop every replica, then run
 once with the new settings, and start again. The full list is in
 [CONFIGURATION.md](CONFIGURATION.md#replicas).
 
+### PostgreSQL 18
+
+The overlay's database is PostgreSQL 18. An install that ran 17 (its data is in the
+`kypost_pgdata` volume) moves to 18 by itself on the next `up` after `git pull`; the script
+it uses, `scripts/postgres-17-to-18.sh`, is mounted from your checkout. Run the usual upgrade,
+`docker compose pull && docker compose stop kypost-server && docker compose up -d --wait`:
+
+1. The one-shot `postgres-17-dump` service (the 17 image, no network) starts 17 on
+   `kypost_pgdata` with a private socket, runs `pg_dumpall` into the new `kypost_postgres`
+   volume (`upgrade-from-17/dump.sql`) and stops 17. It writes nothing into `kypost_pgdata`;
+   17 may replay its own log while it starts.
+2. The `postgres` service (18) restores that dump into `18/docker.part`, renames it to
+   `18/docker` once complete and then starts as usual. Roles, passwords and the C/UTF8
+   locale come across, so `KYPOST_DATABASE_URL` stays the same. The replicas wait until it
+   is healthy.
+
+Each step runs once: later `up`s see `18/docker` and do nothing. `docker compose ps -a` then
+lists `postgres-17-dump` as `Exited (0)`, which is its healthy, finished state. A fresh install has nothing
+to move and initialises 18 directly (the `kypost_pgdata` volume then stays empty).
+
+- **Disk:** about twice the 17 data free on the volumes' filesystem (the dump plus the new
+  cluster). With less, the dump stops with a message naming both sizes and writes nothing;
+  free space and `up` again.
+- **Time:** a full dump, a reload and `ANALYZE`, so it grows with the data. The healthcheck
+  allows an hour before a failure counts; follow it with `docker compose logs -f postgres`.
+- **If it fails:** the 18 service never starts on an empty or half-restored database. A
+  restore cut short is redone from the start on the next start. The logs name the error, and
+  `kypost_pgdata` is unchanged, so you can roll back. If 17 is still running on
+  `kypost_pgdata`, or was killed without a clean stop, the dump finds its `postmaster.pid`
+  and refuses: `up` stops 17 itself first, and both services get two minutes to shut down.
+  After a crash, start 17 once with the previous release and stop it, then `up` again.
+- **Rollback:** stop every replica and `docker compose stop postgres`, check out the release
+  you came from (its `docker-compose.replicas.yml` runs 17 on `kypost_pgdata`) and
+  `docker compose up -d --wait`. Anything written on 18 is not in the 17 data.
+- **Back to 18 after a rollback:** once 17 has run, the next `up` with this release stops
+  before 18 starts: the dump (`docker compose logs postgres-17-dump`) says 17 has run since
+  the move, because 18 lacks what 17 wrote since. This holds after the clean-up of the dump
+  too: the move's record, `18/moved-from-17.checkpoint`, sits beside the 18 cluster. Nothing
+  is deleted. Choose one, then `docker compose down` (keeps volumes) and `up` again:
+  - **Move 17 again** (keeps what 17 wrote, loses what was written on 18 before the
+    rollback): rename the old 18 cluster aside, `docker compose run --rm --no-deps
+    --entrypoint sh postgres -c 'mv /var/lib/postgresql/18 /var/lib/postgresql/18.replaced &&
+    mv /var/lib/postgresql/upgrade-from-17 /var/lib/postgresql/upgrade-from-17.replaced'`
+    (leave out the second `mv` if you already removed the dump). The next `up` dumps and
+    restores 17 as the first time did.
+  - **Keep 18 as it is** (what 17 wrote since stays only in `kypost_pgdata`):
+    `docker compose run --rm --no-deps --entrypoint rm postgres /var/lib/postgresql/18/moved-from-17.checkpoint`.
+- **Clean-up**, your choice, once 18 has checked out (sign in, read mail, run **Back up
+  now**): stop the stack (`docker compose down`, which keeps volumes), then remove the dump,
+  `docker compose run --rm --no-deps --entrypoint rm postgres -r /var/lib/postgresql/upgrade-from-17`,
+  which is safe and keeps rollback. Removing the 17 volume (`docker volume rm
+  <project>_kypost_pgdata`) is a separate step; once it is gone, rollback means restoring a
+  backup. Nothing removes either automatically, nor the `18.replaced` and
+  `upgrade-from-17.replaced` directories a second move leaves (`rm -r` them the same way).
+
 ### Restoring a replica deployment
 
 Restore into a new, empty database beside the old one, which stays untouched until the

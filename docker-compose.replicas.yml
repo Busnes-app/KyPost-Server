@@ -54,9 +54,31 @@ services:
       ollama:
         condition: service_started
 
+  # PostgreSQL 17 installs move to 18 on the next `up`: this one-shot dumps the 17 volume
+  # (kypost_pgdata, only read) into the 18 volume once, and the 18 service restores it before
+  # it starts (docs/RUNNING.md, "PostgreSQL 18"). Fresh installs have nothing to dump.
+  postgres-17-dump:
+    image: postgres:17.12-alpine3.24@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
+    restart: "no"
+    network_mode: none
+    # A SIGKILLed 17 leaves postmaster.pid, which the dump then refuses.
+    stop_grace_period: 2m
+    entrypoint: ["bash", "/ky/postgres-17-to-18.sh", "dump"]
+    environment:
+      POSTGRES_USER: kypost
+      OLD: /var/lib/postgresql/data
+      NEW: /pg18
+    volumes:
+      - kypost_pgdata:/var/lib/postgresql/data
+      - kypost_postgres:/pg18
+      - ./scripts/postgres-17-to-18.sh:/ky/postgres-17-to-18.sh:ro
+
   postgres:
-    image: postgres:17-alpine@sha256:526f86d93c6ea08fd3f1fe5605650cacc781b2c6013169a0ad8f42c7d3d84f32
+    image: postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71
     restart: unless-stopped
+    stop_grace_period: 2m
+    # Restores the 17 dump once, if there is one, then runs the image's own entrypoint.
+    entrypoint: ["bash", "/ky/postgres-17-to-18.sh", "restore"]
     environment:
       POSTGRES_USER: kypost
       POSTGRES_PASSWORD: ${KYPOST_POSTGRES_PASSWORD:?Set KYPOST_POSTGRES_PASSWORD in .env; there is no default}
@@ -66,15 +88,21 @@ services:
     # Room for KYPOST_REPLICAS times the per-replica budget in docs/RUNNING.md.
     command: ["postgres", "-c", "max_connections=${KYPOST_POSTGRES_MAX_CONNECTIONS:-400}"]
     volumes:
-      - kypost_pgdata:/var/lib/postgresql/data
+      - kypost_postgres:/var/lib/postgresql
+      - ./scripts/postgres-17-to-18.sh:/ky/postgres-17-to-18.sh:ro
     healthcheck:
-      # The entrypoint's temporary initialization server has only a Unix socket.
+      # The entrypoint's temporary initialization and restore servers have only a Unix socket.
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "kypost", "-d", "kypost"]
       interval: 2s
       timeout: 2s
       retries: 15
+      # A restore from 17 takes time in proportion to the data.
+      start_period: 1h
     networks:
       - database
+    depends_on:
+      postgres-17-dump:
+        condition: service_completed_successfully
 
   ollama:
     image: ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754
@@ -112,7 +140,9 @@ services:
         ipv4_address: ${KYPOST_PROXY_IP:?Set KYPOST_PROXY_IP to the proxy address inside KYPOST_REPLICA_SUBNET}
 
 volumes:
+  # PostgreSQL 17's data, kept for rollback; remove it by hand once 18 checks out.
   kypost_pgdata:
+  kypost_postgres:
 
 networks:
   replicas:
