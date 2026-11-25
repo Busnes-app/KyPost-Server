@@ -66,6 +66,7 @@ var orgAdmitExempt = map[string]string{
 	"handleImportUpload":      "g is an import grant importGrantOf admits only for ac.UserID",
 	"handleIMAPImportRun":     "g is an import grant importGrantOf admits only for ac.UserID",
 	"importOne":               "job.user is the import grant's account, the caller's own",
+	"claimImport":             "job.user is the import grant's account, the caller's own (its org's transfer lease)",
 	"lookupPublishedKey":      "public WKD key lookup by address; publishing a key is its owner's choice, not an org-bound read",
 	"sendAdminNotice":         "the install's first administrator notifies itself; no request names the account",
 	// Workers: no request; each works from the account a stored row or the ledger names.
