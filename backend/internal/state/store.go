@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -472,7 +473,18 @@ func (s *Store) MarkProcessed(id string) error {
 // processes contend on this file — so neither failure is hypothetical. One
 // transaction makes "recorded and retired" the only two outcomes.
 func (s *Store) RecordProcessedDecision(d Decision) error {
+	return s.RecordProcessedDecisionUnder(nil, d)
+}
+
+// RecordProcessedDecisionUnder is RecordProcessedDecision while l (nil for none) is still
+// held, renewed in the same transaction; a lost lease is ErrLeaseLost and writes nothing.
+func (s *Store) RecordProcessedDecisionUnder(l *Lease, d Decision) error {
 	return s.tx(func(tx *sql.Tx) error {
+		if l != nil {
+			if err := renewLease(context.Background(), tx, l); err != nil {
+				return err
+			}
+		}
 		if err := insertDecision(tx, d); err != nil {
 			return err
 		}
@@ -629,6 +641,19 @@ func insertDecision(e execer, d Decision) error {
 // the JSON version re-serialized and fsynced the entire history per message.
 func (s *Store) AddDecision(d Decision) error {
 	return insertDecision(s.db, d)
+}
+
+// AddDecisionUnder is AddDecision while l is still held (see RecordProcessedDecisionUnder).
+func (s *Store) AddDecisionUnder(l *Lease, d Decision) error {
+	if l == nil {
+		return s.AddDecision(d)
+	}
+	return s.tx(func(tx *sql.Tx) error {
+		if err := renewLease(context.Background(), tx, l); err != nil {
+			return err
+		}
+		return insertDecision(tx, d)
+	})
 }
 
 // HasDecisionWithStatus reports whether a decision with this status has

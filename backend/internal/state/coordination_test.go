@@ -509,8 +509,8 @@ func TestLeaseHasOneHolder(t *testing.T) {
 	if err := a.UndoReplay(ctx, "org-transfer:o1", "h1"); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := a.RenewLease(ctx, "org-transfer:o1", "h1", time.Minute); ok || err != nil {
-		t.Fatalf("a released lease renewed for its old holder: %v %v", ok, err)
+	if err := a.AddDecisionUnder(&Lease{Key: "org-transfer:o1", Holder: "h1", Window: time.Minute}, Decision{MessageID: "x"}); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("a released lease still fenced its old holder's write: %v", err)
 	}
 	if !take(b, "h2", time.Millisecond) {
 		t.Fatal("a released lease refused")
@@ -518,5 +518,36 @@ func TestLeaseHasOneHolder(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	if !take(a, "h3", time.Minute) {
 		t.Fatal("an expired lease refused")
+	}
+}
+
+// A decision write under a lease renews it in its own transaction: after another holder took
+// the lease over, the old holder's record and decision write nothing (no check-then-write gap).
+func TestLeasedWriteAfterTakeoverWritesNothing(t *testing.T) {
+	a, b := twoReplicas(t)
+	ctx := context.Background()
+	old := &Lease{Key: "poller-message:m1", Holder: "host-a", Window: time.Millisecond}
+	if ok, err := a.TakeLease(ctx, old.Key, old.Holder, old.Window); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if ok, err := b.TakeLease(ctx, old.Key, "host-b", time.Minute); !ok || err != nil {
+		t.Fatal("takeover of an expired lease:", ok, err)
+	}
+	d := Decision{MessageID: "m1", Status: "applied", Label: "Primary"}
+	if err := a.RecordProcessedDecisionUnder(old, d); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("record under a lost lease: %v", err)
+	}
+	if err := a.AddDecisionUnder(old, d); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("decision under a lost lease: %v", err)
+	}
+	if seen, err := a.Seen("m1"); seen || err != nil {
+		t.Fatalf("a lost lease marked the message processed: %v %v", seen, err)
+	}
+	if n, _ := a.DecisionsStrict(10); len(n) != 0 {
+		t.Fatalf("a lost lease wrote %d decisions", len(n))
+	}
+	if err := b.RecordProcessedDecisionUnder(&Lease{Key: old.Key, Holder: "host-b", Window: time.Minute}, d); err != nil {
+		t.Fatal("the holder's own record:", err)
 	}
 }
