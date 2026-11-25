@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // Shared security state for PostgreSQL replicas. NewServer keeps everything in process
@@ -50,6 +51,19 @@ func (s *Server) UseSharedState(st *state.Store) {
 		"office-login-params": s.officeLoginParams, "office-login": s.officeLogin,
 	} {
 		l.shared, l.name = st, "budget:"+name
+	}
+	// MH6: in table mode (multi, or migrated volumes) every meter that sends a push or mail
+	// to a person, probes outward or serves unauthenticated callers is one window across
+	// replicas, which may run on several hosts. Per-account load shedding stays per replica.
+	if !users.TableMode(s.configDir) {
+		return
+	}
+	for name, l := range map[string]*keyedLimiter{
+		"mfa-push": s.mfaPushLimiter, "send-as": s.sendAsCooldown, "kypulse-confirm": s.kypulseConfirmCooldown,
+		"notification-test": s.notificationTestCooldown, "native-relay-check": s.nativeRelayCheckCooldown,
+		"deliverability": s.deliverabilityCooldown, "pow-challenges": s.powChallenges, "login-params": s.loginParamsLimiter,
+	} {
+		l.shared, l.name = st, "meter:"+name
 	}
 }
 
@@ -154,6 +168,24 @@ func (l *keyedLimiter) reserve(key string, cost float64) (ok bool, retryAfter ti
 	}
 	ok, retryAfter = l.admitCost(key, cost)
 	return ok, retryAfter, 0
+}
+
+// allowGen is allow returning the shared window's generation for refund (0 in memory).
+func (l *keyedLimiter) allowGen(key string) (ok bool, retryAfter time.Duration, gen int64) {
+	if l.shared != nil {
+		return l.take(key, 1)
+	}
+	ok, retryAfter = l.allow(key)
+	return ok, retryAfter, 0
+}
+
+// refund returns one allowGen hit: to its shared window gen, or to the memory bucket.
+func (l *keyedLimiter) refund(key string, gen int64) {
+	if l.shared != nil {
+		l.give(key, 1, gen)
+		return
+	}
+	l.settleCost(key, -1)
 }
 
 // give hands one reservation back to the window gen, never to a newer one.

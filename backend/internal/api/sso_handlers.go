@@ -246,16 +246,23 @@ func (s *Server) ssoRateLimited(w http.ResponseWriter, r *http.Request) bool {
 // SSO requests that are not a sign-in: spending another session's link grant,
 // and the identity provider's back-channel logout.
 func (s *Server) ssoMetered(w http.ResponseWriter, r *http.Request) bool {
+	limited, _ := s.ssoMeter(w, r)
+	return limited
+}
+
+// ssoMeter is ssoMetered returning the hit's shared window generation (0 in memory), so an
+// accepted delivery can be refunded (keyedLimiter.refund).
+func (s *Server) ssoMeter(w http.ResponseWriter, r *http.Request) (bool, int64) {
 	if s.loginParamsLimiter == nil {
-		return false
+		return false, 0
 	}
-	ok, wait := s.loginParamsLimiter.allow(lockoutKeyForIP(clientIP(r)))
+	ok, wait, gen := s.loginParamsLimiter.allowGen(lockoutKeyForIP(clientIP(r)))
 	if ok {
-		return false
+		return false, gen
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 	http.Error(w, "too many sign-in attempts right now, try again shortly", http.StatusTooManyRequests)
-	return true
+	return true, 0
 }
 
 // handleSSOLogin initiates an OpenID Connect authorization code flow with PKCE.

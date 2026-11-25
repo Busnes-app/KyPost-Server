@@ -1588,3 +1588,31 @@ cleanup waiting on that exact key, then requires stale cleanup refusal after the
 new contact revision commits. A controlled Go overlay disabling only DELETE
 auto-wrap fails with cleanup escaping the pending publication. No extra lock or
 weakened assertion is introduced.
+
+## MH6 shared meters as built (2026-11-24)
+
+In table mode (`users.TableMode`, so multi or migrated volumes) `UseSharedState` also moves the
+eight meters marked "Shared window" in "Per-replica meters" into `state.TakeAttempt`, keyed
+through `sharedKey` under `meter:<name>`: `mfa-push`, `send-as`, `kypulse-confirm`,
+`notification-test`, `native-relay-check`, `deliverability`, `pow-challenges` and
+`login-params`. They use the existing `keyedLimiter` shared path, so a token bucket of burst
+B and refill R becomes a fixed window of B hits per B/R, as the login budget already does.
+Ordinary installs, PostgreSQL replicas on one host included, keep them in process memory, so
+nothing changes there. The per-account load-shedding meters stay per replica, as designed.
+
+**Changed from the design: a failed store refuses with a retry, not `503`.** These meters
+answer through `allow`, whose callers return their usual refusal (`429` with `Retry-After`) when
+it says no. A store that cannot answer says no with `Retry-After` of `sharedTimeout`, so it
+never falls back to memory, but the status is the meter's refusal, not `unavailable`. An accepted back-channel logout
+refunds its `login-params` hit to the window it was counted in (`allowGen`, then `refund`
+through `ReleaseAttempt`), so a burst of real logouts is never throttled.
+
+Tests: `TestTableMetersAreSharedAcrossReplicas` (PostgreSQL: a single pair keeps every meter in
+memory; a table-mode pair admits exactly each meter's window in total, alternating replicas,
+and refuses the next hit on both; another key has its own window; a closed store refuses) and
+`TestTableBackchannelLogoutsAreRefundedAcrossReplicas` (more accepted logouts than the window,
+alternating two table-mode replicas, all succeed).
+
+**Not built in MH6 yet:** the proof-of-work escalation (`powEscalation`, its own per-IP map,
+not a `keyedLimiter`), the per-org import and export lease, and the two-replica variant of
+`TestOrgQuotas`. Per-org quotas already read PostgreSQL only.

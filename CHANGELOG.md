@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Count the MFA push, send-as and KyPulse confirmation, notification test, relay check, deliverability, proof-of-work challenge and login-parameter meters once across replicas in table mode; ordinary installs keep them per process.
+
 - Preserve a scheduled message's quota/held reason when either database-clock read fails; keep its sealed contents and database retry delay intact.
 
 - Use database statement time for table-mode outbox retry backoff, claim admission and discovery; preserve immutable claims, retry limits, ordinary-mode timing and hosted startup gates.
