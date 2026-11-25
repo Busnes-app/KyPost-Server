@@ -38,6 +38,28 @@ func TestTableRePinReplacesAnotherHostsStaleKey(t *testing.T) {
 		must(t, a.store.DeleteSetting(k))
 	}
 	must(t, pin(a, second, 2, 3))
+	// A database writer points the pin back at the retired key with no record: host b still
+	// holds that key's file, but must not seal a fresh record that host a would then accept.
+	current := map[string]string{}
+	for _, k := range pinKeys {
+		v, err := a.store.Setting(k)
+		must(t, err)
+		current[k] = v
+	}
+	for _, k := range pinKeys[:3] {
+		must(t, a.store.SetSetting(k, retired[k]))
+	}
+	must(t, a.store.DeleteSetting(anchorSetting))
+	if err := b.SyncRecoveryKey(); !errors.Is(err, ErrAnchor) {
+		t.Fatal("a stale host recorded the retired pin", err)
+	}
+	_ = a.SyncRecoveryKey()
+	if got, err := os.ReadFile(recoveryclient.RecoveryKeyPath(a.dirs.State)); err != nil || string(got) != string(second.Public().Bytes()) {
+		t.Fatal("a rotated host moved back to the retired key", err)
+	}
+	for k, v := range current {
+		must(t, a.store.SetSetting(k, v))
+	}
 	// Every sealing operation syncs first; the fixture's host B has no volumes.db to seal.
 	if err := b.SyncRecoveryKey(); err != nil {
 		t.Fatal("host b refused the re-pinned key", err)
@@ -48,7 +70,7 @@ func TestTableRePinReplacesAnotherHostsStaleKey(t *testing.T) {
 		t.Fatal("host b would seal to another key", err)
 	}
 	// A database writer replays the retired first pin: neither host moves back to it.
-	current := map[string]string{}
+	current = map[string]string{}
 	for _, k := range pinKeys {
 		v, err := a.store.Setting(k)
 		must(t, err)

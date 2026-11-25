@@ -1645,11 +1645,17 @@ selects table mode. Single mode passes no keys, so its record is unchanged.
 `recovery.pub` in STATE_DIR, so a re-pin on host A leaves host B's file naming the old key,
 which `SyncRecoveryKey` refused. In table mode a record that opens under the provisioned
 `totp-secret.key` now replaces the file before B seals, but only for a strictly newer pin: the
-sealed record carries `pinnedAt` (Unix ns, table mode), and each host keeps the newest one it
-accepted in STATE_DIR `recovery-pin.at`. A database writer can replay a retired record with
-its key ID and topology, but cannot forge `pinnedAt`, so no host moves back to a key the
-operator rotated away from. An unopenable record still refuses and leaves the file. Single
-mode keeps refusing a file that names another key and writes no `recovery-pin.at`.
+sealed record carries a pin `generation` (table mode), and each host keeps the newest one it
+accepted in STATE_DIR `recovery-pin.generation`. A pin issues one above both the last issued
+generation (meta `kyrecovery_pin_generation`, read and raised under the `recovery-pin` lock)
+and the pinning host's own mark, so no host clock decides the order. A database writer can
+replay a retired record with its key ID and topology, or reset the counter, but cannot forge a
+sealed generation, so no host moves back to a key the operator rotated away from (a reset
+counter can only make a new pin refused, never accept an old one). An unopenable record still refuses and leaves the file. Only an
+explicit pin seals a record in table mode: a pin with no sealed record refuses until the
+operator pins again, because recording it from a host's `recovery.pub` would let a host still
+holding a retired key mint a newest record for it. Single mode keeps refusing a file that names
+another key, still records a missing record from `recovery.pub`, and writes no generation.
 
 Tests: `TestTableModeRequiresProvisionedKeysAndCreatesNone` (app, PostgreSQL: each key
 removed in turn refuses the start by name with no file created and no mount left; a lazy key

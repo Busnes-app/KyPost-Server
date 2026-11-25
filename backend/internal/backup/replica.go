@@ -123,13 +123,17 @@ type anchorRecord struct {
 	PublicKey   string `json:"publicKey"` // base64 of the raw public key
 	Threshold   int    `json:"threshold"`
 	TotalShares int    `json:"totalShares"`
-	// PinnedAt (table mode, Unix ns) orders pins: a host never moves its recovery.pub to an
-	// older one, so a replayed retired record cannot roll it back.
-	PinnedAt int64 `json:"pinnedAt,omitempty"`
+	// Generation (table mode) orders pins: a host never moves its recovery.pub to an older
+	// one, so a replayed retired record cannot roll it back. Sealed, so never forged.
+	Generation int64 `json:"generation,omitempty"`
 }
 
-// pinMarkFile, in STATE_DIR on each host, holds the newest PinnedAt this host accepted.
-const pinMarkFile = "recovery-pin.at"
+// pinMarkFile, in STATE_DIR on each host, holds the newest Generation this host accepted.
+// pinGenerationSetting is the last generation issued, read and raised under the pin lock.
+const (
+	pinMarkFile          = "recovery-pin.generation"
+	pinGenerationSetting = "kyrecovery_pin_generation"
+)
 
 func (s *Service) pinMark() (int64, error) {
 	if !s.table {
@@ -179,14 +183,28 @@ func (s *Service) sealAnchor(k recoveryclient.RecoveryKey) (string, int64, error
 	}
 	rec := anchorRecord{PublicKey: base64.StdEncoding.EncodeToString(k.Public.Bytes()), Threshold: k.Threshold, TotalShares: k.TotalShares}
 	if s.table {
-		rec.PinnedAt = time.Now().UnixNano()
+		// One above both the last issued generation and this host's own mark, so neither a
+		// lagging clock nor a reset counter issues a generation this host already passed.
+		last, err := s.settings.Get(pinGenerationSetting)
+		if err != nil && !errors.Is(err, recoveryclient.ErrNotFound) {
+			return "", 0, err
+		}
+		issued, _ := strconv.ParseInt(last, 10, 64)
+		mark, err := s.pinMark()
+		if err != nil {
+			return "", 0, err
+		}
+		rec.Generation = max(issued, mark) + 1
+		if err := s.settings.Set(pinGenerationSetting, strconv.FormatInt(rec.Generation, 10)); err != nil {
+			return "", 0, err
+		}
 	}
 	plain, _ := json.Marshal(rec)
 	nonce := make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return "", 0, err
 	}
-	return base64.StdEncoding.EncodeToString(aead.Seal(nonce, nonce, plain, []byte(k.Public.ID()))), rec.PinnedAt, nil
+	return base64.StdEncoding.EncodeToString(aead.Seal(nonce, nonce, plain, []byte(k.Public.ID()))), rec.Generation, nil
 }
 
 func (s *Service) openAnchor(sealed, keyID string) (recoveryclient.RecoveryKey, int64, error) {
@@ -214,7 +232,7 @@ func (s *Service) openAnchor(sealed, keyID string) (recoveryclient.RecoveryKey, 
 	if err != nil || pk.ID() != keyID {
 		return recoveryclient.RecoveryKey{}, 0, fmt.Errorf("%w: the record holds another key", ErrAnchor)
 	}
-	return recoveryclient.RecoveryKey{Public: pk, Threshold: rec.Threshold, TotalShares: rec.TotalShares}, rec.PinnedAt, nil
+	return recoveryclient.RecoveryKey{Public: pk, Threshold: rec.Threshold, TotalShares: rec.TotalShares}, rec.Generation, nil
 }
 
 // recordAnchor stores the sealed record of the pinned key (PostgreSQL only).
@@ -254,6 +272,10 @@ func (s *Service) SyncRecoveryKey() error {
 		return nil
 	case !pinned:
 		return fmt.Errorf("%w: a record exists without a pin", ErrAnchor)
+	case !recorded && s.table:
+		// Only an explicit pin seals a record (and its Generation) in table mode: a host still
+		// holding a retired recovery.pub must not mint a newest record for it.
+		return fmt.Errorf("%w: the pin has no sealed record; pin the key again", ErrAnchor)
 	case !recorded:
 		// A pin migrated or restored from SQLite, or one whose record write failed: record it
 		// from recovery.pub if that file is the pinned key. A database writer cannot place
@@ -287,7 +309,7 @@ func (s *Service) SyncRecoveryKey() error {
 		}
 		// Table mode (MH5): every host keeps its own recovery.pub, so a re-pin on another
 		// host leaves this one stale. Only a strictly newer pin than this host accepted may
-		// replace it: a database writer can replay a retired record, never forge PinnedAt.
+		// replace it: a database writer can replay a retired record, never forge Generation.
 		if at <= mark {
 			return fmt.Errorf("%w: %s names another key and the record is not a newer pin", ErrAnchor, path)
 		}
