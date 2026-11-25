@@ -216,6 +216,17 @@ func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 	ac, _ := authFromContext(r)
 	_, session, ok := s.sessionOf(r)
 	token := r.PathValue("token")
+	// Taken before the grant is spent, so a busy org keeps its link for a retry.
+	release, status, _ := s.takeOrgTransfer(ac.UserID)
+	switch {
+	case status == http.StatusConflict:
+		back("busy&retry=" + url.QueryEscape(token))
+		return
+	case status != 0:
+		back("unavailable")
+		return
+	}
+	defer release()
 	g, refusal := s.claimExportGrant(token, ac.UserID, ok, sessionHash(session), r.ProtoAtLeast(1, 1))
 	if refusal != "" {
 		back(refusal)
