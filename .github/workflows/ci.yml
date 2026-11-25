@@ -269,7 +269,7 @@ jobs:
     steps:
       - run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}" = true
 
-  # The store, backup, restore and migration suites, and internal/api (held and
+  # The store, backup, restore and migration suites, the poller, and internal/api (held and
   # scheduled sends live in its global state store), again with every store on a
   # Postgres 17 service (UTF8, C locale, as docs/RUNNING.md requires). Each test opens
   # a schema of its own (dbbackend's test hook); tests about SQLite files skip, visibly
@@ -326,7 +326,20 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$LEG" = stores ]; then
-            go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/... ./internal/worker/... ./internal/replica/... ./internal/mfa/... ./internal/captcha/... ./internal/kycalendar/... ./internal/suitepair/... ./internal/tenancy/... ./internal/vol/... ./internal/volumes/... ./internal/users/... ./internal/contacts/...
+            pkgs=(./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/... ./internal/worker/... ./internal/replica/... ./internal/mfa/... ./internal/captcha/... ./internal/kycalendar/... ./internal/suitepair/... ./internal/tenancy/... ./internal/vol/... ./internal/volumes/... ./internal/users/... ./internal/contacts/... ./internal/processor/... ./internal/health/...)
+            # Every package whose tests reach dbbackend (so the variable changes them),
+            # but internal/api, must be in pkgs.
+            go list "${pkgs[@]}" | LC_ALL=C sort > "$RUNNER_TEMP/listed"
+            go list -test -f '{{if not .ForTest}}{{.ImportPath}}{{range .Deps}} {{.}}{{end}}{{end}}' ./... |
+              awk -v d="$(go list -m)/internal/dbbackend" '$1 ~ /\.test$/ { for (i = 2; i <= NF; i++) if ($i == d) { sub(/\.test$/, "", $1); print $1; break } }' |
+              grep -v '/internal/api$' | LC_ALL=C sort > "$RUNNER_TEMP/uses-db"
+            test -s "$RUNNER_TEMP/uses-db"
+            missing="$(LC_ALL=C comm -23 "$RUNNER_TEMP/uses-db" "$RUNNER_TEMP/listed")"
+            if [ -n "$missing" ]; then
+              echo "::error::not in the Postgres stores leg: $missing"
+              exit 1
+            fi
+            go test -race -count=1 -timeout=30m -p 2 "${pkgs[@]}"
             exit
           fi
           go test -race -list . ./internal/api/ | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > "$RUNNER_TEMP/all"
