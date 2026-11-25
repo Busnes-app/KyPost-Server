@@ -10,12 +10,12 @@ test('Mail tabs: arrows move focus, Enter opens, the panel names its tab', async
   await expect(first).toHaveAttribute('aria-selected', 'true');
   await first.focus();
   await page.keyboard.press('ArrowRight');
-  const pane = list.getByRole('tab', { name: 'Reading pane' });
+  const pane = list.getByRole('tab', { name: 'Conversations' });
   await expect(pane).toBeFocused();
   await expect(first).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('Enter');
   await expect(pane).toHaveAttribute('aria-selected', 'true');
-  await expect(page).toHaveURL(/[?&]tab=reading-pane/);
+  await expect(page).toHaveURL(/[?&]tab=conversations/);
   await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', await pane.getAttribute('id'));
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('ArrowLeft');

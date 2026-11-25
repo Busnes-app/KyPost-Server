@@ -5611,7 +5611,7 @@ thead:has(.inbox-bulk-head) th { background: linear-gradient(var(--accent-soft),
 .read-list { min-height: 0; display: flex; flex-direction: column; container: read-list / inline-size; }
 .reading-pane-empty, .read-split, .email-reader-back { display: none; }
 @media (min-width: 1100px) {
-  /* Settings › Mail › Reading pane. Right: the list takes its saved share of the width (52% by default)
+  /* Settings › Appearance › Reading pane. Right: the list takes its saved share of the width (52% by default)
      and the pane keeps at least 35rem, so an 80-character plain-text line stays unwrapped. Below: the list takes its share of the
      height. Off: the open reader covers the list, which keeps its scroll position underneath. */
   .read-layout[data-pane="right"] { grid-template-columns: minmax(20rem, min(var(--read-list-size, 52%), 100% - 35rem - 2rem)) 2rem minmax(0, 1fr); }
