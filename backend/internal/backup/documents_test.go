@@ -252,6 +252,10 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 		t.Fatal("photo reference", ok, err)
 	}
 	key := pinTestKey(t, s)
+	mark, err := os.ReadFile(filepath.Join(s.dirs.State, pinMarkFile))
+	if err != nil {
+		t.Fatal("a table-mode pin wrote no pin generation", err)
+	}
 	p, err := s.Collect()
 	if err != nil {
 		t.Fatal(err)
@@ -291,6 +295,11 @@ func TestTableDocumentsBackupRestore(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "config/users.json")); !os.IsNotExist(err) {
 		t.Fatal("table accounts expanded to a file", err)
+	}
+	// The pin generation travels with recovery.pub, so a restored host keeps refusing a
+	// replayed retired pin.
+	if restored, err := os.ReadFile(filepath.Join(dir, "state", pinMarkFile)); err != nil || string(restored) != string(mark) {
+		t.Fatal("the pin generation did not survive backup and restore", err)
 	}
 	accountBytes, err := snapshotAccountBytes(dir)
 	if err != nil {

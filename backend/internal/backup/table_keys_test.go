@@ -88,18 +88,6 @@ func TestTableRePinReplacesAnotherHostsStaleKey(t *testing.T) {
 	for k, v := range current {
 		must(t, a.store.SetSetting(k, v))
 	}
-	// A capsule carries the pin generation with recovery.pub, so a restore keeps refusing.
-	mark, err := os.ReadFile(filepath.Join(a.dirs.State, pinMarkFile))
-	must(t, err)
-	payload, err := a.Collect()
-	must(t, err)
-	carried := false
-	for _, f := range payload.Files {
-		carried = carried || f.Path == "state/"+pinMarkFile && string(f.Data) == string(mark)
-	}
-	if !carried {
-		t.Fatal("the capsule does not carry the pin generation")
-	}
 	// A host with recovery.pub but no generation (an older capsule) never replaces it.
 	must(t, os.Remove(filepath.Join(b.dirs.State, pinMarkFile)))
 	for _, k := range pinKeys {
