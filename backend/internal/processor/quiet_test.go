@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -23,6 +24,10 @@ func TestQuietMailboxSkippedUntilItChanges(t *testing.T) {
 	polled, appendTo := quietHarness(t, p, u)
 
 	appendTo("")
+	if dbbackend.Postgres() {
+		requireNeverQuiet(t, p, polled)
+		return
+	}
 	for range 3 { // process, then passes until labelling's own writes settle
 		p.tick()
 	}
@@ -58,11 +63,26 @@ func TestDeferringMailboxIsNeverQuiet(t *testing.T) {
 	p.cfg.RateLimits.PerMinute, p.cfg.RateLimits.PerHour = 0, 0 // the classifier's budget defers it
 	polled, appendTo := quietHarness(t, p, u)
 	appendTo("")
+	if dbbackend.Postgres() {
+		requireNeverQuiet(t, p, polled)
+		return
+	}
 	for range 3 {
 		p.tick()
 	}
 	if n := polled(p.tick); n != 1 {
 		t.Fatalf("%d polled, want the primary with deferred mail polled and the empty extra passed over", n)
+	}
+}
+
+// requireNeverQuiet checks that a Postgres mailbox, which has no mailbox.db to
+// stamp, is polled on every pass (backend/AGENTS.md, poller step 1a).
+func requireNeverQuiet(t *testing.T, p *Poller, polled func(func()) int) {
+	t.Helper()
+	for i := range 4 {
+		if n := polled(p.tick); n != 2 {
+			t.Fatalf("Postgres pass %d: %d polled, want every mailbox", i, n)
+		}
 	}
 }
 
