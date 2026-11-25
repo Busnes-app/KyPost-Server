@@ -20,7 +20,9 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/replica"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"github.com/Busnes-app/kypost-server/backend/internal/worker"
 )
 
@@ -32,13 +34,19 @@ func startReplica(ctx context.Context, d runDeps, role string) (id string, relea
 	if !dbbackend.Postgres() {
 		return "", func() {}, nil
 	}
+	table := users.TableMode(d.configDir)
+	if table {
+		if err := assertVolumeFree(d.configDir, d.stateDir, tenancy.Targets); err != nil {
+			return "", nil, err
+		}
+	}
 	boot, err := replica.ReadBootID()
 	if err != nil {
 		return "", nil, err
 	}
 	id, release, err = replica.Start(ctx, replica.Process{
 		Store: d.store, Role: role, BootID: boot, Getenv: os.Getenv,
-		Roots: []string{d.configDir, config.SecretDir(), d.stateDir},
+		Roots: []string{d.configDir, config.SecretDir(), d.stateDir}, Table: table,
 	})
 	if err != nil {
 		return "", nil, err
@@ -46,7 +54,7 @@ func startReplica(ctx context.Context, d runDeps, role string) (id string, relea
 	totp := config.SecretFile("TOTP_SECRET_KEY_FILE", "totp-secret.key")
 	if _, err = cryptutil.LoadOrCreateKey(totp); err == nil {
 		var keys map[string]string
-		if users.TableMode(d.configDir) {
+		if table {
 			keys = provisionedKeys(config.SecretDir())
 		}
 		err = replica.CheckConfig(ctx, d.store, totp, keys)
@@ -68,6 +76,17 @@ func startReplica(ctx context.Context, d runDeps, role string) (id string, relea
 		return "", nil, err
 	}
 	return id, release, nil
+}
+
+// assertVolumeFree is MH7's start check in table mode: the config and state roots resolve to
+// the documents table, and no store is still written to this host's disk (tenancy.Targets).
+func assertVolumeFree(configDir, stateDir string, targets map[string]tenancy.Target) error {
+	for _, root := range []string{configDir, stateDir} {
+		if !vol.OpenDocument(filepath.Join(root, "config.yaml")).IsTable() {
+			return fmt.Errorf("%w: %s is not on the documents table", tenancy.ErrHostFiles, root)
+		}
+	}
+	return tenancy.AssertVolumeFree(targets)
 }
 
 // electionOptions are the role elections' timings: on PostgreSQL a new owner waits longer

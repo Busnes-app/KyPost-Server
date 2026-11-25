@@ -44,6 +44,9 @@ type Process struct {
 	Roots  []string     // the shared data roots: CONFIG_DIR, SECRET_DIR, STATE_DIR
 	BootID string       // this kernel's boot ID (BootIDPath)
 	Getenv func(string) string
+	// Table is table mode (MH7): nothing shared lives on a volume, so the boot ID and volume
+	// ID checks are skipped. The caller runs the volume-free assertion first.
+	Table bool
 }
 
 // ReadBootID reads BootIDPath.
@@ -68,6 +71,10 @@ func Start(ctx context.Context, p Process) (id string, release func(), err error
 	var volume string
 	err = p.Store.Serialized(ctx, "replica-topology", func(context.Context) error {
 		var err error
+		if p.Table {
+			volume, err = recordedVolume(p.Store)
+			return err
+		}
 		if volume, err = checkVolumes(p.Store, p.Roots); err != nil {
 			return err
 		}
@@ -91,6 +98,20 @@ func Start(ctx context.Context, p Process) (id string, release func(), err error
 	id = p.Role + "-" + rand.Text()[:16]
 	release, err = p.Store.RegisterInstance(ctx, state.Instance{ID: id, BootID: p.BootID, VolumeID: volume, Role: p.Role, Started: time.Now().Unix()})
 	return id, release, err
+}
+
+// recordedVolume is the deployment's volume ID from the database alone, minted on first use:
+// table mode writes no ID file, and the instance record keeps one schema.
+func recordedVolume(st *state.Store) (string, error) {
+	id, err := st.Setting(volumeSetting)
+	if errors.Is(err, state.ErrNotFound) {
+		id = rand.Text()
+		err = st.SetSetting(volumeSetting, id)
+	}
+	if err != nil {
+		return "", fmt.Errorf("replica check: %w", err)
+	}
+	return id, nil
 }
 
 // checkVolumes returns the deployment's volume ID after checking that every root holds it.
