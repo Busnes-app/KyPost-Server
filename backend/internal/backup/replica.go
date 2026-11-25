@@ -21,6 +21,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoverykey"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // Backups on PostgreSQL replicas. Every replica mounts the same STATE_DIR, so the
@@ -122,6 +123,39 @@ type anchorRecord struct {
 	PublicKey   string `json:"publicKey"` // base64 of the raw public key
 	Threshold   int    `json:"threshold"`
 	TotalShares int    `json:"totalShares"`
+	// Generation (table mode) orders pins: a host never moves its recovery.pub to an older
+	// one, so a replayed retired record cannot roll it back. Sealed, so never forged.
+	Generation int64 `json:"generation,omitempty"`
+}
+
+// pinMarkFile, in STATE_DIR on each host, holds the newest Generation this host accepted.
+// pinGenerationSetting is the last generation issued, read and raised under the pin lock.
+const (
+	pinMarkFile          = "recovery-pin.generation"
+	pinGenerationSetting = "kyrecovery_pin_generation"
+)
+
+func (s *Service) pinMark() (int64, error) {
+	if !s.table {
+		return 0, nil
+	}
+	b, err := os.ReadFile(filepath.Join(s.dirs.State, pinMarkFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(string(b), 10, 64)
+}
+
+// raisePinMark records at as this host's newest accepted pin (table mode only).
+func (s *Service) raisePinMark(at int64) error {
+	mark, err := s.pinMark()
+	if err != nil || at <= mark {
+		return err
+	}
+	return fsutil.AtomicWriteFile(filepath.Join(s.dirs.State, pinMarkFile), []byte(strconv.FormatInt(at, 10)), 0o600)
 }
 
 func (s *Service) anchorAEAD() (cipher.AEAD, error) {
@@ -142,45 +176,63 @@ func (s *Service) anchorAEAD() (cipher.AEAD, error) {
 
 // sealAnchor seals k with its key ID as associated data: a database writer without the key
 // file can neither read the record nor move it under another key ID.
-func (s *Service) sealAnchor(k recoveryclient.RecoveryKey) (string, error) {
+func (s *Service) sealAnchor(k recoveryclient.RecoveryKey) (string, int64, error) {
 	aead, err := s.anchorAEAD()
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	plain, _ := json.Marshal(anchorRecord{base64.StdEncoding.EncodeToString(k.Public.Bytes()), k.Threshold, k.TotalShares})
+	rec := anchorRecord{PublicKey: base64.StdEncoding.EncodeToString(k.Public.Bytes()), Threshold: k.Threshold, TotalShares: k.TotalShares}
+	if s.table {
+		// One above both the last issued generation and this host's own mark, so neither a
+		// lagging clock nor a reset counter issues a generation this host already passed.
+		last, err := s.settings.Get(pinGenerationSetting)
+		if err != nil && !errors.Is(err, recoveryclient.ErrNotFound) {
+			return "", 0, err
+		}
+		issued, _ := strconv.ParseInt(last, 10, 64)
+		mark, err := s.pinMark()
+		if err != nil {
+			return "", 0, err
+		}
+		rec.Generation = max(issued, mark) + 1
+		if err := s.settings.Set(pinGenerationSetting, strconv.FormatInt(rec.Generation, 10)); err != nil {
+			return "", 0, err
+		}
+	}
+	plain, _ := json.Marshal(rec)
 	nonce := make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return base64.StdEncoding.EncodeToString(aead.Seal(nonce, nonce, plain, []byte(k.Public.ID()))), nil
+	return base64.StdEncoding.EncodeToString(aead.Seal(nonce, nonce, plain, []byte(k.Public.ID()))), rec.Generation, nil
 }
 
-func (s *Service) openAnchor(sealed, keyID string) (recoveryclient.RecoveryKey, error) {
+func (s *Service) openAnchor(sealed, keyID string) (recoveryclient.RecoveryKey, int64, error) {
 	aead, err := s.anchorAEAD()
 	if err != nil {
-		return recoveryclient.RecoveryKey{}, err
+		return recoveryclient.RecoveryKey{}, 0, err
 	}
 	raw, err := base64.StdEncoding.DecodeString(sealed)
 	if err != nil || len(raw) < aead.NonceSize() {
-		return recoveryclient.RecoveryKey{}, fmt.Errorf("%w: the record is malformed", ErrAnchor)
+		return recoveryclient.RecoveryKey{}, 0, fmt.Errorf("%w: the record is malformed", ErrAnchor)
 	}
 	plain, err := aead.Open(nil, raw[:aead.NonceSize()], raw[aead.NonceSize():], []byte(keyID))
 	if err != nil {
-		return recoveryclient.RecoveryKey{}, fmt.Errorf("%w: the record does not open under the pinned key ID", ErrAnchor)
+		return recoveryclient.RecoveryKey{}, 0, fmt.Errorf("%w: the record does not open under the pinned key ID", ErrAnchor)
 	}
 	var rec anchorRecord
 	if err := json.Unmarshal(plain, &rec); err != nil {
-		return recoveryclient.RecoveryKey{}, fmt.Errorf("%w: %v", ErrAnchor, err)
+		return recoveryclient.RecoveryKey{}, 0, fmt.Errorf("%w: %v", ErrAnchor, err)
 	}
 	pub, err := base64.StdEncoding.DecodeString(rec.PublicKey)
 	if err != nil {
-		return recoveryclient.RecoveryKey{}, fmt.Errorf("%w: %v", ErrAnchor, err)
+		return recoveryclient.RecoveryKey{}, 0, fmt.Errorf("%w: %v", ErrAnchor, err)
 	}
 	pk, err := recoverykey.ParsePublicKey(pub)
 	if err != nil || pk.ID() != keyID {
-		return recoveryclient.RecoveryKey{}, fmt.Errorf("%w: the record holds another key", ErrAnchor)
+		return recoveryclient.RecoveryKey{}, 0, fmt.Errorf("%w: the record holds another key", ErrAnchor)
 	}
-	return recoveryclient.RecoveryKey{Public: pk, Threshold: rec.Threshold, TotalShares: rec.TotalShares}, nil
+	return recoveryclient.RecoveryKey{Public: pk, Threshold: rec.Threshold, TotalShares: rec.TotalShares}, rec.Generation, nil
 }
 
 // recordAnchor stores the sealed record of the pinned key (PostgreSQL only).
@@ -188,9 +240,12 @@ func (s *Service) recordAnchor(k recoveryclient.RecoveryKey) error {
 	if !dbbackend.Postgres() {
 		return nil
 	}
-	sealed, err := s.sealAnchor(k)
+	sealed, at, err := s.sealAnchor(k)
 	if err == nil {
 		err = s.settings.Set(anchorSetting, sealed)
+	}
+	if err == nil {
+		err = s.raisePinMark(at)
 	}
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPinNotRecorded, err)
@@ -217,6 +272,10 @@ func (s *Service) SyncRecoveryKey() error {
 		return nil
 	case !pinned:
 		return fmt.Errorf("%w: a record exists without a pin", ErrAnchor)
+	case !recorded && s.table:
+		// Only an explicit pin seals a record (and its Generation) in table mode: a host still
+		// holding a retired recovery.pub must not mint a newest record for it.
+		return fmt.Errorf("%w: the pin has no sealed record; pin the key again", ErrAnchor)
 	case !recorded:
 		// A pin migrated or restored from SQLite, or one whose record write failed: record it
 		// from recovery.pub if that file is the pinned key. A database writer cannot place
@@ -227,7 +286,7 @@ func (s *Service) SyncRecoveryKey() error {
 		}
 		return s.recordAnchor(k)
 	}
-	k, err := s.openAnchor(sealed, keyID)
+	k, at, err := s.openAnchor(sealed, keyID)
 	if err != nil {
 		return err
 	}
@@ -237,14 +296,35 @@ func (s *Service) SyncRecoveryKey() error {
 	if n, e2 := strconv.Atoi(f.vals["kyrecovery_total_shares"]); e2 != nil || n != k.TotalShares {
 		return fmt.Errorf("%w: the pinned topology differs from the record", ErrAnchor)
 	}
-	if _, err := os.Stat(recoveryclient.RecoveryKeyPath(s.dirs.State)); err == nil {
-		if _, err := recoveryclient.LoadRecoveryKey(s.dirs.State, f); err != nil {
-			return fmt.Errorf("%w: %s names another key", ErrAnchor, recoveryclient.RecoveryKeyPath(s.dirs.State))
+	mark, err := s.pinMark()
+	if err != nil {
+		return fmt.Errorf("%w: %s is unreadable: %v", ErrAnchor, pinMarkFile, err)
+	}
+	path := recoveryclient.RecoveryKeyPath(s.dirs.State)
+	if _, err := os.Stat(path); err == nil {
+		if _, err := recoveryclient.LoadRecoveryKey(s.dirs.State, f); err == nil {
+			return s.raisePinMark(at)
+		} else if !s.table {
+			return fmt.Errorf("%w: %s names another key", ErrAnchor, path)
 		}
-		return nil
+		// Table mode (MH5): every host keeps its own recovery.pub, so a re-pin on another
+		// host leaves this one stale. Only a strictly newer pin than this host accepted may
+		// replace it: a database writer can replay a retired record, never forge Generation.
+		// No mark (a capsule from before pin generations): nothing proves the record newer.
+		if mark == 0 || at <= mark {
+			return fmt.Errorf("%w: %s names another key and the record is not a newer pin than this host accepted; pin the key again", ErrAnchor, path)
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	} else if s.table && at < mark {
+		return fmt.Errorf("%w: the record is an older pin than this host accepted", ErrAnchor)
 	}
 	// Missing on this replica: write it from the record, write-once, as a pin would.
-	return recoveryclient.StoreRecoveryKey(s.dirs.State, f, k)
+	if err := recoveryclient.StoreRecoveryKey(s.dirs.State, f, k); err != nil {
+		return err
+	}
+	return s.raisePinMark(at)
 }
 
 // checkAnchor reports, for status, a pin whose sealed record is missing or does not open.
@@ -257,7 +337,7 @@ func (s *Service) checkAnchor(f *frozen) error {
 	case !recorded:
 		return ErrPinNotRecorded
 	}
-	_, err := s.openAnchor(sealed, keyID)
+	_, _, err := s.openAnchor(sealed, keyID)
 	return err
 }
 

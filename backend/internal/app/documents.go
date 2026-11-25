@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -14,46 +17,58 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"github.com/Busnes-app/kypost-server/backend/internal/volumes"
 )
 
-// Start selects table mode before any document store opens. A normal single install
-// reads only its existing mode record and creates no volume store or master key.
-func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode string) (func(), error) {
-	noop := func() {}
+// documentTableMode reports table mode: multi, or the explicit volume_stores record. A
+// normal single install reads only that record.
+func documentTableMode(ctx context.Context, stateDir, mode string) (bool, error) {
 	if !dbbackend.Postgres() {
 		if mode == config.TenancyMulti {
-			return nil, errors.New("table-mode documents require PostgreSQL")
+			return false, errors.New("table-mode documents require PostgreSQL")
 		}
-		return noop, nil
+		return false, nil
 	}
 	rootPath := filepath.Join(stateDir, "state.db")
 	exists, err := dbbackend.Exists(rootPath)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	marker := ""
 	if exists {
 		st, err := dbbackend.Open(rootPath, dbbackend.Options{Kind: "state", ReadOnly: true})
 		if err != nil {
-			return nil, err
+			return false, err
 		}
 		err = st.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='volume_stores'`).Scan(&marker)
 		closeErr := st.Close()
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
+			return false, err
 		}
 		if closeErr != nil {
-			return nil, closeErr
+			return false, closeErr
 		}
 	}
-	if mode != config.TenancyMulti && marker == "" {
-		return noop, nil
-	}
 	if marker != "" && marker != "postgres" {
-		return nil, errors.New("invalid volume_stores setting")
+		return false, errors.New("invalid volume_stores setting")
+	}
+	return mode == config.TenancyMulti || marker != "", nil
+}
+
+// Start selects table mode before any document store opens. A normal single install
+// reads only its existing mode record and creates no volume store or master key. Table
+// mode requires every provisioned key (MH5) and creates none until release.
+func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode string) (func(), error) {
+	noop := func() {}
+	table, err := documentTableMode(ctx, stateDir, mode)
+	if err != nil {
+		return nil, err
+	}
+	if !table {
+		return noop, nil
 	}
 	// Historical MH2 stores and capsules retain file account authority. MH8 owns
 	// migration; never replace retained accounts with an empty/new table at startup.
@@ -62,7 +77,20 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	master, err := cryptutil.LoadKey(filepath.Join(secretDir, "documents.key"))
+	keys := provisionedKeys(secretDir)
+	for _, name := range slices.Sorted(maps.Keys(keys)) {
+		if info, err := os.Stat(keys[name]); err != nil || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("table mode requires a provisioned %s in SECRET_DIR on every host", name)
+		}
+	}
+	unprovision := cryptutil.ProvisionKeys(append(slices.Collect(maps.Values(keys)), secretDir)...)
+	started := false
+	defer func() {
+		if !started {
+			unprovision()
+		}
+	}()
+	master, err := cryptutil.LoadKey(keys["documents.key"])
 	if err != nil {
 		return nil, errors.New("table-mode documents require a provisioned documents.key")
 	}
@@ -119,8 +147,8 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 		db.Close()
 		return nil, err
 	}
-	mounted = true
-	return func() { releaseState(); releaseConfig(); releaseAccounts(); _ = db.Close() }, nil
+	mounted, started = true, true
+	return func() { releaseState(); releaseConfig(); releaseAccounts(); _ = db.Close(); unprovision() }, nil
 }
 
 // TableOptions derives ownership from retained identities, never request fields.
@@ -169,4 +197,30 @@ func documentTableOptions(configDir, mode string, master []byte, accounts *users
 			return "", vol.ErrPath
 		},
 	}
+}
+
+// provisionedKeys are the key files, by name, that table mode requires on every host and
+// fingerprints (replica.Fingerprint): the runtime would otherwise create each lazily, one
+// per host. A *_FILE variable moves a key as it does in single mode. The bulk-backup restic
+// key stays optional: LoadOrCreateKey refuses to create it when bulk backups first run.
+func provisionedKeys(secretDir string) map[string]string {
+	file := func(env, name string) string {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			return v
+		}
+		return filepath.Join(secretDir, name)
+	}
+	keys := map[string]string{
+		"totp-secret.key":     file("TOTP_SECRET_KEY_FILE", "totp-secret.key"),
+		"pow.key":             file("POW_SECRET_FILE", "pow.key"),
+		"imap-config.key":     file("IMAP_CONFIG_KEY_FILE", "imap-config.key"),
+		"pgp-private-key.key": file("PGP_PRIVATE_KEY_FILE", "pgp-private-key.key"),
+		"pickup-store.key":    file("PICKUP_STORE_KEY_FILE", "pickup-store.key"),
+		"pairing.key":         file("PAIRING_SECRET_FILE", "pairing.key"),
+		"relay-identity.key":  file("RELAY_IDENTITY_KEY_FILE", "relay-identity.key"),
+	}
+	for _, name := range []string{"documents.key", "scheduled-send.key", "imap-import.key", "native-relay.key", tenancy.TombstoneKeyFile, "notifications-vapid-private.pem"} {
+		keys[name] = filepath.Join(secretDir, name)
+	}
+	return keys
 }

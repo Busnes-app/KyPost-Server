@@ -15,7 +15,6 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoverykey"
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
-	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -164,6 +163,7 @@ func TestHistoricalDocumentCapsuleRetainsAccountsThroughStartupRefusal(t *testin
 	if err = os.Rename(filepath.Join(configDir, "users.json"), filepath.Join(configDir, "users.json.retained")); err != nil {
 		t.Fatal(err)
 	}
+	provisionTableKeys(t, secretDir)
 	release, err := startDocuments(ctx, configDir, stateDir, secretDir, config.TenancySingle)
 	if err != nil {
 		t.Fatal("retry after explicit conversion", err)
@@ -206,9 +206,7 @@ func TestTableModeRefusesIncompleteAccountLayouts(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			if _, err = cryptutil.LoadOrCreateKey(filepath.Join(secretDir, "documents.key")); err != nil {
-				t.Fatal(err)
-			}
+			provisionTableKeys(t, secretDir)
 			if layout == "corrupt-table" {
 				if _, err = db.Exec(`INSERT INTO accounts(id,username,record) VALUES('broken','broken',?)`, []byte(`{"id":"wrong"}`)); err != nil {
 					t.Fatal(err)

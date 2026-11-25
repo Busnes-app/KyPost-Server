@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 
@@ -866,6 +867,9 @@ func loadOrCreateNotificationPrivateKey(path string) (*ecdsa.PrivateKey, error) 
 	if b, err := os.ReadFile(path); err == nil {
 		return parseNotificationPrivateKeyPEM(b)
 	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err := cryptutil.RefuseCreate(path); err != nil {
 		return nil, err
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)

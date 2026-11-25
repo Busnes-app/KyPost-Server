@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
@@ -50,6 +52,9 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	if err := RefuseCreate(path); err != nil {
+		return nil, err
+	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
@@ -62,6 +67,60 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 		return key, nil
 	}
 	return LoadKey(path)
+}
+
+// ErrKeyNotProvisioned is a missing key that an operator must provision: table mode
+// (multi-host design, MH5) creates no key at runtime, since each host would make its own.
+var ErrKeyNotProvisioned = errors.New("key is not provisioned")
+
+// provisioned holds the paths (key files or directories of them) table-mode startup
+// marks as provisioned.
+var provisioned struct {
+	sync.RWMutex
+	paths []string
+}
+
+// ProvisionKeys marks paths, key files or the directories holding them, as provisioned
+// until release: no key under them is created.
+func ProvisionKeys(paths ...string) (release func()) {
+	abs := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if a, err := filepath.Abs(p); err == nil {
+			abs = append(abs, a)
+		}
+	}
+	provisioned.Lock()
+	provisioned.paths = append(provisioned.paths, abs...)
+	provisioned.Unlock()
+	return func() {
+		provisioned.Lock()
+		defer provisioned.Unlock()
+		for _, a := range abs {
+			for i, p := range provisioned.paths {
+				if p == a {
+					provisioned.paths = append(provisioned.paths[:i], provisioned.paths[i+1:]...)
+					break
+				}
+			}
+		}
+	}
+}
+
+// RefuseCreate is ErrKeyNotProvisioned, naming the file only, for a key at a provisioned
+// path. Every key creator calls it before creating.
+func RefuseCreate(path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	provisioned.RLock()
+	defer provisioned.RUnlock()
+	for _, p := range provisioned.paths {
+		if abs == p || strings.HasPrefix(abs, p+string(filepath.Separator)) {
+			return fmt.Errorf("%w: %s; provision it in SECRET_DIR on every host", ErrKeyNotProvisioned, filepath.Base(path))
+		}
+	}
+	return nil
 }
 
 // LoadKey reads the 32-byte base64-encoded master key at path. Unlike

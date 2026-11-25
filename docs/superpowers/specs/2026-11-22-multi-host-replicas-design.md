@@ -1616,3 +1616,58 @@ alternating two table-mode replicas, all succeed).
 **Not built in MH6 yet:** the proof-of-work escalation (`powEscalation`, its own per-IP map,
 not a `keyedLimiter`), the per-org import and export lease, and the two-replica variant of
 `TestOrgQuotas`. Per-org quotas already read PostgreSQL only.
+## MH5 provisioned keys as built (2026-11-24)
+
+**No key is created at runtime in table mode.** `app.provisionedKeys` lists, by name, every
+key a table-mode process uses: `documents.key`, `totp-secret.key`, `pow.key`,
+`imap-config.key`, `pgp-private-key.key`, `pickup-store.key`, `pairing.key`,
+`relay-identity.key`, `scheduled-send.key`, `imap-import.key`, `native-relay.key`,
+`address-tombstone.key` and `notifications-vapid-private.pem`; a `*_FILE` variable moves a key
+as in single mode. `startDocuments` refuses to start, naming the first missing key and never
+its bytes, before any store opens. It then marks those files and SECRET_DIR provisioned
+(`cryptutil.ProvisionKeys`) until release. `cryptutil.LoadOrCreateKey` (every lazy key) and
+`config`'s notification-key creator call `cryptutil.RefuseCreate` before creating, so a key
+missing later fails with `ErrKeyNotProvisioned` instead of each host making its own. The
+bulk-backup restic key and the hosted receiving server key (`receiving-tls.key`) stay
+optional: each is refused when its feature first needs it, not at start. The remaining
+`fsutil.CreateExclusive` callers write no runtime key (`users.json`, the installer's admin
+file, the operator's `receiving gateway keygen`, and `replica-volume.id`, which MH7 removes in
+table mode).
+
+**The key-set digest is the replica fingerprint.** In table mode `replica.CheckConfig` and
+`Accept` take the provisioned keys: each file adds an entry under its name, HMAC-SHA256
+(subkey `kypost:replica-config`) of the file's SHA-256, beside the shared settings in meta
+`replica_config_fingerprint`. A host holding a different key is refused naming that key; a
+rotation is offline, `accept-replica-config` with every replica stopped, which now also
+selects table mode. Single mode passes no keys, so its record is unchanged.
+
+**Changed from the design: a stale `recovery.pub` is replaced.** Every host keeps its own
+`recovery.pub` in STATE_DIR, so a re-pin on host A leaves host B's file naming the old key,
+which `SyncRecoveryKey` refused. In table mode a record that opens under the provisioned
+`totp-secret.key` now replaces the file before B seals, but only for a strictly newer pin: the
+sealed record carries a pin `generation` (table mode), and each host keeps the newest one it
+accepted in STATE_DIR `recovery-pin.generation`. A pin issues one above both the last issued
+generation (meta `kyrecovery_pin_generation`, read and raised under the `recovery-pin` lock)
+and the pinning host's own mark, so no host clock decides the order. A database writer can
+replay a retired record with its key ID and topology, or reset the counter, but cannot forge a
+sealed generation, so no host moves back to a key the operator rotated away from (a reset
+counter can only make a new pin refused, never accept an old one). A table-mode capsule carries
+`recovery-pin.generation` with `recovery.pub`, so a restored host keeps its mark; a host that
+holds a `recovery.pub` but no mark (a capsule from before generations) never replaces it
+automatically and needs an explicit re-pin. An unopenable record still refuses and leaves the file. Only an
+explicit pin seals a record in table mode: a pin with no sealed record refuses until the
+operator pins again, because recording it from a host's `recovery.pub` would let a host still
+holding a retired key mint a newest record for it. Single mode keeps refusing a file that names
+another key, still records a missing record from `recovery.pub`, and writes no generation.
+
+Tests: `TestTableModeRequiresProvisionedKeysAndCreatesNone` (app, PostgreSQL: each key
+removed in turn refuses the start by name with no file created and no mount left; a lazy key
+is refused while running and created again after release), `TestProvisionedKeysAreFingerprinted`
+(replica: single mode adds no key entry, a different key is refused by name, a rotation is
+accepted, a missing key is named), `TestTableRePinReplacesAnotherHostsStaleKey` (backup, two
+hosts with separate filesystems: B's sync, which every run and export performs first, replaces
+its stale file with the re-pinned key; a tampered record refuses and leaves B's file; a deposit
+from B is not exercised, since the fixture's second host has no `volumes.db` to seal), `TestProvisionedPathsCreateNoKey` (cryptutil) and
+`TestLoadOrCreateNotificationPrivateKey_RefusesAProvisionedPath` (config).
+
+MH6's shared meters, MH7's host checks and every startup gate remain.

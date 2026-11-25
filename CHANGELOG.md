@@ -19,6 +19,7 @@ non-prerelease version.
 ## Unreleased
 
 - Count the MFA push, send-as and KyPulse confirmation, notification test, relay check, deliverability, proof-of-work challenge and login-parameter meters once across replicas in table mode; ordinary installs keep them per process.
+- Require every key to be provisioned in table mode: startup names a missing key, nothing creates one at runtime, each host's key files are compared against the deployment's record by digest, and a re-pin on one host replaces another host's stale `recovery.pub` from the sealed record. Ordinary installs still create keys on first use.
 
 - Preserve a scheduled message's quota/held reason when either database-clock read fails; keep its sealed contents and database retry delay intact.
 

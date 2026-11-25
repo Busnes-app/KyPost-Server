@@ -210,7 +210,9 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 				if tableAccounts && r.prefix == "config" && d.Name() == "users.json" {
 					return nil
 				}
-				if tableDocuments && r.prefix != "private" && !snapshotDatabase(d.Name()) && d.Name() != "users.json" && d.Name() != "recovery.pub" {
+				// recovery.pub and its pin generation travel together, so a restored host keeps
+				// refusing a retired pin.
+				if tableDocuments && r.prefix != "private" && !snapshotDatabase(d.Name()) && d.Name() != "users.json" && d.Name() != "recovery.pub" && d.Name() != pinMarkFile {
 					return nil
 				}
 				if !d.Type().IsRegular() {
