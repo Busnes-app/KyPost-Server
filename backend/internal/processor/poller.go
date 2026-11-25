@@ -1830,7 +1830,7 @@ func (p *Poller) applyFilterRules(ctx context.Context, uc userCtx, msg imapadapt
 	// it, so only the decision is recorded here. A failed write is retryable:
 	// the actions happened and only the bookkeeping lost a lock race.
 	if !outcome.Stopped {
-		if err := uc.store.AddDecision(decision); err != nil {
+		if err := uc.store.AddDecisionUnder(uc.claim, decision); err != nil {
 			return false, &retryableErr{err: err}
 		}
 		return false, nil

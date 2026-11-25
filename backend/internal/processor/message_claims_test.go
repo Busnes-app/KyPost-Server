@@ -141,3 +141,66 @@ func TestClaimRereadsProcessedState(t *testing.T) {
 		t.Fatalf("labelled %v and %v with %d decisions, want once", mailA.labelled, mailB.labelled, n)
 	}
 }
+
+// The same takeover through a filter rule that does not stop: A freezes inside the rule's
+// keyword action, B takes the message over and handles it, and A, resumed, writes neither the
+// rule's decision nor its own record.
+func TestExpiredClaimHolderRecordsNoRuleDecision(t *testing.T) {
+	prev := messageClaimTTL
+	messageClaimTTL = 200 * time.Millisecond
+	t.Cleanup(func() { messageClaimTTL = prev })
+	a, b, u, mailA, mailB, entered := twoHostPollers(t)
+	seedRule(t, a, u, rules.Rule{
+		Name:    "tag and carry on",
+		Enabled: true,
+		Match:   rules.MatchGroup{Op: "allof", Conditions: []rules.Condition{{Field: "subject", Comparator: "contains", Value: "once"}}},
+		Actions: []rules.Action{{Type: "keyword", Value: "VIP"}},
+	})
+	done := make(chan error, 1)
+	go func() { done <- a.tickUser(u, time.Time{}) }()
+	<-entered
+	time.Sleep(300 * time.Millisecond)
+	if err := b.tickUser(u, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	want := decisionCount(t, b, u) // the rule's decision and the record, B's
+	if want != 2 || len(mailB.labelled) == 0 {
+		t.Fatalf("the taker wrote %d decisions, labelled %v; want the rule's and the record", want, mailB.labelled)
+	}
+	close(mailA.leave)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := decisionCount(t, b, u); n != want {
+		t.Fatalf("%d decisions, want %d: the resumed host wrote for a message another host took over", n, want)
+	}
+}
+
+// And through the phishing verdict, written before classification: A freezes applying the
+// phishing keyword, B takes the message over, and A, resumed, writes no verdict row.
+func TestExpiredClaimHolderRecordsNoPhishingVerdict(t *testing.T) {
+	prev := messageClaimTTL
+	messageClaimTTL = 200 * time.Millisecond
+	t.Cleanup(func() { messageClaimTTL = prev })
+	a, b, u, mailA, mailB, entered := twoHostPollers(t)
+	phish := []imapadapter.Message{{ID: "7", Sender: "a@example.com", Subject: "pair", Body: "Confirm: kypost://native-pair?sub=x"}}
+	mailA.msgs, mailB.msgs = phish, phish
+	done := make(chan error, 1)
+	go func() { done <- a.tickUser(u, time.Time{}) }()
+	<-entered
+	time.Sleep(300 * time.Millisecond)
+	if err := b.tickUser(u, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	want := decisionCount(t, b, u)
+	if want < 2 {
+		t.Fatalf("the taker wrote %d decisions; want its verdict and its record", want)
+	}
+	close(mailA.leave)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := decisionCount(t, b, u); n != want {
+		t.Fatalf("%d decisions, want %d: the resumed host wrote a verdict for a message another host took over", n, want)
+	}
+}

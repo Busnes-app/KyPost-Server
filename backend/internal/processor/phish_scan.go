@@ -303,7 +303,8 @@ func (p *Poller) flagAppImpersonation(ctx context.Context, uc userCtx, msg imapa
 	if uc.encryptIncoming {
 		subject = pgpmail.OuterPlaceholderSubject
 	}
-	if err := uc.store.AddDecision(state.Decision{
+	// Under the message's claim: a host whose claim was taken over writes no verdict row.
+	if err := uc.store.AddDecisionUnder(uc.claim, state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,

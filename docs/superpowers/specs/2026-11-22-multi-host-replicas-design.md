@@ -1780,7 +1780,8 @@ message. After taking it, `processBatch` reads `Seen` again, since another host 
 finished the message in between. A message another host has claimed is held below the
 checkpoint without counting as a deferral, and the next tick finds it processed.
 
-Every decision write (`RecordProcessedDecisionUnder`, `AddDecisionUnder`) renews the claim in
+Every decision write (`RecordProcessedDecisionUnder`, and `AddDecisionUnder` for the rows a
+non-stopping filter rule, the phishing verdict and a deferred failure add) renews the claim in
 its own transaction and writes nothing if the claim is gone. A takeover is itself a write to
 that store, so it cannot fall between the check and the write. Every push follows a
 successful record. A host frozen past the claim's TTL (`perMessageTimeout` plus a minute),
@@ -1800,7 +1801,10 @@ every write in them is CAS-checked or an idempotent delete.
 Tests: `TestTwoHostsHandleAMessageOnce` (processor: host A pauses inside its label write,
 host B ticks the same mailbox and labels nothing; after A finishes, B's next tick finds the
 message processed, with one decision), `TestExpiredClaimHolderRecordsNothing` (A pauses past
-the claim's TTL, B takes the message over and handles it, A resumes and records nothing),
+the claim's TTL, B takes the message over and handles it, A resumes and records nothing;
+`TestExpiredClaimHolderRecordsNoRuleDecision` and `TestExpiredClaimHolderRecordsNoPhishingVerdict`
+do the same with A frozen inside a non-stopping filter rule's action and inside the phishing
+keyword write, the two decision rows written before the record),
 `TestClaimRereadsProcessedState` (B pauses between its first `Seen` and its claim while A
 handles the message; B leaves it), state's `TestLeaseHasOneHolder`,
 `TestLeasedWriteAfterTakeoverWritesNothing` (a record and a decision under a lease another
