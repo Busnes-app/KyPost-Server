@@ -17,8 +17,23 @@ sock=$(mktemp -d)
 case $mode in
 dump)
   old=${OLD:?set OLD to the PostgreSQL 17 data directory}
+  checkpoint() { LC_ALL=C as_pg pg_controldata "$old" | awk -F': *' '/^Latest checkpoint location/ { print $2 }'; }
+  # PostgreSQL's own lock check cannot see a server in another container (its PID 1 looks
+  # like our grandparent), so a 17 still running on OLD would get a second postmaster.
+  refuse_running() {
+    echo "postgres-17-to-18: $old/postmaster.pid exists: PostgreSQL 17 is running on it, or did not stop cleanly; stop it (start it once with the previous setup and stop it, if it crashed), then start again" >&2
+    exit 1
+  }
   if [ -s "$new/18/docker/PG_VERSION" ] || [ -s "$dump_dir/dump.sql" ]; then
-    echo "postgres-17-to-18: already done"; exit 0
+    if [ ! -s "$old/PG_VERSION" ]; then echo "postgres-17-to-18: already done"; exit 0; fi
+    [ ! -e "$old/postmaster.pid" ] || refuse_running
+    # Kit v2 kept no checkpoint: take the current one as the moved state.
+    [ -s "$dump_dir/source-checkpoint" ] || checkpoint > "$dump_dir/source-checkpoint"
+    # Every start of 17 writes a new checkpoint. A changed one means 17 ran after the move (a
+    # rollback), so 18 lacks what 17 wrote since: never start 18 on it silently.
+    if [ "$(checkpoint)" = "$(cat "$dump_dir/source-checkpoint")" ]; then echo "postgres-17-to-18: already done"; exit 0; fi
+    echo "postgres-17-to-18: PostgreSQL 17 has run on $old since it was moved to 18, so 18 lacks what 17 wrote since then. To move 17 again: stop everything, rename $new/18 and $dump_dir with a suffix such as .replaced (nothing is deleted), then start again. To keep 18 as it is: delete $dump_dir/source-checkpoint, then start again." >&2
+    exit 1
   fi
   if [ ! -s "$old/PG_VERSION" ]; then
     echo "postgres-17-to-18: no PostgreSQL 17 data in $old, nothing to move"; exit 0
@@ -26,12 +41,7 @@ dump)
   if [ "$(cat "$old/PG_VERSION")" != 17 ]; then
     echo "postgres-17-to-18: $old holds PostgreSQL $(cat "$old/PG_VERSION"), expected 17" >&2; exit 1
   fi
-  # PostgreSQL's own lock check cannot see a server in another container (its PID 1 looks
-  # like our grandparent), so a 17 still running on OLD would get a second postmaster.
-  if [ -e "$old/postmaster.pid" ]; then
-    echo "postgres-17-to-18: $old/postmaster.pid exists: PostgreSQL 17 is running on it, or did not stop cleanly; stop it (start it once with the previous setup and stop it, if it crashed), then start again" >&2
-    exit 1
-  fi
+  [ ! -e "$old/postmaster.pid" ] || refuse_running
   # The dump and the restored cluster each take at most about the size of the 17 data.
   need=$(( $(du -sk "$old" | cut -f1) * 2 ))
   free=$(df -Pk "$new" | awk 'NR == 2 { print $4 }')
@@ -52,6 +62,10 @@ dump)
   printf '%s\n' "$su" > "$dump_dir/superuser"
   as_pg pg_dumpall -h "$sock" -U "$su" -f "$dump_dir/dump.sql.part"
   as_pg sync "$dump_dir/dump.sql.part"
+  trap - EXIT
+  as_pg pg_ctl -D "$old" -m fast -w stop
+  # 17 as the dump left it; a later start of 17 (a rollback) changes this.
+  checkpoint > "$dump_dir/source-checkpoint"
   mv "$dump_dir/dump.sql.part" "$dump_dir/dump.sql"
   sync "$dump_dir"
   echo "postgres-17-to-18: dumped $old into $dump_dir/dump.sql; the 17 data is kept"
