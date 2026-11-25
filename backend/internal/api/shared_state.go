@@ -65,6 +65,7 @@ func (s *Server) UseSharedState(st *state.Store) {
 	} {
 		l.shared, l.name = st, "meter:"+name
 	}
+	s.powDifficulty.shared = st
 }
 
 // sharedKey is how a lockout or budget key is stored: hashed, so no username, address or

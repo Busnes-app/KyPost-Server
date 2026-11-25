@@ -1,8 +1,12 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 const (
@@ -85,7 +89,26 @@ type powEscalation struct {
 	mu             sync.Mutex
 	entries        map[string]*powEscalationEntry
 	sweepThreshold int
+	// shared (MH6, table mode) keeps the failures in PostgreSQL instead, one window per
+	// address and account on database time, so every replica prices an address alike.
+	shared *state.Store
 }
+
+// powSharedPrefix is where an address's windows live: its accounts' keys share it, so the
+// difficulty is one range sum.
+func powSharedPrefix(ip string) string {
+	sum := sha256.Sum256([]byte(ip))
+	return "meter:pow-escalation:" + hex.EncodeToString(sum[:]) + ":"
+}
+
+func powSharedKey(ip, account string) string {
+	sum := sha256.Sum256([]byte(account))
+	return powSharedPrefix(ip) + hex.EncodeToString(sum[:])
+}
+
+// powSharedHits caps a shared window's count: enough failures to reach the ceiling from any
+// base, so a counter never grows past what changes a price.
+const powSharedHits = 32
 
 func newPowEscalation() *powEscalation {
 	return &powEscalation{
@@ -99,6 +122,13 @@ func newPowEscalation() *powEscalation {
 // users.NormalizeUsername by the caller, so the three spellings of one
 // username share one budget (the lesson handleLogin's lockout key learned).
 func (p *powEscalation) recordFailure(ip, account string, now time.Time) {
+	if p.shared != nil {
+		// A failure that cannot be counted is lost; the login lockouts still bound guessing.
+		ctx, cancel := sharedContext()
+		defer cancel()
+		_, _, _, _ = p.shared.TakeAttempt(ctx, powSharedKey(ip, account), powSharedHits, powEscalationDecay)
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -141,6 +171,12 @@ func (p *powEscalation) recordFailure(ip, account string, now time.Time) {
 // in as themselves to reset the price, and repeat. Forgiveness is scoped to the
 // account actually proved.
 func (p *powEscalation) clearAccount(ip, account string) {
+	if p.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		_ = p.shared.ClearAttempts(ctx, powSharedKey(ip, account))
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e, exists := p.entries[ip]
@@ -156,15 +192,12 @@ func (p *powEscalation) clearAccount(ip, account string) {
 // maxNumberFor returns the search space to issue to ip: base multiplied by
 // powEscalationFactor once per recent failure, capped.
 func (p *powEscalation) maxNumberFor(ip string, base int, now time.Time) int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	e, exists := p.entries[ip]
-	if !exists || now.After(e.expiresAt) {
-		return base
+	failures, err := p.failures(ip, now)
+	if err != nil {
+		return powMaxNumberCeiling // unknown is priced as the worst, never as clean
 	}
 	maxNumber := base
-	for i := 0; i < e.total(); i++ {
+	for i := 0; i < failures; i++ {
 		// Check before multiplying: powMaxNumberCeiling is far below
 		// math.MaxInt, but growing by 4x per failure reaches overflow in
 		// well under a hundred iterations and an attacker chooses the count.
@@ -177,6 +210,22 @@ func (p *powEscalation) maxNumberFor(ip string, base int, now time.Time) int {
 		return powMaxNumberCeiling
 	}
 	return maxNumber
+}
+
+// failures is ip's recent failure count across its accounts.
+func (p *powEscalation) failures(ip string, now time.Time) (int, error) {
+	if p.shared != nil {
+		ctx, cancel := sharedContext()
+		defer cancel()
+		return p.shared.AttemptHitsUnder(ctx, powSharedPrefix(ip))
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, exists := p.entries[ip]
+	if !exists || now.After(e.expiresAt) {
+		return 0, nil
+	}
+	return e.total(), nil
 }
 
 // sweepExpired drops decayed entries. Fed by unauthenticated callers, so it

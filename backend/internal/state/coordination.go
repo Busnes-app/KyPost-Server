@@ -78,6 +78,18 @@ func (s *Store) AttemptHits(ctx context.Context, key string) (hits int, left tim
 	return int(h), time.Duration(l) * time.Millisecond, err
 }
 
+// AttemptHitsUnder sums the live windows whose key starts with prefix. It reads a key range,
+// so the primary key serves it; prefix must end in an ASCII byte below 0x7f.
+func (s *Store) AttemptHitsUnder(ctx context.Context, prefix string) (int, error) {
+	if prefix == "" || len(prefix) > 400 || prefix[len(prefix)-1] >= 0x7f {
+		return 0, errInvalidKey
+	}
+	end := prefix[:len(prefix)-1] + string(prefix[len(prefix)-1]+1)
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(hits), 0) FROM security_windows WHERE key >= ? AND key < ? AND expires_at > `+nowMillis(), prefix, end).Scan(&n)
+	return int(n), err
+}
+
 // SpendChallenge records a challenge until expiresMs (unix milliseconds) and reports whether
 // it was unspent. An expired record is replaced.
 func (s *Store) SpendChallenge(ctx context.Context, salt string, expiresMs int64) (bool, error) {

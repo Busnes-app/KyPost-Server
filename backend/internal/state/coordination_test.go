@@ -70,6 +70,27 @@ func TestSharedWindowAdmitsTheLimitAcrossReplicas(t *testing.T) {
 	}
 }
 
+// AttemptHitsUnder sums only the live windows under its prefix, on either replica.
+func TestAttemptHitsUnderSumsOnePrefix(t *testing.T) {
+	a, b := twoReplicas(t)
+	ctx := context.Background()
+	for _, k := range []string{"esc:ip1:acct1", "esc:ip1:acct1", "esc:ip1:acct2", "esc:ip10:acct1", "esc:ip2:acct1", "esc:ip1;"} {
+		if _, _, _, err := a.TakeAttempt(ctx, k, 100, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, _, err := a.TakeAttempt(ctx, "esc:ip1:old", 100, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if n, err := b.AttemptHitsUnder(ctx, "esc:ip1:"); err != nil || n != 3 {
+		t.Fatalf("hits under esc:ip1: = %d, %v; want 3", n, err)
+	}
+	if _, err := b.AttemptHitsUnder(ctx, ""); !errors.Is(err, errInvalidKey) {
+		t.Fatalf("empty prefix: %v", err)
+	}
+}
+
 // A refund for an expired window must not credit the window that replaced it.
 func TestRefundRestoresOnlyItsOwnWindow(t *testing.T) {
 	a, b := twoReplicas(t)
