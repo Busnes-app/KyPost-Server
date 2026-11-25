@@ -18,6 +18,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Move the Reading pane setting from Settings → Mail to Settings → Appearance.
 - In table mode (not startable yet), skip the one-host boot-ID and volume-ID checks and refuse to start instead while any store still lives on the host's disk; refuse a plain listener, a database URL without `sslmode=verify-full` or with unbounded dead-connection keepalives off loopback, cleartext Ollama, push relays or KyIdentity, and `ALLOW_INSECURE_SMTP`. Ordinary installs are unchanged.
 - CI now runs the poller and health tests on PostgreSQL, and fails when a package whose tests use the database is left out of the PostgreSQL job. The quiet-mailbox tests now check that PostgreSQL mailboxes are polled on every pass, as documented, instead of expecting the SQLite-only skip.
 - Share the proof-of-work escalation across table-mode replicas, and run one mail import or export per organization at a time across replicas on a multi-tenant server. Single installs are unchanged.
