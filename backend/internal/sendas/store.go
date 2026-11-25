@@ -30,6 +30,8 @@ var (
 	ErrNotPending      = errors.New("sendas: alias is not pending")
 	ErrCodeMismatch    = errors.New("sendas: verification code does not match")
 	ErrTooManyAttempts = errors.New("sendas: too many wrong codes, alias failed")
+	// ErrProbeOnRecord refuses a server probe for an address that already has a live record.
+	ErrProbeOnRecord = errors.New("sendas: address already has a pending or verified record")
 )
 
 // Store is one user's set of send-as alias records, persisted as
@@ -246,6 +248,12 @@ func (s *Store) create(userID, email, displayName string, auto bool) (Alias, err
 		}
 		now := time.Now().UTC()
 		email = strings.ToLower(email)
+		// Checked under the update, so of two hosts that both saw the probe due, one mails it.
+		for _, a := range s.aliases {
+			if auto && strings.EqualFold(strings.TrimSpace(a.Email), email) && a.Status != "failed" {
+				return ErrProbeOnRecord
+			}
+		}
 		created = Alias{
 			ID:               id,
 			UserID:           userID,

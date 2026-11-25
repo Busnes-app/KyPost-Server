@@ -1131,6 +1131,8 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 		p.retryForwards(ctx, uc.id)
 	}
 	var res tickResult
+	claimed := p.messageClaims()
+	defer claimed.release()
 	for i, msg := range messages {
 		seen, err := uc.store.Seen(msg.ID)
 		if err != nil {
@@ -1143,6 +1145,12 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 			continue
 		}
 		if seen {
+			res.skippedSeen++
+			continue
+		}
+		if !claimed.take(uc.id, msg.ID) {
+			// Another host works on it (or the claim cannot be read): hold it, uncounted.
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
 			res.skippedSeen++
 			continue
 		}

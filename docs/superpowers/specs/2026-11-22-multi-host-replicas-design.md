@@ -1739,3 +1739,55 @@ the table-mode API suite runs every converted site through real fences.
 
 This completes the cross-store fence part of MH4. The elected-job audit, MH5's provisioned
 keys, MH7's host checks and every startup gate remain.
+
+## MH4 elected jobs as built (2026-11-24)
+
+The election (`worker.Run`) gives one owner per role, and losing the role cancels every job's
+context. A holder frozen past `Grace` can still resume beside the new owner for up to one probe
+interval, or longer in a job that ignores its context, so each job's writes carry their own
+fence. This is the list for "Elected roles and split brain", point 2. On PostgreSQL every write
+transaction already takes its schema's writer lock (`pgdialect`), so a read-then-write inside
+one transaction cannot interleave with another host. Table documents compare a revision on
+every write.
+
+| Role | Job | Fence |
+|---|---|---|
+| every daemon | multi-mode receiving import (`startLeasedImport`) | per-mailbox lease on database time, renewed inside the quota fence; receipt dedupe |
+| `daemon` | receiving import, single mode (`startReceivingImport`) | `claim` lease and receipts; `Complete` in one transaction |
+| `daemon` | Cloudflare pickup | increasing routing revision in a transaction; holding rows keyed by gateway and id; provider delete only after commit |
+| `daemon` | poller: classification, rules, labels, decisions, native and web push | **new: a per-message claim** (below) |
+| `daemon` | poller: out-of-office | `ClaimOutOfOfficeReply` (insert once) and `AdmitSend` keyed by the claim |
+| `daemon` | poller: KyCalendar forward, phishing keyword, Autocrypt harvest | fixed event ID; idempotent keyword; document CAS |
+| `daemon` | poller: snooze wake | the IMAP move (a second move of a moved UID fails) |
+| `daemon` | poller: own-address send-as probe | **new: `CreateAuto` refuses an address with a live record**, under the document's CAS update, so one probe is mailed |
+| `daemon` | poller: WKD recheck, retention, heartbeat | document lock and CAS; idempotent deletes; last writer wins on the health stamp |
+| `daemon` | backup schedule | `backup-run` (`WithLock`; losing it cancels the run), due re-read under the lock |
+| `mail-runtime` | outbox recovery | outbox claim token; `submitting` is never reclaimed |
+| `mail-runtime` | DKIM rotation | `vol.Lock(FenceNativeDomains)` and the relay document's CAS |
+| `api-sweepers` | native provisioning | org and directory fences; serializable account transaction |
+| `api-sweepers` | pickup, contact photo, contacts tombstone, envelope and agent-token sweeps | removes at the observed revision; CAS; serializable transaction; one `DELETE` |
+| `api-sweepers` | version monitor | the notified mark is set in a transaction before the mail |
+| `api-sweepers` | scheduled sends | `UPDATE … RETURNING` claim on database time; state-checked moves |
+| `api-sweepers` | orgs poller and purge | `ApplyOrg` revision fence; `org_purges` steps and catalog tombstones |
+| `api-sweepers` | expired coordination rows | idempotent deletes |
+
+**The poller's per-message claim.** The processed row is written only when a message is
+done, so a frozen owner and the new one both labelled, recorded and pushed it, and the new
+owner's warmup resets every checkpoint on takeover. In table mode `processBatch` now claims
+each unprocessed message before any work, as a replay record (`RecordReplay`) on database time
+keyed by a hash of user and message. A message another host has claimed is held below the
+checkpoint without counting as a deferral, and the next tick finds it processed. Claims are
+released when the batch ends, and expire after `perMessageTimeout` plus a minute if their
+host died. A store that cannot answer reads as "claimed". Ordinary installs take no claims.
+
+**Residual, accepted:** a scheduled message's draft can be saved twice if its host freezes
+after `ClaimScheduledReturn` long enough for PostgreSQL to drop its instance lock: the other
+host's sweep hands the row back and saves the draft too. Nothing is sent twice. Fixing it
+needs a draft save that deduplicates by Message-ID. The WKD recheck, retention and the
+warmup's checkpoint reset take no context, so after losing the role they finish their pass;
+every write in them is CAS-checked or an idempotent delete.
+
+Tests: `TestTwoHostsHandleAMessageOnce` (processor: host A pauses inside its label write,
+host B ticks the same mailbox and labels nothing; after A finishes, B's next tick finds the
+message processed, with one decision) and `TestCreateAutoRecordsOneProbeAcrossHandles`
+(sendas: two handles on one store record one probe; a user's own request is not refused).

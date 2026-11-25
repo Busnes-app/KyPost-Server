@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"errors"
 	"net/mail"
 	"strings"
 	"time"
@@ -121,6 +122,9 @@ func (p *Poller) ensureOwnAddressProven(userID string) {
 	}
 
 	alias, err := store.CreateAuto(userID, ownAddress)
+	if errors.Is(err, sendas.ErrProbeOnRecord) {
+		return // another host's probe is out
+	}
 	if err != nil {
 		p.log.Error("failed to record own-address probe",
 			"user_id", userID, "error", err.Error())
