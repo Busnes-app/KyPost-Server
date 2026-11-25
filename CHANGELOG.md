@@ -18,6 +18,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Move the replica overlay's database to PostgreSQL 18. An install on 17 moves by itself on the next `up`: a one-shot dumps the 17 volume, which is kept for rollback, and 18 restores it once before starting. Needs about twice the data in free space; see [PostgreSQL 18](docs/RUNNING.md#postgresql-18). CI now tests on PostgreSQL 18.
 - CI now runs the poller and health tests on PostgreSQL, and fails when a package whose tests use the database is left out of the PostgreSQL job. The quiet-mailbox tests now check that PostgreSQL mailboxes are polled on every pass, as documented, instead of expecting the SQLite-only skip.
 - Share the proof-of-work escalation across table-mode replicas, and run one mail import or export per organization at a time across replicas on a multi-tenant server. Single installs are unchanged.
 - In table mode, claim each incoming message across hosts before the poller works on it, so a daemon resuming after a freeze and the new owner never both label, record and push one message; the own-address send-as probe is mailed once. Ordinary installs are unchanged.

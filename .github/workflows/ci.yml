@@ -271,7 +271,7 @@ jobs:
 
   # The store, backup, restore and migration suites, the poller, and internal/api (held and
   # scheduled sends live in its global state store), again with every store on a
-  # Postgres 17 service (UTF8, C locale, as docs/RUNNING.md requires). Each test opens
+  # Postgres 18 service (UTF8, C locale, as docs/RUNNING.md requires). Each test opens
   # a schema of its own (dbbackend's test hook); tests about SQLite files skip, visibly
   # in -v output. internal/api is sharded by test name as in backend-api-test.
   backend-postgres-test:
@@ -285,7 +285,7 @@ jobs:
         leg: [stores, api-1, api-2]
     services:
       postgres:
-        image: postgres:17@sha256:3b0cda93be7c8dba2ed484d19393d93845dc3dafb88973e248ba8e6d99d784e1
+        image: postgres:18.7-trixie@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_INITDB_ARGS: --locale=C --encoding=UTF8
@@ -490,9 +490,14 @@ jobs:
             if head -n1 "$f" | grep -q '^#!/bin/sh'; then sh -n "$f"; else bash -n "$f"; fi
           done
 
-      # shellcheck ships on the ubuntu runner image.
+      # shellcheck ships on the ubuntu runner image. postgres-17-to-18.sh is the shared Ky
+      # kit, kept byte for byte (check-replicas-compose.py): its one info finding, sourcing the
+      # postgres image's entrypoint, which does not exist here, is excluded for it alone.
       - name: shellcheck
-        run: shellcheck scripts/*.sh
+        run: |
+          shopt -s extglob
+          shellcheck scripts/!(postgres-17-to-18).sh
+          shellcheck -e SC1091 scripts/postgres-17-to-18.sh
 
       - run: scripts/check-no-binaries.sh
 
@@ -766,6 +771,11 @@ jobs:
 
       - name: replica cutover (SQLite -> PostgreSQL -> two replicas)
         run: bash scripts/check-replica-cutover.sh kypost-server:ci
+
+      # The replica overlay's PostgreSQL, seeded on 17 with the previous compose files, moves
+      # to 18 on the next up; rollback, rerun, a bad dump and a fresh install. Needs no image.
+      - name: replica PostgreSQL 17 -> 18 upgrade
+        run: bash scripts/test-postgres-17-to-18.sh
 
       - name: container logs
         if: always()

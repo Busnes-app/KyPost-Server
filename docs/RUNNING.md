@@ -366,6 +366,46 @@ change: stop every replica, then run
 once with the new settings, and start again. The full list is in
 [CONFIGURATION.md](CONFIGURATION.md#replicas).
 
+### PostgreSQL 18
+
+The overlay's database is PostgreSQL 18. An install that ran 17 (its data is in the
+`kypost_pgdata` volume) moves to 18 by itself on the next `up` after `git pull`; the script
+it uses, `scripts/postgres-17-to-18.sh`, is mounted from your checkout. Run the usual upgrade,
+`docker compose pull && docker compose stop kypost-server && docker compose up -d --wait`:
+
+1. The one-shot `postgres-17-dump` service (the 17 image, no network) starts 17 on
+   `kypost_pgdata` with a private socket, runs `pg_dumpall` into the new `kypost_postgres`
+   volume (`upgrade-from-17/dump.sql`) and stops 17. It writes nothing into `kypost_pgdata`;
+   17 may replay its own log while it starts.
+2. The `postgres` service (18) restores that dump into `18/docker.part`, renames it to
+   `18/docker` once complete and then starts as usual. Roles, passwords and the C/UTF8
+   locale come across, so `KYPOST_DATABASE_URL` stays the same. The replicas wait until it
+   is healthy.
+
+Each step runs once: later `up`s see `18/docker` and do nothing. A fresh install has nothing
+to move and initialises 18 directly (the `kypost_pgdata` volume then stays empty).
+
+- **Disk:** about twice the 17 data free on the volumes' filesystem (the dump plus the new
+  cluster). With less, the dump stops with a message naming both sizes and writes nothing;
+  free space and `up` again.
+- **Time:** a full dump, a reload and `ANALYZE`, so it grows with the data. The healthcheck
+  allows an hour before a failure counts; follow it with `docker compose logs -f postgres`.
+- **If it fails:** the 18 service never starts on an empty or half-restored database. A
+  restore cut short is redone from the start on the next start. The logs name the error, and
+  `kypost_pgdata` is unchanged, so you can roll back.
+- **Rollback:** stop every replica and `docker compose stop postgres`, check out the release
+  you came from (its `docker-compose.replicas.yml` runs 17 on `kypost_pgdata`) and
+  `docker compose up -d --wait`. Anything written on 18 is not in the 17 data. To move again
+  after running on 17, remove the 18 volume first (`docker volume rm <project>_kypost_postgres`,
+  with `docker compose down` beforehand; `docker volume ls` shows the name): otherwise the
+  next `up` keeps the 18 data it already has and nothing written on 17 since comes across.
+- **Clean-up**, your choice, once 18 has checked out (sign in, read mail, run **Back up
+  now**): stop the stack (`docker compose down`, which keeps volumes), then remove the 17
+  volume (`docker volume rm <project>_kypost_pgdata`) and the dump:
+  `docker compose run --rm --no-deps --entrypoint rm postgres -r /var/lib/postgresql/upgrade-from-17`.
+  Nothing removes either automatically. Once the 17 volume is gone, rollback means restoring
+  a backup.
+
 ### Restoring a replica deployment
 
 Restore into a new, empty database beside the old one, which stays untouched until the

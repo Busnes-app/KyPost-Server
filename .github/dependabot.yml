@@ -135,6 +135,11 @@ updates:
       interval: weekly
     cooldown:
       default-days: 3
+    # PostgreSQL majors move data (docs/RUNNING.md, "PostgreSQL 18"): a new major needs a
+    # written migration, and the 17 dump one-shot must stay on 17.
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
     groups:
       actions:
         patterns: ["*"]
@@ -150,15 +155,25 @@ updates:
       interval: weekly
     cooldown:
       default-days: 3
+    # PostgreSQL majors move data (docs/RUNNING.md, "PostgreSQL 18"): a new major needs a
+    # written migration, and the 17 dump one-shot must stay on 17.
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 
-  # Pinned images in the optional compose files (rspamd).
+  # Pinned images in the optional compose files (rspamd, the replica overlay's PostgreSQL).
   - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly
     cooldown:
       default-days: 3
+    # PostgreSQL majors move data (docs/RUNNING.md, "PostgreSQL 18"): a new major needs a
+    # written migration, and the 17 dump one-shot must stay on 17.
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"

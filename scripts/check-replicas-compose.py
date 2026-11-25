@@ -59,12 +59,30 @@ assert "container_name" not in db and not db.get("ports"), "PostgreSQL is reacha
 assert set(db["networks"]) == {"database"} and doc["networks"]["database"].get("internal") is True, "PostgreSQL is not on an internal network only"
 assert db["environment"]["POSTGRES_PASSWORD"] == required["KYPOST_POSTGRES_PASSWORD"], "PostgreSQL password is not the operator's"
 assert db["environment"]["POSTGRES_INITDB_ARGS"] == "--locale=C --encoding=UTF8"
-assert re.fullmatch(r"postgres:17[\w.-]*@sha256:[0-9a-f]{64}", db["image"]), db["image"]
+# PostgreSQL 18, moving a 17 volume on the first up (scripts/postgres-17-to-18.sh, the shared
+# Ky kit, byte for byte; scripts/test-postgres-17-to-18.sh runs it).
+kit = "/ky/postgres-17-to-18.sh"
+assert hashlib.sha256((root / "scripts/postgres-17-to-18.sh").read_bytes()).hexdigest() == "a800e026af73d9304aa970c2c3919caecd4c52eb8d9b702f3447e632bdc21214", \
+    "scripts/postgres-17-to-18.sh differs from the shared Ky kit"
+mounts = lambda svc: sorted((v.get("source", "").rsplit("/scripts/", 1)[-1], v["target"], bool(v.get("read_only"))) for v in svc["volumes"])
+assert db["image"] == "postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71", db["image"]
+assert "PGDATA" not in db["environment"], "PGDATA set: 18 keeps its data in /var/lib/postgresql/18/docker"
+assert mounts(db) == [("kypost_postgres", "/var/lib/postgresql", False), ("postgres-17-to-18.sh", kit, True)], f"PostgreSQL 18 mounts {db['volumes']}"
+assert db["entrypoint"] == ["bash", kit, "restore"] and db["command"][0] == "postgres", (db["entrypoint"], db["command"])
+assert db["depends_on"]["postgres-17-dump"]["condition"] == "service_completed_successfully", "18 starts before the 17 dump finished"
+assert db["healthcheck"]["start_period"] == "1h0m0s", "a long restore would mark PostgreSQL unhealthy"
+dump = services["postgres-17-dump"]
+assert dump["image"] == "postgres:17.12-alpine3.24@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73", dump["image"]
+assert dump["entrypoint"] == ["bash", kit, "dump"] and dump["network_mode"] == "none" and dump["restart"] == "no", "the 17 dump is not an offline one-shot"
+assert dump["environment"] == {"POSTGRES_USER": db["environment"]["POSTGRES_USER"], "OLD": "/var/lib/postgresql/data", "NEW": "/pg18"}, dump["environment"]
+assert mounts(dump) == [("kypost_pgdata", "/var/lib/postgresql/data", False), ("kypost_postgres", "/pg18", False), ("postgres-17-to-18.sh", kit, True)], f"17 dump mounts {dump['volumes']}"
+assert not any("kypost_pgdata" == v.get("source") for name, svc in services.items() if name != "postgres-17-dump" for v in svc.get("volumes", [])), \
+    "only the 17 dump may mount the 17 volume"
 for name, svc in [("proxy", proxy), ("ollama", ollama)]:
     assert re.search(r"@sha256:[0-9a-f]{64}$", svc["image"]), f"{name} image is not pinned by digest"
 assert [p["host_ip"] for p in proxy["ports"]] == [required["KYPOST_BIND"]] and proxy["ports"][0]["target"] == 5866, "KYPOST_BIND does not gate the proxy publish"
 assert proxy["networks"]["replicas"]["ipv4_address"] == required["KYPOST_PROXY_IP"]
-print("PASS replicas: PostgreSQL 17 digest-pinned, C/UTF8, internal network, no host port, operator password; KYPOST_BIND gates the proxy")
+print("PASS replicas: PostgreSQL 18 digest-pinned, the 17 volume moved by the kit's one-shot dump and restore, C/UTF8, internal network, no host port, operator password; KYPOST_BIND gates the proxy")
 
 # No service carries the database URL in argv; the replicas read it from their environment.
 for name, svc in services.items():
