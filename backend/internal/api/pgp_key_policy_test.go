@@ -44,3 +44,21 @@ func TestKeyPolicyAtEveryAPIEntry(t *testing.T) {
 		})
 	}
 }
+
+// TestStoredKeyOutsideAllowlistStillBinds: a contact key stored before the
+// allowlist keeps its fingerprint for pin checks, so it does not turn into a
+// key conflict; only new keys are refused.
+func TestStoredKeyOutsideAllowlistStillBinds(t *testing.T) {
+	keys, err := pgpmailtest.PolicyKeys("policy@example.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range keys {
+		if k.Name != "v4 ECDSA P-256" && k.Name != "v4 RSA-1024" {
+			continue
+		}
+		if fp := keyFingerprintCached(k.Armored); fp == "" {
+			t.Errorf("%s: stored key lost its fingerprint", k.Name)
+		}
+	}
+}
