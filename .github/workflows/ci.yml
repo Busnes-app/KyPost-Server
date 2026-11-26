@@ -619,6 +619,9 @@ jobs:
       - name: strong-key overlay preserves Compose configuration
         run: python3 scripts/check-strong-crypto-compose.py
 
+      - name: PQC TLS guard
+        run: scripts/check-pqc-tls.sh
+
       - name: private Rspamd sidecar qualification
         run: python3 scripts/check-rspamd.py
 
