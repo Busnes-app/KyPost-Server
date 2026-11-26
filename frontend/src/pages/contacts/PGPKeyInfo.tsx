@@ -1,8 +1,8 @@
 // Renders the fingerprint/expiry of a contact's armored PGP key, or the
-// parse error. openpgp is imported lazily so the ~390 KB bundle is not pulled
-// in until a contact actually has a key.
+// parse error. The OpenPGP engine loads lazily, only once a contact has a key.
 
 import { useEffect, useState } from "react";
+import { pgpEngine } from "../../lib/pgpEngine";
 
 export type PGPKeyResult = { fingerprint: string; keyId: string; expires?: string } | { error: string };
 
@@ -10,11 +10,9 @@ export async function validatePGPKey(armored: string): Promise<PGPKeyResult | nu
   const trimmed = armored.trim();
   if (!trimmed) return null;
   try {
-    const openpgp = await import("openpgp");
-    const key = await openpgp.readKey({ armoredKey: trimmed });
-    const expirationTime = await key.getExpirationTime();
-    const expires = expirationTime instanceof Date ? expirationTime.toISOString().slice(0, 10) : undefined;
-    return { fingerprint: key.getFingerprint(), keyId: key.getKeyID().toHex(), expires };
+    const key = await (await pgpEngine()).inspect(trimmed);
+    const expires = key.expires > 0 ? new Date(key.expires * 1000).toISOString().slice(0, 10) : undefined;
+    return { fingerprint: key.fingerprint.toLowerCase(), keyId: key.keyIDs[0].toLowerCase(), expires };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "invalid key" };
   }

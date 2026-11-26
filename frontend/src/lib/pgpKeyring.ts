@@ -1,6 +1,6 @@
 // Complete sealed vault plaintext validation. Conversion stays gated; recovery
 // inspection must never install a ring as a committed account update.
-import type { Message, PrivateKey, PublicKey } from "openpgp";
+import { pgpEngine, type KeyInfo } from "./pgpEngine";
 
 const MAX_KEYRING_BYTES = 128 << 10;
 const MAX_KEYS = 16;
@@ -13,9 +13,12 @@ export type KeyringMetadata = {
   keyFingerprints: string[];
 };
 
+/** One ring member: its armor exactly as stored, and what the engine read from it. */
+export type RingKey = { armored: string; info: KeyInfo };
+
 export type ParsedKeyring = {
-  activeKey: PrivateKey;
-  keys: PrivateKey[];
+  activeKey: RingKey;
+  keys: RingKey[];
 } & ({ kind: "legacy" } | { kind: "keyring"; metadata: KeyringMetadata });
 
 function invalid(): never {
@@ -26,21 +29,18 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readSingleKey(armor: string): Promise<PrivateKey> {
+async function readSingleKey(armor: string): Promise<RingKey> {
   // OpenPGP armor readers may stop at the first block. Reject trailing blocks
   // rather than silently discarding a second historical key.
   const trimmed = armor.trim();
   if (!trimmed.startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----") ||
       !trimmed.endsWith("-----END PGP PRIVATE KEY BLOCK-----") ||
       trimmed.split("-----BEGIN PGP ").length !== 2) invalid();
-  const pgp = await import("openpgp");
-  const keys = await pgp.readPrivateKeys({ armoredKeys: trimmed });
-  const key = keys[0];
-  if (keys.length !== 1 || !key) invalid();
-  // isDecrypted() on a primary key means SOME packet is decrypted. A ring must
-  // not silently accept a still-passphrase-protected historical subkey.
-  if (!key.getKeys().every(({ keyPacket }) => "isDecrypted" in keyPacket && keyPacket.isDecrypted())) invalid();
-  return key;
+  const info = await (await pgpEngine()).inspect(trimmed);
+  // One key per block, and every secret packet decrypted: a ring must not
+  // silently accept a still-passphrase-protected historical subkey.
+  if (info.count !== 1 || !info.isPrivate || info.locked) invalid();
+  return { armored: armor, info };
 }
 
 /** Validate the complete payload before exposing any member to a decrypt call. */
@@ -49,8 +49,9 @@ export async function parseKeyring(raw: string): Promise<ParsedKeyring> {
     if (!raw.trimStart().startsWith("{")) {
       // Preserve the existing armor reader: legacy exports may carry preambles,
       // large certification/UID sets or a GNU dummy primary with live subkeys.
-      const pgp = await import("openpgp");
-      const activeKey = await pgp.readPrivateKey({ armoredKey: raw });
+      const info = await (await pgpEngine()).inspect(raw);
+      if (!info.isPrivate) invalid();
+      const activeKey = { armored: raw, info };
       return { kind: "legacy", activeKey, keys: [activeKey] };
     }
     if (raw.length > MAX_KEYRING_BYTES || new TextEncoder().encode(raw).length > MAX_KEYRING_BYTES) invalid();
@@ -61,23 +62,23 @@ export async function parseKeyring(raw: string): Promise<ParsedKeyring> {
         !Array.isArray(value.keyFingerprints) || !value.keyFingerprints.every((item: unknown) => typeof item === "string") ||
         !Array.isArray(value.keys) || value.keys.length < 1 || value.keys.length > MAX_KEYS) invalid();
 
-    const keys: PrivateKey[] = [];
+    const keys: RingKey[] = [];
     const primaryFingerprints = new Set<string>();
     for (const entry of value.keys) {
       if (!record(entry) || typeof entry.fingerprint !== "string" || typeof entry.privateKey !== "string" ||
           (entry.revocationCertificate !== undefined && typeof entry.revocationCertificate !== "string")) invalid();
       const key = await readSingleKey(entry.privateKey);
-      const fingerprint = key.getFingerprint().toUpperCase();
+      const fingerprint = key.info.fingerprint;
       if (entry.fingerprint.toUpperCase() !== fingerprint || primaryFingerprints.has(fingerprint)) invalid();
       primaryFingerprints.add(fingerprint);
       keys.push(key);
     }
-    const inventory = keys.flatMap(key => key.getKeys().map(member => member.getFingerprint().toUpperCase()));
+    const inventory = keys.flatMap(key => key.info.fingerprints);
     const declared = value.keyFingerprints.map((fingerprint: string) => fingerprint.toUpperCase());
     const activeFingerprint = value.activeFingerprint.toUpperCase();
     if (inventory.length > MAX_FINGERPRINTS || new Set(inventory).size !== inventory.length || new Set(declared).size !== declared.length ||
         inventory.length !== declared.length || !inventory.every(fingerprint => declared.includes(fingerprint))) invalid();
-    const activeKey = keys.find(key => key.getFingerprint().toUpperCase() === activeFingerprint);
+    const activeKey = keys.find(key => key.info.fingerprint === activeFingerprint);
     if (!activeKey) invalid();
     const metadata: KeyringMetadata = { version: 1, materialGeneration: value.materialGeneration,
       primaryFingerprints: [...primaryFingerprints].sort(), keyFingerprints: inventory.slice().sort() };
@@ -86,16 +87,6 @@ export async function parseKeyring(raw: string): Promise<ParsedKeyring> {
     // Parser errors can contain hostile input; never surface key material.
     return invalid();
   }
-}
-
-/** IDs select candidates only; OpenPGP verifies the actual decryption. */
-export function decryptionKeysFor(keyring: ParsedKeyring, message: Message<string>): PrivateKey[] {
-  const ids = message.getEncryptionKeyIDs().map(id => id.toHex());
-  // ponytail: bounded scan of at most 16 keys; index only if the ring cap grows.
-  if (ids.some(id => /^0+$/.test(id))) return keyring.keys;
-  const keys = keyring.keys.filter(key => key.getKeyIDs().some(id => ids.includes(id.toHex())));
-  if (keys.length === 0) throw new Error("No retained PGP key matches this message.");
-  return keys;
 }
 
 /** Treat server/file metadata as untrusted until all bounds and inventories hold. */
@@ -115,15 +106,10 @@ export function parseKeyringMetadata(value: unknown): KeyringMetadata {
   return { version: 1, materialGeneration: value.materialGeneration, primaryFingerprints, keyFingerprints };
 }
 
-// Packet order can differ between Go and JS serialization. Compare the full
-// multiset, including UID signatures/revocations, without rewriting private armor.
-async function publicPackets(key: PublicKey): Promise<string[]> {
-  const { PacketList } = await import("openpgp");
-  return Array.from(key.toPacketList(), packet => {
-    const single = new PacketList();
-    single.push(packet);
-    return Array.from(single.write(), byte => byte.toString(16).padStart(2, "0")).join("");
-  }).sort();
+// The public packet multiset: User ID order may differ between the stored
+// public key and the ring, so compare packets, not the serialization.
+function packetSet(info: KeyInfo): string {
+  return JSON.stringify(info.packets.map(p => Array.from(p, b => b.toString(16).padStart(2, "0")).join("")).sort());
 }
 
 /** Matches every member and current public packet; matching an active key alone is insufficient. */
@@ -134,16 +120,15 @@ export async function validateKeyringSnapshot(raw: string, snapshot: {
   if (ring.kind !== "keyring") invalid();
   const metadata = parseKeyringMetadata(snapshot.keyring);
   if (JSON.stringify(metadata) !== JSON.stringify(ring.metadata) ||
-      typeof snapshot.fingerprint !== "string" || ring.activeKey.getFingerprint().toUpperCase() !== snapshot.fingerprint.toUpperCase()) {
+      typeof snapshot.fingerprint !== "string" || ring.activeKey.info.fingerprint !== snapshot.fingerprint.toUpperCase()) {
     throw new Error("This backup does not contain the current complete keyring. Older backups cannot recover newer keys; keep this copy for a future merge into an unlocked current ring.");
   }
   try {
     if (typeof snapshot.publicKey !== "string" || new TextEncoder().encode(snapshot.publicKey).length > MAX_KEYRING_BYTES) invalid();
-    const pgp = await import("openpgp");
-    const keys = await pgp.readKeys({ armoredKeys: snapshot.publicKey });
-    const key = keys[0];
-    if (keys.length !== 1 || !key || key.isPrivate() ||
-        JSON.stringify(await publicPackets(key)) !== JSON.stringify(await publicPackets(ring.activeKey.toPublic()))) invalid();
+    // Both sides are serialized by the same engine, so every User ID,
+    // signature and revocation packet must be present in both.
+    const key = await (await pgpEngine()).inspect(snapshot.publicKey);
+    if (key.count !== 1 || key.isPrivate || packetSet(key) !== packetSet(ring.activeKey.info)) invalid();
   } catch {
     throw new Error("The backup's public key does not match the current keyring. Public identities or revocations may have changed; no key was restored.");
   }

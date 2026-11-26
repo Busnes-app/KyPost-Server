@@ -1,0 +1,203 @@
+{
+  "goVersion": "go1.27.4",
+  "sizes": {
+    "wasm": {
+      "raw": 8938965,
+      "gzip": 2444197,
+      "brotli": 1798246
+    },
+    "openpgpMinMjs": {
+      "raw": 395333,
+      "gzip": 129781,
+      "brotli": 106842
+    },
+    "wasmExecJs": 16992
+  },
+  "chromium": "159.0.8154.6",
+  "cspWithout": {
+    "engine": "wasm",
+    "error": "Error: page.evaluate: CompileError: WebAssembly.instantiateStreaming(): Compiling or instantiating WebAssembly module violates the following Content Security policy directive because 'unsafe-eval' is not an allowed source of script in the following Content Security Policy directive: \"script-src 'self'\".",
+    "console": []
+  },
+  "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+  "desktop": {
+    "wasm": {
+      "engine": "wasm",
+      "instantiateMs": 37.5,
+      "loadMs": 57.7,
+      "v4": {
+        "generate": {
+          "median": 0.9,
+          "max": 11.4
+        },
+        "publicKeyBytes": 757,
+        "encryptSign": {
+          "median": 3.5,
+          "max": 16.4
+        },
+        "messageBytes": 22782,
+        "decryptVerify": {
+          "median": 3.7,
+          "max": 9.1
+        },
+        "signDetached": {
+          "median": 1.3,
+          "max": 2.8
+        },
+        "verifyDetached": {
+          "median": 1.2,
+          "max": 2
+        },
+        "wasmMemoryBytes": 11534336
+      },
+      "v6": {
+        "generate": {
+          "median": 3.8,
+          "max": 7.1
+        },
+        "publicKeyBytes": 18581,
+        "encryptSign": {
+          "median": 5.9,
+          "max": 8.4
+        },
+        "messageBytes": 28858,
+        "decryptVerify": {
+          "median": 5.6,
+          "max": 7.8
+        },
+        "signDetached": {
+          "median": 3,
+          "max": 4.5
+        },
+        "verifyDetached": {
+          "median": 1.9,
+          "max": 2.9
+        },
+        "wasmMemoryBytes": 12058624
+      },
+      "jsHeapUsedBytes": 1819116,
+      "jsHeapTotalBytes": 3932160
+    },
+    "openpgp": {
+      "engine": "openpgp",
+      "instantiateMs": 29,
+      "loadMs": 29,
+      "v4": {
+        "generate": {
+          "median": 0.9,
+          "max": 7.3
+        },
+        "publicKeyBytes": 807,
+        "encryptSign": {
+          "median": 1,
+          "max": 4.5
+        },
+        "messageBytes": 22798,
+        "decryptVerify": {
+          "median": 1.2,
+          "max": 5.5
+        },
+        "signDetached": {
+          "median": 0.3,
+          "max": 0.6
+        },
+        "verifyDetached": {
+          "median": 0.3,
+          "max": 0.5
+        }
+      },
+      "jsHeapUsedBytes": 3964608,
+      "jsHeapTotalBytes": 8867840
+    }
+  },
+  "cpu4x": {
+    "wasm": {
+      "engine": "wasm",
+      "instantiateMs": 130.2,
+      "loadMs": 208.3,
+      "v4": {
+        "generate": {
+          "median": 4.5,
+          "max": 34.6
+        },
+        "publicKeyBytes": 757,
+        "encryptSign": {
+          "median": 15.8,
+          "max": 58.4
+        },
+        "messageBytes": 22782,
+        "decryptVerify": {
+          "median": 28.7,
+          "max": 40.1
+        },
+        "signDetached": {
+          "median": 7.3,
+          "max": 9.1
+        },
+        "verifyDetached": {
+          "median": 5.4,
+          "max": 11.8
+        },
+        "wasmMemoryBytes": 9437184
+      },
+      "v6": {
+        "generate": {
+          "median": 17.8,
+          "max": 52.3
+        },
+        "publicKeyBytes": 18581,
+        "encryptSign": {
+          "median": 28.5,
+          "max": 46.1
+        },
+        "messageBytes": 28858,
+        "decryptVerify": {
+          "median": 27.6,
+          "max": 37.8
+        },
+        "signDetached": {
+          "median": 14.3,
+          "max": 19.5
+        },
+        "verifyDetached": {
+          "median": 12.6,
+          "max": 14
+        },
+        "wasmMemoryBytes": 12320768
+      },
+      "jsHeapUsedBytes": 1977524,
+      "jsHeapTotalBytes": 2621440
+    },
+    "openpgp": {
+      "engine": "openpgp",
+      "instantiateMs": 78.7,
+      "loadMs": 78.7,
+      "v4": {
+        "generate": {
+          "median": 6.6,
+          "max": 29.5
+        },
+        "publicKeyBytes": 807,
+        "encryptSign": {
+          "median": 4.6,
+          "max": 21.3
+        },
+        "messageBytes": 22798,
+        "decryptVerify": {
+          "median": 8,
+          "max": 23.5
+        },
+        "signDetached": {
+          "median": 1.5,
+          "max": 3
+        },
+        "verifyDetached": {
+          "median": 1.5,
+          "max": 2.5
+        }
+      },
+      "jsHeapUsedBytes": 3406560,
+      "jsHeapTotalBytes": 6508544
+    }
+  }
+}

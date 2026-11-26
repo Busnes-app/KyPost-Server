@@ -946,7 +946,7 @@ same headers `mailmsg.Build` writes, and the Sent copy carries them too. On
 read, `lib/mimeContent.ts` returns them decoded in memory; the reader offers
 them as `download` links on `application/octet-stream` blob URLs and inlines
 `cid:` raster images as `data:` URLs, so nothing decrypted is posted back or
-navigated to in this origin. Limits: openpgp.js decrypts under a 25 MiB
+navigated to in this origin. Limits: the browser engine (gopenpgp WebAssembly) decrypts under a 25 MiB
 decompressed cap (mirrors `mailmsg.MaxInboundMessageBytes`), the parser keeps
 at most 200 attachments and 25 MiB of decoded attachment bytes and reports the
 rest as a count, and a send refuses before encrypting when the attachments
@@ -1201,9 +1201,9 @@ nothing on the server to decrypt with.
    free-form and self-certified, and a key may carry arbitrarily many, so "this
    key claims the sender's address" is forgeable with one extra User ID — that
    defeated two successive versions of this check. It is also parser-dependent:
-   openpgp.js and go-crypto disagree on adversarial User IDs in both
-   directions, so a client deriving its own answer can vouch for a key the
-   server's binding rejects. The server ships the binding precisely so no
+   openpgp.js (the browser's engine until #748) and go-crypto disagree on
+   adversarial User IDs in both directions, so a client deriving its own answer
+   can vouch for a key the server's binding rejects. The server ships the binding precisely so no
    second parser participates in the trust decision.
    A contact with a v4 and a v6 key yields **two** `signerKeys` entries with
    the same `addresses`, each checked against its own pin; try each. Opening a

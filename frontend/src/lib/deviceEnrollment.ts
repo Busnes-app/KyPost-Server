@@ -362,7 +362,7 @@ export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, 
   snapshot: Parameters<typeof validateKeyringSnapshot>[1];
 }): Promise<HpkeDeviceEnvelope> {
   const ring = await validateKeyringSnapshot(raw, snapshot);
-  const fingerprint = ring.activeKey.getFingerprint().toUpperCase();
+  const fingerprint = ring.activeKey.info.fingerprint;
   if (!deviceId || new TextEncoder().encode(deviceId).length > 0xffff) {
     throw new Error("Invalid enrollment device ID. Pair the device again.");
   }

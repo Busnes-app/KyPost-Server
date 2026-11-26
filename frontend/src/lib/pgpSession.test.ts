@@ -1,4 +1,5 @@
 // @vitest-environment node
+import * as pgp from "openpgp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../../../testdata/pgp-keyring-v1.json";
 import { parseKeyring } from "./pgpKeyring";
@@ -277,7 +278,7 @@ it("rewraps exact complete ring bytes against a matching current snapshot", asyn
   const raw = JSON.stringify(fixture.ring);
   const ring = await parseKeyring(raw);
   if (ring.kind !== "keyring") throw new Error("expected ring");
-  const snapshot = bootstrapFixture({ fingerprint: ring.activeKey.getFingerprint(), publicKey: ring.activeKey.toPublic().armor(),
+  const snapshot = bootstrapFixture({ fingerprint: ring.activeKey.info.fingerprint, publicKey: (await pgp.readPrivateKey({ armoredKey: ring.activeKey.armored })).toPublic().armor(),
     keyring: ring.metadata, wrappedPrivateKey: JSON.stringify(await wrapPrivateKey(raw, OLD_PASSWORD)) });
   getPGPBootstrap.mockResolvedValue(snapshot);
   const prepared = await session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD);
@@ -297,8 +298,8 @@ describe("complete-ring restore confirmation", () => {
       const raw = JSON.stringify(fixture.ring);
       const ring = await parseKeyring(raw);
       if (ring.kind !== "keyring") throw new Error("expected ring");
-      getPGPBootstrap.mockResolvedValue(bootstrapFixture({ fingerprint: ring.activeKey.getFingerprint(),
-        publicKey: ring.activeKey.toPublic().armor(), keyring: ring.metadata }));
+      getPGPBootstrap.mockResolvedValue(bootstrapFixture({ fingerprint: ring.activeKey.info.fingerprint,
+        publicKey: (await pgp.readPrivateKey({ armoredKey: ring.activeKey.armored })).toPublic().armor(), keyring: ring.metadata }));
       const snapshot = (await session.loadPGPSession()).bootstrap;
       if (!snapshot) throw new Error("missing snapshot");
       rewrapPGPKeyring.mockImplementation(async (input: { wrapped: string; expectedRevision: number }) => {
@@ -325,7 +326,7 @@ describe("complete-ring recovery slot confirmation", () => {
       const raw = JSON.stringify(fixture.ring);
       const ring = await parseKeyring(raw);
       if (ring.kind !== "keyring") throw new Error("expected ring");
-      const snapshot = bootstrapFixture({ fingerprint:ring.activeKey.getFingerprint(),publicKey:ring.activeKey.toPublic().armor(),keyring:ring.metadata });
+      const snapshot = bootstrapFixture({ fingerprint:ring.activeKey.info.fingerprint,publicKey:(await pgp.readPrivateKey({ armoredKey: ring.activeKey.armored })).toPublic().armor(),keyring:ring.metadata });
       const created = await createRecoveryBackup(raw,{ fingerprint:snapshot.fingerprint,publicKey:snapshot.publicKey,keyring:ring.metadata });
       getPGPBootstrap.mockResolvedValue({...snapshot,pgpRevision:outcome === "stale preparation" ? 8 : 7});
       putPGPKeyringRecovery.mockImplementation(async (input:{envelope:string;expectedRevision:number;isCurrent:()=>boolean}) => {

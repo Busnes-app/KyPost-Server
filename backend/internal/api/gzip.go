@@ -52,10 +52,13 @@ func withGzip(next http.Handler) http.Handler {
 // explicit refusal that reads as acceptance to a substring check, and
 // "gzip;q=0.9" is an acceptance that reads as refusal to the obvious fix for
 // it — which is the whole reason this is a parse and not one strings.Contains.
-func acceptsGzip(header string) bool {
+func acceptsGzip(header string) bool { return acceptsEncoding(header, "gzip") }
+
+// acceptsEncoding is acceptsGzip for any content coding (RFC 9110 12.5.3).
+func acceptsEncoding(header, coding string) bool {
 	for _, part := range strings.Split(header, ",") {
 		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
-		if !strings.EqualFold(strings.TrimSpace(token), "gzip") {
+		if !strings.EqualFold(strings.TrimSpace(token), coding) {
 			continue
 		}
 		q, ok := strings.CutPrefix(strings.TrimSpace(params), "q=")

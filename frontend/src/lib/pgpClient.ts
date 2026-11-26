@@ -2,25 +2,19 @@
 // private key is client-protected, because the server has no copy it can
 // open.
 //
-// openpgp is imported dynamically everywhere here for the same reason
-// ContactsPage already does it: it is a large bundle and no page needs it
-// until the user actually touches PGP.
+// The library runs behind lib/pgpEngine.ts (openpgp.js, or gopenpgp wasm in
+// dev builds) and is loaded lazily: it is large and no page needs it until
+// the user actually touches PGP.
 
 import { type BoundSignerKey } from "../api/pgp";
 import { requireUnlockedKey, requireUnlockedKeyMaterial } from "./keyVault";
-import { decryptionKeysFor, parseKeyring } from "./pgpKeyring";
+import { pgpEngine, type KeyInfo, type PgpEngine, type SignatureCheck } from "./pgpEngine";
+import { parseKeyring } from "./pgpKeyring";
 import { parseMimeContent, type BodyMode, type MimeAttachment, type ProtectedHeaders } from "./mimeContent";
 
-type OpenPGP = typeof import("openpgp");
-type PublicKey = Awaited<ReturnType<OpenPGP["readKey"]>>;
-type VerificationResult = Awaited<ReturnType<OpenPGP["verify"]>>["signatures"][number];
-
-// OpenPGP.js defaults to 2047. Apply a literal 2048-bit floor to new use
-// and signature trust; its decryption path still opens retained historical keys.
-const RSA_POLICY = { minRSABits: 2048 };
-
-async function openpgp(): Promise<OpenPGP> {
-  return import("openpgp");
+/** Every ring member, armored, for the engine to try. */
+async function ringKeys(): Promise<string[]> {
+  return (await parseKeyring(requireUnlockedKeyMaterial())).keys.map((key) => key.armored);
 }
 
 export type GeneratedIdentity = {
@@ -45,7 +39,6 @@ export async function generateIdentity(
   email: string,
   additionalEmails: string[] = []
 ): Promise<GeneratedIdentity> {
-  const pgp = await openpgp();
   // Every address the account has proven it owns becomes a User ID. Both WKD
   // serving and Autocrypt advertising refuse a key that does not carry the
   // address in question, so a key with only the primary address silently
@@ -60,18 +53,7 @@ export async function generateIdentity(
     seen.add(addr.toLowerCase());
     userIDs.push({ name, email: addr });
   }
-  const { privateKey, publicKey } = await pgp.generateKey({
-    type: "ecc",
-    curve: "curve25519Legacy",
-    userIDs,
-    format: "armored"
-  });
-  const parsed = await pgp.readKey({ armoredKey: publicKey });
-  return {
-    armoredPrivateKey: privateKey,
-    armoredPublicKey: publicKey,
-    fingerprint: parsed.getFingerprint().toUpperCase()
-  };
+  return (await pgpEngine()).generate(userIDs, "v4");
 }
 
 /**
@@ -86,19 +68,7 @@ export async function importIdentity(
   armoredPrivateKey: string,
   passphrase: string
 ): Promise<GeneratedIdentity> {
-  const pgp = await openpgp();
-  let key = await pgp.readPrivateKey({ armoredKey: armoredPrivateKey.trim() });
-  if (!key.isDecrypted()) {
-    if (!passphrase) {
-      throw new Error("This key is passphrase-protected. Enter its passphrase to import it.");
-    }
-    key = await pgp.decryptKey({ privateKey: key, passphrase });
-  }
-  return {
-    armoredPrivateKey: key.armor(),
-    armoredPublicKey: key.toPublic().armor(),
-    fingerprint: key.getFingerprint().toUpperCase()
-  };
+  return (await pgpEngine()).importPrivate(armoredPrivateKey, passphrase);
 }
 
 export type DecryptedMessage = {
@@ -166,10 +136,11 @@ type SignerBinding = { addresses: string[]; unconfirmed: boolean };
  * pgp_receive.go — and this compares address strings.
  */
 async function readBoundSignerKeys(
-  pgp: OpenPGP,
+  engine: PgpEngine,
   signerKeys: BoundSignerKey[]
-): Promise<{ keys: PublicKey[]; bindingByFingerprint: Map<string, SignerBinding> }> {
-  const keys: PublicKey[] = [];
+): Promise<{ keys: string[]; infos: KeyInfo[]; bindingByFingerprint: Map<string, SignerBinding> }> {
+  const keys: string[] = [];
+  const infos: KeyInfo[] = [];
   const bindingByFingerprint = new Map<string, SignerBinding>();
   for (const entry of signerKeys) {
     const trimmed = entry?.publicKey?.trim();
@@ -177,9 +148,10 @@ async function readBoundSignerKeys(
       continue;
     }
     try {
-      const key = await pgp.readKey({ armoredKey: trimmed });
-      keys.push(key);
-      bindingByFingerprint.set(key.getFingerprint().toUpperCase(), {
+      const info = await engine.inspect(trimmed);
+      keys.push(trimmed);
+      infos.push(info);
+      bindingByFingerprint.set(info.fingerprint, {
         addresses: (entry.addresses ?? []).map((a) => a.trim().toLowerCase()),
         // An Autocrypt key was taken from a message. The DKIM gate on the
         // harvest makes it the sender DOMAIN's word, not a person's, so until
@@ -191,7 +163,7 @@ async function readBoundSignerKeys(
       // verification.
     }
   }
-  return { keys, bindingByFingerprint };
+  return { keys, infos, bindingByFingerprint };
 }
 
 /**
@@ -206,26 +178,23 @@ async function readBoundSignerKeys(
  * auto-pinned (Autocrypt harvest and WKD auto-trust both pin without asking)
  * could sign a message, put anyone in the From header, and be vouched for.
  */
-async function judgeSignatures(
-  signatures: VerificationResult[],
-  verificationKeys: PublicKey[],
+function judgeSignatures(
+  signatures: SignatureCheck[],
+  verificationKeys: KeyInfo[],
   bindingByFingerprint: Map<string, SignerBinding>,
   senderAddress: string
-): Promise<{ verified: boolean; signerUnconfirmed: boolean; signerFingerprint: string }> {
+): { verified: boolean; signerUnconfirmed: boolean; signerFingerprint: string } {
   const wanted = senderAddress.trim().toLowerCase();
   for (const signature of signatures) {
-    try {
-      // `verified` rejects rather than returning false on a bad signature.
-      await signature.verified;
-    } catch {
+    if (!signature.valid) {
       // Try the next signature; an unverifiable one is not fatal.
       continue;
     }
-    const keyID = signature.keyID.toHex().toUpperCase();
+    const { keyID, fingerprint } = signature;
     const match = verificationKeys.find((k) =>
-      k.getKeys().some((sub) => sub.getKeyID().toHex().toUpperCase() === keyID)
+      (keyID !== "" && k.keyIDs.includes(keyID)) || (fingerprint !== "" && k.fingerprints.includes(fingerprint))
     );
-    const signerFingerprint = match ? match.getFingerprint().toUpperCase() : keyID;
+    const signerFingerprint = match ? match.fingerprint : keyID || fingerprint;
     const binding = match ? bindingByFingerprint.get(signerFingerprint) : undefined;
     const bound = Boolean(wanted && binding?.addresses.includes(wanted));
     return {
@@ -253,27 +222,20 @@ export async function decryptMessage(
   signerKeys: BoundSignerKey[],
   senderAddress: string
 ): Promise<DecryptedMessage> {
-  const pgp = await openpgp();
-  const keyring = await parseKeyring(requireUnlockedKeyMaterial());
+  const engine = await pgpEngine();
+  const decryptionKeys = await ringKeys();
 
-  const armored = extractArmoredMessage(payload);
-  const message = await pgp.readMessage({ armoredMessage: armored });
-
-  const { keys: verificationKeys, bindingByFingerprint } = await readBoundSignerKeys(
-    pgp,
-    signerKeys
-  );
-  const result = await pgp.decrypt({
-    message,
-    decryptionKeys: decryptionKeysFor(keyring, message),
-    verificationKeys: verificationKeys.length > 0 ? verificationKeys : undefined,
-    expectSigned: false,
-    config: { ...RSA_POLICY, maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
+  const { keys: verificationKeys, infos, bindingByFingerprint } = await readBoundSignerKeys(engine, signerKeys);
+  const result = await engine.decrypt({
+    armoredMessage: extractArmoredMessage(payload),
+    decryptionKeys,
+    verificationKeys,
+    maxBytes: MAX_DECRYPTED_BYTES
   });
 
-  const signatures = result.signatures ?? [];
+  const signatures = result.signatures;
   const signed = signatures.length > 0;
-  const verdict = await judgeSignatures(signatures, verificationKeys, bindingByFingerprint, senderAddress);
+  const verdict = judgeSignatures(signatures, infos, bindingByFingerprint, senderAddress);
 
   // The decrypted payload is a MIME entity, not display text: headers,
   // boundaries and an encoded body. Parsing it here keeps the reader from
@@ -281,7 +243,7 @@ export async function decryptMessage(
   // message, and recovers the render mode from the part's own Content-Type so
   // nothing downstream has to sniff the bytes. An inline-PGP message has no MIME
   // headers; parseMimeContent returns null and the raw text is the body.
-  const raw = typeof result.data === "string" ? result.data : String(result.data);
+  const raw = result.data;
   const parsed = parseMimeContent(raw);
 
   return {
@@ -328,7 +290,7 @@ export async function verifySignedMessage(
   signerKeys: BoundSignerKey[],
   senderAddress: string
 ): Promise<DecryptedMessage> {
-  const pgp = await openpgp();
+  const engine = await pgpEngine();
 
   const raw = atob(signedPartBase64);
   const bytes = new Uint8Array(raw.length);
@@ -342,10 +304,7 @@ export async function verifySignedMessage(
   const body = parsed ? parsed.body : partText;
   const bodyMode = parsed?.mode;
 
-  const { keys: verificationKeys, bindingByFingerprint } = await readBoundSignerKeys(
-    pgp,
-    signerKeys
-  );
+  const { keys: verificationKeys, infos, bindingByFingerprint } = await readBoundSignerKeys(engine, signerKeys);
 
   let verdict = { verified: false, signerUnconfirmed: false, signerFingerprint: "" };
   try {
@@ -356,17 +315,10 @@ export async function verifySignedMessage(
     if (verificationKeys.length === 0) {
       throw new Error("no key is bound to this sender");
     }
-    const result = await pgp.verify({
-      // binary, not text: the part's bytes are already in canonical CRLF form
-      // and must reach the hash untouched. Handing openpgp.js a string invites
-      // it to re-canonicalize content that is already exactly right.
-      message: await pgp.createMessage({ binary: bytes }),
-      signature: await pgp.readSignature({ armoredSignature }),
-      verificationKeys,
-      expectSigned: false,
-      config: RSA_POLICY
-    });
-    verdict = await judgeSignatures(result.signatures ?? [], verificationKeys, bindingByFingerprint, senderAddress);
+    // Bytes, not text: the part is already in canonical CRLF form and must
+    // reach the hash untouched.
+    const checks = await engine.verifyDetached({ data: bytes, armoredSignature, verificationKeys });
+    verdict = judgeSignatures(checks, infos, bindingByFingerprint, senderAddress);
   } catch {
     // An unreadable signature, or no key to check it with. The message stays
     // readable and the badge says it could not be checked — never that it
@@ -475,8 +427,8 @@ export async function buildEncryptedDeliveries(
   sign: boolean,
   attachments: EncryptedAttachment[] = []
 ): Promise<EncryptedDelivery[]> {
-  const pgp = await openpgp();
-  const signingKeys = sign ? [await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() })] : undefined;
+  const engine = await pgpEngine();
+  const signingKey = sign ? requireUnlockedKey() : undefined;
   const protectedContent = buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments);
 
   const deliveries: EncryptedDelivery[] = [];
@@ -484,17 +436,11 @@ export async function buildEncryptedDeliveries(
     if (group.recipients.length === 0 || group.publicKeys.length === 0) {
       continue;
     }
-    const encryptionKeys = await readPublicKeys(pgp, group.publicKeys);
-    const armored = await pgp.encrypt({
-      message: await pgp.createMessage({ text: protectedContent }),
-      encryptionKeys,
-      signingKeys,
-      format: "armored",
-      config: RSA_POLICY
-    });
+    const encryptionKeys = await readPublicKeys(engine, group.publicKeys);
+    const armored = await engine.encrypt({ text: protectedContent, encryptionKeys, signingKey });
     deliveries.push({
       recipients: group.recipients,
-      ciphertext: wrapAsPGPMime(envelope, String(armored))
+      ciphertext: wrapAsPGPMime(envelope, armored)
     });
   }
   return deliveries;
@@ -518,20 +464,12 @@ export async function buildSignedDelivery(
   recipients: string[],
   attachments: EncryptedAttachment[] = []
 ): Promise<EncryptedDelivery> {
-  const pgp = await openpgp();
-  const signingKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
   const signedPart = buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments, true);
-  const armoredSignature = String(
-    await pgp.sign({
-      message: await pgp.createMessage({ binary: new TextEncoder().encode(signedPart) }),
-      signingKeys: signingKey,
-      detached: true,
-      format: "armored",
-      config: RSA_POLICY
-    })
+  const { armoredSignature, hashAlgorithm } = await (await pgpEngine()).signDetached(
+    new TextEncoder().encode(signedPart),
+    requireUnlockedKey()
   );
-  const signature = await pgp.readSignature({ armoredSignature });
-  const hash = MICALG_BY_HASH[signature.packets[0].hashAlgorithm ?? -1] ?? "pgp-sha256";
+  const hash = MICALG_BY_HASH[hashAlgorithm] ?? "pgp-sha256";
   return { recipients, ciphertext: wrapAsSignedMime(envelope, signedPart, armoredSignature, hash) };
 }
 
@@ -571,17 +509,14 @@ export async function buildEncryptedSentCopy(
   sign: boolean,
   attachments: EncryptedAttachment[] = []
 ): Promise<string> {
-  const pgp = await openpgp();
-  const ownKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
-  const signingKeys = sign ? [ownKey] : undefined;
-  const armored = await pgp.encrypt({
-    message: await pgp.createMessage({ text: buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments) }),
-    encryptionKeys: ownKey.toPublic(),
-    signingKeys,
-    format: "armored",
-    config: RSA_POLICY
+  const ownKey = requireUnlockedKey();
+  const armored = await (await pgpEngine()).encrypt({
+    text: buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments),
+    // The private key itself: its public half is derived here, never fetched.
+    encryptionKeys: [ownKey],
+    signingKey: sign ? ownKey : undefined
   });
-  return wrapAsPGPMime(envelope, String(armored));
+  return wrapAsPGPMime(envelope, armored);
 }
 
 /**
@@ -599,21 +534,14 @@ export async function buildEncryptedDraft(
   body: string,
   attachments: EncryptedAttachment[] = []
 ): Promise<string> {
-  const pgp = await openpgp();
-  const ownKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
   const content = buildProtectedContent(
     contentType,
     body,
     { subject: envelope.subject, to: envelope.to.join(", "), cc: (envelope.cc ?? []).join(", "), bcc: (envelope.bcc ?? []).join(", ") },
     attachments
   );
-  const armored = await pgp.encrypt({
-    message: await pgp.createMessage({ text: content }),
-    encryptionKeys: ownKey.toPublic(),
-    format: "armored",
-    config: RSA_POLICY
-  });
-  return wrapAsPGPMime(envelope, String(armored));
+  const armored = await (await pgpEngine()).encrypt({ text: content, encryptionKeys: [requireUnlockedKey()] });
+  return wrapAsPGPMime(envelope, armored);
 }
 
 /**
@@ -622,23 +550,13 @@ export async function buildEncryptedDraft(
  * once the vault is unlocked again.
  */
 export async function sealToSelf(text: string): Promise<string> {
-  const pgp = await openpgp();
-  const ownKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
-  return String(
-    await pgp.encrypt({ message: await pgp.createMessage({ text }), encryptionKeys: ownKey.toPublic(), format: "armored", config: RSA_POLICY })
-  );
+  return (await pgpEngine()).encrypt({ text, encryptionKeys: [requireUnlockedKey()] });
 }
 
 export async function openSealedToSelf(armored: string): Promise<string> {
-  const pgp = await openpgp();
-  const keyring = await parseKeyring(requireUnlockedKeyMaterial());
-  const message = await pgp.readMessage({ armoredMessage: armored });
-  const result = await pgp.decrypt({
-    message,
-    decryptionKeys: decryptionKeysFor(keyring, message),
-    config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
-  });
-  return typeof result.data === "string" ? result.data : String(result.data);
+  const engine = await pgpEngine();
+  const result = await engine.decrypt({ armoredMessage: armored, decryptionKeys: await ringKeys(), verificationKeys: [], maxBytes: MAX_DECRYPTED_BYTES });
+  return result.data;
 }
 
 // Matches pgpmail.OuterPlaceholderSubject so both send paths look identical
@@ -750,15 +668,16 @@ function wrapBase64(encoded: string): string[] {
   return out;
 }
 
-async function readPublicKeys(pgp: OpenPGP, armoredKeys: string[]) {
-  const keys = [];
+async function readPublicKeys(engine: PgpEngine, armoredKeys: string[]) {
+  const keys: string[] = [];
   for (const armored of armoredKeys) {
     const trimmed = armored?.trim();
     if (!trimmed) {
       continue;
     }
     try {
-      keys.push(await pgp.readKey({ armoredKey: trimmed }));
+      await engine.inspect(trimmed);
+      keys.push(trimmed);
     } catch {
       // One unparseable contact key must not cost every other recipient
       // their encryption, or every other signer their verification.
