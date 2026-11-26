@@ -244,7 +244,7 @@ clients use them as refusal inputs:
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.9 go test -v -run DeviceEnvelope ./internal/cryptutil
+go test -v -run DeviceEnvelope ./internal/cryptutil
 ```
 
 V5 is the same plaintext sealed with RFC 9180 HPKE; its framing and vectors are in

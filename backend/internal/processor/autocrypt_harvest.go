@@ -263,6 +263,9 @@ func validateAutocryptKey(keydata []byte, addr string) (armored, fingerprint str
 	if err != nil {
 		return "", "", fmt.Errorf("parse autocrypt key: %w", err)
 	}
+	if err := pgpmail.CheckKeyPolicy(keydata); err != nil {
+		return "", "", err
+	}
 	armored, err = key.GetArmoredPublicKey()
 	if err != nil {
 		return "", "", err

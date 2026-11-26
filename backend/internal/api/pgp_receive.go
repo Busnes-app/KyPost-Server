@@ -243,7 +243,7 @@ func keyMatchesPin(c contacts.Contact) bool {
 	if c.PGPKeyFingerprint == "" {
 		return true
 	}
-	info, err := pgpmail.InspectPublicKey(c.PGPKey)
+	info, err := pgpmail.ReadPublicKey(c.PGPKey)
 	if err != nil {
 		return false
 	}

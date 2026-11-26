@@ -58,6 +58,9 @@ func keyserverLookup(ctx context.Context, email string) (armored, fingerprint st
 	if err != nil {
 		return "", "", pgpmail.KeyStatus{}, err
 	}
+	if err := pgpmail.CheckArmoredKeyPolicy(armored); err != nil {
+		return "", "", pgpmail.KeyStatus{}, err
+	}
 	status, err = pgpmail.CheckKeyStatus(armored)
 	if err != nil {
 		return "", "", pgpmail.KeyStatus{}, err
@@ -81,6 +84,10 @@ func (s *Server) handlePGPKeyserverLookup(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		if errors.Is(err, errKeyserverKeyNotFound) {
 			http.Error(w, "no key found for this address", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, pgpmail.ErrKeyPolicy) {
+			http.Error(w, "the keyserver's key is not accepted: "+err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
 		http.Error(w, "keyserver lookup failed", http.StatusBadGateway)

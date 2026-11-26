@@ -99,6 +99,17 @@ Other PGP boundaries:
   server-held keys and incoming encryption) and signing refuse an RSA primary
   or selected subkey below 2048 bits and name the key. Incoming encryption
   leaves the original message in place. See [key strength](STRONG-CRYPTO.md).
+- **Accepted key types.** A new key you upload, paste on a contact, import in a
+  vCard or CardDAV address book, or that KyPost finds through WKD, the keyserver
+  or an Autocrypt header must be a v4 Ed25519/Curve25519 or RSA-2048+ key (an
+  ML-KEM-768+X25519 encryption subkey is allowed), or a v6 Ed25519/X25519 or
+  ML-DSA-65+Ed25519 / ML-KEM-768+X25519 key. Anything else (DSA, ElGamal, NIST
+  or Brainpool curves, Ed448, RSA below 2048, pre-standard post-quantum keys) is
+  refused with an error that names the algorithm; ask the correspondent for a
+  supported key. Keys already stored keep working. The full list is in
+  [key strength](STRONG-CRYPTO.md).
+- **Autocrypt headers** carry only your From address's User ID and current
+  encryption subkey, and KyPost neither sends nor reads one over 10 KiB.
   Keep the window open and copy the current text somewhere safe before leaving.
   This browser policy does not establish TLS or
   the independent native clients' policies.

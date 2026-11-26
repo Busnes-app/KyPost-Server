@@ -90,9 +90,12 @@ func TestEncryptMIMERefusesRSABelow2048(t *testing.T) {
 			if _, err := EncryptMIME([]byte(floorMessage), []string{strongKey}, signerFor(t, weak)); !errors.Is(err, ErrWeakRSAKey) {
 				t.Fatalf("sign with %s: got %v, want ErrWeakRSAKey", name, err)
 			}
-			// The key itself stays importable; only new use is refused.
-			if _, err := InspectPublicKey(weakKey); err != nil {
-				t.Fatalf("inspect %s: %v", name, err)
+			// A new upload is refused by the allowlist; a stored one still reads.
+			if _, err := InspectPublicKey(weakKey); !errors.Is(err, ErrWeakRSAKey) || !errors.Is(err, ErrKeyPolicy) {
+				t.Fatalf("inspect %s: got %v, want ErrKeyPolicy and ErrWeakRSAKey", name, err)
+			}
+			if _, err := ReadPublicKey(weakKey); err != nil {
+				t.Fatalf("read stored %s: %v", name, err)
 			}
 		})
 	}

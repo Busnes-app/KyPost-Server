@@ -634,6 +634,13 @@ Implemented:
 - The server derives fingerprint and key ID from the uploaded public key
   rather than trusting the client's claim — otherwise a client could get its
   own key published under someone else's identity through WKD or Autocrypt.
+- Every public key the server accepts (this upload, the keyring update,
+  contact writes, CardDAV/vCard, WKD, the keyserver and Autocrypt) must pass
+  the version/algorithm allowlist in [STRONG-CRYPTO.md](STRONG-CRYPTO.md):
+  v4 Ed25519/Curve25519 or RSA-2048+ (ML-KEM-768+X25519 subkeys allowed), v6
+  Ed25519/X25519 or ML-DSA-65+Ed25519 / ML-KEM-768+X25519. The browser's
+  generated keys (v4 Ed25519 + cv25519) pass. A client that generates or
+  imports a key must stay inside it; the refusal names the algorithm.
 - Browser crypto: `lib/keyVault.ts` (wrap/unwrap/lock, 12 tests) and
   `lib/pgpClient.ts` (generate, import, decrypt, encrypt, RFC 3156 wrapping
   with a full RFC 5322 envelope and protected Subject).
