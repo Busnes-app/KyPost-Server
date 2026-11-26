@@ -70,3 +70,15 @@ func checkCellCodes(table []relayCode, cells []string) error {
 	}
 	return nil
 }
+
+// RelayCell is the cell whose masked relay region code is code, if the table has one. An MX
+// host sends a relay address with no such cell to its own cell, which answers it as unknown
+// (MH10).
+func RelayCell(code byte) (string, bool) {
+	for _, e := range relayCodes {
+		if e.code == code {
+			return e.cell, true
+		}
+	}
+	return "", false
+}

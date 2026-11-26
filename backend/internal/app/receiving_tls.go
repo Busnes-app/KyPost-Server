@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/big"
 	mathrand "math/rand/v2"
 	"net"
@@ -25,12 +26,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 )
@@ -374,14 +377,36 @@ type receivingConfigReply struct {
 	Destinations []string `json:"destinations"`
 }
 
-// receivingRemote is an MX host's KYPOST_RECEIVING_REMOTE file: its own key, the replicas'
-// private addresses and the replicas' server pins (current and next).
+// receivingRemote is an MX host's KYPOST_RECEIVING_REMOTE file: its own key, its own cell's
+// replicas (private addresses and server pins, current and next) and, on a host that
+// forwards relay-domain mail across regions (MH10), the hosted relay domain and the other
+// cells' replicas by cell.
 type receivingRemote struct {
 	Key        string   `json:"key"`
 	Servers    []string `json:"servers"`
 	ServerPins []string `json:"server_pins"`
 	tls        *tls.Config
+
+	RelayDomain string                         `json:"relay_domain,omitempty"`
+	Cells       map[string]*receivingCellRoute `json:"cells,omitempty"`
 }
+
+// receivingCellRoute is one other cell's replicas, reached with the same key; each cell
+// enrols that key as a gateway of its own (RX R4 per cell).
+type receivingCellRoute struct {
+	Servers    []string `json:"servers"`
+	ServerPins []string `json:"server_pins"`
+	tls        *tls.Config
+}
+
+// receivingEndpoint is where one call goes: a cell's replicas and its pinned TLS.
+type receivingEndpoint struct {
+	servers []string
+	tls     *tls.Config
+}
+
+// relayCellFor is the masked relay region code table (tenancy.RelayCell); tests replace it.
+var relayCellFor = tenancy.RelayCell
 
 // loadReceivingRemote reads KYPOST_RECEIVING_REMOTE. Unset is nil: the command runs as it
 // always has. Set, it must be valid on a multi install, and there is no local fallback.
@@ -393,7 +418,7 @@ func loadReceivingRemote() (*receivingRemote, error) {
 	if err := receivingMultiEnv(); err != nil {
 		return nil, err
 	}
-	bad := errors.New("KYPOST_RECEIVING_REMOTE must name an owner-only JSON file with key, 1-16 private servers and 1-4 server_pins")
+	bad := errors.New("KYPOST_RECEIVING_REMOTE must name an owner-only JSON file with key, 1-16 private servers and 1-4 server_pins, and for other cells a relay_domain and cells of the same shape")
 	if !filepath.IsAbs(path) {
 		return nil, bad
 	}
@@ -404,19 +429,15 @@ func loadReceivingRemote() (*receivingRemote, error) {
 	var c receivingRemote
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if dec.Decode(&c) != nil || len(c.Servers) < 1 || len(c.Servers) > 16 || len(c.ServerPins) < 1 || len(c.ServerPins) > 4 {
+	if dec.Decode(&c) != nil || !validRemoteRoute(c.Servers, c.ServerPins) || (c.RelayDomain == "") != (len(c.Cells) == 0) ||
+		c.RelayDomain != "" && checkReceivingHost(c.RelayDomain) != nil || len(c.Cells) >= config.MaxCells {
 		return nil, bad
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return nil, bad
 	}
-	for _, s := range c.Servers {
-		if _, ok := privateAddress(s); !ok {
-			return nil, bad
-		}
-	}
-	for _, p := range c.ServerPins {
-		if !tenancy.ValidPin(p) {
+	for cell, route := range c.Cells {
+		if cells, err := config.Cells(cell); err != nil || len(cells) != 1 || cells[0] != cell || route == nil || !validRemoteRoute(route.Servers, route.ServerPins) {
 			return nil, bad
 		}
 	}
@@ -429,7 +450,54 @@ func loadReceivingRemote() (*receivingRemote, error) {
 		return nil, err
 	}
 	c.tls = pinVerifiedClientTLS(cert, c.ServerPins)
+	for _, route := range c.Cells {
+		route.tls = pinVerifiedClientTLS(cert, route.ServerPins)
+	}
 	return &c, nil
+}
+
+// validRemoteRoute is one cell's replicas: 1-16 private addresses and 1-4 server pins.
+func validRemoteRoute(servers, pins []string) bool {
+	if len(servers) < 1 || len(servers) > 16 || len(pins) < 1 || len(pins) > 4 {
+		return false
+	}
+	for _, s := range servers {
+		if _, ok := privateAddress(s); !ok {
+			return false
+		}
+	}
+	for _, p := range pins {
+		if !tenancy.ValidPin(p) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *receivingRemote) own() receivingEndpoint { return receivingEndpoint{c.Servers, c.tls} }
+
+// route is the cell a recipient's bind goes to (MH10): on the relay domain, the cell whose
+// region code is the character after adjective.animal., read without a +tag (sso.PlusBase,
+// as bind resolves it); everything else, and a code that names no cell this host forwards
+// to, goes to this host's own cell, which answers it. The bind still carries the recipient
+// as received.
+func (c *receivingRemote) route(recipient string) receivingEndpoint {
+	recipient = sso.PlusBase(recipient)
+	at := strings.LastIndexByte(recipient, '@')
+	if len(c.Cells) == 0 || at < 0 || !strings.EqualFold(recipient[at+1:], c.RelayDomain) {
+		return c.own()
+	}
+	local := strings.ToLower(recipient[:at])
+	random := local[strings.LastIndexByte(local, '.')+1:]
+	if strings.Count(local, ".") != 2 || len(random) != 7 || strings.Trim(random, "abcdefghijklmnopqrstuvwxyz234567") != "" {
+		return c.own()
+	}
+	if cell, ok := relayCellFor(random[0]); ok {
+		if r, ok := c.Cells[cell]; ok {
+			return receivingEndpoint{r.Servers, r.tls}
+		}
+	}
+	return c.own()
 }
 
 // pinVerifiedClientTLS is the helper's TLS: no CA and no name, because the server's key
@@ -454,14 +522,18 @@ func pinVerifiedClientTLS(cert tls.Certificate, pins []string) *tls.Config {
 // written, a lost answer is an error, never a retry. The server's budget leaves five
 // seconds of ctx for its answer to arrive.
 func (c *receivingRemote) call(ctx context.Context, args []string, body []byte) (byte, []byte, error) {
+	return c.own().call(ctx, args, body)
+}
+
+func (e receivingEndpoint) call(ctx context.Context, args []string, body []byte) (byte, []byte, error) {
 	lost := errors.New("receiving server did not answer")
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		return 1, nil, lost
 	}
-	for _, i := range mathrand.Perm(len(c.Servers)) {
+	for _, i := range mathrand.Perm(len(e.servers)) {
 		dial, cancel := context.WithTimeout(ctx, time.Second)
-		conn, err := (&tls.Dialer{Config: c.tls}).DialContext(dial, "tcp", c.Servers[i])
+		conn, err := (&tls.Dialer{Config: e.tls}).DialContext(dial, "tcp", e.servers[i])
 		cancel()
 		if err != nil {
 			continue
@@ -511,7 +583,16 @@ func (c *receivingRemote) forward(ctx context.Context, args []string, input io.R
 		}
 		body = raw
 	}
-	code, _, err := c.call(ctx, args, body)
+	var code byte
+	var err error
+	switch {
+	case args[0] == "bind":
+		code, _, err = c.route(args[3]).call(ctx, args, body)
+	case len(c.Cells) > 0:
+		code, err = c.acceptAcross(ctx, args, body)
+	default:
+		code, _, err = c.call(ctx, args, body)
+	}
 	switch {
 	case err != nil:
 		return &receivingCommandError{err: err, code: 1}
@@ -519,6 +600,47 @@ func (c *receivingRemote) forward(ctx context.Context, args []string, input io.R
 		return &receivingCommandError{err: errors.New("refused by the receiving server"), code: int(code)}
 	}
 	return nil
+}
+
+// acceptAcross completes one message in every cell that bound a recipient (MH10). It asks
+// each cell whether it holds the transaction (held, no body) and sends the message only to
+// those, so no cell receives mail it has no recipient for. The answer is 250 only when every
+// holder committed. A cell that cannot answer, or holders that disagree, answer 451: the
+// sender retries, and a cell that committed keeps a second copy (at least once, as RX's lost
+// answer already is). If no cell holds it, the own cell answers as it always has.
+func (c *receivingRemote) acceptAcross(ctx context.Context, args []string, body []byte) (byte, error) {
+	targets := []receivingEndpoint{c.own()}
+	for _, cell := range slices.Sorted(maps.Keys(c.Cells)) {
+		targets = append(targets, receivingEndpoint{c.Cells[cell].Servers, c.Cells[cell].tls})
+	}
+	var holders []receivingEndpoint
+	for _, t := range targets {
+		code, _, err := t.call(ctx, []string{"held", args[1]}, nil)
+		switch {
+		case err != nil:
+			return 1, err
+		case code == 0:
+			holders = append(holders, t)
+		case code != 3:
+			return 1, errors.New("a receiving cell could not say whether it holds the message")
+		}
+	}
+	if len(holders) == 0 {
+		holders = targets[:1]
+	}
+	var first byte
+	for i, h := range holders {
+		code, _, err := h.call(ctx, args, body)
+		if err != nil {
+			code = 1
+		}
+		if i == 0 {
+			first = code
+		} else if code != first {
+			return 1, errors.New("receiving cells answered the message differently")
+		}
+	}
+	return first, nil
 }
 
 // destinations fetches the replicas' destination domains for the MX host's profile.
