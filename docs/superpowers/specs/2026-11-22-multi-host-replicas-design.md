@@ -1922,3 +1922,52 @@ byte. Paths are under `backend/internal/`.
   URL keepalive settings, and `verify-full` on PgBouncer's legs and on replication
   `primary_conninfo`. `replica/AGENTS.md` describes `Process.Table`. The multi-host Compose
   profile is not built here. It joins RX PR 5's hosted profile when multi can start.
+
+## MH9 cells as built (2026-11-25)
+
+KyIdentity's Cells amendment (its tenancy spec, C1–C5, 2026-11-24) replaces the single region ID
+this note's "What a cell is" proposed: a cell is a KyIdentity `home_region` slug, and a
+deployment serves a list of them, `KY_CELLS`, instead of one `KYPOST_REGION`. What landed:
+
+- **`KY_CELLS`** (`config.Cells`, checked in `config.Tenancy`, so `CheckEnv` and every command
+  refuse it): in multi mode 1 to 32 KyIdentity home region slugs (`^[a-z][a-z0-9-]{1,31}$`),
+  comma-separated, none twice, kept sorted; single mode refuses it, as it refuses
+  `KYPOST_STAFF_ORG_ID`. No refusal echoes the value. The hosted and MX Compose profiles require it.
+- **Shared configuration.** `KY_CELLS` is a shared replica setting (`replica.MultiShared`,
+  compared as a sorted list). It joins the fingerprint only when set, so a single-tenant record is
+  byte for byte unchanged, and a replica serving other cells than the record is refused at start
+  (`accept-replica-config` records a deliberate change, such as a cell added under C2). This is
+  the "replica with another region refused" row of MH9; no separate `meta` key is written.
+- **The orgs poll is the one place a cell is decided.** `Server.applyOrgs` caches an org only when
+  its `home_region` is one of the server's cells (the staff org always: it is in every cell). An
+  org of another cell goes to `tenancy.db` `foreign_orgs(id, home_region, revision)` and never
+  into `orgs`; a cached row for it, unless a `deleted` tombstone, is dropped after its members'
+  sessions are revoked as for a suspension (C4 says this never happens, and `suitedir` documents
+  `home_region` as fixed). `OrgCursor` counts `foreign_orgs`, so the other cells' orgs are not
+  listed again on every poll, and a restore forgets them with the cache (`ForgetRestored`).
+  `orgs.home_region` records each own org's cell for MH11's object keys.
+- **Every way in therefore answers an org of another cell as an org the cache does not hold**,
+  with no per-path check that could be missed: browser sign-in, device sign-on, every session,
+  device, CardDAV and MCP credential (`orgServe`), sending, staff selection (`KnownOrg`), storage
+  reports (`ReportableOrgs`), the purge (`DeletedOrgs`), the receiving tier's `bind` (exit 12,
+  `451 4.2.1`, as for an uncached org), imports (wait), and peer calls (no account, so
+  `no_user`).
+- **Directory events** are the exception, as this note's MH9 step says: an org held in
+  `foreign_orgs` is refused for good (422, KyIdentity stops retrying), and an org no poll has
+  listed yet for now (503, KyIdentity retries; a new org's first sign-in waits up to one poll),
+  both before anything is written. Before MH9 an uncached org's event applied; with cells it
+  could be another cell's new org. After a restore empties the cache, events wait for the
+  restore read the same way.
+- **Object storage prefix.** Every object key of an org starts with its cell:
+  `cells/<home_region>/bodies/<org>/<mailbox>/<object id>`, and the purge lists and empties
+  `cells/<home_region>/bodies/<org>/` (amending "Object storage for message bodies" above). One
+  bucket may then hold several cells (C2) and no deployment lists another's keys. KyPost has no
+  object storage yet: MH11 builds `vol.Object` with this layout, from `tenancy.Org.HomeRegion`.
+- **Not built here.** The masked relay region code table, the disaster-recovery runbook (both
+  still MH9 rows above, needed before a second cell opens, not before K PR 7), MH10's routing, and
+  wiring `Server.cells` from `KY_CELLS` at a multi start, which K PR 7 does with the rest of the
+  multi wiring (`Server.tenancy` and `staffOrg` are test-only until then).
+- **Tests.** `config` `TestCells`; `replica` `TestCellsAreSharedOnlyWhenSet`,
+  `TestReplicaWithOtherCellsRefused` (PostgreSQL); `tenancy` `TestForeignOrg`; `api`
+  `TestCellsServeOnlyTheirOwnOrgs`: two in-process hosts, one per cell, poll one KyIdentity, and
+  each way in above is compared with an org no host knows; `app` `TestHostedBindForeignOrg`.

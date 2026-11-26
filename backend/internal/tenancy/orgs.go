@@ -38,14 +38,16 @@ type Quotas struct {
 	Mailboxes        *int64 `json:"mailboxes"`
 }
 
-// Org is one cached org.
+// Org is one cached org. HomeRegion is its cell (KyIdentity tenancy spec, Cells, C1), one of
+// this deployment's; MH11's object keys start with it ("cells/<home_region>/").
 type Org struct {
-	Known    bool
-	Status   string
-	Revision int64
-	Enabled  bool
-	Quotas   Quotas
-	PolledAt time.Time
+	Known      bool
+	Status     string
+	Revision   int64
+	Enabled    bool
+	Quotas     Quotas
+	PolledAt   time.Time
+	HomeRegion string
 }
 
 // Fresh reports whether the last good poll that confirmed o is within StaleAfter. A
@@ -94,7 +96,7 @@ func LookupOrg(ctx context.Context, db *sql.DB, org string) (Org, error) {
 		quotas  string
 		polled  int64
 	)
-	err := db.QueryRowContext(ctx, `SELECT status, revision, enabled, quotas_json, polled_at FROM orgs WHERE id = ?`, org).Scan(&o.Status, &o.Revision, &enabled, &quotas, &polled)
+	err := db.QueryRowContext(ctx, `SELECT status, revision, enabled, quotas_json, polled_at, home_region FROM orgs WHERE id = ?`, org).Scan(&o.Status, &o.Revision, &enabled, &quotas, &polled, &o.HomeRegion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Org{}, nil
 	}
@@ -135,11 +137,11 @@ func parseQuotas(raw string) Quotas {
 }
 
 // OrgCursor is the since value for the next poll: one below the highest cached
-// revision, so orgs sharing it that a cut-short page left out are listed again (an
-// equal revision applies as the same state), or 0 with an empty cache.
+// revision, other cells' orgs included, so orgs sharing it that a cut-short page left out
+// are listed again (an equal revision applies as the same state), or 0 with an empty cache.
 func OrgCursor(ctx context.Context, db *sql.DB) (int64, error) {
 	var top sql.NullInt64
-	if err := db.QueryRowContext(ctx, `SELECT MAX(revision) FROM orgs`).Scan(&top); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT MAX(revision) FROM (SELECT revision FROM orgs UNION ALL SELECT revision FROM foreign_orgs) AS listed`).Scan(&top); err != nil {
 		return 0, err
 	}
 	return max(top.Int64-1, 0), nil
@@ -159,11 +161,22 @@ func ValidOrg(o suitedir.Org) error {
 	return errors.New("tenancy: malformed org entry")
 }
 
-// ApplyOrg writes one listed org in its own statement (K "one transaction per org"). A
-// lower revision than the cached one is stale and changes nothing, and deleted is
+// ApplyOrg writes one listed org of this deployment's cells (K "one transaction per org").
+// A lower revision than the cached one is stale and changes nothing, and deleted is
 // terminal (T "Account holder guard"). An entry that is not canonical is refused.
 func ApplyOrg(ctx context.Context, db *sql.DB, o suitedir.Org, now time.Time) error {
 	if err := ValidOrg(o); err != nil {
+		return err
+	}
+	// C4: an org never changes cell; if KyIdentity ever says otherwise, the newest answer wins.
+	var foreign sql.NullInt64
+	if err := db.QueryRowContext(ctx, `SELECT MAX(revision) FROM foreign_orgs WHERE id = ?`, o.ID).Scan(&foreign); err != nil {
+		return err
+	}
+	if foreign.Valid && foreign.Int64 > o.Revision {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM foreign_orgs WHERE id = ?`, o.ID); err != nil {
 		return err
 	}
 	enabled := 0
@@ -174,11 +187,34 @@ func ApplyOrg(ctx context.Context, db *sql.DB, o suitedir.Org, now time.Time) er
 	if quotas == "" {
 		quotas = "{}"
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO orgs(id, status, revision, enabled, quotas_json, polled_at) VALUES(?, ?, ?, ?, ?, ?)
+	_, err := db.ExecContext(ctx, `INSERT INTO orgs(id, status, revision, enabled, quotas_json, polled_at, home_region) VALUES(?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET status = excluded.status, revision = excluded.revision, enabled = excluded.enabled,
- quotas_json = excluded.quotas_json, polled_at = excluded.polled_at
-WHERE excluded.revision >= orgs.revision AND orgs.status <> 'deleted'`, o.ID, o.Status, o.Revision, enabled, quotas, now.Unix())
+ quotas_json = excluded.quotas_json, polled_at = excluded.polled_at, home_region = excluded.home_region
+WHERE excluded.revision >= orgs.revision AND orgs.status <> 'deleted'`, o.ID, o.Status, o.Revision, enabled, quotas, now.Unix(), o.HomeRegion)
 	return err
+}
+
+// ApplyForeignOrg records a listed org of another cell (MH9; KyIdentity tenancy spec, Cells,
+// C5) as its ID, cell and revision only, and drops any cached row for it that is not a
+// deleted tombstone, so every way in answers it as an org the cache does not hold. A lower
+// revision than the recorded one changes nothing.
+func ApplyForeignOrg(ctx context.Context, db *sql.DB, o suitedir.Org) error {
+	if err := ValidOrg(o); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM orgs WHERE id = ? AND revision <= ? AND status <> 'deleted'`, o.ID, o.Revision); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `INSERT INTO foreign_orgs(id, home_region, revision) VALUES(?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET home_region = excluded.home_region, revision = excluded.revision
+WHERE excluded.revision >= foreign_orgs.revision`, o.ID, o.HomeRegion, o.Revision)
+	return err
+}
+
+// Foreign reports whether org is recorded as another cell's (ApplyForeignOrg).
+func Foreign(ctx context.Context, db *sql.DB, org string) (bool, error) {
+	id, err := lookup(ctx, db, `SELECT id FROM foreign_orgs WHERE id = ?`, org)
+	return id != "", err
 }
 
 // MarkPolled stamps every cached org with a good poll's time: KyIdentity answered for

@@ -41,6 +41,7 @@ func TestRunRefusesMultiTenancy(t *testing.T) {
 	t.Setenv("STATE_DIR", t.TempDir())
 	t.Setenv("SECRET_DIR", t.TempDir())
 	t.Setenv("KYPOST_TENANCY", "multi")
+	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d")
 	for _, mode := range []string{"server", "daemon", "all", "bootstrap-admin"} {
 		err := Run([]string{"--mode", mode})

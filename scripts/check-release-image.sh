@@ -25,7 +25,7 @@ fi
 # KYPOST_DATABASE_URL would make every command connect first (dbbackend.Check), and the gate
 # reads only the environment.
 multi=(--rm --name "$run" --network none --memory 512m -e KYPOST_BIND=127.0.0.1
-  -e KYPOST_TENANCY=multi -e KYPOST_STAFF_ORG_ID=6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d
+  -e KYPOST_TENANCY=multi -e KYPOST_STAFF_ORG_ID=6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d -e KY_CELLS=e2e-1
   -e KYPOST_NATIVE_MAIL=true -e KYPOST_DISABLE_AI_SORTING=true)
 want='KYPOST_TENANCY=multi is not available in this release'
 for how in entrypoint server; do

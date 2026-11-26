@@ -272,6 +272,7 @@ func TestReceivingOrgStoragePool(t *testing.T) {
 	}
 	// The staff org is exempt.
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", receivingOrgA)
 	if got := exit("staff", "one@example.test"); got != 0 {
 		t.Fatalf("staff org: exit %d", got)

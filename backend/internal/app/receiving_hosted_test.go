@@ -93,6 +93,7 @@ func TestHostedBindOrgStatus(t *testing.T) {
 
 	// The staff org is never gated (K8), whatever the cache says.
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", receivingOrgB)
 	status(receivingOrgB, suitedir.OrgSuspended, false)
 	if err := r.bind(ctx, "staff", tlsSender, "two@example.test"); err != nil {
@@ -273,6 +274,7 @@ func TestHostedBindArguments(t *testing.T) {
 		t.Fatal("single-tenant bind took a source argument")
 	}
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", tlsStaffOrg)
 	if err := checkReceivingArgs(bind); err != nil {
 		t.Fatal(err)
@@ -288,5 +290,30 @@ func TestHostedBindArguments(t *testing.T) {
 	var commandError *receivingCommandError
 	if !errors.As(errOrgUnavailable, &commandError) || commandError.code != 12 || !errors.As(errProbeBudget, &commandError) || commandError.code != 13 {
 		t.Fatal("hosted exit codes changed")
+	}
+}
+
+// MH9: an org of another cell is never cached, so mail for its mailbox answers exactly as an
+// uncached org's (exit 12, 451 4.2.1), and nothing is kept.
+func TestHostedBindForeignOrg(t *testing.T) {
+	r, _ := importFixture(t, receivingOrgA, receivingOrgB)
+	ctx := context.Background()
+	if err := tenancy.ForgetRestored(ctx, r.tenancy); err != nil {
+		t.Fatal(err)
+	}
+	uncached := r.bind(ctx, "uncached", tlsSender, "one@example.test")
+	if receivingExit(uncached) != 12 {
+		t.Fatalf("uncached org: %v", uncached)
+	}
+	o := suitedir.Org{ID: receivingOrgA, Status: suitedir.OrgActive, Revision: orgRevision.Add(1), Enabled: true, Quotas: json.RawMessage(`{}`), HomeRegion: "eu-central-1"}
+	if err := tenancy.ApplyForeignOrg(ctx, r.tenancy, o); err != nil {
+		t.Fatal(err)
+	}
+	err := r.bind(ctx, "foreign", tlsSender, "one@example.test")
+	if err == nil || err.Error() != uncached.Error() {
+		t.Fatalf("foreign org: %v, want the uncached answer %v", err, uncached)
+	}
+	if s := stateOf(t, r, receivingGateway, "foreign"); s != "gone" {
+		t.Fatalf("foreign org's mail was kept: %s", s)
 	}
 }
