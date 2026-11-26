@@ -13,7 +13,7 @@ trap 'docker rm -f "$cid" "$run" >/dev/null 2>&1; rm -rf "$dir"' EXIT
 docker cp -q "$cid:/usr/local/bin/kypost-server" "$dir/kypost-server"
 
 info=$(go version -m "$dir/kypost-server")
-grep -q -P '^\tdep\tgithub.com/Busnes-app/kypost-server/backend\t' <<<"$info" ||
+grep -q -P '^\t(mod|dep)\tgithub.com/Busnes-app/kypost-server/backend\t' <<<"$info" ||
   { echo "::error::$image: no build info for kypost-server:" >&2; echo "$info" >&2; exit 1; }
 if tags=$(grep -P '^\tbuild\t-tags=' <<<"$info") && grep -q -w kye2e <<<"$tags"; then
   echo "::error::$image was built with the end-to-end test tag: $tags" >&2
