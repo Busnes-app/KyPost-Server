@@ -18,6 +18,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add the `kye2e` end-to-end test build gate: only a binary built with `-tags kye2e` (the suite end-to-end run, which also accepts only a `.test` issuer) passes the multi-tenant startup refusal. CI and the publish workflows now fail on an image built with that tag or one that starts in multi-tenant mode. Every release build still refuses multi-tenant mode.
 - Add `KY_CELLS`, the KyIdentity home regions a multi-tenant deployment serves (not startable yet). A multi-tenant server caches only its own cells' orgs and answers an org of another cell as an unknown one everywhere; directory events for it are refused, and those for an org not yet polled wait for the next poll. Replicas must agree on `KY_CELLS`. Ordinary installs are unchanged and refuse the variable.
 - Move the Reading pane setting from Settings → Mail to Settings → Appearance.
 - In table mode (not startable yet), skip the one-host boot-ID and volume-ID checks and refuse to start instead while any store still lives on the host's disk; refuse a plain listener, a database URL without `sslmode=verify-full` or with unbounded dead-connection keepalives off loopback, cleartext Ollama, push relays or KyIdentity, and `ALLOW_INSECURE_SMTP`. Ordinary installs are unchanged.

@@ -66,7 +66,7 @@ func runBackupCommand(name string, rest []string, stdin io.Reader, stdout io.Wri
 	if err != nil {
 		return err
 	}
-	if mode == config.TenancyMulti {
+	if mode == config.TenancyMulti { // in every build, the end-to-end test build too
 		return config.ErrMultiTenancyUnavailable
 	}
 	releaseDocuments, err := startDocuments(context.Background(), config.ConfigDir(), config.StateDir(), config.SecretDir(), mode)

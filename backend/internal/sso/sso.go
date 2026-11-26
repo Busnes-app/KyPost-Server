@@ -115,7 +115,8 @@ func (s *Store) loadUnlocked() SSOSettings {
 	}
 
 	var cfg SSOSettings
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	// The end-to-end test build loads no issuer outside .test: it reads as unconfigured.
+	if err := json.Unmarshal(data, &cfg); err != nil || config.MultiTenantBuild && config.CheckTestIssuer(cfg.IssuerURL) != nil {
 		return SSOSettings{
 			AutoProvision: true,
 		}
@@ -278,6 +279,11 @@ func ValidateIssuerURL(raw string, allowInsecure bool) error {
 	u, err := url.Parse(trimmed)
 	if err == nil && (u.RawQuery != "" || u.Fragment != "") {
 		return errors.New("issuer URL must not carry a query string or fragment")
+	}
+	if config.MultiTenantBuild {
+		if err := config.CheckTestIssuer(trimmed); err != nil {
+			return err
+		}
 	}
 	return requireSafeURL("issuer URL", trimmed, allowInsecure)
 }

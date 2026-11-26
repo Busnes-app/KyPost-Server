@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 )
 
@@ -77,10 +78,35 @@ func TestSSOSettingsStore(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 
+	// The end-to-end test build reads an issuer outside .test as unconfigured; one under
+	// .test loads in both builds.
 	got := NewStore(tmpDir).Load()
-	if !got.Enabled || got.IssuerURL != "https://auth.example.com" || got.ClientID != "kypost" {
-		t.Errorf("unexpected loaded settings: %+v", got)
+	if taggedBuild && (got.Enabled || got.IssuerURL != "") || !taggedBuild && (!got.Enabled || got.IssuerURL != "https://auth.example.com" || got.ClientID != "kypost") {
+		t.Errorf("test build %v: unexpected loaded settings: %+v", taggedBuild, got)
 	}
+	cfg.IssuerURL = "https://id.e2e.test"
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewStore(tmpDir).Load(); !got.Enabled || got.IssuerURL != "https://id.e2e.test" {
+		t.Errorf("a .test issuer did not load: %+v", got)
+	}
+}
+
+// releaseOnly ends a test whose provider runs on loopback, outside .test, after checking
+// that the end-to-end test build refuses such an issuer (ValidateIssuerURL, on every save
+// and discovery). The release build runs the whole test.
+func releaseOnly(t *testing.T) {
+	t.Helper()
+	if !taggedBuild {
+		return
+	}
+	for _, issuer := range []string{"https://127.0.0.1:8443", "http://127.0.0.1:9000", "https://auth.example.com"} {
+		if err := ValidateIssuerURL(issuer, false); err == nil || !strings.Contains(err.Error(), ".test") {
+			t.Fatalf("the end-to-end test build accepted %s: %v", issuer, err)
+		}
+	}
+	t.Skip("the end-to-end test build serves only an https issuer under .test")
 }
 
 func TestClaimsAppAdmin(t *testing.T) {
@@ -141,6 +167,7 @@ func TestClaimsLegacyRoleIsNotAdmin(t *testing.T) {
 
 // A correctly signed token is accepted and its claims survive intact.
 func TestExchangeAcceptsSignedToken(t *testing.T) {
+	releaseOnly(t)
 	idp := newIdP(t)
 
 	claims, err := exchange(t, idp)
@@ -161,6 +188,7 @@ func TestExchangeAcceptsSignedToken(t *testing.T) {
 // Each of these is a token the removed ParseClaims would have accepted, or
 // would have had no opinion about. Every one must now be refused.
 func TestExchangeRefusesUnverifiableTokens(t *testing.T) {
+	releaseOnly(t)
 	for _, tc := range []struct {
 		name  string
 		spoil func(*ssotest.IdP)
@@ -248,6 +276,7 @@ func TestNewProviderRefusesIssuerMismatch(t *testing.T) {
 // Discovery must not be able to move the client secret onto a cleartext or
 // unrelated-scheme endpoint.
 func TestNewProviderRefusesUnsafeDiscoveredEndpoints(t *testing.T) {
+	releaseOnly(t)
 	for _, tc := range []struct{ name, tokenEndpoint string }{
 		{"cleartext token endpoint on a public host", "http://tokens.example.com/t"},
 		{"non-http scheme", "ftp://tokens.example.com/t"},
@@ -282,6 +311,7 @@ func TestNewProviderRefusesUnsafeDiscoveredEndpoints(t *testing.T) {
 
 // The provider must not be led somewhere the scheme policy never inspected.
 func TestNewProviderRefusesRedirects(t *testing.T) {
+	releaseOnly(t)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
@@ -337,11 +367,14 @@ func TestValidateIssuerURL(t *testing.T) {
 		{"a bare host is refused", "auth.example.com", false, true},
 		{"empty is refused", "", false, true},
 		{"a query string is refused", "https://auth.example.com?x=1", false, true},
+		{"an https issuer under .test is fine", "https://id.e2e.test", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateIssuerURL(tc.raw, tc.allowInsecure)
-			if (err != nil) != tc.wantErr {
-				t.Errorf("ValidateIssuerURL(%q, %v) error = %v, wantErr = %v", tc.raw, tc.allowInsecure, err, tc.wantErr)
+			// The end-to-end test build also refuses every issuer outside .test.
+			wantErr := tc.wantErr || taggedBuild && config.CheckTestIssuer(tc.raw) != nil
+			if (err != nil) != wantErr {
+				t.Errorf("ValidateIssuerURL(%q, %v) error = %v, wantErr = %v", tc.raw, tc.allowInsecure, err, wantErr)
 			}
 		})
 	}
@@ -369,6 +402,7 @@ func writeJSONDoc(w http.ResponseWriter, doc map[string]any) error {
 // A thin ID token is topped up from userinfo, without losing what the signed
 // token did say and without accepting a profile for a different subject.
 func TestExchangeMergesUserInfo(t *testing.T) {
+	releaseOnly(t)
 	t.Run("fills only the blanks", func(t *testing.T) {
 		idp := newIdP(t)
 		// Signed token carries sub and email but no username.
@@ -447,6 +481,7 @@ func TestClaimsFreshProof(t *testing.T) {
 }
 
 func TestVerifyIDTokenRunsTheExchangeChecks(t *testing.T) {
+	releaseOnly(t)
 	provider := func(idp *ssotest.IdP) *Provider {
 		t.Helper()
 		p, err := NewProvider(context.Background(), testSettings(idp.URL()), "https://mail.example.com/cb")
@@ -486,6 +521,7 @@ func TestVerifyIDTokenRunsTheExchangeChecks(t *testing.T) {
 }
 
 func TestIDTokenIssuedAtBoundsBothVerificationPaths(t *testing.T) {
+	releaseOnly(t)
 	for _, method := range []string{"exchange", "verify"} {
 		for _, tc := range []struct {
 			name   string

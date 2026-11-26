@@ -139,7 +139,7 @@ func CheckEnv() error {
 	}
 	if mode, _, err := Tenancy(); err != nil {
 		bad = append(bad, err.Error())
-	} else if mode == TenancyMulti {
+	} else if mode == TenancyMulti && !MultiTenantBuild {
 		bad = append(bad, ErrMultiTenancyUnavailable.Error())
 	}
 	if len(bad) > 0 {
