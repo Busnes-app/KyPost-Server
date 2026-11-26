@@ -78,6 +78,7 @@ func TestReceivingMultiModeWithoutTenancyRefuses(t *testing.T) {
 	r, _ := receivingFixture(t)
 	quarantineCLI(t, r)
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", tlsStaffOrg)
 	if err := runReceivingBlocks([]string{"list"}, io.Discard); err == nil {
 		t.Fatal("multi mode without a multi record listed blocks")

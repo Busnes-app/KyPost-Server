@@ -63,7 +63,8 @@ func TestEveryEnvironmentVariableIsClassified(t *testing.T) {
 	// Prose words the docs put in backticks, not settings.
 	notSettings := map[string]bool{"TRUE": true}
 	for n, src := range names {
-		if _, shared := Shared[n]; !shared && !perHost[n] && !notSettings[n] {
+		_, multi := MultiShared[n]
+		if _, shared := Shared[n]; !shared && !multi && !perHost[n] && !notSettings[n] {
 			t.Errorf("%s (named in %s) is not classified as Shared or PerHost", n, src)
 		}
 	}
@@ -357,5 +358,49 @@ func TestProvisionedKeysAreFingerprinted(t *testing.T) {
 	}
 	if err := CheckConfig(ctx, st, key, keys); err == nil || !strings.Contains(err.Error(), "pow.key") {
 		t.Fatalf("missing key: %v", err)
+	}
+}
+
+// KY_CELLS (MH9) joins the fingerprint only when set, so a single-tenant record is unchanged,
+// and two replicas serving other cells differ (compared as a sorted list).
+func TestCellsAreSharedOnlyWhenSet(t *testing.T) {
+	key := fingerprintKey(t)
+	single, err := Fingerprint(key, env(map[string]string{}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := single["KY_CELLS"]; ok {
+		t.Fatal("an unset KY_CELLS is in the fingerprint")
+	}
+	a, _ := Fingerprint(key, env(map[string]string{"KY_CELLS": "us-east-1,us-east-2"}), nil)
+	b, _ := Fingerprint(key, env(map[string]string{"KY_CELLS": " us-east-2, us-east-1"}), nil)
+	c, _ := Fingerprint(key, env(map[string]string{"KY_CELLS": "us-east-1"}), nil)
+	if got := Diff(a, b); len(got) != 0 {
+		t.Errorf("the same cells in another order differ: %v", got)
+	}
+	if got := Diff(a, c); !slices.Equal(got, []string{"KY_CELLS"}) {
+		t.Errorf("other cells: diff %v", got)
+	}
+	if err := mismatch(Diff(a, c)); strings.Contains(err.Error(), "us-east") {
+		t.Errorf("the refusal carries a value: %v", err)
+	}
+}
+
+// A replica serving other cells than the deployment's record is refused at start.
+func TestReplicaWithOtherCellsRefused(t *testing.T) {
+	dbbackend.RequirePostgres(t)
+	ctx := context.Background()
+	key, dir := fingerprintKey(t), t.TempDir()
+	t.Setenv("KY_CELLS", "us-east-1")
+	if err := CheckConfig(ctx, globalStore(t, dir), key, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KY_CELLS", "us-east-1,us-east-2")
+	if err := CheckConfig(ctx, globalStore(t, dir), key, nil); !errors.Is(err, ErrConfigMismatch) || !strings.Contains(err.Error(), "KY_CELLS") {
+		t.Fatalf("other cells: %v", err)
+	}
+	t.Setenv("KY_CELLS", " us-east-1 ")
+	if err := CheckConfig(ctx, globalStore(t, dir), key, nil); err != nil {
+		t.Fatalf("the same cell: %v", err)
 	}
 }

@@ -54,6 +54,10 @@ var Shared = map[string]func(string) string{
 	"CONFIG_DIR": trim, "SECRET_DIR": trim, "STATE_DIR": trim,
 }
 
+// MultiShared are shared settings only multi mode sets (KY_CELLS, the cells this deployment
+// serves). Each joins the fingerprint only when set, so a single-tenant record never changes.
+var MultiShared = map[string]func(string) string{"KY_CELLS": list}
+
 // PerHost settings may differ between replicas: listeners, logging, resources, the local
 // model service, receiving concurrency, scratch and tools, the database URL itself, test and
 // Compose-only variables, and the receiver knobs the replica profile refuses anyway.
@@ -138,6 +142,11 @@ func Fingerprint(totpKeyPath string, getenv func(string) string, keys map[string
 	out := map[string]string{KeyField: sum(KeyField, "")}
 	for name, canon := range Shared {
 		out[name] = sum(name, canon(getenv(name)))
+	}
+	for name, canon := range MultiShared {
+		if v := canon(getenv(name)); v != "" {
+			out[name] = sum(name, v)
+		}
 	}
 	for name, path := range keys {
 		b, err := os.ReadFile(path)

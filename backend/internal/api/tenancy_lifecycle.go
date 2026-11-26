@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -135,10 +136,21 @@ func (s *Server) applyOrgs(ctx context.Context, orgs []suitedir.Org, now time.Ti
 		if err != nil {
 			return err
 		}
-		if err := s.revokeIfStopping(ctx, old, o); err != nil {
-			return err
+		// An org of another cell is never cached (C5), so every way in answers it as an org
+		// the cache does not hold; a cached one stops like a suspension. Staff are in every cell.
+		if o.ID != s.staffOrg && !slices.Contains(s.cells, o.HomeRegion) {
+			stopped := o
+			stopped.Status = suitedir.OrgSuspended
+			if old.Known {
+				err = s.revokeIfStopping(ctx, old, stopped)
+			}
+			if err == nil {
+				err = tenancy.ApplyForeignOrg(ctx, s.tenancy, o)
+			}
+		} else if err = s.revokeIfStopping(ctx, old, o); err == nil {
+			err = tenancy.ApplyOrg(ctx, s.tenancy, o, now)
 		}
-		if err := tenancy.ApplyOrg(ctx, s.tenancy, o, now); err != nil {
+		if err != nil {
 			return err
 		}
 	}

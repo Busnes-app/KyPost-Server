@@ -20,6 +20,7 @@ x-receiving: &receiving
   environment: &receiving-env
     KYPOST_TENANCY: multi
     KYPOST_STAFF_ORG_ID: ${KYPOST_STAFF_ORG_ID:?Set KYPOST_STAFF_ORG_ID, the staff org's id}
+    KY_CELLS: ${KY_CELLS:?Set KY_CELLS, the KyIdentity home regions this deployment serves}
     KYPOST_DATABASE_URL: ${KYPOST_DATABASE_URL:?Set KYPOST_DATABASE_URL in .env}
     KYPOST_NATIVE_MAIL: "true"
     KYPOST_NATIVE_RECEIVING: "true"
@@ -76,6 +77,7 @@ services:
     environment:
       KYPOST_TENANCY: multi
       KYPOST_STAFF_ORG_ID: ${KYPOST_STAFF_ORG_ID:?Set KYPOST_STAFF_ORG_ID, the staff org's id}
+      KY_CELLS: ${KY_CELLS:?Set KY_CELLS, the KyIdentity home regions this deployment serves}
       KYPOST_NATIVE_MAIL: "true"
       KYPOST_NATIVE_RECEIVING: "true"
 

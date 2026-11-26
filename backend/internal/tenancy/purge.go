@@ -355,11 +355,13 @@ func FenceRestored(stateDir string) (err error) {
 	return ForgetRestored(context.Background(), db)
 }
 
-// ForgetRestored is FenceRestored's change: the org cache, the finished purges and any
-// restore read go.
+// ForgetRestored is FenceRestored's change: the org cache (other cells' orgs too), the
+// finished purges and any restore read go.
 func ForgetRestored(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `DELETE FROM orgs`); err != nil {
-		return err
+	for _, table := range []string{"orgs", "foreign_orgs"} {
+		if _, err := db.ExecContext(ctx, `DELETE FROM `+table); err != nil {
+			return err
+		}
 	}
 	if _, err := db.ExecContext(ctx, `DELETE FROM org_purges WHERE done_at IS NOT NULL`); err != nil {
 		return err

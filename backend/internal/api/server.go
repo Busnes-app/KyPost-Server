@@ -317,10 +317,12 @@ type Server struct {
 	ssoStore      *sso.Store
 	nativeDomains *sso.NativeDomainStore
 	nativeMail    bool
-	// tenancy is the multi-tenant side store and staffOrg its staff org (tenancy design
-	// K3, K7). nil in single mode, where nothing parses or checks org_id.
+	// tenancy is the multi-tenant side store, staffOrg its staff org (tenancy design K3,
+	// K7) and cells the KyIdentity home regions it serves (KY_CELLS, MH9). nil in single
+	// mode, where nothing parses or checks org_id.
 	tenancy   *sql.DB
 	staffOrg  string
+	cells     []string
 	kycal     *kycalendar.Client
 	kydrive   *kydrive.Client
 	kymessage *suitepair.Client

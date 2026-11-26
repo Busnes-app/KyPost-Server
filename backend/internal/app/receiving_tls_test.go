@@ -43,6 +43,7 @@ func multiReceivingFixture(t *testing.T) *tlsFixture {
 	r, _ := receivingFixture(t)
 	quarantineCLI(t, r)
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", tlsStaffOrg)
 	t.Setenv("SECRET_DIR", t.TempDir())
 	t.Setenv("KYPOST_RECEIVING_REMOTE", "")
@@ -502,8 +503,10 @@ func TestReceivingTLSRefusedOutsideMultiMode(t *testing.T) {
 	for _, mode := range []string{"", config.TenancySingle, config.TenancyMulti} {
 		t.Setenv("KYPOST_TENANCY", mode)
 		t.Setenv("KYPOST_STAFF_ORG_ID", "")
+		t.Setenv("KY_CELLS", "")
 		if mode == config.TenancyMulti {
 			t.Setenv("KYPOST_STAFF_ORG_ID", tlsStaffOrg) // multi in the environment, but no multi record
+			t.Setenv("KY_CELLS", "test-1")
 		}
 		if err := runReceivingServe([]string{"--tls", "127.0.0.1:2526"}); !errors.Is(err, errReceivingSingle) {
 			t.Errorf("%q: serve --tls: %v", mode, err)
