@@ -1,10 +1,36 @@
 # KyPost OpenPGP v6 and post-quantum keys, design
 
-Date: 2026-11-25. Status: **proposed, awaiting owner answers** to the numbered questions at the end. Nothing
-here is built. Owner request (2026-11-25): move KyPost to OpenPGP v6 (RFC 9580) with post-quantum keys,
+Date: 2026-11-25. Status: **approved in part** (see "Owner answers"). Q7, Q10 and Q12 are still open. Nothing
+is built yet. Owner request (2026-11-25): move KyPost to OpenPGP v6 (RFC 9580) with post-quantum keys,
 then move the whole Ky stack to post-quantum cryptography. The suite-wide plan is
 `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-stack-plan.md` (**B**). The primary-source research both
 specs rely on is `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-research.md` (**R**).
+
+## Owner answers (2026-11-25)
+
+- **Approved as recommended:** Q1, Q2, Q3, Q4, Q6, Q8, Q11.
+- **Q5, changed: pin an openpgp.js v7 pre-release now, and keep it updatable by Dependabot.**
+  - No v7 is published to npm: `dist-tags` is `{latest: 6.3.3}` and there are no `7.*` versions, checked
+    2026-11-25. The pin is therefore a git dependency on an exact openpgpjs `main` commit, the line that carries
+    RFC 9980 (PR #2022).
+  - The PR that adds it proves two things: Dependabot opens an update for that git dependency (unproven so
+    far), and the build passes against the RFC 9980 fixtures.
+  - Browser **read** support moves forward into P3 (below).
+  - **Where openpgp.js cannot do a job, the browser runs gopenpgp compiled to WebAssembly**: the same library
+    and KyPost profile as the server and the Mac. A spike on Go 1.27.3 with gopenpgp v3.5.2 `profile.PQC()`,
+    run under Node 26 (not yet in a browser), passed:
+    - it generated a v6 key with algorithm 30 and a 13,680-byte public certificate (the estimate was ~13.8 KB);
+    - it encrypted, signed, decrypted and verified;
+    - each operation took 4-18 ms;
+    - the module is 8.8 MB, 2.4 MB gzipped.
+  - It is lazily loaded, and used only for what openpgp.js lacks. Today that is ML-KEM-1024+X448 and
+    ML-DSA-87+Ed448 (openpgp.js PR #2077, still open), and any RFC 9980 case where the cross-implementation
+    fixtures show openpgp.js v7 disagreeing with go-crypto and Bouncy Castle.
+- **Q9, overturned: a person's mail is encrypted to their v6 certificate, and KyPost uses v6 whenever
+  possible.** Mail already stored is re-encrypted (new phase P6 below), and so is any message that still
+  arrives encrypted to the v4 key.
+- **Asked for explanation, pending:** Q7 (security level), Q10 (dual signing). **Not answered:** Q12 (merge
+  approval). Until answered, P3-P6 wait for the owner's merge approval.
 
 Line references are to KyPost-Server `origin/main` at `928ba0be`. Server paths are relative to the repo
 root. Client references are to KyPost-for-Android `01f304bb` (**A:**), KyPost-for-Mac `165148e` (**M:**,
@@ -44,8 +70,9 @@ line number as "reported". **Nothing here was run.** "Unverified" marks a claim 
   Anyone who records it and later breaks P-256 gets every message, past and future. Moving it to X-Wing
   (ML-KEM-768+X25519), which ky-primitives already uses for backups, is phase P2 and does not wait for
   openpgp.js v7.
-- **Mail already stored stays classical.** Every incoming-encrypted INBOX message, Sent copy and draft so far
-  is X25519 ECDH with SEIPDv1. It cannot become PQ without re-encryption by the user's own client.
+- **Mail already stored gets re-encrypted (owner, Q9).** Every incoming-encrypted INBOX message, Sent copy and
+  draft so far is X25519 ECDH with SEIPDv1. The user's own client re-encrypts it to the v6 certificate in P6,
+  because only the client holds the key.
 
 ## What changes for whom
 
@@ -252,9 +279,28 @@ A Linux client on GnuPG cannot decrypt v6. Devices already publish the envelope 
 v4 until the Linux backend (Q6) ships. The browser has no enrolled-device record; it reads v6 once P4 ships,
 and P4 is the last step before any switch.
 
-### Existing stored mail
+### Existing stored mail (P6, owner Q9)
 
-It stays readable through the v4 key in the ring. It is not re-encrypted (Q9).
+The server never holds the private key, so re-encryption runs in the user's own client, after the step-4 switch:
+
+1. The client lists stored messages whose PKESKs name only the v4 key. The server can read PKESK recipient IDs
+   without decrypting anything. This covers incoming-encrypted INBOX, Sent, drafts, and mail outsiders encrypted
+   to the published v4 certificate.
+2. For each message the client decrypts with the v4 ring member, re-encrypts the same plaintext (the full MIME,
+   so any inner signature survives) to the account's v6 certificate, and uploads it with compare-and-swap on the
+   old ciphertext's SHA-256.
+3. The server accepts the replacement only if its PKESKs name only the account's current v6 encryption subkey.
+   It then replaces the ciphertext atomically, keeping the message ID, flags and folder.
+4. The job is resumable, throttled, and runs on any unlocked client. Mail that keeps arriving for the v4 key (from
+   outside senders) is picked up on the next unlock.
+
+Limits:
+
+- Backups taken before re-encryption still hold the v4 ciphertext until they expire. They are sealed to the
+  X-Wing KyRecovery key, so a recorded backup alone is not exposed.
+- Plaintext mail on accounts without incoming encryption is out of scope; that is the incoming-encryption setting,
+  not this spec.
+- The v4 key stays in the ring for as long as outside correspondents use it.
 
 ## Phases
 
@@ -266,8 +312,9 @@ usual gate. P3-P5 change what users' keys and mail can do, so each needs the own
 | **P0 groundwork** | Server algorithm/version allowlist; multi-certificate WKD fetch; contacts hold v4 + v6 keys and pins; signer-binding parse cache, sender-only `pgp-payload` keys; Autocrypt minimization and 10 KiB cap both ways; 64-hex QR on all clients; shared v6 Ed25519 and RFC 9980 fixtures in `testdata/` (keys, ring, both message rows, signatures), made with go-crypto and cross-checked with BC 1.87; golden test for v4 incoming encryption; ML-DSA-65 timings in CI; fix the doc drift (SAS length in `docs/DEVICE_ENROLLMENT.md:101-117`, advertised versions at `:220-221`, the `GOTOOLCHAIN=go1.26.9` pin at `docs/PGP_KEY_LIFECYCLE.md:247`) | Nothing |
 | **P1 server profile** | The KyPost profile; `EncryptStoredMIME` encrypts to the v6 certificate when the account's switch is on (nothing can turn it on before P4, because no account has a v6 certificate until then) | P0 |
 | **P2 PQ device envelope** | Envelope v6 with X-Wing HPKE on server, browser and three clients; SAS v2; X-Wing device keys (Q8); v4/v5 stay accepted until every client ships v6, then the server stops issuing them | P0; ky-primitives HPKE helper from B |
-| **P3 clients read v6** | Android (BC 1.87), Mac/iOS (gopenpgp profile), Linux backend (Q6): decrypt v6 PKESK + SEIPDv2 and ID 35, verify ML-DSA composites, v2 rings, larger caps, device capability report | P0 |
-| **P4 browser** | openpgp.js v7; v6 generation; v2 ring; Tier 5 conversion keeping v4 active; capability-split delivery groups; "not quantum-safe" marking | openpgp.js v7 (Q5); P1-P3 |
+| **P3 clients read v6** | Android (BC 1.87), Mac/iOS (gopenpgp profile), Linux backend (gopenpgp c-archive, Q6), **browser (pinned openpgp.js v7 commit, gopenpgp WASM fallback, Q5)**: decrypt v6 PKESK + SEIPDv2 and ID 35, verify ML-DSA composites, v2 rings, larger caps, device capability report | P0 |
+| **P4 browser keys** | v6 generation; v2 ring; Tier 5 conversion keeping v4 active; capability-split delivery groups; "not quantum-safe" marking | P1-P3 |
+| **P6 archive to v6** | Re-encrypt every stored message still addressed to the v4 key to the v6 certificate (Q9) | P4 |
 | **P5 outside world** | Q4's ID 35 subkey on v4 certificates; Q3's v6 publication on WKD; Autocrypt v2 when it is more than an individual draft; key-replacement links (draft-ietf-openpgp-replacementkey) | An interop matrix run (below); P4 |
 
 **Interop matrix** (P5 gate, scripted, re-runnable): GnuPG 2.4 and 2.5 (default and `--allow-9980`),
@@ -287,6 +334,10 @@ blocks that publication default.
   changes when one byte of the X-Wing key changes.
 - P4: no delivery group carries both a v6 PKESK and a v3 PKESK.
 - Step 4 switch: incoming encryption stays v4 while any enrolled device lacks v6 capability.
+- P6: the server refuses a replacement whose PKESK names any key but the account's current v6 encryption
+  subkey, and one whose compare-and-swap hash does not match the stored ciphertext.
+- P3: the browser decrypts the shared RFC 9980 fixtures with the pinned openpgp.js v7 and with the WASM fallback,
+  and both agree with go-crypto and Bouncy Castle.
 
 ## Owner questions
 
