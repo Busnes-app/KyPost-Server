@@ -36,8 +36,9 @@ describe("complete keyring recovery", () => {
     const parsed = await parseKeyring(restored.privateKey);
     expect(parsed.kind).toBe("keyring");
     if (parsed.kind !== "keyring") throw new Error("expected ring");
-    const historical = parsed.keys.find(key => key.getFingerprint().toUpperCase() === fixture.ring.keys[1].fingerprint);
-    expect((await pgp.decrypt({ message: await pgp.readMessage({ armoredMessage: fixture.ciphertext }), decryptionKeys: historical })).data).toBe(fixture.plaintext);
+    const historical = parsed.keys.find(key => key.info.fingerprint === fixture.ring.keys[1].fingerprint.toUpperCase());
+    const decryptionKeys = await pgp.readPrivateKey({ armoredKey: historical!.armored });
+    expect((await pgp.decrypt({ message: await pgp.readMessage({ armoredMessage: fixture.ciphertext }), decryptionKeys })).data).toBe(fixture.plaintext);
   });
 
   it("preserves an unpublished revocation certificate and exact armor bytes", async () => {

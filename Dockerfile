@@ -32,6 +32,10 @@ ARG VERSION=
 RUN cd backend && CGO_ENABLED=0 go build -trimpath \
 	-ldflags="-X github.com/Busnes-app/kypost-server/backend/internal/appversion.release=${VERSION}" \
 	-o /app/bin/kypost-server ./cmd/main.go
+# The browser's OpenPGP engine: gopenpgp compiled to WebAssembly with this
+# same toolchain, and the toolchain's own wasm_exec.js (frontend/AGENTS.md).
+COPY scripts/build-pgp-wasm.sh ./scripts/
+RUN scripts/build-pgp-wasm.sh /app/pgp-wasm
 
 FROM node:26.13.1-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS frontend-builder
 WORKDIR /frontend
@@ -42,6 +46,7 @@ WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend .
+COPY --from=backend-builder /app/pgp-wasm .pgp-wasm
 RUN npm run build
 
 # Nothing in the runtime path is JavaScript: the frontend is static files from

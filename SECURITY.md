@@ -117,9 +117,11 @@ of 3; the API and the daemon each retain at most 64 cached mail clients.
 
 ### Browser OpenPGP RSA policy
 
-`frontend/src/lib/pgpClient.ts` supplies a literal 2048-bit RSA minimum to
-OpenPGP.js for encryption, signing and signature verification, including the
-primary key and selected subkeys. This overrides the locked library's 2047-bit
+The browser's OpenPGP engine is gopenpgp compiled to WebAssembly
+(`backend/cmd/pgpwasm`, `frontend/src/lib/pgpEngine.ts`). It applies the
+server's own literal 2048-bit RSA minimum (`backend/internal/pgpprofile`
+`RequireStrongRSA`) for encryption, signing and signature trust, including the
+primary key and selected subkeys. This overrides go-crypto's 2047-bit
 default. Recipient encryption, Sent copies, drafts and sealed autosaves refuse
 undersized keys; the browser does not omit a weak recipient or downgrade to
 plaintext. Historical decryption and key import/retention remain available;

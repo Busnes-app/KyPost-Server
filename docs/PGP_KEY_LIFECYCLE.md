@@ -329,8 +329,8 @@ pass:
    preservation of third-party certifications. Exercise GnuPG/Thunderbird interop.
 
 The small [crypto probe](pgp-key-lifecycle-check.cjs) runs after `npm ci` in
-`frontend`: `node docs/pgp-key-lifecycle-check.cjs`. It uses the pinned installed
-OpenPGP.js and proves historical/hidden-recipient decryption, revoked-key historical
+`frontend`: `node docs/pgp-key-lifecycle-check.cjs`. It uses OpenPGP.js (now a dev
+dependency: the browser itself runs gopenpgp WebAssembly) and proves historical/hidden-recipient decryption, revoked-key historical
 decryption with refusal of new encryption, an old-key certification of the new
 identity, and UID addition without changing primary/subkey IDs. It does **not**
 prove wire compatibility, persistence, revocation distribution, UID revocation or

@@ -11,13 +11,13 @@
     "test:browser": "playwright test",
     "lint": "node lint/node_modules/eslint/bin/eslint.js --config lint/eslint.config.js src",
     "prebuild": "node src/ky-ui/check-vendor.mjs",
-    "pretest": "node src/ky-ui/check-vendor.mjs"
+    "pretest": "node src/ky-ui/check-vendor.mjs",
+    "build:pgp-wasm": "bash ../scripts/build-pgp-wasm.sh"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",
     "@hpke/core": "1.10.1",
     "dompurify": "3.5.0",
-    "openpgp": "^6.3.3",
     "qrcode": "^1.5.4",
     "quill": "2.0.2",
     "react": "^19.3.1",
@@ -33,6 +33,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
     "jsdom": "^31.0.1",
+    "openpgp": "^6.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
     "vitest": "^5.1.1"

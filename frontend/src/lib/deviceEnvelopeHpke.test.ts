@@ -40,7 +40,7 @@ async function keyringInput(vector: { deviceId: string; plaintext: string }) {
   if (ring.kind !== "keyring") throw new Error("test needs a keyring");
   return {
     raw: vector.plaintext, deviceId: vector.deviceId, publicKeyB64: fixture.devicePublicKey,
-    snapshot: { fingerprint: ring.activeKey.getFingerprint().toUpperCase(), publicKey: ring.activeKey.toPublic().armor(), keyring: ring.metadata },
+    snapshot: { fingerprint: ring.activeKey.info.fingerprint, publicKey: (await pgp.readPrivateKey({ armoredKey: ring.activeKey.armored })).toPublic().armor(), keyring: ring.metadata },
     typedCode: await deriveEnrollmentCode(fixture.devicePublicKey, vector.deviceId, bucketFor(Math.floor(Date.now() / 1000))),
   };
 }
@@ -130,14 +130,14 @@ describe("HPKE device envelopes (v4/v5)", () => {
     const v5 = fixture.vectors[1];
     const ring = await parseKeyring(await open(await sealKeyringForDevice(await keyringInput(v5)) as Envelope, 5, v5.deviceId, v5.fingerprint));
     expect(ring.keys).toHaveLength(2);
-    const message = await pgp.encrypt({ message: await pgp.createMessage({ text: "retained history" }), encryptionKeys: ring.keys[1].toPublic() });
-    expect((await pgp.decrypt({ message: await pgp.readMessage({ armoredMessage: message }), decryptionKeys: ring.keys })).data).toBe("retained history");
+    const message = await pgp.encrypt({ message: await pgp.createMessage({ text: "retained history" }), encryptionKeys: (await pgp.readPrivateKey({ armoredKey: ring.keys[1].armored })).toPublic() });
+    expect((await pgp.decrypt({ message: await pgp.readMessage({ armoredMessage: message }), decryptionKeys: await Promise.all(ring.keys.map(k => pgp.readPrivateKey({ armoredKey: k.armored }))) })).data).toBe("retained history");
   });
 
   it("refuses incomplete, stale, single-key or oversized ring material", async () => {
     const input = await keyringInput(fixture.vectors[1]);
     const ring = await parseKeyring(input.raw);
-    for (const material of [fixture.vectors[0].plaintext, input.raw.replace(ring.keys[1].getFingerprint().toUpperCase(), "0".repeat(40)), input.raw + " ".repeat(128 << 10)]) {
+    for (const material of [fixture.vectors[0].plaintext, input.raw.replace(ring.keys[1].info.fingerprint, "0".repeat(40)), input.raw + " ".repeat(128 << 10)]) {
       await expect(sealKeyringForDevice({ ...input, raw: material })).rejects.toThrow(/keyring is invalid or unsupported/);
     }
     await expect(sealKeyringForDevice({ ...input, snapshot: { ...input.snapshot, keyring: { ...input.snapshot.keyring, materialGeneration: 3 } } })).rejects.toThrow(/complete keyring/);

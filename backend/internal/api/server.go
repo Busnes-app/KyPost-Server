@@ -636,7 +636,7 @@ func (s *Server) routes() http.Handler {
 	s.routesFrontend(mux)
 
 	// The paired KyDrive origin can change at run time, so the policy is per response.
-	return withGzip(withSecurityHeaders(withDeadline(mux, requestDeadline), func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }, s.kydrive.Origin))
+	return withGzip(withSecurityHeaders(withDeadline(mux, requestDeadline), s.contentSecurityPolicy, s.kydrive.Origin))
 }
 
 // routesAuth registers sign-in, session, and second-factor endpoints.
@@ -1691,6 +1691,7 @@ func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
 						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 					} else if relPath == "index.html" {
 						w.Header().Set("Cache-Control", "no-cache")
+						w.Header().Set("Content-Security-Policy", appShellPolicy(s.contentSecurityPolicy()))
 					}
 					// http.ServeContent falls back to mime.TypeByExtension,
 					// whose builtin table has no .woff2 and whose only other
@@ -1699,6 +1700,10 @@ func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
 					// as application/octet-stream.
 					if strings.HasSuffix(relPath, ".woff2") {
 						w.Header().Set("Content-Type", "font/woff2")
+					}
+					if strings.HasSuffix(relPath, ".wasm") {
+						serveWasm(w, r, root, relPath, info, f)
+						return
 					}
 					http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 					return
@@ -1711,6 +1716,7 @@ func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
 	// tab opened after an upgrade loads the new build.
 	if _, err := os.Stat(indexPath); err == nil {
 		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Security-Policy", appShellPolicy(s.contentSecurityPolicy()))
 		http.ServeFile(w, r, indexPath)
 		return
 	}
