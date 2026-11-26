@@ -189,6 +189,8 @@ func mergeGroup(members []Contact) (survivor Contact, absorbed []string) {
 	k := mergePGPProvenance(survivor, byNewest)
 	survivor.PGPKey, survivor.PGPKeyFingerprint, survivor.PGPKeySource, survivor.PGPKeyVerified, survivor.PGPKeyAutocryptDate =
 		k.PGPKey, k.PGPKeyFingerprint, k.PGPKeySource, k.PGPKeyVerified, k.PGPKeyAutocryptDate
+	survivor.PGPKeyV6, survivor.PGPKeyV6Fingerprint, survivor.PGPKeyV6Source, survivor.PGPKeyV6Verified =
+		k.PGPKeyV6, k.PGPKeyV6Fingerprint, k.PGPKeyV6Source, k.PGPKeyV6Verified
 	survivor.PhoneticGivenName = firstNonEmpty(byNewest, func(c Contact) string { return c.PhoneticGivenName })
 	survivor.PhoneticFamilyName = firstNonEmpty(byNewest, func(c Contact) string { return c.PhoneticFamilyName })
 	survivor.Department = firstNonEmpty(byNewest, func(c Contact) string { return c.Department })

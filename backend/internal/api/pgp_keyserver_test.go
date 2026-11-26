@@ -169,7 +169,7 @@ func TestPGPRecipientsCheck(t *testing.T) {
 // TestRecipientsCheckRejectsAnUnboundedAddressList pins the cap that the send
 // path has and this sibling does not.
 //
-// findContactPGPKey calls store.List(), which calls refreshFromDiskLocked — a
+// findKeyedContact calls store.List(), which calls refreshFromDiskLocked — a
 // full os.ReadFile plus json.Unmarshal of contacts.json — once PER ADDRESS. The
 // comment justifying maxRecipientsPerSend on the send path states the cost
 // exactly: "Key resolution re-reads and re-unmarshals the entire contacts file

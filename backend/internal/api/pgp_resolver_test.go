@@ -45,7 +45,7 @@ func TestResolveUsesWKDAndPinsContact(t *testing.T) {
 	if !got.Usable || got.Tier != tierWKD {
 		t.Fatalf("expected usable WKD tier, got %+v", got)
 	}
-	if _, ok := must2(findContactPGPKey(store, "erin@example.com")); !ok {
+	if _, ok := must2(findKeyedContact(store, "erin@example.com")); !ok {
 		t.Fatalf("expected the WKD key to be pinned to a contact")
 	}
 }

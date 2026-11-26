@@ -175,8 +175,8 @@ PGP:
 - `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (per-slot key envelopes)
 - `GET /api/pgp/bootstrap` (everything the browser needs to unlock a client-protected identity in one call; `accountAddresses` lists the addresses this account sends as, for leaving them out of Reply All)
 - `GET /api/pgp/keyserver/lookup` (queries keys.openpgp.org)
-- `POST /api/pgp/recipients/check` (key status for a set of recipients before you send)
-- `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient)
+- `POST /api/pgp/recipients/check` (key status for a set of recipients before you send; each usable result adds `capability`: `pq`, `v6` or `v4`)
+- `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient; each result adds `capability`, the best key class the recipient offers: `pq` (an ML-KEM-768+X25519 encryption key), `v6` or `v4`. `publicKey` stays the v4 key whenever the recipient has one. See [E2E_PGP.md](E2E_PGP.md#contact-keys-one-v4-and-one-v6))
 - `GET /api/pgp/qr/token` and `GET /api/pgp/qr/key` (public key exchange through a QR code)
 - `POST /api/pgp/pickup` (creates a sealed pickup for a recipient with no usable key, so a client-protected sender can still use the secure-link fallback)
 - `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message. On a converted account the send carries `materialGeneration` and is refused with 409 when it is stale, and a paired device must be enrolled at that generation. Optional `replyToMessageId` (and `replyToMailbox`) threads a reply as on `/api/mail/send`, with the same refusals: the server adds the outer `In-Reply-To`/`References` to every delivery and the Sent copy; a delivery or Sent copy already carrying either, or whose headers do not parse, is refused with 400 before anything is delivered)
@@ -208,7 +208,8 @@ Contacts:
 - `GET|POST|DELETE /api/contacts/carddav-client/config` and `POST /api/contacts/carddav-client/sync` (sync from an external CardDAV server), returns 403 while `managed`
 - `POST|GET|DELETE /api/contacts/{id}/photo`
 - `POST /api/contacts/{id}/self`
-- `POST /api/contacts/{id}/pgp-key/confirm` (`{fingerprint, authSecret}`: marks the contact's pinned key confirmed after the user compared fingerprints; step-up as above; 409 when the fingerprint is not the pinned key)
+- `POST /api/contacts/{id}/pgp-key/confirm` (`{fingerprint, authSecret}`: marks the contact's pinned key confirmed after the user compared fingerprints — the v4 slot's or the v6 slot's (`pgpKeyV6Verified`), whichever pin it names; step-up as above; 409 when the fingerprint is not a pinned key)
+- Contacts carry a read-only v6 slot beside `pgpKey`: `pgpKeyV6`, `pgpKeyV6Source`, `pgpKeyV6Fingerprint`, `pgpKeyV6Verified`. Writes never set it directly: a v6 key written to `pgpKey` of a contact whose `pgpKey` is a v4 key moves into it (and a v4 key written over a lone v6 `pgpKey` moves that v6 key into it), a write that omits it keeps it, and a write with no `pgpKey` clears both. See [E2E_PGP.md](E2E_PGP.md#contact-keys-one-v4-and-one-v6)
 - `GET|POST /api/contacts/sync` (mobile two-way sync, authenticated with
   `X-Kypost-Device-Id` and `X-Kypost-Device-Secret`, not a pairing token).
   POST takes `{baseCursor, changes[]}`. A change may opt in to
