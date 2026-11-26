@@ -31,9 +31,10 @@ cleanup() {
 trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; "${new[@]}" logs postgres-17-dump postgres 2>&1 | tail -40 >&2 || true; exit 1; }
 # logged <pattern> <command...>: does the command's output (stderr too) match? It is read
-# whole first. `logs | grep -q` ended in SIGPIPE (141 under pipefail) when grep stopped at an
-# early match: a check whose marker was there failed (#749 ci-docker), and an `&& fail` check
-# was skipped. A failing command fails the test rather than reading as "not logged".
+# whole first. `logs | grep -q` failed under pipefail once grep stopped at an early match
+# (SIGPIPE 141, or 1 where SIGPIPE is ignored): a check whose marker was there failed (#749
+# ci-docker), and an `&& fail` check was skipped. A failing command fails the test rather than
+# reading as "not logged".
 logged() {
   local pattern=$1 out
   shift

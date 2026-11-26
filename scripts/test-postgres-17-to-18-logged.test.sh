@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Checks test-postgres-17-to-18.sh's `logged` log assertion on a stream that keeps writing after
-# its marker, the shape that made `logs | grep -q` end in SIGPIPE (141 under pipefail, GNU
-# grep) and fail a check whose marker was there. Runs the script's own `logged`; needs no Docker.
+# Checks test-postgres-17-to-18.sh's `logged` log assertion on a stream that keeps writing
+# after its marker: the shape that made `logs | grep -q` fail under pipefail (GNU grep; SIGPIPE
+# 141, or 1 where SIGPIPE is ignored) on a check whose marker was there. Runs the script's own
+# `logged`; needs no Docker.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 script=scripts/test-postgres-17-to-18.sh
@@ -17,10 +18,11 @@ broken() { echo "restored"; return 7; } # a failing `docker compose logs`
 problems=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got $2, want $3"; problems=$((problems + 1)); fi; }
 
-# The old form fails here: the reason for the change (GNU grep; ugrep drains its input).
+# The old form fails here: the reason for the change (GNU grep; ugrep drains its input). 141 is
+# SIGPIPE; where SIGPIPE is ignored, as on GitHub's runner, the producer's write fails instead (1).
 if grep --version 2>/dev/null | head -n1 | grep -q 'GNU grep'; then
-  old=$( (stream | grep -q restored) && echo 0 || echo $?)
-  check "old pipe form fails on an early marker (GNU grep)" "$old" 141
+  old=$( (stream 2>/dev/null | grep -q restored) && echo 0 || echo $?)
+  check "old pipe form fails on an early marker (GNU grep, status $old)" "$([ "$old" != 0 ] && echo fails || echo passes)" fails
 fi
 got=$(logged restored stream && echo 0 || echo $?)
 check "early marker, more output after it" "$got" 0
