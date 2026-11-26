@@ -77,6 +77,7 @@ func TestTableBackupCLISelectsDocumentsBeforeService(t *testing.T) {
 	}
 	t.Setenv("KYPOST_TENANCY", "single")
 	t.Setenv("KYPOST_STAFF_ORG_ID", "")
+	t.Setenv("KY_CELLS", "")
 	// The CLI must retain the same historical-account safety refusal as startup.
 	retained := []byte(`{"users":[{"id":"historical-owner","role":"admin","active":true}]}`)
 	accountPath := filepath.Join(configDir, "users.json")
