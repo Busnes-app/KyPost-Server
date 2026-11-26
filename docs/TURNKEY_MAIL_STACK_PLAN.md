@@ -155,6 +155,6 @@ No live mail is submitted until the operator supplies the account and recipient.
 
 ## Evidence and outstanding decisions
 
-Local architecture facts are linked above. The [Mailflare assessment](MAILFLARE_INTEGRATION.md) records its pinned upstream capabilities and gaps; the [Maddy proposal](MADDY_INTEGRATION_HANDOFF.md) is historical candidate material, not this plan's selected architecture. Proposed SQLite representation, receiver choice, gateway-directory staleness bound, quota defaults, change-history retention and relay uncertainty procedure require phase 1/implementation evidence. None is a claim of shipped behavior.
+Local architecture facts are linked above. Earlier candidate engine evaluations are not part of this plan's selected architecture. Proposed SQLite representation, receiver choice, gateway-directory staleness bound, quota defaults, change-history retention and relay uncertainty procedure require phase 1/implementation evidence. None is a claim of shipped behavior.
 
 Receiving providers can persist raw mail for retrieval ([SES S3 action](https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-s3.html)); their retention/authentication must be validated separately. Relay setup depends on domain verification and provider readiness ([Resend SMTP](https://resend.com/docs/send-with-smtp), [SES production access](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)). These examples establish feasibility, not a provider selection.
