@@ -1014,7 +1014,10 @@ Tenancy fits on top:
 ## Phased build plan
 
 Each PR ships on its own, with single-tenant behaviour unchanged. `KYPOST_TENANCY=multi` is
-refused at startup until PR 7. Until then multi-mode code runs only in tests. PR 2 onward needed
+refused at startup until PR 7. Until then multi-mode code runs only in tests, and in the suite
+end-to-end run (KyCalendar `docs/superpowers/specs/2026-11-24-multi-tenant-e2e-design.md`), which
+builds KyPost with `-tags kye2e`. Only that tag lifts the refusal ("The `kye2e` gate as built",
+below); every release build still refuses. PR 2 onward needed
 KyIdentity's T PR 3 (`org_id` in tokens, logout tokens and webhooks, and `/api/suite/orgs`),
 which has merged as KyIdentity #276. So PRs 1–5 and PR 6's org purge can start now. Four parts
 wait, each on a KyIdentity change listed under the plan:
@@ -1112,6 +1115,39 @@ these KyIdentity changes:
 - for MH9: a home `region` on each org in `/api/suite/orgs`, sync events sent only to the org's
   home cell, a home region on each suite email domain, and mailbox addresses given only on the
   org's own region's domains (MH "Regions").
+
+
+### The `kye2e` gate as built (2026-11-25)
+
+The suite end-to-end design's KyPost row, built:
+
+- `config.MultiTenantBuild` is a constant from two build-tagged files: `false` in
+  `config/gate_release.go` (`//go:build !kye2e`), `true` only in `config/gate_kye2e.go`. No
+  environment value, flag or `-ldflags -X` reaches it.
+- `CheckEnv` refuses `multi` with `ErrMultiTenancyUnavailable` unless `MultiTenantBuild`.
+  `BootstrapAdmin` refuses `multi` in a release build and returns `nil`, writing nothing, in the
+  test build (K6: no bootstrap administrator). The backup commands refuse `multi` in every build.
+- The test build takes only an `https` issuer under `.test` (`config.CheckTestIssuer`). KyPost's
+  issuer is runtime configuration (`sso.json`), not startup configuration, so the refusal sits
+  where every issuer passes: `sso.ValidateIssuerURL` (every save, and every OIDC discovery) refuses
+  it, and `sso.Store.Load` reads a stored issuer outside `.test` as unconfigured, so no sign-in,
+  directory call or webhook uses it.
+- Checks: `scripts/check-test-build-tag.sh` (ci-backend-checks) keeps the tag in the gate files
+  and Markdown, refuses `-tags` and `GOFLAGS` in the Dockerfile, Makefiles,
+  compose files, `ci.yml`, `publish-main.yml`, `release-image.yml` and `dependency-release.yml`,
+  and runs the complete `config`, `app` and `sso/...` suites with `-tags kye2e` (it fails if a test
+  elsewhere depends on the build). Each test that depends on the gate asserts the release refusal
+  in a release build and the test build's behaviour under the tag, keyed on `taggedBuild`, a
+  test-only constant from the build tag alone (`gate_release_test.go`/`gate_kye2e_test.go` in
+  `config`, `app` and `sso`), so an edit to either gate file fails them, and
+  `TestGateMatchesBuildTag` directly (`TestCheckEnvRefusesMulti`,
+  `TestBootstrapAdminRefusesMulti` with the backup commands, `TestRunRefusesMultiTenancy`,
+  `TestValidateIssuerURL`, `TestSSOSettingsStore`), and the sso tests whose provider is on loopback
+  check that the test build refuses it before skipping (`releaseOnly`). `scripts/check-release-image.sh <image>` (ci-docker on
+  `kypost-server:ci`; `publish-main.yml` and `release-image.yml` on a local build before the push,
+  `release-image.yml` again on the pushed digest) fails on `-tags=kye2e` in `go version -m`, and
+  starts the image twice with a multi-tenant environment, through the entrypoint and as
+  `--mode server`, expecting the release refusal. `TestCheckTestIssuer` covers the `.test` rule.
 
 ## PR 1 as built (2026-11-21)
 

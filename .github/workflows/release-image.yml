@@ -205,6 +205,23 @@ jobs:
           set -euo pipefail
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
+      # Before anything is pushed: the build carries no end-to-end test tag and refuses
+      # multi-tenant startup. The push below reuses this build's layers.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - name: Build the image locally
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: kypost-server:release-check
+          build-args: VERSION=${{ steps.version.outputs.value }}
+          cache-from: type=gha
+      - name: Require a release build
+        run: scripts/check-release-image.sh kypost-server:release-check
+
       # Only the immutable version tag is published here. :stable is promoted
       # further down, AFTER the attestation exists and verifies.
       #
@@ -227,6 +244,12 @@ jobs:
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The pushed digest too, before it is attested or reaches :stable.
+      - name: Require the pushed image to be a release build
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: scripts/check-release-image.sh "$IMAGE_NAME@$DIGEST"
 
       # Pin to the published v2.3.0 commit. GitHub's newer generic attest
       # action is equivalent, but this dedicated action is the smallest pinned
