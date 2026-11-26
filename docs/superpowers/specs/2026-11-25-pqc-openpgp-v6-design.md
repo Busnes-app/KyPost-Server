@@ -1,7 +1,6 @@
 # KyPost OpenPGP v6 and post-quantum keys, design
 
-Date: 2026-11-25. Status: **approved in part** (see "Owner answers"). Q7, Q10 and Q12 are still open. Nothing
-is built yet. Owner request (2026-11-25): move KyPost to OpenPGP v6 (RFC 9580) with post-quantum keys,
+Date: 2026-11-25. Status: **approved** (see "Owner answers"). Only Q12 is unanswered. P0 is being built. Owner request (2026-11-25): move KyPost to OpenPGP v6 (RFC 9580) with post-quantum keys,
 then move the whole Ky stack to post-quantum cryptography. The suite-wide plan is
 `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-stack-plan.md` (**B**). The primary-source research both
 specs rely on is `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-research.md` (**R**).
@@ -29,8 +28,15 @@ specs rely on is `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-research.m
 - **Q9, overturned: a person's mail is encrypted to their v6 certificate, and KyPost uses v6 whenever
   possible.** Mail already stored is re-encrypted (new phase P6 below), and so is any message that still
   arrives encrypted to the v4 key.
-- **Asked for explanation, pending:** Q7 (security level), Q10 (dual signing). **Not answered:** Q12 (merge
-  approval). Until answered, P3-P6 wait for the owner's merge approval.
+- **Second round (2026-11-25, later):**
+  - **Q5 extended:** since gopenpgp compiles to WebAssembly, *test it as a full replacement for openpgp.js*, not
+    only as a fallback. A draft evaluation PR (`feat/pqc-wasm-engine`) runs the existing browser test suite
+    against both engines and reports size, load time, interop, the CSP change and the secret-handling posture.
+    The choice between openpgp.js v7 and gopenpgp WASM is made on those numbers.
+  - **Q7 approved:** category 3 (ML-KEM-768 / ML-DSA-65) for now.
+  - **Q9 approved**, as overturned above (re-encrypt to v6, P6).
+  - **Q10 approved:** sign with the key that matches each delivery; no dual signing.
+  - **Q12 not answered:** until it is, P3-P6 wait for the owner's merge approval; P0-P2 merge on the usual gate.
 
 Line references are to KyPost-Server `origin/main` at `928ba0be`. Server paths are relative to the repo
 root. Client references are to KyPost-for-Android `01f304bb` (**A:**), KyPost-for-Mac `165148e` (**M:**,
