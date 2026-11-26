@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -210,11 +212,16 @@ func (r *receivingRuntime) answer(conn net.Conn, protocol int) {
 	if !ok {
 		return
 	}
-	if args[0] == "config" {
+	if args[0] == "config" || args[0] == "held" {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
-		if _, ok := readReceivingBody(in, "bind", length); ok {
+		if _, ok := readReceivingBody(in, "bind", length); !ok {
+			return
+		}
+		if args[0] == "config" {
 			code, reply = r.configReply(ctx)
+		} else {
+			code = r.held(ctx, args[1])
 		}
 		return
 	}
@@ -233,6 +240,22 @@ func (r *receivingRuntime) answer(conn net.Conn, protocol int) {
 	if err == nil {
 		code = 0
 	}
+}
+
+// held answers an MX host's question before a cross-cell accept (MH10): 0 when this cell
+// holds the transaction id under the caller's gateway, staged or done, and 3 when it holds
+// nothing, so the message body goes only to cells that bound a recipient.
+func (r *receivingRuntime) held(ctx context.Context, id string) byte {
+	if id == "" || len(id) > 256 || strings.ContainsAny(id, "\x00\r\n") {
+		return 1
+	}
+	switch _, err := r.holding.Get(ctx, r.gatewayID(), id); {
+	case err == nil:
+		return 0
+	case errors.Is(err, sql.ErrNoRows):
+		return 3
+	}
+	return 1
 }
 
 // parseReceivingRequest checks a header line. Protocol 2 carries an absolute deadline;
@@ -254,7 +277,7 @@ func parseReceivingRequest(line []byte, protocol int, limit time.Time) (args []s
 	dec := json.NewDecoder(bytes.NewReader(line))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&req) != nil || req.V != receivingRemoteProtocol || req.BudgetMS < 1 || req.BudgetMS > 30_000 || len(req.Args) == 0 ||
-		(req.Args[0] != "bind" && req.Args[0] != "accept" && (req.Args[0] != "config" || len(req.Args) != 1)) {
+		(req.Args[0] != "bind" && req.Args[0] != "accept" && (req.Args[0] != "config" || len(req.Args) != 1) && (req.Args[0] != "held" || len(req.Args) != 2)) {
 		return nil, time.Time{}, 0, false
 	}
 	if _, err := dec.Token(); err != io.EOF {

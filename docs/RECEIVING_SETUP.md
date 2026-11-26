@@ -511,6 +511,22 @@ key against a pin (SHA-256 of its SubjectPublicKeyInfo). There is no CA and no h
    <hostname> <cert> <key>` to build its Maddy profile from the replicas' domains.
 5. On each replica: `kypost-server receiving serve --tls <private-IP:port>`.
 
+**Other cells (MH10).** An MX host also serves the hosted relay domain for every cell. To
+forward to other cells, enrol its key in each of them (step 3 on one of that cell's replicas,
+under the same ID), and add `relay_domain` and a `cells` entry per other cell, with that cell's
+replica addresses and `server-pin`, to the remote file ([configuration](CONFIGURATION.md)).
+Then:
+- `bind` for a relay address goes to the cell whose region code is the character after
+  `adjective.animal.` ([CELL-RECOVERY.md](CELL-RECOVERY.md#region-codes)). Primary-domain
+  addresses, and a code that names no cell in the file, go to the host's own cell, which
+  refuses an unknown one and counts it against the source's budget.
+- Before `accept`, the helper asks every cell whether it holds the transaction (`held`, no
+  message), and sends the message only to the cells that do.
+- `250` comes only when all of them have committed. If one fails or cannot be reached, the
+  answer is `451`, and the sender's retry gives a cell that already committed a second copy.
+- A cell that has not enrolled the host refuses it in the handshake, and that cell's
+  recipients get `451`.
+
 Rotation: generate a new key on the host and `add` it under the same ID (at most two live pins
 per ID). Switch the host's remote file to it, then `receiving gateway revoke <id> <old-pin>`.
 Pins also expire after 90 days; a replica logs a warning on each connection from a pin with

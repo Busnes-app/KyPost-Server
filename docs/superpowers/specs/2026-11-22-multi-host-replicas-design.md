@@ -1992,7 +1992,7 @@ The two MH9 rows left by "MH9 cells as built".
     `TestRunRefusesMultiTenancy` expects `ErrNoRelayCode`. K PR 7 therefore never allocates a relay
     address without a code.
   - **The reverse lookup** (code to cell, with an unknown code going to the MX host's own cell) is
-    MH10's, and is not built.
+    MH10's: `tenancy.RelayCell` ("MH10 cross-region relay routing as built").
 - **No cell has a code yet: owner decision.** No production cell is configured or documented. The
   only cells anywhere are the e2e suite's `e2e-1` and `e2e-2` (KyCalendar
   `e2e/suite/compose/compose.yml`) and spec examples. Until the owner names the launch cells and
@@ -2009,3 +2009,43 @@ The two MH9 rows left by "MH9 cells as built".
     server that writes its record. Then fence, promote and check the record. The same keys start;
     another `totp-secret.key` is refused. The old primary is rebuilt as a standby.
   - The multi-mode start (step 6 with `KY_CELLS`) is unproven until K PR 7.
+
+## MH10 cross-region relay routing as built (2026-11-26)
+
+- **Endpoints per region code.** The MX helper's `KYPOST_RECEIVING_REMOTE` keeps its own cell's
+  `servers`/`server_pins` and gains `relay_domain` and `cells` (cell slug to the same shape, at
+  most 31, each checked like the own cell's). The pinned client TLS (RX R3) and one MX key
+  serve every cell.
+- **Gateway enrolment per cell.** Each cell enrols the MX key with `receiving gateway add` on
+  its own replicas. A cell that has not refuses the handshake (`GatewayFor`, unchanged), so its
+  recipients get `451`.
+- **Routing.** `receivingRemote.route` sends `bind` for an address on `relay_domain` whose last
+  local-part segment is 7 base32 characters to the cell its first character names:
+  `tenancy.RelayCell`, the append-only table, still unassigned. Everything else goes to the
+  own cell, which answers as today, counting an unknown relay address against the source's
+  probe budget. That includes primary domains, malformed or short segments, a code with no
+  cell, and a cell missing from `cells`.
+- **Completion across cells.** The MX host keeps no state (RX R2), and Maddy's `accept` names no
+  recipients, so the helper asks every cell first.
+  - A new protocol 3 command, `held <id>` (no body), answers 0 when the caller's gateway has
+    the transaction in that cell and 3 when it has nothing.
+  - `accept` and its body go only to the holders, so no cell receives a message it has no
+    recipient for.
+  - The answer is `250` only when every holder answers 0. If any `held` or `accept` call fails
+    or cannot be reached, or holders answer differently, the answer is exit 1 (`451`), and a
+    cell that committed keeps a second copy on the retry (at least once, as "Mail per
+    region" says). If no cell holds it, the own cell answers as before.
+  - With no `cells`, nothing changes: no `held` is sent.
+- **Decision taken here** (the design named the behaviour, not the mechanism): the body-less
+  `held` query, so a stateless helper can find the cells that bound recipients without sending
+  the body everywhere, and `relay_domain` in the remote file, so the helper can tell relay
+  addresses from primary ones without asking a replica.
+- **Tests** (`app`, fixtures for the codes, cells and endpoints; push relays empty):
+  - `TestCrossCellRelayDelivers`: A to B, and one message to A and B.
+  - `TestCrossCellRelayFailureInOneCellIsTemporary`: B fails after `held`; B unreachable.
+  - `TestCrossCellRelayUnknownCodeIsCountedHere`: unknown codes count in A until exit 13, and B
+    is never contacted.
+  - `TestCrossCellRelayUnpinnedGatewayRefused`.
+  - `TestCrossCellRemoteFile`: `held`, and the file's refusals.
+- **Not here:** masked allocation under a code (K PR 7), assigning codes (owner), and object
+  storage (MH11). Multi startup stays refused in release builds.
