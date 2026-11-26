@@ -9,7 +9,7 @@ gates=(backend/internal/config/gate_release.go backend/internal/config/gate_kye2
 fail=0
 
 stray=$(git grep -l -i "$tag" -- . ':!backend/internal/config/gate_release.go' ':!backend/internal/config/gate_kye2e.go' \
-  ':!backend/internal/*/gate_kye2e_test.go' ':!*.md' ':!scripts/check-test-build-tag.sh' ':!scripts/check-release-image.sh' || true)
+  ':!backend/internal/*/gate_release_test.go' ':!backend/internal/*/gate_kye2e_test.go' ':!*.md' ':!scripts/check-test-build-tag.sh' ':!scripts/check-release-image.sh' || true)
 if [ -n "$stray" ]; then
   echo "::error::the $tag build tag appears outside the gate files:" >&2
   echo "$stray" >&2
@@ -31,10 +31,18 @@ fi
   { echo "::error::${gates[0]} must be //go:build !$tag with MultiTenantBuild = false" >&2; fail=1; }
 grep -qx '//go:build kye2e' "${gates[1]}" ||
   { echo "::error::${gates[1]} must be //go:build $tag" >&2; fail=1; }
+# Every package whose tests depend on the build runs below in the test build.
+for d in $(git grep -l -e MultiTenantBuild -e taggedBuild -- 'backend/*_test.go' | xargs -r -n1 dirname | sort -u); do
+  case "$d" in backend/internal/config | backend/internal/app | backend/internal/sso | backend/internal/sso/*) ;;
+  *) echo "::error::$d has tests that depend on the build; add it to the tagged run below" >&2; fail=1 ;;
+  esac
+done
 [ "$fail" -eq 0 ] || exit 1
 
-# The test build opens the gate and takes only a .test issuer (the untagged suite checks that
-# the release build refuses).
+# The packages whose tests depend on the build, complete, in the test build: each such test
+# asserts the release refusal in a release build and the tagged behaviour here (the untagged
+# CI legs run the release side).
 cd backend
-go vet -tags "$tag" ./internal/config/ ./internal/app/ ./internal/sso/
-go test -count=1 -tags "$tag" -run '^TestE2EBuild' ./internal/config/ ./internal/app/ ./internal/sso/
+pkgs=(./internal/config/ ./internal/app/ ./internal/sso/...)
+go vet -tags "$tag" "${pkgs[@]}"
+go test -count=1 -timeout 20m -tags "$tag" "${pkgs[@]}"

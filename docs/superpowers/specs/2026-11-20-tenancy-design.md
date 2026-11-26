@@ -1129,15 +1129,22 @@ The suite end-to-end design's KyPost row, built:
   where every issuer passes: `sso.ValidateIssuerURL` (every save, and every OIDC discovery) refuses
   it, and `sso.Store.Load` reads a stored issuer outside `.test` as unconfigured, so no sign-in,
   directory call or webhook uses it.
-- Checks: `scripts/check-test-build-tag.sh` (ci-backend-checks) keeps the tag in the gate files,
-  their tagged tests and Markdown, refuses `-tags` and `GOFLAGS` in the Dockerfile, Makefiles,
+- Checks: `scripts/check-test-build-tag.sh` (ci-backend-checks) keeps the tag in the gate files
+  and Markdown, refuses `-tags` and `GOFLAGS` in the Dockerfile, Makefiles,
   compose files, `ci.yml`, `publish-main.yml`, `release-image.yml` and `dependency-release.yml`,
-  and runs the tagged `TestE2EBuild*` tests. `scripts/check-release-image.sh <image>` (ci-docker on
+  and runs the complete `config`, `app` and `sso/...` suites with `-tags kye2e` (it fails if a test
+  elsewhere depends on the build). Each test that depends on the gate asserts the release refusal
+  in a release build and the test build's behaviour under the tag, keyed on `taggedBuild`, a
+  test-only constant from the build tag alone (`gate_release_test.go`/`gate_kye2e_test.go` in
+  `config`, `app` and `sso`), so an edit to either gate file fails them, and
+  `TestGateMatchesBuildTag` directly (`TestCheckEnvRefusesMulti`,
+  `TestBootstrapAdminRefusesMulti` with the backup commands, `TestRunRefusesMultiTenancy`,
+  `TestValidateIssuerURL`, `TestSSOSettingsStore`), and the sso tests whose provider is on loopback
+  check that the test build refuses it before skipping (`releaseOnly`). `scripts/check-release-image.sh <image>` (ci-docker on
   `kypost-server:ci`; `publish-main.yml` and `release-image.yml` on a local build before the push,
   `release-image.yml` again on the pushed digest) fails on `-tags=kye2e` in `go version -m`, and
   starts the image twice with a multi-tenant environment, through the entrypoint and as
-  `--mode server`, expecting the release refusal. Untagged: `TestCheckEnvRefusesMulti`,
-  `TestBootstrapAdminRefusesMulti`, `TestCheckTestIssuer`.
+  `--mode server`, expecting the release refusal. `TestCheckTestIssuer` covers the `.test` rule.
 
 ## PR 1 as built (2026-11-21)
 
