@@ -138,3 +138,28 @@ func withSecurityHeaders(next http.Handler, policy func() string, driveOrigin fu
 		next.ServeHTTP(w, r)
 	})
 }
+
+// contentSecurityPolicy is the policy for this instance's CAPTCHA provider
+// and paired KyDrive, which can change at run time.
+func (s *Server) contentSecurityPolicy() string {
+	return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin())
+}
+
+// appShellPolicy adds 'wasm-unsafe-eval' to script-src for the app shell
+// document only: the browser's OpenPGP engine is gopenpgp compiled to
+// WebAssembly (frontend/src/lib/pgpEngineWasm.ts), and compiling it needs
+// that source. It allows WebAssembly compilation and nothing else; it never
+// becomes 'unsafe-eval'. Every other response keeps the base policy.
+//
+// handleFrontend sets it itself: withDeadline gives handlers a fresh header
+// map, so the middleware's policy is not there to edit, and this one replaces
+// it when the buffered headers are copied out.
+func appShellPolicy(policy string) string {
+	directives := strings.Split(policy, "; ")
+	for i, d := range directives {
+		if strings.HasPrefix(d, "script-src ") && !strings.Contains(d, "'wasm-unsafe-eval'") {
+			directives[i] = d + " 'wasm-unsafe-eval'"
+		}
+	}
+	return strings.Join(directives, "; ")
+}

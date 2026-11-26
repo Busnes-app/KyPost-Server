@@ -389,8 +389,9 @@ jobs:
       - name: npm ci
         run: npm ci
 
-      # Blocking gate on runtime dependencies only. dompurify, openpgp and
-      # quill are what a hostile email actually reaches; a high-severity
+      # Blocking gate on runtime dependencies only. dompurify and quill are
+      # what a hostile email actually reaches (OpenPGP is the Go wasm engine,
+      # covered by govulncheck); a high-severity
       # advisory against any of them should stop a merge.
       #
       # --omit=dev is a deliberate scope, not a way to duck a finding. The
@@ -407,7 +408,7 @@ jobs:
       # Severity ratings are assigned for a generic consumer; "low" for a text
       # editor is not low for one that eats hostile email.
       #
-      # The runtime dependency list is seven packages long, so a low-severity
+      # The runtime dependency list is six packages long, so a low-severity
       # advisory on one of them is worth a human looking at it.
       - name: npm audit (runtime dependencies)
         run: npm audit --omit=dev --audit-level=low
@@ -419,6 +420,16 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=high
 
+      # The browser's OpenPGP engine (backend/cmd/pgpwasm), built with
+      # go.mod's exact toolchain. typecheck, tests and the build all load it.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: build OpenPGP wasm
+        run: npm run build:pgp-wasm
+
       - name: typecheck
         run: npm run typecheck
 
@@ -428,30 +439,12 @@ jobs:
           npm ci --prefix lint
           npm run lint
 
-      # gopenpgp wasm engine (evaluation, docs/superpowers/specs/2026-11-26-
-      # pqc-gopenpgp-wasm-evaluation.md): build it with go.mod's toolchain so
-      # the parity tests below must run, never skip.
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-
-      - name: build gopenpgp wasm
-        run: ../scripts/build-pgp-wasm.sh
-
-      - name: test
-        env:
-          KYPOST_REQUIRE_PGP_WASM: "1"
-        run: npm test -- --run
-
-      - name: pgp suites on the wasm engine
-        env:
-          VITE_PGP_ENGINE: gopenpgp-wasm
-        run: npx vitest run src/lib/
-
       - name: wasm bridge Go tests (under Node)
         working-directory: backend
         run: PATH="$(go env GOROOT)/lib/wasm:$PATH" GOOS=js GOARCH=wasm go test -count=1 ./cmd/pgpwasm
+
+      - name: test
+        run: npm test -- --run
 
       - name: build
         run: npm run build

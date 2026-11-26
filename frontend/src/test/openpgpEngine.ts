@@ -1,7 +1,7 @@
-// The openpgp.js engine: the calls pgpClient made before the engine split,
-// with the same options.
-import type { PgpEngine, SignatureCheck } from "./pgpEngine";
-import { decryptionKeysFor } from "./pgpKeyring";
+// openpgp.js 6.3.3 behind the engine interface, with the options the browser
+// used before gopenpgp replaced it. Test-only: the interop target for
+// pgpEngine.parity.test.ts. Production never imports this.
+import type { PgpEngine, SignatureCheck } from "../lib/pgpEngine";
 
 type OpenPGP = typeof import("openpgp");
 type VerificationResult = Awaited<ReturnType<OpenPGP["verify"]>>["signatures"][number];
@@ -42,12 +42,23 @@ export const openpgpEngine: PgpEngine = {
   },
 
   async inspect(armoredKey) {
-    const key = await (await pgp()).readKey({ armoredKey });
+    const o = await pgp();
+    const key = await o.readKey({ armoredKey });
     const members = key.getKeys();
+    const expiry = await key.getExpirationTime();
     return {
       fingerprint: key.getFingerprint().toUpperCase(),
       version: key.keyPacket.version,
       isPrivate: key.isPrivate(),
+      locked: key.isPrivate() && !members.every((m) => "isDecrypted" in m.keyPacket && m.keyPacket.isDecrypted()),
+      count: 1,
+      expires: expiry instanceof Date ? Math.floor(expiry.getTime() / 1000) : 0,
+      publicKey: key.toPublic().write(),
+      packets: Array.from(key.toPublic().toPacketList(), (packet) => {
+        const single = new o.PacketList();
+        single.push(packet);
+        return single.write();
+      }),
       keyIDs: members.map((m) => m.getKeyID().toHex().toUpperCase()),
       fingerprints: members.map((m) => m.getFingerprint().toUpperCase()),
       algorithms: members.map((m) => m.keyPacket.algorithm)
@@ -86,7 +97,7 @@ export const openpgpEngine: PgpEngine = {
     const verifiers = await Promise.all(verificationKeys.map((armoredKey) => o.readKey({ armoredKey })));
     const result = await o.decrypt({
       message,
-      decryptionKeys: decryptionKeysFor({ keys }, message),
+      decryptionKeys: keys,
       verificationKeys: verifiers.length > 0 ? verifiers : undefined,
       expectSigned: false,
       config: { ...RSA_POLICY, maxDecompressedMessageSize: maxBytes }

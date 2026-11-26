@@ -1,24 +1,21 @@
 // @vitest-environment node
-// Engine parity and interop: openpgp.js 6.3.3 and the gopenpgp wasm engine
-// (scripts/build-pgp-wasm.sh). The whole pgpClient suite also runs on the
-// wasm engine with VITE_PGP_ENGINE=gopenpgp-wasm (CI does both).
-import { existsSync, readFileSync } from "node:fs";
+// Interop between the browser's gopenpgp wasm engine and openpgp.js 6.3.3,
+// the engine it replaced (and what most correspondents' web clients run),
+// plus the shared RFC 9980 fixtures in testdata/openpgp-v6.
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { pgpEngine, type PgpEngine } from "./pgpEngine";
-
-const built = existsSync(resolve(import.meta.dirname, "../../.pgp-wasm/kypost-pgp.wasm"));
-if (!built && process.env.KYPOST_REQUIRE_PGP_WASM) throw new Error("gopenpgp wasm not built: run scripts/build-pgp-wasm.sh");
-if (built) await import("../test/pgpWasmSetup");
+import { openpgpEngine } from "../test/openpgpEngine";
 
 const MAX = 1 << 20;
 const ids = (email: string) => [{ name: "Test", email }];
 
 async function engines(): Promise<[PgpEngine, PgpEngine]> {
-  return [await pgpEngine("openpgp.js"), await pgpEngine("gopenpgp-wasm")];
+  return [openpgpEngine, await pgpEngine()];
 }
 
-describe.runIf(built)("openpgp.js and gopenpgp wasm agree", () => {
+describe("openpgp.js and gopenpgp wasm agree", () => {
   for (const [producer, consumer] of [[0, 1], [1, 0], [0, 0], [1, 1]] as const) {
     it(`v4: engine ${producer} encrypts+signs, engine ${consumer} decrypts+verifies`, async () => {
       const e = await engines();
@@ -82,25 +79,24 @@ describe.runIf(built)("openpgp.js and gopenpgp wasm agree", () => {
   }, 30000);
 });
 
-// The P0 shared fixtures (testdata/openpgp-v6, bracken's feat/pqc-p0-key-policy).
-// Point KYPOST_PGP_FIXTURES at that directory to run; not in this branch yet.
-const fixtures = process.env.KYPOST_PGP_FIXTURES;
-describe.runIf(built && Boolean(fixtures))("P0 fixtures", () => {
+// The P0 shared fixtures (made by go-crypto, cross-checked with Bouncy Castle).
+const fixtures = resolve(import.meta.dirname, "../../../testdata/openpgp-v6");
+describe("P0 fixtures", () => {
   const read = (name: string) => readFileSync(`${fixtures}/${name}`, "utf8");
   for (const name of ["v4", "v4-pqc", "v6-pqc"]) {
     it(`wasm opens ${name}.msg.asc`, async () => {
-      const wasm = await pgpEngine("gopenpgp-wasm");
+      const wasm = await pgpEngine();
       const out = await wasm.decrypt({ armoredMessage: read(`${name}.msg.asc`), decryptionKeys: [read(`${name}.sec.asc`)], verificationKeys: [read(`${name}.pub.asc`)], maxBytes: MAX });
       expect(out.data.replace(/\r\n/g, "\n")).toBe(read("message.txt").replace(/\r\n/g, "\n"));
     });
   }
   it("wasm verifies v6-pqc.sig.asc over message.txt", async () => {
-    const wasm = await pgpEngine("gopenpgp-wasm");
+    const wasm = await pgpEngine();
     const checks = await wasm.verifyDetached({ data: readFileSync(`${fixtures}/message.txt`), armoredSignature: read("v6-pqc.sig.asc"), verificationKeys: [read("v6-pqc.pub.asc")] });
     expect(checks.map((s) => s.valid)).toEqual([true]);
   });
   it("openpgp.js 6.3 opens v4.msg.asc and refuses the PQC ones", async () => {
-    const js = await pgpEngine("openpgp.js");
+    const js = openpgpEngine;
     const out = await js.decrypt({ armoredMessage: read("v4.msg.asc"), decryptionKeys: [read("v4.sec.asc")], verificationKeys: [], maxBytes: MAX });
     expect(out.data.replace(/\r\n/g, "\n")).toBe(read("message.txt").replace(/\r\n/g, "\n"));
     await expect(js.decrypt({ armoredMessage: read("v6-pqc.msg.asc"), decryptionKeys: [read("v6-pqc.sec.asc")], verificationKeys: [], maxBytes: MAX })).rejects.toThrow();

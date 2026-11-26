@@ -14,7 +14,7 @@ import { parseMimeContent, type BodyMode, type MimeAttachment, type ProtectedHea
 
 /** Every ring member, armored, for the engine to try. */
 async function ringKeys(): Promise<string[]> {
-  return (await parseKeyring(requireUnlockedKeyMaterial())).keys.map((key) => key.armor());
+  return (await parseKeyring(requireUnlockedKeyMaterial())).keys.map((key) => key.armored);
 }
 
 export type GeneratedIdentity = {

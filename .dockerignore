@@ -16,6 +16,7 @@ share/
 # Produced by the frontend-builder stage inside the image. A stale local copy
 # is never wanted and can only mask a broken build.
 frontend/dist/
+frontend/.pgp-wasm/
 
 # Go binaries a local build leaves in backend/ (see .gitignore).
 /backend/main

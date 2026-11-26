@@ -56,6 +56,14 @@ func anyList(list []string) []any {
 	return out
 }
 
+func packetList(list [][]byte) []any {
+	out := make([]any, len(list))
+	for i, p := range list {
+		out[i] = toJS(p)
+	}
+	return out
+}
+
 func checks(list []signatureCheck) []any {
 	out := make([]any, len(list))
 	for i, c := range list {
@@ -125,6 +133,7 @@ func main() {
 				algos[i] = a
 			}
 			return map[string]any{"fingerprint": info.Fingerprint, "version": info.Version, "isPrivate": info.IsPrivate,
+				"locked": info.Locked, "count": info.Count, "expires": info.Expires, "publicKey": toJS(info.PublicKey), "packets": packetList(info.Packets),
 				"keyIDs": anyList(info.KeyIDs), "fingerprints": anyList(info.Fingerprints), "algorithms": algos}, nil
 		}),
 		"encrypt": op(func(req js.Value) (map[string]any, error) {

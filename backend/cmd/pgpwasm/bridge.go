@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/ProtonMail/gopenpgp/v3/armor"
@@ -29,6 +30,11 @@ type keyInfo struct {
 	Fingerprint  string   // primary, upper-case hex
 	Version      int      // 4 or 6
 	IsPrivate    bool     // carries secret material
+	Locked       bool     // some secret packet is encrypted or a GNU dummy
+	Count        int      // keys in the input; only the first is described
+	Expires      int64    // Unix seconds, 0 for none
+	PublicKey    []byte   // binary transferable public key
+	Packets      [][]byte // PublicKey split into packets, for an order-free comparison
 	KeyIDs       []string // primary then subkeys, upper-case hex
 	Fingerprints []string // same order
 	Algorithms   []int    // same order, RFC 9580 / RFC 9980 IDs
@@ -122,8 +128,36 @@ func inspect(data []byte) (keyInfo, error) {
 		return keyInfo{}, err
 	}
 	defer key.ClearPrivateParams()
+	ring, err := crypto.NewKeyRingFromBinary(bytesOrUnarmored(data))
+	if err != nil {
+		return keyInfo{}, err
+	}
+	pub, err := key.GetPublicKey()
+	if err != nil {
+		return keyInfo{}, err
+	}
+	packets, err := splitPackets(pub)
+	if err != nil {
+		return keyInfo{}, err
+	}
 	e := key.GetEntity()
-	info := keyInfo{Fingerprint: strings.ToUpper(key.GetFingerprint()), Version: key.GetVersion(), IsPrivate: key.IsPrivate()}
+	info := keyInfo{Packets: packets, Fingerprint: strings.ToUpper(key.GetFingerprint()), Version: key.GetVersion(), IsPrivate: key.IsPrivate(),
+		Count: ring.CountEntities(), PublicKey: pub}
+	if key.IsPrivate() {
+		locked, err := key.IsLocked()
+		if err != nil {
+			return keyInfo{}, err
+		}
+		// IsLocked is "every secret packet is encrypted"; a ring needs none to be.
+		unusable := func(k *packet.PrivateKey) bool { return k == nil || k.Encrypted || k.Dummy() }
+		info.Locked = locked || unusable(e.PrivateKey)
+		for _, sub := range e.Subkeys {
+			info.Locked = info.Locked || unusable(sub.PrivateKey)
+		}
+	}
+	if sig, err := e.PrimarySelfSignature(time.Now(), nil); err == nil && sig.KeyLifetimeSecs != nil && *sig.KeyLifetimeSecs > 0 {
+		info.Expires = e.PrimaryKey.CreationTime.Unix() + int64(*sig.KeyLifetimeSecs)
+	}
 	add := func(pk *packet.PublicKey) {
 		info.KeyIDs = append(info.KeyIDs, fmt.Sprintf("%016X", pk.KeyId))
 		info.Fingerprints = append(info.Fingerprints, fmt.Sprintf("%X", pk.Fingerprint))
@@ -311,6 +345,42 @@ func verifyDetached(data, signature []byte, verificationKeys [][]byte) ([]signat
 		return nil, err
 	}
 	return signatures(res), nil
+}
+
+// splitPackets cuts go-crypto's own serialization into whole packets. It
+// writes only new-format headers with definite lengths (RFC 9580 4.2.1).
+func splitPackets(b []byte) ([][]byte, error) {
+	var out [][]byte
+	for len(b) > 0 {
+		if b[0]&0xC0 != 0xC0 || len(b) < 2 {
+			return nil, errors.New("unexpected packet header")
+		}
+		var hdr, n int
+		switch l := int(b[1]); {
+		case l < 192:
+			hdr, n = 2, l
+		case l < 224 && len(b) >= 3:
+			hdr, n = 3, (l-192)<<8+int(b[2])+192
+		case l == 255 && len(b) >= 6:
+			hdr, n = 6, int(b[2])<<24|int(b[3])<<16|int(b[4])<<8|int(b[5])
+		default:
+			return nil, errors.New("unexpected packet length")
+		}
+		if n < 0 || hdr+n > len(b) {
+			return nil, errors.New("truncated packet")
+		}
+		out = append(out, b[:hdr+n])
+		b = b[hdr+n:]
+	}
+	return out, nil
+}
+
+// bytesOrUnarmored returns binary OpenPGP data, dearmoring the first block.
+func bytesOrUnarmored(data []byte) []byte {
+	if raw, err := armor.UnarmorBytes(data); err == nil {
+		return raw
+	}
+	return data
 }
 
 func armorBytes(data []byte, armorType string) (string, error) {

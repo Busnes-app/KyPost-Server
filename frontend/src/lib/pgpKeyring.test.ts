@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as pgp from "openpgp";
 import fixture from "../../../testdata/pgp-keyring-v1.json";
-import { decryptionKeysFor, parseKeyring } from "./pgpKeyring";
+import { parseKeyring } from "./pgpKeyring";
 import { lock, requireUnlockedKey, unlockWithArmoredKey, VaultLockedError } from "./keyVault";
 import { buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, decryptMessage, openSealedToSelf, sealToSelf } from "./pgpClient";
 
@@ -16,18 +16,14 @@ describe("keyring readers", () => {
   it("imports a legacy key without converting its bytes", async () => {
     const ring = await parseKeyring(active.privateKey);
     expect(ring.keys).toEqual([ring.activeKey]);
-    expect(ring.activeKey.getFingerprint().toUpperCase()).toBe(active.fingerprint);
+    expect(ring.activeKey.armored).toBe(active.privateKey);
+    expect(ring.activeKey.info.fingerprint).toBe(active.fingerprint);
   });
 
   it.each(["ciphertext", "hiddenCiphertext"] as const)("reads historical mail and autosaves through %s", async field => {
     const ring = await parseKeyring(raw);
-    const message = await pgp.readMessage({ armoredMessage: fixture[field] });
-    const candidates = decryptionKeysFor(ring, message);
-    expect(candidates.map(k => k.getFingerprint().toUpperCase())).toContain(historical.fingerprint);
-    if (field === "ciphertext") {
-      expect(candidates).toHaveLength(1);
-      expect(message.getEncryptionKeyIDs()[0].toHex()).not.toBe(ring.keys[1].getKeyID().toHex());
-    } else expect(candidates).toHaveLength(2);
+    expect(ring.keys.map(k => k.info.fingerprint)).toEqual(fixture.ring.keys.map(k => k.fingerprint.toUpperCase()));
+    expect(ring.keys.map(k => k.armored)).toEqual(fixture.ring.keys.map(k => k.privateKey));
     unlockWithArmoredKey(active.privateKey);
     await expect(openSealedToSelf(fixture[field])).rejects.toThrow();
     unlockWithArmoredKey(raw);
@@ -124,7 +120,7 @@ describe("keyring readers", () => {
     ring.activeFingerprint = ring.activeFingerprint.toLowerCase();
     ring.keyFingerprints = ring.keyFingerprints.map(value => value.toLowerCase());
     ring.keys = ring.keys.map(value => ({ ...value, fingerprint: value.fingerprint.toLowerCase() }));
-    expect((await parseKeyring(JSON.stringify(ring))).activeKey.getFingerprint().toUpperCase()).toBe(active.fingerprint);
+    expect((await parseKeyring(JSON.stringify(ring))).activeKey.info.fingerprint).toBe(active.fingerprint);
     ring.keyFingerprints.push(active.fingerprint);
     await expect(parseKeyring(JSON.stringify(ring))).rejects.toThrow(/invalid/);
   });

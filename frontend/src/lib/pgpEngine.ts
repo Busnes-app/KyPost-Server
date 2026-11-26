@@ -1,7 +1,8 @@
-// pgpEngine: the OpenPGP operations pgpClient needs, behind one interface so
-// openpgp.js and gopenpgp compiled to WebAssembly can be compared on the same
-// test suite (docs/superpowers/specs/2026-11-26-pqc-gopenpgp-wasm-evaluation.md).
-// Keys and messages cross it armored, as pgpClient already stores them.
+// pgpEngine: the OpenPGP operations the browser needs, run by gopenpgp
+// compiled to WebAssembly (backend/cmd/pgpwasm), the same library and KyPost
+// profile as the server. Keys and messages cross it armored, as they are
+// stored. Tests drive openpgp.js through the same interface as an interop
+// target (src/test/openpgpEngine.ts); production has no other engine.
 
 export type KeyProfile = "v4" | "v6";
 
@@ -11,6 +12,16 @@ export type KeyInfo = {
   fingerprint: string;
   version: number;
   isPrivate: boolean;
+  /** Some secret packet is passphrase-encrypted or a GNU dummy. */
+  locked: boolean;
+  /** Keys in the input; the rest of this describes the first. */
+  count: number;
+  /** Unix seconds, 0 for none. */
+  expires: number;
+  /** Binary transferable public key, as the engine serializes it. */
+  publicKey: Uint8Array;
+  /** publicKey split into packets, for an order-free comparison. */
+  packets: Uint8Array[];
   /** Primary first, then subkeys; upper-case hex. */
   keyIDs: string[];
   fingerprints: string[];
@@ -21,7 +32,7 @@ export type KeyInfo = {
 export type SignatureCheck = { keyID: string; fingerprint: string; valid: boolean };
 
 export interface PgpEngine {
-  readonly name: "openpgp.js" | "gopenpgp-wasm";
+  readonly name: string;
   generate(userIDs: { name: string; email: string }[], profile: KeyProfile): Promise<EngineKey>;
   /** Returns the key unlocked. */
   importPrivate(armoredKey: string, passphrase: string): Promise<EngineKey>;
@@ -37,26 +48,7 @@ export interface PgpEngine {
   dearmor(armored: string): Promise<Uint8Array>;
 }
 
-// Dev-only switch, fixed at build time: production builds never set
-// VITE_PGP_ENGINE, so the wasm module is not even fetched.
-const selected = import.meta.env.VITE_PGP_ENGINE === "gopenpgp-wasm" ? "gopenpgp-wasm" : "openpgp.js";
-
-let current: Promise<PgpEngine> | undefined;
-
-export function pgpEngine(name: PgpEngine["name"] = selected): Promise<PgpEngine> {
-  if (name !== selected) return load(name);
-  current ??= load(name);
-  return current;
-}
-
-// Only dev and test builds, or a build that selected it, can reach the wasm
-// engine; a production build drops the chunk entirely.
-const wasmAllowed = import.meta.env.MODE !== "production" || selected === "gopenpgp-wasm";
-
-async function load(name: PgpEngine["name"]): Promise<PgpEngine> {
-  if (name === "gopenpgp-wasm") {
-    if (!wasmAllowed) throw new Error("The gopenpgp wasm engine is not part of this build.");
-    return (await import("./pgpEngineWasm")).wasmEngine();
-  }
-  return (await import("./pgpEngineOpenpgp")).openpgpEngine;
+/** The browser's engine. Loads the module on first use, not before. */
+export async function pgpEngine(): Promise<PgpEngine> {
+  return (await import("./pgpEngineWasm")).wasmEngine;
 }
