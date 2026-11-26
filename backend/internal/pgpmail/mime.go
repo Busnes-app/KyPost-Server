@@ -13,6 +13,7 @@ import (
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpprofile"
 )
 
 // envelopeHeaderOrder lists the outer RFC 5322 headers preserved verbatim on a
@@ -163,6 +164,7 @@ func encryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Ide
 	if err != nil {
 		return nil, fmt.Errorf("pgpmail: new recipient keyring: %w", err)
 	}
+	version := 0
 	for _, armored := range recipientArmoredPubKeys {
 		key, err := crypto.NewKeyFromArmored(armored)
 		if err != nil {
@@ -171,15 +173,26 @@ func encryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Ide
 		if err := requireStrongRSA(key, false); err != nil {
 			return nil, err
 		}
+		if version != 0 && key.GetVersion() != version {
+			return nil, errors.New("pgpmail: cannot mix v4 and v6 recipient keys in one message")
+		}
+		version = key.GetVersion()
 		if err := recipients.AddKey(key); err != nil {
 			return nil, fmt.Errorf("pgpmail: add recipient key: %w", err)
 		}
 	}
 
-	builder := crypto.PGP().Encryption().Recipients(recipients)
+	handle := crypto.PGP()
+	if version == 6 {
+		handle = pgpprofile.V6()
+	}
+	builder := handle.Encryption().Recipients(recipients)
 	if signer != nil {
 		if err := requireStrongRSA(signer.key, true); err != nil {
 			return nil, err
+		}
+		if signer.key.GetVersion() != version {
+			return nil, errors.New("pgpmail: signing key version does not match recipient key version")
 		}
 		builder = builder.SigningKey(signer.key)
 	}

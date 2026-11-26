@@ -18,8 +18,9 @@ var ErrKeyPolicy = errors.New("KyPost accepts only v4 keys (Ed25519, Curve25519,
 
 // keyPolicy lists the allowed algorithms per key version and role. A v4
 // EdDSA signing subkey is allowed: GnuPG smartcard setups make one, and it
-// adds no algorithm the primary list lacks. Level-5 PQC (31, 36) waits for
-// the owner's answer to spec Q7; pre-RFC 9980 code points (105, 107) never.
+// adds no algorithm the primary list lacks. Level-5 PQC (31, 36) is excluded
+// per spec Q7 (category 3 only for now); pre-RFC 9980 code points (105, 107)
+// are never allowed.
 var keyPolicy = map[byte]struct{ primary, subkey []packet.PublicKeyAlgorithm }{
 	4: {
 		primary: []packet.PublicKeyAlgorithm{packet.PubKeyAlgoRSA, packet.PubKeyAlgoEdDSA},

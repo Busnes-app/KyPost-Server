@@ -58,7 +58,3 @@ github.com/Busnes-app/kypost-server/backend/internal/backup.SetImportHooksForTes
 github.com/Busnes-app/kypost-server/backend/internal/mailbox.SetPoolCheck
 # Test-only: fences a root's locks while its documents stay files (MH4 fence audit).
 github.com/Busnes-app/kypost-server/backend/internal/vol.FenceRootForTest
-
-# The KyPost v6 profile. cmd/pgpwasm (GOOS=js only, which deadcode does not
-# build) calls it today; the server switches to it in spec A phase P1.
-github.com/Busnes-app/kypost-server/backend/internal/pgpprofile.V6
