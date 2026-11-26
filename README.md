@@ -17,7 +17,6 @@ Native direct outbound delivery is available as an explicit protected-API profil
 ## Features
 
 - HR-driven work-email allocation: KyIdentity can reserve a unique native address before creating the employee’s SSO account. Reservations grant no mailbox access; normal activation and directory provisioning prepare it later. See [HR address reservations](docs/NATIVE_PROVISIONING.md#hr-address-reservations).
-
 - IMAP web client: inbox reader with read/unread actions, conversation view (per-user switch, on by default), folders, compose with SMTP send, recipient rejection messages, scheduled send and draft save, plain-text signatures (the phone apps keep their own), an out-of-office reply with separate texts for the organisation and outside senders, filter rules (GUI and Sieve).
 - Sending quotas across immediate and scheduled mail: 60 messages an hour and 1000 recipients a day by default, adjustable by administrators per installation or account.
 - Automatic keyword labels from an on-device embedding sorter backed by a local Ollama model; each account keeps its own labels. Labels are a hint, not a security boundary — see [Architecture](docs/ARCHITECTURE.md#architecture).
@@ -71,15 +70,22 @@ Read the [KyPost mdBook manual](https://busnes.app/manuals/kypost-server/) for t
 
 For Identity-first or Notes-only standalone installs, `bash scripts/ensure-network.sh` creates only the KyPost-owned shared bridge; no mail server is installed. See [network ownership and fixed-IP proxy setup](docs/Reverse_Proxy_Networking.md#when-the-network-already-exists).
 
+- [Standalone installation](INSTALL.md) — First-run setup and connecting a mailbox.
 - [Running](docs/RUNNING.md) — Requirements, Quick Start, Ports. <a id="requirements"></a><a id="quick-start"></a><a id="ports"></a>
+- [Configuration](docs/CONFIGURATION.md) — Environment variables and Compose overlays.
 - [Architecture](docs/ARCHITECTURE.md) — Architecture, Project Structure. <a id="architecture"></a><a id="project-structure"></a>
+- [API](docs/API.md) — HTTP endpoints and authentication surface.
 - [PGP keys](docs/PGP-KEYS.md) — Where your PGP private key lives. <a id="where-your-pgp-private-key-lives"></a>
 - [Accounts](docs/ACCOUNTS.md) — Session Behavior, Users and Roles. <a id="session-behavior"></a><a id="users-and-roles"></a>
 - [AI sorting](docs/AI-SORTING.md) — Environment Variables. <a id="environment-variables"></a><a id="choosing-a-classifier-model"></a><a id="running-without-ai-sorting"></a>
 - [Clients and push](docs/CLIENTS-AND-PUSH.md) — Mobile App Pairing (Native), Push Relays (Cloudflare Workers). <a id="mobile-app-pairing-native"></a><a id="certificate-pinning-in-the-pairing-qr"></a><a id="push-relays-cloudflare-workers"></a>
+- [TLS](docs/TLS.md) — Inbound TLS and reverse-proxy configuration.
 - [Storage and recovery](docs/STORAGE-AND-RECOVERY.md) — Persistence, Backup and Restore. <a id="persistence"></a><a id="backup-and-restore"></a><a id="back-up"></a><a id="restore"></a><a id="verify-the-restore"></a>
+- [Restore runbook](docs/RESTORE.md) — Scratch restore verification and sealed-backup recovery.
+- [Logging](LOGGING.md) — Structured JSON logs, redaction, and supervisord log streams.
 - [Development](docs/DEVELOPMENT.md) — API Highlights, Build and Dev Checks. <a id="api-highlights"></a><a id="build-and-dev-checks"></a>
 - [Operations](docs/OPERATIONS.md) — Operations, Updating KyPost, Troubleshooting. <a id="operations"></a><a id="updating-kypost"></a><a id="verifying-an-image-by-hand"></a><a id="moving-a-locally-built-install-onto-published-images"></a><a id="troubleshooting"></a><a id="ollama-or-model-issues"></a><a id="imap-connection-issues"></a><a id="smtp-send-issues"></a><a id="kypost-does-not-apply-labels"></a><a id="pwa-installation-on-firefox"></a>
+- [Security](SECURITY.md) — Threat model notes and vulnerability reporting.
 - [Verifying releases](docs/VERIFYING-RELEASES.md) — Check a release image's signature and source commit, and rebuild its binary to the same bytes.
 - [Assurance case](docs/ASSURANCE-CASE.md) — Threat model, trust boundaries, and why the security requirements are met.
 - [Key strength](docs/STRONG-CRYPTO.md) — Key sizes KyPost accepts, the optional `GODEBUG=fips140=on` TLS profile, and what it does not cover.
