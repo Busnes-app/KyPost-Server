@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/ky-primitives/pqtls"
 )
 
 func directTestProfile() DomainRelay {
@@ -70,6 +72,7 @@ func TestDirectMXSMTPRecipientEvidence(t *testing.T) {
 				raw, hello string
 				recipients int
 				auth       bool
+				tlsState   tls.ConnectionState
 				err        error
 			}
 			done := make(chan observed, 1)
@@ -110,6 +113,7 @@ func TestDirectMXSMTPRecipientEvidence(t *testing.T) {
 						if connection.Handshake() != nil {
 							return
 						}
+						got.tlsState = connection.ConnectionState()
 						c = connection
 						reader, writer = bufio.NewReader(c), bufio.NewWriter(c)
 						secured = true
@@ -184,6 +188,7 @@ func TestDirectMXSMTPRecipientEvidence(t *testing.T) {
 					t.Fatal("unsafe peer received mail")
 				}
 			} else {
+				pqtls.RequireHybrid(t, got.tlsState)
 				// One verifying DKIM-Signature, then the exact stored MIME.
 				normalized, e := NormalizeSMTPMessage([]byte(got.raw))
 				if e != nil || verifyWire(t, directTestProfile(), string(normalized)) != relayProofMIME || got.recipients != 1 {

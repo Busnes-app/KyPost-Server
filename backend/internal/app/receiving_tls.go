@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/pqtls"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -319,12 +320,9 @@ func runReceivingServeTLS(address string) error {
 // frame is read.
 func (r *receivingRuntime) serveTLS(raw net.Conn, db *sql.DB, cert tls.Certificate) {
 	var gateway string
-	conn := tls.Server(raw, &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		// ponytail: inline until ky-primitives v0.11.0 pqtls.HybridOnly is tagged
-		CurvePreferences: []tls.CurveID{tls.X25519MLKEM768},
-		Certificates:     []tls.Certificate{cert},
-		ClientAuth:       tls.RequireAnyClientCert,
+	conn := tls.Server(raw, pqtls.HybridOnly(&tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientAuth:   tls.RequireAnyClientCert,
 		// No resumption: every connection presents its key and meets a fresh pin check.
 		SessionTicketsDisabled: true,
 		VerifyConnection: func(cs tls.ConnectionState) error {
@@ -344,7 +342,7 @@ func (r *receivingRuntime) serveTLS(raw net.Conn, db *sql.DB, cert tls.Certifica
 			gateway = id
 			return nil
 		},
-	})
+	}))
 	defer conn.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -506,10 +504,7 @@ func (c *receivingRemote) route(recipient string) receivingEndpoint {
 // must instead match one of pins (RX R3). Go calls VerifyConnection even when chain
 // verification is skipped, and a handshake whose server key is not pinned fails.
 func pinVerifiedClientTLS(cert tls.Certificate, pins []string) *tls.Config {
-	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		// ponytail: inline until ky-primitives v0.11.0 pqtls.HybridOnly is tagged
-		CurvePreferences:   []tls.CurveID{tls.X25519MLKEM768},
+	return pqtls.HybridOnly(&tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true, //nolint:gosec // replaced by the pin check in VerifyConnection
 		VerifyConnection: func(cs tls.ConnectionState) error {
@@ -518,7 +513,7 @@ func pinVerifiedClientTLS(cert tls.Certificate, pins []string) *tls.Config {
 			}
 			return nil
 		},
-	}
+	})
 }
 
 // call sends one request to a replica. It tries the replicas in random order, each with

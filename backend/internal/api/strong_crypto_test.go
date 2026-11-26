@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/ky-primitives/pqtls"
 )
 
 func rsaKey(t *testing.T, bits int) *rsa.PrivateKey {
@@ -61,7 +63,7 @@ func issue(t *testing.T, pub crypto.PublicKey, parentKey crypto.Signer, parent *
 	return cert
 }
 
-func writeRSAKeypair(t *testing.T, certPath, keyPath string, key *rsa.PrivateKey) {
+func writeRSAKeypair(t *testing.T, certPath, keyPath string, key *rsa.PrivateKey) *x509.Certificate {
 	t.Helper()
 	cert := issue(t, &key.PublicKey, key, nil, true)
 	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0o600); err != nil {
@@ -70,6 +72,7 @@ func writeRSAKeypair(t *testing.T, certPath, keyPath string, key *rsa.PrivateKey
 	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return cert
 }
 
 // Go serves an RSA-1024 certificate even with GODEBUG=fips140=on, so the
@@ -124,4 +127,100 @@ func TestTLSClientsRefuseWeakChainsInTheStrongProfile(t *testing.T) {
 			t.Fatalf("RSA-%d root, fips140=%v: err = %v", bits, fips140.Enabled(), err)
 		}
 	}
+}
+
+type tlsHandshakeResult struct {
+	state tls.ConnectionState
+	err   error
+}
+
+func serveOneTLS(t *testing.T, cfg *tls.Config) (string, <-chan tlsHandshakeResult) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	done := make(chan tlsHandshakeResult, 1)
+	go func() {
+		raw, err := ln.Accept()
+		if err != nil {
+			done <- tlsHandshakeResult{err: err}
+			return
+		}
+		sc := tls.Server(raw, cfg)
+		err = sc.Handshake()
+		state := sc.ConnectionState()
+		_ = sc.Close()
+		done <- tlsHandshakeResult{state: state, err: err}
+	}()
+	return ln.Addr().String(), done
+}
+
+// KyPost's default inbound (newTLSConfig) and outbound (probeSPKIPin) TLS configs
+// leave CurvePreferences unset so Go negotiates X25519MLKEM768 with modern peers
+// (including under GODEBUG=fips140=on) while preserving classical fallback for
+// external peers.
+func TestDefaultTLSNegotiatesX25519MLKEM768(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := filepath.Join(dir, "c.pem"), filepath.Join(dir, "c.key")
+	key := rsaKey(t, 2048)
+	cert := writeRSAKeypair(t, certPath, keyPath, key)
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+
+	serverCfg, err := newTLSConfig(certPath, keyPath)
+	if err != nil {
+		t.Fatalf("newTLSConfig: %v", err)
+	}
+
+	t.Run("outbound_and_inbound_hybrid", func(t *testing.T) {
+		addr, done := serveOneTLS(t, serverCfg)
+		if _, err := probeSPKIPin(context.Background(), "https://"+addr, roots); err != nil {
+			t.Fatalf("probeSPKIPin: %v", err)
+		}
+		res := <-done
+		if res.err != nil {
+			t.Fatalf("server handshake: %v", res.err)
+		}
+		pqtls.RequireHybrid(t, res.state)
+	})
+
+	t.Run("inbound_classical_fallback", func(t *testing.T) {
+		addr, done := serveOneTLS(t, serverCfg)
+		conn, err := tls.Dial("tcp", addr, &tls.Config{
+			RootCAs:          roots,
+			ServerName:       "127.0.0.1",
+			CurvePreferences: []tls.CurveID{tls.CurveP256},
+		})
+		if err != nil {
+			t.Fatalf("classical client dial: %v", err)
+		}
+		state := conn.ConnectionState()
+		_ = conn.Close()
+		if res := <-done; res.err != nil {
+			t.Fatalf("server handshake: %v", res.err)
+		}
+		if state.CurveID != tls.CurveP256 {
+			t.Fatalf("negotiated curve = %v, want CurveP256", state.CurveID)
+		}
+	})
+
+	t.Run("outbound_classical_fallback", func(t *testing.T) {
+		classicalServer := &tls.Config{
+			Certificates:     []tls.Certificate{{Certificate: [][]byte{cert.Raw}, PrivateKey: key}},
+			CurvePreferences: []tls.CurveID{tls.CurveP256},
+		}
+		addr, done := serveOneTLS(t, classicalServer)
+		if _, err := probeSPKIPin(context.Background(), "https://"+addr, roots); err != nil {
+			t.Fatalf("probeSPKIPin against classical server: %v", err)
+		}
+		res := <-done
+		if res.err != nil {
+			t.Fatalf("classical server handshake: %v", res.err)
+		}
+		if res.state.CurveID != tls.CurveP256 {
+			t.Fatalf("negotiated curve = %v, want CurveP256", res.state.CurveID)
+		}
+	})
 }

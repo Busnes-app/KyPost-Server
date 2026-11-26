@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/pqtls"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -661,11 +662,9 @@ func TestReceivingTLSRequiresX25519MLKEM768(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hybrid client->server handshake: %v", err)
 	}
-	if got := conn.ConnectionState().CurveID; got != tls.X25519MLKEM768 {
-		_ = conn.Close()
-		t.Fatalf("negotiated curve = %v, want %v", got, tls.X25519MLKEM768)
-	}
+	state := conn.ConnectionState()
 	_ = conn.Close()
+	pqtls.RequireHybrid(t, state)
 
 	classical := []struct {
 		name  string
