@@ -3,7 +3,10 @@
 // decisions.json in each user's state directory.
 package contacts
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 const (
 	PGPSourceManual    = "manual"
@@ -195,4 +198,32 @@ func (c *Contact) tombstone() {
 	c.DiscoveryCreated = false
 	// MergedInto is intentionally preserved: a merge tombstones the loser and
 	// then records which survivor it was folded into.
+}
+
+// AuthenticatedForContact reports whether storing a key proven for addr on
+// contact c stays within what that proof covers.
+//
+// True when the contact carries only addr (nothing else can inherit the key),
+// or when addr is the contact's primary address — the one a record-wide key is
+// legitimately about. False for a secondary address on a multi-address card,
+// where a record-wide write would silently authorize the key for the other
+// addresses too.
+func AuthenticatedForContact(c Contact, addr string) bool {
+	target := strings.ToLower(strings.TrimSpace(addr))
+	seen := map[string]bool{}
+	for _, e := range c.Emails {
+		v := strings.ToLower(strings.TrimSpace(e.Value))
+		if v != "" {
+			seen[v] = true
+		}
+	}
+	if len(seen) <= 1 {
+		return true
+	}
+	for _, e := range c.Emails {
+		if v := strings.ToLower(strings.TrimSpace(e.Value)); v != "" {
+			return v == target
+		}
+	}
+	return false
 }

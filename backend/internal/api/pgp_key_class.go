@@ -43,15 +43,21 @@ func (k keyClass) capability() string {
 // classOfEntity reads e's class from the encryption key go-crypto would pick
 // now, which prefers a PQ subkey over an equally new classical one.
 func classOfEntity(e *openpgp.Entity) keyClass {
+	k, _ := usableClassOfEntity(e)
+	return k
+}
+
+// usableClassOfEntity is classOfEntity plus whether e can be encrypted to now.
+func usableClassOfEntity(e *openpgp.Entity) (keyClass, bool) {
 	ek, ok := e.EncryptionKey(time.Now(), nil)
 	return keyClass{
 		V6: e.PrimaryKey.Version == 6,
 		PQ: ok && ek.PublicKey.PubKeyAlgo == packet.PubKeyAlgoMlkem768X25519,
-	}
+	}, ok
 }
 
 // contactCapability is the best class among a contact's keys that still match
-// their pins, or "" when it holds none.
+// their pins and can be encrypted to now, or "" when it holds none.
 func contactCapability(c contacts.Contact) string {
 	best := keyClass{}
 	found := false
@@ -63,7 +69,11 @@ func contactCapability(c contacts.Contact) string {
 		if err != nil || key.GetEntity() == nil {
 			continue
 		}
-		if k := classOfEntity(key.GetEntity()); !found || k.rank() > best.rank() {
+		k, usable := usableClassOfEntity(key.GetEntity())
+		if !usable {
+			continue
+		}
+		if !found || k.rank() > best.rank() {
 			best, found = k, true
 		}
 	}

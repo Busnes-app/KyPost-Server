@@ -95,7 +95,8 @@ derived from it must be invalidated by a mechanism the daemon can reach — see
   slot, and `PGPKeyV6*`), each with its own pin, source and confirmation;
   `splitV6Slot` in the sink routes them before carry and pin. A v6 key written
   to `PGPKey` over a stored v4 key moves to the v6 slot (an addition, never a
-  key change); a write that omits the slot keeps it; a write with no `PGPKey`
+  key change; it replaces an echoed v6 slot, and Autocrypt-sourced writes never
+  move); a write that omits the slot keeps it; a write with no `PGPKey`
   clears both. Old records read unchanged. The slot is part of `pgpBindingOf`,
   `ConfirmPGPKey`, dedupe's key move and the private-key strip
   (`v6slot_test.go`).

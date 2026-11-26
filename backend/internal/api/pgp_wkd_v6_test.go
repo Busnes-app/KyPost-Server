@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
+	"github.com/ProtonMail/gopenpgp/v3/profile"
 )
 
 func testV4Key(t *testing.T, email string) string {
@@ -181,5 +183,51 @@ func TestPickWKDEncryptsToThePinnedKey(t *testing.T) {
 	v4, _, use, changed := pickWKD(c, []wkdCert{cert(k4), cert(k6)})
 	if changed || v4 == nil || use == nil || use.Fingerprint != c.PGPKeyFingerprint {
 		t.Fatalf("changed=%v use=%v, want the pinned v6 key", changed, use)
+	}
+}
+
+// A WKD lookup of a SECONDARY address cannot add a v6 key beside the contact's
+// key: the key would then sign for the primary address too. The primary
+// address (or a single-address contact) may.
+func TestWKDPinAddsV6OnlyForTheWholeContactsAddress(t *testing.T) {
+	k4 := testV4Key(t, "bob@example.com")
+	k6 := testV6Key(t, "bob@other.example", true)
+	cert := func(armored string) *wkdCert {
+		key := must1(crypto.NewKeyFromArmored(armored))
+		return &wkdCert{Armored: armored, Fingerprint: key.GetFingerprint(), Class: classOfEntity(key.GetEntity())}
+	}
+	store := must1(contacts.New(t.TempDir()))
+	must1(store.Upsert(contacts.Contact{FormattedName: "Bob", Emails: []contacts.ContactValue{{Value: "bob@example.com"}, {Value: "bob@other.example"}}, PGPKey: k4}))
+	kr := &keyResolver{store: store}
+
+	kr.pin("bob@other.example", cert(k4), cert(k6), contacts.PGPSourceWKD)
+	c, _ := must2(findContact(store, "bob@example.com"))
+	if c.PGPKeyV6 != "" {
+		t.Fatal("a secondary-address WKD lookup added a v6 key to the whole contact")
+	}
+	for _, k := range must1(boundSignerKeysForSender(store, "bob@example.com")) {
+		if k.PublicKey != "" && k.PublicKey != c.PGPKey {
+			t.Fatal("the primary address gained a signer key from the secondary address's WKD")
+		}
+	}
+	kr.pin("bob@example.com", cert(k4), cert(testV6Key(t, "bob@example.com", true)), contacts.PGPSourceWKD)
+	if c, _ := must2(findContact(store, "bob@example.com")); c.PGPKeyV6 == "" {
+		t.Fatal("the primary address's WKD lookup did not add its v6 key")
+	}
+}
+
+// capability counts only keys that can be encrypted to now: a usable v4 key
+// beside an expired v6 PQC key is "v4".
+func TestCapabilityIgnoresUnusableKeys(t *testing.T) {
+	k4 := testV4Key(t, "bob@example.com")
+	exp, err := crypto.PGPWithProfile(profile.PQC()).KeyGeneration().AddUserId("Bob", "bob@example.com").
+		GenerationTime(time.Now().Add(-48 * time.Hour).Unix()).Lifetime(3600).New().GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k6 := must1(exp.GetArmoredPublicKey())
+	c := contacts.Contact{PGPKey: k4, PGPKeyFingerprint: fingerprintOf(t, k4), PGPKeyV6: k6, PGPKeyV6Fingerprint: fingerprintOf(t, k6)}
+	if got := contactCapability(c); got != "v4" {
+		t.Fatalf("capability = %q, want v4", got)
 	}
 }

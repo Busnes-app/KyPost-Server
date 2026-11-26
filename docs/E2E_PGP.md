@@ -1001,9 +1001,12 @@ changes no one's keys and no encryption output.
   v6 > v4. Against a pinned contact, each pinned version must still be served
   with its pinned fingerprint (or not served at all), and at least one pinned
   key must be in the answer; otherwise `key_changed`. Discovered keys are
-  pinned into their own slots.
+  pinned into their own slots. A v6 key is added beside an existing key only
+  by a lookup of the contact's primary address (or its only one), because a
+  contact's keys sign for all its addresses; Autocrypt never adds one.
 - `recipients/resolve` and `recipients/check` add `capability` per recipient:
-  `pq`, `v6` or `v4`, the best class among the keys that match their pins.
+  `pq`, `v6` or `v4`, the best class among the keys that match their pins
+  and can be encrypted to now.
   `publicKey`/the send path still use the v4 key whenever there is one: no
   KyPost sender can encrypt to a v6 PQC key yet. P4 changes that.
 

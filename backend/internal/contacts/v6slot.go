@@ -35,9 +35,14 @@ func keyVersion(armored string) int {
 //     both: removing "the key" must not leave the other one encrypting.
 //   - A v6 slot alone moves into PGPKey: one key, one slot.
 func splitV6Slot(c *Contact, existing Contact, exists bool) error {
-	if exists && c.PGPKeyV6 == "" && c.PGPKey != "" && c.PGPKeySource != PGPSourceAutocrypt && keyVersion(c.PGPKey) == 6 && keyVersion(existing.PGPKey) == 4 {
-		c.PGPKeyV6, c.PGPKeyV6Source = c.PGPKey, c.PGPKeySource
-		if strings.EqualFold(c.PGPKeyFingerprint, pgpKeyFingerprint(c.PGPKey)) {
+	if exists && c.PGPKey != "" && c.PGPKeySource != PGPSourceAutocrypt && keyVersion(c.PGPKey) == 6 && keyVersion(existing.PGPKey) == 4 {
+		// A read-modify-write echoes the v6 slot it read; the v6 key in PGPKey
+		// replaces it. The same v6 key keeps its stored pin (carried below).
+		fp := pgpKeyFingerprint(c.PGPKey)
+		c.PGPKeyV6, c.PGPKeyV6Source, c.PGPKeyV6Fingerprint, c.PGPKeyV6Verified = c.PGPKey, c.PGPKeySource, "", false
+		if strings.EqualFold(fp, pgpKeyFingerprint(existing.PGPKeyV6)) {
+			c.PGPKeyV6Source = ""
+		} else if strings.EqualFold(c.PGPKeyFingerprint, fp) {
 			c.PGPKeyV6Fingerprint, c.PGPKeyV6Verified = c.PGPKeyFingerprint, c.PGPKeyVerified
 		}
 		c.PGPKey, c.PGPKeySource, c.PGPKeyFingerprint, c.PGPKeyVerified, c.PGPKeyAutocryptDate =

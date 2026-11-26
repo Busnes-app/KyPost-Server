@@ -129,7 +129,10 @@ func (kr *keyResolver) pin(email string, v4, v6 *wkdCert, source string) {
 	if v6 != nil {
 		if v4 == nil && (c.PGPKey == "" || keyVersionOf(c.PGPKey) == 6) {
 			set(&c.PGPKey, &c.PGPKeyFingerprint, &c.PGPKeySource, &c.PGPKeyVerified, v6)
-		} else {
+		} else if contacts.AuthenticatedForContact(c, email) || strings.EqualFold(c.PGPKeyV6Fingerprint, v6.Fingerprint) {
+			// A v6 key added beside an existing key signs for every address on
+			// the contact, so only a lookup of the address the whole record is
+			// about may add one (same rule as the Autocrypt harvest).
 			set(&c.PGPKeyV6, &c.PGPKeyV6Fingerprint, &c.PGPKeyV6Source, &c.PGPKeyV6Verified, v6)
 		}
 	}

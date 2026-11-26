@@ -165,3 +165,33 @@ func TestAutocryptV6OverV4StaysAKeyChange(t *testing.T) {
 		t.Fatalf("autocrypt v6 moved into the v6 slot: v6=%v pin=%s", got.PGPKeyV6 != "", got.PGPKeyFingerprint)
 	}
 }
+
+// A read-modify-write that echoes the v6 slot and puts a new v6 key in
+// PGPKey replaces the v6 key and keeps the v4 one; resending the same v6 key
+// keeps its pin and confirmation.
+func TestV6ReadModifyWriteReplacesV6Slot(t *testing.T) {
+	store := must(New(t.TempDir()))
+	k4, k6 := v4Key(t, "bob@example.com"), v6Key(t, "bob@example.com", false)
+	c := must(store.Upsert(Contact{FormattedName: "Bob", PGPKey: k4}))
+	c.PGPKey = k6
+	c = must(store.Upsert(c))
+	c, _, err := store.ConfirmPGPKey(c.UID, c.PGPKeyV6Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin4 := c.PGPKeyFingerprint
+
+	same := c
+	same.PGPKey = k6 // same v6 key, slot echoed
+	got := must(store.Upsert(same))
+	if got.PGPKeyFingerprint != pin4 || got.PGPKeyV6Fingerprint != pgpKeyFingerprint(k6) || !got.PGPKeyV6Verified {
+		t.Fatalf("same v6 resend: v4 %s v6 %s verified %v", got.PGPKeyFingerprint, got.PGPKeyV6Fingerprint, got.PGPKeyV6Verified)
+	}
+
+	next := v6Key(t, "bob@example.com", true)
+	got.PGPKey = next
+	got = must(store.Upsert(got))
+	if got.PGPKeyFingerprint != pin4 || got.PGPKeyV6Fingerprint != pgpKeyFingerprint(next) || got.PGPKeyV6Verified {
+		t.Fatalf("new v6: v4 %s v6 %s verified %v", got.PGPKeyFingerprint, got.PGPKeyV6Fingerprint, got.PGPKeyV6Verified)
+	}
+}
