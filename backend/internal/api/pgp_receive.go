@@ -267,9 +267,8 @@ var keyFPCache = struct {
 const keyFPCacheMax = 4096
 
 // keyFingerprintCached is a STORED key's fingerprint, "" when it does not
-// parse. It reads stored keys, never uploads: once the P0 key-policy PR (#749)
-// lands, this one call switches from InspectPublicKey to pgpmail.ReadPublicKey,
-// so a stored key the upload allowlist refuses is not turned into a conflict.
+// parse. It reads stored keys, never uploads, so it uses ReadPublicKey: a
+// stored key the upload allowlist refuses is not turned into a conflict.
 func keyFingerprintCached(armored string) string {
 	h := sha256.Sum256([]byte(armored))
 	keyFPCache.Lock()
@@ -278,7 +277,7 @@ func keyFingerprintCached(armored string) string {
 	if ok {
 		return fp
 	}
-	if info, err := pgpmail.InspectPublicKey(armored); err == nil {
+	if info, err := pgpmail.ReadPublicKey(armored); err == nil {
 		fp = info.Fingerprint
 	}
 	keyFPCache.Lock()

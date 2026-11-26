@@ -1,0 +1,36 @@
+From: Sender <sender@example.org>
+To: v4@example.org
+Subject: [Encrypted] Email Sent by KyPost
+Date: Wed, 25 Nov 2026 00:00:00 +0000
+Message-ID: <golden@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary=43ebec1cb91108caadf0c5c5e2ed283f38644ae01d307f739d5f2a80b1de
+
+--43ebec1cb91108caadf0c5c5e2ed283f38644ae01d307f739d5f2a80b1de
+Content-Type: application/pgp-encrypted
+
+Version: 1
+
+--43ebec1cb91108caadf0c5c5e2ed283f38644ae01d307f739d5f2a80b1de
+Content-Disposition: inline; filename="encrypted.asc"
+Content-Type: application/octet-stream; name="encrypted.asc"
+
+-----BEGIN PGP MESSAGE-----
+
+wV4DsgOS2JeBt4MSAQdACRXGtiE2ha0w7ArHfXQAEYFw+T/Bb5GtD3eyP/Lu9FUw
+N7oHh14KyNMlHKjfayq60utZ/y2D0skvEPOR//a/wY/wGUxgC/J6278EX8VMzs8j
+0ukBYS0+BY9/WOY2WSk5UWMwv+EA8sbcVCgWtljn3BRQPROu72sfbOKdEJIwleCg
+aqfqpVufqIH/7LpTur8LMCu71xbjx01JuRZHtDnj/v4sSPCZQ1tWvIcigKi8ylS1
+HOBiw+q1hs7PBDm1tMFp8w7EDVns1ETl9gD/+jxxzBmVrnNFtTmQ+vnuMOIk8o0B
+F2mZszCz0xvhWHCw8IbXE9JQ2FMYmaXjvUEigEkwOK/Jv5ZpLya3m0vUzHQYnHYE
+5kPmpjdrzkEygFHsFmvvthcQfj2OalTk+CUsKVRv1Rtf0HAUt70nhZZL599COg1N
+r/unhnb8oFjU+LMCmBWtO1B/UnbS4Asbx1nl5VUYFGCNYk129dwZbh8/dGgmOwc0
+hF3KQYYeNW0gtgL7EL+dJpiXo+GKyFw9HuvNuJ/mZXNxCk/5aK7hDAZv3/yiKuLb
+wpwjJIYsog6LWw7uNQQfivadRRqVdhqIG8mJey0bsB3XD9z/AeK6MJHrPfoYepvy
+8xUa0GY+CsHVbqpX8NFhP/3VBvc+53wNUNYe9z7mH8D8qMQVUL6KLZ3oPT1n8rMG
+cJw9UshDIsesukTxo/sGX2l5rSbM4xKtfpjv74KN20PiQ0UbHACf6HcTQWjfF1Ko
+bsJMpA7YI/27TeBrjEmpz30+TeQx9Hl4XQUdJ2NINNe7BC/JUCsMnT0VxRjf07/X
+vtXy/rC7PbquJvnY+UnruHBm8a+a9cflxgOjC8urqZOCLg==
+=kAYR
+-----END PGP MESSAGE-----
+--43ebec1cb91108caadf0c5c5e2ed283f38644ae01d307f739d5f2a80b1de--

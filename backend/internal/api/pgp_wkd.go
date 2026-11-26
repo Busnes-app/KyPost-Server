@@ -49,6 +49,9 @@ func validateDiscoveredKey(armored, email string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse discovered key: %w", err)
 	}
+	if err := pgpmail.CheckArmoredKeyPolicy(armored); err != nil {
+		return "", err
+	}
 	status, err := pgpmail.CheckKeyStatus(armored)
 	if err != nil {
 		return "", err
