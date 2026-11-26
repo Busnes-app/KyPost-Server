@@ -195,3 +195,34 @@ func TestV6ReadModifyWriteReplacesV6Slot(t *testing.T) {
 		t.Fatalf("new v6: v4 %s v6 %s verified %v", got.PGPKeyFingerprint, got.PGPKeyV6Fingerprint, got.PGPKeyV6Verified)
 	}
 }
+
+// A v4 key written over a contact whose only key is a v6 key in pgpKey joins
+// it: the v6 key, pin and confirmation move to the v6 slot, and an echoed v6
+// pin does not leave the v4 key in conflict. A genuinely disputed pin still is.
+func TestV4KeyAddedBesideLegacyV6KeepsV6(t *testing.T) {
+	store := must(New(t.TempDir()))
+	k6, k4 := v6Key(t, "bob@example.com", false), v4Key(t, "bob@example.com")
+	c := must(store.Upsert(Contact{FormattedName: "Bob", PGPKey: k6}))
+	c, _, err := store.ConfirmPGPKey(c.UID, c.PGPKeyFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin6 := c.PGPKeyFingerprint
+
+	c.PGPKey = k4 // round trip: echoes pin6, source and verified
+	got := must(store.Upsert(c))
+	if got.PGPKeyV6Fingerprint != pin6 || pgpKeyFingerprint(got.PGPKeyV6) != pin6 || !got.PGPKeyV6Verified {
+		t.Fatalf("v6 slot = %s verified %v, want the old v6 key confirmed", got.PGPKeyV6Fingerprint, got.PGPKeyV6Verified)
+	}
+	if got.PGPKeyFingerprint != pgpKeyFingerprint(k4) || got.PGPKeyVerified {
+		t.Fatalf("v4 slot pin = %s verified %v, want its own unconfirmed pin", got.PGPKeyFingerprint, got.PGPKeyVerified)
+	}
+
+	// A write naming some other pin is a real dispute and stays one.
+	store2 := must(New(t.TempDir()))
+	d := must(store2.Upsert(Contact{FormattedName: "Bob", PGPKey: k6}))
+	d.PGPKey, d.PGPKeyFingerprint = k4, pgpKeyFingerprint(v4Key(t, "bob@example.com"))
+	if got := must(store2.Upsert(d)); got.PGPKeyFingerprint == pgpKeyFingerprint(k4) {
+		t.Fatal("a disputed pin was replaced by the new key's own")
+	}
+}

@@ -992,7 +992,9 @@ changes no one's keys and no encryption output.
 - Clients keep sending one `pgpKey`. A v6 key written there while the stored
   `pgpKey` is a v4 key is the correspondent **adding** a v6 certificate: the
   server moves it to `pgpKeyV6` and keeps the v4 key, pin and confirmation.
-  That is not `key_changed`. A different v4 key still is. A write that omits
+  That is not `key_changed`. A different v4 key still is. The reverse holds
+  too: a v4 key written over a contact whose only key is a v6 key in `pgpKey`
+  moves that v6 key, pin and confirmation into `pgpKeyV6`. A write that omits
   `pgpKeyV6` keeps it; a write with no `pgpKey` removes both.
 - WKD answers may carry several certificates
   (draft-koch-openpgp-webkey-service-22 §3.1). The server reads up to 8, keeps
@@ -1001,9 +1003,10 @@ changes no one's keys and no encryption output.
   v6 > v4. Against a pinned contact, each pinned version must still be served
   with its pinned fingerprint (or not served at all), and at least one pinned
   key must be in the answer; otherwise `key_changed`. Discovered keys are
-  pinned into their own slots. A v6 key is added beside an existing key only
-  by a lookup of the contact's primary address (or its only one), because a
-  contact's keys sign for all its addresses; Autocrypt never adds one.
+  pinned into their own slots. Only a lookup of the contact's primary
+  address (or its only one) may install a new fingerprint in either slot,
+  because a contact's keys sign for all its addresses; a lookup of any other
+  address only renews keys already pinned. Autocrypt never adds a v6 key.
 - `recipients/resolve` and `recipients/check` add `capability` per recipient:
   `pq`, `v6` or `v4`, the best class among the keys that match their pins
   and can be encrypted to now.

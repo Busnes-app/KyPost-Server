@@ -209,7 +209,7 @@ Contacts:
 - `POST|GET|DELETE /api/contacts/{id}/photo`
 - `POST /api/contacts/{id}/self`
 - `POST /api/contacts/{id}/pgp-key/confirm` (`{fingerprint, authSecret}`: marks the contact's pinned key confirmed after the user compared fingerprints — the v4 slot's or the v6 slot's (`pgpKeyV6Verified`), whichever pin it names; step-up as above; 409 when the fingerprint is not a pinned key)
-- Contacts carry a read-only v6 slot beside `pgpKey`: `pgpKeyV6`, `pgpKeyV6Source`, `pgpKeyV6Fingerprint`, `pgpKeyV6Verified`. Writes never set it directly: a v6 key written to `pgpKey` of a contact whose `pgpKey` is a v4 key moves into it, a write that omits it keeps it, and a write with no `pgpKey` clears both. See [E2E_PGP.md](E2E_PGP.md#contact-keys-one-v4-and-one-v6)
+- Contacts carry a read-only v6 slot beside `pgpKey`: `pgpKeyV6`, `pgpKeyV6Source`, `pgpKeyV6Fingerprint`, `pgpKeyV6Verified`. Writes never set it directly: a v6 key written to `pgpKey` of a contact whose `pgpKey` is a v4 key moves into it (and a v4 key written over a lone v6 `pgpKey` moves that v6 key into it), a write that omits it keeps it, and a write with no `pgpKey` clears both. See [E2E_PGP.md](E2E_PGP.md#contact-keys-one-v4-and-one-v6)
 - `GET|POST /api/contacts/sync` (mobile two-way sync, authenticated with
   `X-Kypost-Device-Id` and `X-Kypost-Device-Secret`, not a pairing token).
   POST takes `{baseCursor, changes[]}`. A change may opt in to

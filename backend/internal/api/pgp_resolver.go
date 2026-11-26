@@ -116,23 +116,34 @@ func (kr *keyResolver) pin(email string, v4, v6 *wkdCert, source string) {
 			DiscoveryCreated: true,
 		}
 	}
+	// A contact's keys sign for every address on it, so only a lookup of the
+	// address the whole record is about may install a NEW fingerprint (same
+	// rule as the Autocrypt harvest); any other lookup only renews pins the
+	// contact already holds.
+	whole := !ok || contacts.AuthenticatedForContact(c, email)
 	set := func(key, fp, src *string, verified *bool, cert *wkdCert) {
 		same := *fp != "" && strings.EqualFold(*fp, cert.Fingerprint)
+		if !same && !whole {
+			return
+		}
 		*key, *fp = cert.Armored, cert.Fingerprint
 		if !same {
 			*src, *verified = source, false
 		}
 	}
-	if v4 != nil {
+	// A v4 key joining a v6 key held in the original slot moves that v6 key,
+	// with its pin and confirmation, to the v6 slot first.
+	if v4 != nil && whole && c.PGPKeyV6 == "" && keyVersionOf(c.PGPKey) == 6 {
+		c.PGPKeyV6, c.PGPKeyV6Fingerprint, c.PGPKeyV6Source, c.PGPKeyV6Verified = c.PGPKey, c.PGPKeyFingerprint, c.PGPKeySource, c.PGPKeyVerified
+		c.PGPKey, c.PGPKeyFingerprint, c.PGPKeySource, c.PGPKeyVerified, c.PGPKeyAutocryptDate = "", "", "", false, ""
+	}
+	if v4 != nil && keyVersionOf(c.PGPKey) != 6 {
 		set(&c.PGPKey, &c.PGPKeyFingerprint, &c.PGPKeySource, &c.PGPKeyVerified, v4)
 	}
 	if v6 != nil {
-		if v4 == nil && (c.PGPKey == "" || keyVersionOf(c.PGPKey) == 6) {
+		if c.PGPKey == "" || keyVersionOf(c.PGPKey) == 6 {
 			set(&c.PGPKey, &c.PGPKeyFingerprint, &c.PGPKeySource, &c.PGPKeyVerified, v6)
-		} else if contacts.AuthenticatedForContact(c, email) || strings.EqualFold(c.PGPKeyV6Fingerprint, v6.Fingerprint) {
-			// A v6 key added beside an existing key signs for every address on
-			// the contact, so only a lookup of the address the whole record is
-			// about may add one (same rule as the Autocrypt harvest).
+		} else {
 			set(&c.PGPKeyV6, &c.PGPKeyV6Fingerprint, &c.PGPKeyV6Source, &c.PGPKeyV6Verified, v6)
 		}
 	}

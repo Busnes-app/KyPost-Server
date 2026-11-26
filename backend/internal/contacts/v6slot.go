@@ -33,6 +33,7 @@ func keyVersion(armored string) int {
 //   - A write that keeps a key but carries no v6 slot keeps the stored one, so
 //     those clients cannot drop it by omission. A write with no key removes
 //     both: removing "the key" must not leave the other one encrypting.
+//   - A v4 key written over a v6 key in PGPKey is the reverse addition.
 //   - A v6 slot alone moves into PGPKey: one key, one slot.
 func splitV6Slot(c *Contact, existing Contact, exists bool) error {
 	if exists && c.PGPKey != "" && c.PGPKeySource != PGPSourceAutocrypt && keyVersion(c.PGPKey) == 6 && keyVersion(existing.PGPKey) == 4 {
@@ -47,6 +48,18 @@ func splitV6Slot(c *Contact, existing Contact, exists bool) error {
 		}
 		c.PGPKey, c.PGPKeySource, c.PGPKeyFingerprint, c.PGPKeyVerified, c.PGPKeyAutocryptDate =
 			existing.PGPKey, existing.PGPKeySource, existing.PGPKeyFingerprint, existing.PGPKeyVerified, existing.PGPKeyAutocryptDate
+	}
+	// The reverse: a v4 key written over a v6 key held in the original slot
+	// joins it. The v6 key keeps its pin and confirmation in the v6 slot, and
+	// an echoed v6 pin is not carried onto the v4 key.
+	if exists && c.PGPKeyV6 == "" && existing.PGPKeyV6 == "" && c.PGPKeySource != PGPSourceAutocrypt && keyVersion(existing.PGPKey) == 6 {
+		if v := keyVersion(c.PGPKey); v != 0 && v != 6 {
+			c.PGPKeyV6, c.PGPKeyV6Source, c.PGPKeyV6Fingerprint, c.PGPKeyV6Verified =
+				existing.PGPKey, existing.PGPKeySource, existing.PGPKeyFingerprint, existing.PGPKeyVerified
+			if existing.PGPKeyFingerprint != "" && strings.EqualFold(c.PGPKeyFingerprint, existing.PGPKeyFingerprint) {
+				c.PGPKeyFingerprint, c.PGPKeySource, c.PGPKeyVerified, c.PGPKeyAutocryptDate = "", "", false, ""
+			}
+		}
 	}
 	if c.PGPKey == "" {
 		c.PGPKey, c.PGPKeySource, c.PGPKeyFingerprint, c.PGPKeyVerified = c.PGPKeyV6, c.PGPKeyV6Source, c.PGPKeyV6Fingerprint, c.PGPKeyV6Verified
