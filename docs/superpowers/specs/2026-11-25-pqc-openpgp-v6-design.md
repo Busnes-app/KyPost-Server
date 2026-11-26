@@ -388,7 +388,11 @@ Each has a recommendation. The first is the big one.
    (A:app/src/main/AGENTS.md).
    **Recommend: Android keeps an X-Wing private key that exists only encrypted under the existing StrongBox/TEE
    AES-256-GCM key with per-use user authentication, so it is never usable without the hardware. Apple uses
-   CryptoKit X-Wing, Secure Enclave-wrapped where available. Linux uses its existing secret store.**
+   a Secure Enclave ML-KEM-768 key where the OS offers one; otherwise a CryptoKit X-Wing key in the Keychain with
+   `ThisDeviceOnly` and user-presence access control. The Secure Enclave has no AES keys and cannot wrap an
+   arbitrary key, so "Secure Enclave-wrapped X-Wing", as first written, is not possible. Corrected after the
+   owner's approval; the intent (hardware-bound where the platform allows) is unchanged. Linux uses its existing
+   secret store.**
 9. **Mail already encrypted to the v4 key.** (a) Leave it classical and say so in the security docs. (b) Later,
    offer an opt-in "re-encrypt my mailbox" job that runs in the user's own client, at real cost in time and
    battery.
