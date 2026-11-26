@@ -1,8 +1,10 @@
 package api
 
 import (
+	"crypto/sha256"
 	"net/mail"
 	"strings"
+	"sync"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
@@ -240,14 +242,51 @@ func senderAddrSpec(sender string) string {
 // and refusing them would silently drop verification for the whole legacy
 // address book. An empty pin means "never pinned", not "pinned to nothing".
 func keyMatchesPin(c contacts.Contact) bool {
-	if c.PGPKeyFingerprint == "" {
-		return true
+	return slotMatchesPin(c.PGPKey, c.PGPKeyFingerprint)
+}
+
+// slotMatchesPin is keyMatchesPin for one key slot (v4 or v6).
+func slotMatchesPin(key, pin string) bool {
+	return pin == "" || strings.EqualFold(keyFingerprintCached(key), pin)
+}
+
+// keyFPCache holds a stored key's fingerprint by the SHA-256 of its armored
+// bytes, so the signer binding stops parsing every contact key on every
+// bootstrap (a v6 PQC certificate is ~18 KB armored).
+//
+// Keyed by content, never by contact or pin: an Autocrypt rotation keeps the
+// old pin on new key bytes, and a cache keyed on the pin would go on calling the
+// new key the pinned one. Any contact change that touches a key therefore
+// misses the cache by construction; nothing has to remember to invalidate it.
+// ponytail: cleared whole at the cap; an LRU only helps past 4096 distinct keys.
+var keyFPCache = struct {
+	sync.Mutex
+	m map[[32]byte]string
+}{m: map[[32]byte]string{}}
+
+const keyFPCacheMax = 4096
+
+// keyFingerprintCached is a STORED key's fingerprint, "" when it does not
+// parse. It reads stored keys, never uploads, so it uses ReadPublicKey: a
+// stored key the upload allowlist refuses is not turned into a conflict.
+func keyFingerprintCached(armored string) string {
+	h := sha256.Sum256([]byte(armored))
+	keyFPCache.Lock()
+	fp, ok := keyFPCache.m[h]
+	keyFPCache.Unlock()
+	if ok {
+		return fp
 	}
-	info, err := pgpmail.InspectPublicKey(c.PGPKey)
-	if err != nil {
-		return false
+	if info, err := pgpmail.ReadPublicKey(armored); err == nil {
+		fp = info.Fingerprint
 	}
-	return strings.EqualFold(info.Fingerprint, c.PGPKeyFingerprint)
+	keyFPCache.Lock()
+	if len(keyFPCache.m) >= keyFPCacheMax {
+		clear(keyFPCache.m)
+	}
+	keyFPCache.m[h] = fp
+	keyFPCache.Unlock()
+	return fp
 }
 
 // signerKeysForSender lived here and returned the candidate signer keys for a
@@ -281,7 +320,17 @@ func keyMatchesPin(c contacts.Contact) bool {
 // A key with no bound address is omitted rather than sent unlabelled: it could
 // only ever verify nothing, and an empty Addresses list is exactly the kind of
 // thing a client might read as "matches everything".
+//
+// Each key slot is its own entry: a contact with a v4 and a v6 key yields two
+// entries with the same addresses, and a client tries each.
 func boundSignerKeys(store *contacts.Store) ([]boundSignerKey, error) {
+	return signerKeysMatching(store, "")
+}
+
+// signerKeysMatching is boundSignerKeys narrowed to contacts that bind address
+// ("" keeps all). It narrows BEFORE looking at any key, so opening one message
+// costs one sender's keys, not the whole address book's.
+func signerKeysMatching(store *contacts.Store, address string) ([]boundSignerKey, error) {
 	all, err := store.List()
 	if err != nil {
 		return nil, err
@@ -301,23 +350,24 @@ func boundSignerKeys(store *contacts.Store) ([]boundSignerKey, error) {
 			seen[addr] = true
 			addresses = append(addresses, addr)
 		}
-		if len(addresses) == 0 {
+		if len(addresses) == 0 || (address != "" && !seen[address]) {
 			continue
 		}
-		// A pin mismatch is reported, not dropped — but without key
-		// material, so no client can verify against it.
-		if !keyMatchesPin(c) {
-			out = append(out, boundSignerKey{Addresses: addresses, Conflict: true})
-			continue
+		out = append(out, signerKeyEntry(addresses, c.PGPKey, c.PGPKeyFingerprint, c.PGPKeyVerified, c.PGPKeySource))
+		if c.PGPKeyV6 != "" {
+			out = append(out, signerKeyEntry(addresses, c.PGPKeyV6, c.PGPKeyV6Fingerprint, c.PGPKeyV6Verified, c.PGPKeyV6Source))
 		}
-		out = append(out, boundSignerKey{
-			Addresses: addresses,
-			PublicKey: c.PGPKey,
-			Verified:  c.PGPKeyVerified,
-			Source:    c.PGPKeySource,
-		})
 	}
 	return out, nil
+}
+
+// signerKeyEntry reports a pin mismatch rather than dropping it, but without
+// key material, so no client can verify against it.
+func signerKeyEntry(addresses []string, key, pin string, verified bool, source string) boundSignerKey {
+	if !slotMatchesPin(key, pin) {
+		return boundSignerKey{Addresses: addresses, Conflict: true}
+	}
+	return boundSignerKey{Addresses: addresses, PublicKey: key, Verified: verified, Source: source}
 }
 
 // boundSignerKeysForSender is boundSignerKeys narrowed to one sender.
@@ -336,21 +386,8 @@ func boundSignerKeys(store *contacts.Store) ([]boundSignerKey, error) {
 // address matches nothing, which is the safe direction: no keys, so no verdict
 // beyond "signed, but not by a key you hold for this sender".
 func boundSignerKeysForSender(store *contacts.Store, address string) ([]boundSignerKey, error) {
-	out := []boundSignerKey{}
 	if address == "" {
-		return out, nil
+		return []boundSignerKey{}, nil
 	}
-	all, err := boundSignerKeys(store)
-	if err != nil {
-		return nil, err
-	}
-	for _, k := range all {
-		for _, a := range k.Addresses {
-			if a == address {
-				out = append(out, k)
-				break
-			}
-		}
-	}
-	return out, nil
+	return signerKeysMatching(store, address)
 }

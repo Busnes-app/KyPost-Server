@@ -99,8 +99,18 @@ type PublicKeyInfo struct {
 // fingerprint and key ID from the key it was actually given rather than
 // believing whatever the client claimed them to be — a client that could
 // assert an arbitrary fingerprint could get its own key published under
-// another key's identity via WKD or Autocrypt.
+// another key's identity via WKD or Autocrypt. The key must pass the
+// algorithm allowlist (CheckKeyPolicy).
 func InspectPublicKey(armoredPublicKey string) (PublicKeyInfo, error) {
+	if err := CheckArmoredKeyPolicy(armoredPublicKey); err != nil {
+		return PublicKeyInfo{}, err
+	}
+	return ReadPublicKey(armoredPublicKey)
+}
+
+// ReadPublicKey is InspectPublicKey without the allowlist, for a key already
+// stored: a key accepted before the allowlist existed must keep working.
+func ReadPublicKey(armoredPublicKey string) (PublicKeyInfo, error) {
 	key, err := crypto.NewKeyFromArmored(strings.TrimSpace(armoredPublicKey))
 	if err != nil {
 		return PublicKeyInfo{}, fmt.Errorf("pgpmail: parse public key: %w", err)

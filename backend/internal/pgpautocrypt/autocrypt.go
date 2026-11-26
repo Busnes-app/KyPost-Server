@@ -9,6 +9,12 @@ import (
 	"unicode"
 )
 
+// MaxHeaderBytes bounds an Autocrypt header value, counted without folding
+// whitespace, both ways: Autocrypt asks for headers under 10 KiB, and a
+// receiver must not be made to parse or store more. An outbound header is
+// measured as built, which is never shorter, so KyPost accepts what it sends.
+const MaxHeaderBytes = 10 << 10
+
 // ParseAutocryptHeader parses one `Autocrypt` header value (the text after
 // "Autocrypt:") into its addr attribute and base64-decoded keydata bytes.
 //
@@ -17,8 +23,12 @@ import (
 // unknown attribute whose name does NOT start with "_" is "critical" and
 // makes the whole header invalid; unknown "_"-prefixed attributes are
 // non-critical and ignored. keydata is standard base64, possibly folded with
-// whitespace, so all whitespace is stripped before decoding.
+// whitespace, so all whitespace is stripped before decoding. A header over
+// MaxHeaderBytes is refused before it is decoded.
 func ParseAutocryptHeader(value string) (addr string, keydata []byte, err error) {
+	if n := len(strings.Join(strings.Fields(value), "")); n > MaxHeaderBytes {
+		return "", nil, fmt.Errorf("autocrypt: header is %d bytes, over the %d-byte limit", n, MaxHeaderBytes)
+	}
 	var keyB64 string
 	haveAddr, haveKey := false, false
 	for _, part := range strings.Split(value, ";") {

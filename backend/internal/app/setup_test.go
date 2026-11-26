@@ -54,7 +54,7 @@ func setupTestBundle(t *testing.T, b setupBundle) (setupReport, error) {
 }
 func TestApplySetupPreservesKeysChallengesAndSettings(t *testing.T) {
 	setupTestRoots(t)
-	b := setupBundle{Version: 1, SSO: &sso.SSOSettings{Enabled: true, IssuerURL: "https://identity.example.com", ClientID: "kypost", ClientSecret: "private-test-client-secret", AutoProvision: true}, PairingSecret: setupTestKey(t), Domains: []string{"example.com", "example.org"}}
+	b := setupBundle{Version: 1, SSO: &sso.SSOSettings{Enabled: true, IssuerURL: "https://identity.example.test", ClientID: "kypost", ClientSecret: "private-test-client-secret", AutoProvision: true}, PairingSecret: setupTestKey(t), Domains: []string{"example.com", "example.org"}}
 	r, e := setupTestBundle(t, b)
 	if e != nil {
 		t.Fatal(e)
@@ -103,7 +103,7 @@ func TestApplySetupRefusesConflictsBeforeConfigurationWrites(t *testing.T) {
 	for _, kind := range []string{"sso", "key", "domain", "hold"} {
 		t.Run(kind, func(t *testing.T) {
 			setupTestRoots(t)
-			b := setupBundle{Version: 1, SSO: &sso.SSOSettings{Enabled: true, IssuerURL: "https://identity.example.com", ClientID: "kypost"}, PairingSecret: setupTestKey(t), Domains: []string{"example.com"}}
+			b := setupBundle{Version: 1, SSO: &sso.SSOSettings{Enabled: true, IssuerURL: "https://identity.example.test", ClientID: "kypost"}, PairingSecret: setupTestKey(t), Domains: []string{"example.com"}}
 			switch kind {
 			case "sso":
 				os.WriteFile(filepath.Join(config.ConfigDir(), "sso.json"), []byte(`{"enabled":false}`), 0o600)
@@ -152,7 +152,7 @@ func TestApplySetupRejectsUnsafeBundleInputs(t *testing.T) {
 
 func TestSetupStatusListsBlockersWithoutLeakingOrChangingSettings(t *testing.T) {
 	setupTestRoots(t)
-	b := setupBundle{Version: 1, SSO: &sso.SSOSettings{Enabled: true, IssuerURL: "https://identity.example.com", ClientID: "kypost", ClientSecret: "private-test-client-secret"}, PairingSecret: setupTestKey(t), Domains: []string{"example.com"}}
+	b := setupBundle{Version: 1, SSO: &sso.SSOSettings{Enabled: true, IssuerURL: "https://identity.example.test", ClientID: "kypost", ClientSecret: "private-test-client-secret"}, PairingSecret: setupTestKey(t), Domains: []string{"example.com"}}
 	if _, e := setupTestBundle(t, b); e != nil {
 		t.Fatal(e)
 	}

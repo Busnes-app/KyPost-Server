@@ -144,7 +144,7 @@ func (s *Store) CommitPGPKeyring(ctx context.Context, id string, update PGPKeyri
 		if u.PGPProtection() != PGPProtectionClient || !u.UsesDerivedAuth() {
 			return ErrPGPKeyringUpgradeRequired
 		}
-		previous, err := pgpmail.InspectPublicKey(u.PGPPublicKey)
+		previous, err := pgpmail.ReadPublicKey(u.PGPPublicKey)
 		if err != nil || !strings.EqualFold(previous.Fingerprint, u.PGPFingerprint) {
 			return ErrInvalidPGPKeyring
 		}

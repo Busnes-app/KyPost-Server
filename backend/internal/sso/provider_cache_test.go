@@ -48,6 +48,7 @@ func resetProviderCache(t *testing.T) {
 // Four public routes call NewProvider, and each call used to be one outbound
 // GET to the operator's identity provider.
 func TestNewProviderDiscoversOncePerSettings(t *testing.T) {
+	releaseOnly(t)
 	resetProviderCache(t)
 	issuer, hits := discoveryCounter(t)
 
@@ -96,6 +97,7 @@ func TestProviderCacheKeyCoversEverySetting(t *testing.T) {
 
 // A rotated IdP configuration is picked up without a restart.
 func TestProviderCacheEntriesExpire(t *testing.T) {
+	releaseOnly(t)
 	resetProviderCache(t)
 	issuer, hits := discoveryCounter(t)
 

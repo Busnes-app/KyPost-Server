@@ -100,8 +100,8 @@ reflex.
 
 ## The code
 
-**Ten characters, Crockford base32, grouped `XXXXX-XXXXX`**, derived as
-`truncate(SHA-256(devicePublicKey ‖ deviceId ‖ timeBucket), 50 bits)`. Crockford
+**Fourteen characters, Crockford base32, grouped `XXXX-XXX-XXXX-XXX`**, derived as
+`truncate(SHA-256(devicePublicKey ‖ deviceId ‖ timeBucket), 70 bits)`. Crockford
 because it excludes the character pairs people transcribe wrongly.
 
 **Valid for two minutes**, matching `GET /api/pgp/qr/token`'s existing TTL. Reuse that
@@ -110,7 +110,7 @@ number rather than inventing a second one; if it moves, both should move togethe
 ### NORMATIVE: the exact bytes
 
 Added 2026-08-05. The paragraph above reads like a specification and is not one — `‖` has
-no byte meaning, `timeBucket` has no encoding, and "50 bits" does not say which. Three
+no byte meaning, `timeBucket` has no encoding, and "70 bits" does not say which. Three
 independent implementations (browser, Android, Qt) have to agree bit-for-bit, and a
 disagreement does not fail loudly: it fails as "the codes do not match" on every honest
 enrollment, which is indistinguishable to the user from a hostile server. Everything below
@@ -158,14 +158,17 @@ NFD, and none needs escaping in the `device:<id>` slot name.
 Implementations MUST NOT normalise `deviceId` before hashing. With the charset above there
 is nothing to normalise, which is the point.
 
-**Code extraction.** Take the **first 50 bits of `H`, most-significant bit first**, and
-emit ten Crockford base32 characters, character *i* encoding bits `[5i, 5i+5)`. Fifty bits
-is exactly ten characters with no padding. Alphabet:
-`0123456789ABCDEFGHJKMNPQRSTVWXYZ`. Display as `XXXXX-XXXXX`.
+**Code extraction.** Take the **first 70 bits of `H`, most-significant bit first**, and
+emit fourteen Crockford base32 characters, character *i* encoding bits `[5i, 5i+5)`. Seventy
+bits is exactly fourteen characters with no padding. Alphabet:
+`0123456789ABCDEFGHJKMNPQRSTVWXYZ`. Display as `XXXX-XXX-XXXX-XXX`
+(`formatEnrollmentCode`, `frontend/src/lib/deviceEnrollment.ts`). It was ten characters
+(50 bits) until 2026-08-05; the old code is a prefix of the new one, so a client left at ten
+fails as "the codes do not match", not loudly.
 
 **Input normalisation before comparison.** Uppercase; strip hyphens, spaces and tabs; map
 `I` and `L` to `1` and `O` to `0`, per Crockford's decode rules. Compare the normalised
-ten characters, never the display form.
+fourteen characters, never the display form.
 
 **Bucket acceptance.** The browser accepts the **current bucket and the immediately
 preceding one**, and never a future one. The preceding bucket is needed because the phone
@@ -217,8 +220,10 @@ for a legacy one, with no v2/v3 fallback. A device that does not advertise the v
 account needs, including one with no claim (no longer read as `[2]`), is refused before any
 code or password is asked for, with "Update KyPost on that device".
 
-**Rollout:** KyPost-for-Android advertises only `[2,3]` until its v4/v5 release. A server
-with this rule refuses new Android enrollments until that release is installed.
+**Clients:** all three advertise `[4,5]`: KyPost-for-Android `OPENABLE_ENVELOPE_VERSIONS`
+(`pgp/DeviceEnvelope.kt`), KyPost-for-Mac `supportedEnvelopeVersions`
+(`Domain/Security/DeviceEnvelope.swift`) and KyPost-for-Linux
+`core/net/PgpDeviceEnrollmentClient.cpp` (read on each `origin/main`, 2026-11-25).
 
 ```json
 {"v": 4, "alg": "HPKE-Base-P256-SHA256-A256GCM", "enc": "<base64>", "ct": "<base64>"}
@@ -269,7 +274,7 @@ bucket    = 14000000            (unixSeconds 1680000000)
 rawKey    = 0x04 followed by X = 0x01 repeated 32 times,
                                 Y = 0x02 repeated 32 times
 
-expected code = 5R9K6FWA18      displayed as 5R9K6-FWA18
+expected code = 5R9K6FWA18A8YP  displayed as 5R9K-6FW-A18A-8YP
 ```
 
 Note this key is a valid *encoding* but not a point on P-256, which is deliberate: the
@@ -294,9 +299,15 @@ The time bucket forces the collision to be found *inside the window*.
 
 ### Why the code can be short
 
-Ten characters is fifty bits. An attacker with a GPU farm at ~10¹² hashes/sec gets
-about 2^47 attempts in 120 seconds — short of 2^50 with margin, and that is against the
-deferred-enrollment case. Enrolling at pairing collapses the window further.
+Fourteen characters is seventy bits. The first version used ten (fifty bits) on an online
+bound: ~2^47 attempts in 120 seconds at ~10¹² hashes/sec. That bound is wrong, because the
+comparison has no commitment step: every preimage input is fixed, public or
+attacker-chosen, so an adversary who can write the device table grinds a key or device id
+that collides at a chosen *future* bucket offline and waits for it. At fifty bits that is
+roughly 14 GPU-hours per window; at seventy it is about a million GPU-years. Refusing
+future buckets does not stop precomputing into one. The principled fix is a commitment to
+the device key (Matrix's SAS is shorter and sound for that reason), which needs a
+browser-to-device channel this protocol does not have.
 
 Note the honest asymmetry in this bound: the attacker must generate *real keypairs*,
 because they need the private half to open what the browser seals. That is far more
@@ -475,7 +486,7 @@ and still honoured, so other platforms and older clients keep working.
   from mismatch — they mean different things and only one of them is alarming.
 - **Mismatch.** The browser refuses to seal and says why in terms of the actual risk,
   not "try again". Up to three entries are allowed within the one two-minute window,
-  because typing ten characters invites a genuine typo while blind guessing is
+  because typing fourteen characters invites a genuine typo while blind guessing is
   hopeless — this is the opposite of the MFA case, where a single attempt is right
   precisely because guessing is cheap. After three, the ceremony aborts and must be
   restarted from the device.
@@ -499,7 +510,7 @@ and still honoured, so other platforms and older clients keep working.
   server that retains too much, a stolen backup, or a compromised database — not against
   one actively serving malicious code. Say so in the UI copy's vicinity rather than
   letting "we verify the fingerprint" be read as stronger than it is.
-- **Ten characters is real friction at a moment the user wants to be finished.** It is
+- **Fourteen characters is real friction at a moment the user wants to be finished.** It is
   once per device, which is the right place to spend it, but the copy has to earn it by
   saying what the check is for.
 - **The Qt keystore story is still unproven** and this spec does not resolve it.

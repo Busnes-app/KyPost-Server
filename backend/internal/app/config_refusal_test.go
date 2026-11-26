@@ -44,8 +44,12 @@ func TestRunRefusesMultiTenancy(t *testing.T) {
 	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d")
 	for _, mode := range []string{"server", "daemon", "all", "bootstrap-admin"} {
-		if err := Run([]string{"--mode", mode}); err == nil || !strings.Contains(err.Error(), "KYPOST_TENANCY=multi is not available") {
-			t.Fatalf("%s: %v", mode, err)
+		err := Run([]string{"--mode", mode})
+		refused := err != nil && strings.Contains(err.Error(), "KYPOST_TENANCY=multi is not available")
+		// The end-to-end test build passes the gate: bootstrap has nothing to do, and the
+		// next multi requirement (PostgreSQL) refuses the rest.
+		if taggedBuild && (refused || mode != "bootstrap-admin" && err == nil) || !taggedBuild && !refused {
+			t.Fatalf("%s, test build %v: %v", mode, taggedBuild, err)
 		}
 	}
 	for _, f := range []string{"users.json", "admin.env", "config.yaml"} {

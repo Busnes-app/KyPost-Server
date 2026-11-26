@@ -634,6 +634,13 @@ Implemented:
 - The server derives fingerprint and key ID from the uploaded public key
   rather than trusting the client's claim — otherwise a client could get its
   own key published under someone else's identity through WKD or Autocrypt.
+- Every public key the server accepts (this upload, the keyring update,
+  contact writes, CardDAV/vCard, WKD, the keyserver and Autocrypt) must pass
+  the version/algorithm allowlist in [STRONG-CRYPTO.md](STRONG-CRYPTO.md):
+  v4 Ed25519/Curve25519 or RSA-2048+ (ML-KEM-768+X25519 subkeys allowed), v6
+  Ed25519/X25519 or ML-DSA-65+Ed25519 / ML-KEM-768+X25519. The browser's
+  generated keys (v4 Ed25519 + cv25519) pass. A client that generates or
+  imports a key must stay inside it; the refusal names the algorithm.
 - Browser crypto: `lib/keyVault.ts` (wrap/unwrap/lock, 12 tests) and
   `lib/pgpClient.ts` (generate, import, decrypt, encrypt, RFC 3156 wrapping
   with a full RFC 5322 envelope and protected Subject).
@@ -978,6 +985,41 @@ change above — that change is the opposite of "nothing silently downgrades"
 for the case it targets: a `server`-protected send to a keyless recipient
 used to downgrade silently, and now refuses instead unless the caller opts in.
 
+### Contact keys: one v4 and one v6
+
+Groundwork for OpenPGP v6 and post-quantum keys (spec
+`docs/superpowers/specs/2026-11-25-pqc-openpgp-v6-design.md`, phase P0). It
+changes no one's keys and no encryption output.
+
+- A contact holds at most two keys: `pgpKey` (the original slot, normally v4)
+  and `pgpKeyV6`, each with its own pin (`pgpKeyFingerprint`,
+  `pgpKeyV6Fingerprint`), source and confirmation. Contacts stored before the
+  slot read unchanged: their single `pgpKey`, whatever its version, is the
+  original slot.
+- Clients keep sending one `pgpKey`. A v6 key written there while the stored
+  `pgpKey` is a v4 key is the correspondent **adding** a v6 certificate: the
+  server moves it to `pgpKeyV6` and keeps the v4 key, pin and confirmation.
+  That is not `key_changed`. A different v4 key still is. The reverse holds
+  too: a v4 key written over a contact whose only key is a v6 key in `pgpKey`
+  moves that v6 key, pin and confirmation into `pgpKeyV6`. A write that omits
+  `pgpKeyV6` keeps it; a write with no `pgpKey` removes both.
+- WKD answers may carry several certificates
+  (draft-koch-openpgp-webkey-service-22 §3.1). The server reads up to 8, keeps
+  each that carries the address as a User ID and is usable, and ranks them: v6
+  with an ML-KEM-768+X25519 (RFC 9980 ID 35) key > v4 with an ID 35 subkey >
+  v6 > v4. Against a pinned contact, each pinned version must still be served
+  with its pinned fingerprint (or not served at all), and at least one pinned
+  key must be in the answer; otherwise `key_changed`. Discovered keys are
+  pinned into their own slots. Only a lookup of the contact's primary
+  address (or its only one) may install a new fingerprint in either slot,
+  because a contact's keys sign for all its addresses; a lookup of any other
+  address only renews keys already pinned. Autocrypt never adds a v6 key.
+- `recipients/resolve` and `recipients/check` add `capability` per recipient:
+  `pq`, `v6` or `v4`, the best class among the keys that match their pins
+  and can be encrypted to now.
+  `publicKey`/the send path still use the v4 key whenever there is one: no
+  KyPost sender can encrypt to a v6 PQC key yet. P4 changes that.
+
 ## Mobile plan
 
 **Historical design and compatibility notes.** The former server-custody choice
@@ -1163,6 +1205,10 @@ nothing on the server to decrypt with.
    directions, so a client deriving its own answer can vouch for a key the
    server's binding rejects. The server ships the binding precisely so no
    second parser participates in the trust decision.
+   A contact with a v4 and a v6 key yields **two** `signerKeys` entries with
+   the same `addresses`, each checked against its own pin; try each. Opening a
+   message (`pgp-payload`) ships only the keys bound to `resolvedSender`;
+   bootstrap ships every contact's.
 4. Sending encrypted: build the ciphertext on device and POST to
    `/api/mail/send-pgp` with one delivery per recipient group, BCC recipients
    each in their own. Each delivery must be a **complete RFC 5322 message** —

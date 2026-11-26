@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -131,5 +133,27 @@ func TestBootstrapAdminDoesNotWriteAnOperatorSuppliedPasswordToDisk(t *testing.T
 	}
 	if _, err := os.Stat(filepath.Join(dir, bootstrapPasswordFile)); !os.IsNotExist(err) {
 		t.Fatal("wrote a password file for a password the operator already has")
+	}
+}
+
+// A release build refuses multi mode at bootstrap; the end-to-end test build has no
+// bootstrap administrator to make (K6) and returns nil. Neither writes anything, and the
+// backup commands refuse multi in both.
+func TestBootstrapAdminRefusesMulti(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONFIG_DIR", dir)
+	t.Setenv("KYPOST_TENANCY", "multi")
+	t.Setenv("KY_CELLS", "test-1")
+	t.Setenv("KYPOST_STAFF_ORG_ID", "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d")
+	if err := BootstrapAdmin(); taggedBuild && err != nil || !taggedBuild && !errors.Is(err, config.ErrMultiTenancyUnavailable) {
+		t.Fatalf("BootstrapAdmin in multi mode, test build %v: %v", taggedBuild, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("multi bootstrap wrote %v", entries)
+	}
+	for _, name := range []string{"backup-drill", "deposit"} {
+		if err := runBackupCommand(name, nil, strings.NewReader(""), new(strings.Builder)); !errors.Is(err, config.ErrMultiTenancyUnavailable) {
+			t.Fatalf("%s in multi mode: %v", name, err)
+		}
 	}
 }

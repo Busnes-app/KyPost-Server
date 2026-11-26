@@ -3,7 +3,10 @@
 // decisions.json in each user's state directory.
 package contacts
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 const (
 	PGPSourceManual    = "manual"
@@ -56,7 +59,15 @@ type Contact struct {
 	PGPKeyVerified    bool     `json:"pgpKeyVerified,omitempty"`    // user eyeballed the fingerprint / came via QR
 	// PGPKeyAutocryptDate is the RFC 3339 effective date of the Autocrypt
 	// message that supplied PGPKey; older Autocrypt headers are ignored.
-	PGPKeyAutocryptDate string               `json:"pgpKeyAutocryptDate,omitempty"`
+	PGPKeyAutocryptDate string `json:"pgpKeyAutocryptDate,omitempty"`
+	// The v6 slot. A contact holds at most two keys: PGPKey (the original
+	// slot, normally v4; a key stored before this slot existed stays there
+	// whatever its version) and here one OpenPGP v6 key beside a v4 one, with
+	// its own TOFU pin, source and confirmation. See splitV6Slot.
+	PGPKeyV6            string               `json:"pgpKeyV6,omitempty"`
+	PGPKeyV6Source      string               `json:"pgpKeyV6Source,omitempty"`
+	PGPKeyV6Fingerprint string               `json:"pgpKeyV6Fingerprint,omitempty"`
+	PGPKeyV6Verified    bool                 `json:"pgpKeyV6Verified,omitempty"`
 	IMs                 []ContactIM          `json:"ims,omitempty"`
 	Websites            []ContactURL         `json:"websites,omitempty"`
 	Relations           []ContactRelation    `json:"relations,omitempty"`
@@ -170,6 +181,7 @@ func (c *Contact) tombstone() {
 	c.PhotoRef = ""
 	c.GroupIDs = nil
 	c.PGPKey = ""
+	c.PGPKeyV6 = ""
 	c.PGPKeyAutocryptDate = ""
 	c.PGPKeyRemovedAutocrypt = ""
 	c.IMs = nil
@@ -186,4 +198,32 @@ func (c *Contact) tombstone() {
 	c.DiscoveryCreated = false
 	// MergedInto is intentionally preserved: a merge tombstones the loser and
 	// then records which survivor it was folded into.
+}
+
+// AuthenticatedForContact reports whether storing a key proven for addr on
+// contact c stays within what that proof covers.
+//
+// True when the contact carries only addr (nothing else can inherit the key),
+// or when addr is the contact's primary address — the one a record-wide key is
+// legitimately about. False for a secondary address on a multi-address card,
+// where a record-wide write would silently authorize the key for the other
+// addresses too.
+func AuthenticatedForContact(c Contact, addr string) bool {
+	target := strings.ToLower(strings.TrimSpace(addr))
+	seen := map[string]bool{}
+	for _, e := range c.Emails {
+		v := strings.ToLower(strings.TrimSpace(e.Value))
+		if v != "" {
+			seen[v] = true
+		}
+	}
+	if len(seen) <= 1 {
+		return true
+	}
+	for _, e := range c.Emails {
+		if v := strings.ToLower(strings.TrimSpace(e.Value)); v != "" {
+			return v == target
+		}
+	}
+	return false
 }

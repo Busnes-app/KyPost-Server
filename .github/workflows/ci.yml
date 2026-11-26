@@ -72,6 +72,11 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # The end-to-end test build tag stays in its gate files and out of every release path, and the
+      # tagged build opens multi only under a .test issuer.
+      - name: end-to-end build tag
+        run: ../scripts/check-test-build-tag.sh
+
       - name: Bundled receiver default and configured limits
         run: |
           set -euo pipefail
@@ -526,6 +531,11 @@ jobs:
       - name: supervisord.conf self-check
         run: scripts/supervisord.test.sh
 
+      # The PostgreSQL 17 -> 18 drill's log check (logged), on a stream that keeps writing after
+      # its marker; no Docker. GNU grep here is what made the old pipe form fail.
+      - name: PostgreSQL 17 -> 18 log check self-test
+        run: scripts/test-postgres-17-to-18-logged.test.sh
+
       # A variable .env.example offers but compose never passes does nothing.
       - name: env example reaches compose
         run: scripts/check-env-example.sh
@@ -548,7 +558,9 @@ jobs:
         run: |
           set -euo pipefail
           for step in \
+            "Require a release build" \
             "Build and publish the immutable version tag" \
+            "Require the pushed image to be a release build" \
             "Publish GitHub image attestation" \
             "Verify the attestation before promoting" \
             "Decide whether this release may move stable" \
@@ -564,6 +576,7 @@ jobs:
           # for. Assert both the gate and the trigger that feeds it.
           for step in \
             "Require CI to have passed for this commit" \
+            "Require a release build" \
             "Build and publish main tag" \
             "Publish GitHub image attestation" \
             "Verify the attestation"; do
@@ -656,6 +669,15 @@ jobs:
 
       - name: private data roots and real entrypoint
         run: python3 scripts/check-private-roots.py kypost-server:ci
+
+      # The image publish-main.yml and release-image.yml build: no end-to-end test tag, and
+      # multi-tenant startup refused.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - name: Image is a release build
+        run: scripts/check-release-image.sh kypost-server:ci
 
       - name: supervisor drains separate groups serially
         run: docker run --rm --network none --user kypost --entrypoint python3 kypost-server:ci /opt/kypost/scripts/check-supervisor-shutdown.py --runtime-only

@@ -160,7 +160,7 @@ func replayMultiUIDKey(t *testing.T, olderExpired, newerExpired, preferOlder boo
 }
 func replayV6Key(t *testing.T) string {
 	t.Helper()
-	e, err := openpgp.NewEntity("Bob", "", "bob@example.com", &packet.Config{V6Keys: true, RSABits: 2048})
+	e, err := openpgp.NewEntity("Bob", "", "bob@example.com", &packet.Config{V6Keys: true, Algorithm: packet.PubKeyAlgoEd25519})
 	if err != nil {
 		t.Fatal(err)
 	}

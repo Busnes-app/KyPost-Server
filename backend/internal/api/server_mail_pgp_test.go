@@ -54,12 +54,12 @@ func TestFindContactPGPKey(t *testing.T) {
 		t.Fatalf("Upsert: %v", err)
 	}
 
-	key, ok := must2(findContactPGPKey(store, "bob@example.com"))
-	if !ok || key == "" {
-		t.Fatalf("expected a key for bob@example.com, got ok=%v key=%q", ok, key)
+	c, ok := must2(findKeyedContact(store, "bob@example.com"))
+	if key := c.PGPKey; !ok || key == "" {
+		t.Fatalf("expected a key for bob@example.com, got ok=%v key=%q", ok, c.PGPKey)
 	}
 
-	if _, ok := must2(findContactPGPKey(store, "nobody@example.com")); ok {
+	if _, ok := must2(findKeyedContact(store, "nobody@example.com")); ok {
 		t.Fatal("expected no key for an unknown address")
 	}
 }

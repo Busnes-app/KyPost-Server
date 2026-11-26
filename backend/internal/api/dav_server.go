@@ -887,6 +887,9 @@ func validateContactKey(armored string, emails []contacts.ContactValue) error {
 	if key.IsPrivate() {
 		return errPrivateContactKey
 	}
+	if err := pgpmail.CheckArmoredKeyPolicy(armored); err != nil {
+		return err
+	}
 	status, err := pgpmail.CheckKeyStatus(armored)
 	if err != nil {
 		return err

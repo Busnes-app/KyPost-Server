@@ -49,6 +49,11 @@ type resolvedKey struct {
 	// reported as tierNone would invite the sender to downgrade a recipient
 	// whose pinned key was there all along.
 	Err error
+	// Capability is the best key class the recipient offers ("pq", "v6",
+	// "v4"; "" with no key). Additive and informational in P0: Armored is
+	// still the v4 key whenever there is one, because no KyPost sender can
+	// encrypt to a v6 PQC key yet (openpgp.js 6.3.3). P4 switches.
+	Capability string
 }
 
 // keyResolver runs the PGP key discovery ladder — pinned contact key → WKD
@@ -69,7 +74,7 @@ type keyResolver struct {
 }
 
 // findContact returns the first contact whose email matches, case-
-// insensitively. Unlike findContactPGPKey (server.go), this returns the
+// insensitively. Unlike findKeyedContact (server_mail_send.go), this returns the
 // whole Contact so callers can inspect/update provenance fields beyond
 // PGPKey.
 func findContact(store *contacts.Store, email string) (contacts.Contact, bool, error) {
@@ -88,14 +93,15 @@ func findContact(store *contacts.Store, email string) (contacts.Contact, bool, e
 	return contacts.Contact{}, false, nil
 }
 
-// pin writes a discovered key + provenance to the matching contact,
-// creating a minimal contact if none exists yet. Upsert assigns a UID when
-// c.UID is empty. Marks the key unverified — WKD/keyserver discovery is
-// TOFU, not eyeball verification — unless the discovered fingerprint matches
-// the fingerprint already pinned to the contact, in which case this is just
-// a refresh of the same key and any existing source/verified provenance
-// (e.g. a manual, eyeball-verified pin) is preserved rather than downgraded.
-func (kr *keyResolver) pin(email, armored, fingerprint, source string) {
+// pin writes discovered keys + provenance to the matching contact, creating a
+// minimal contact if none exists yet. Upsert assigns a UID when c.UID is
+// empty. Marks each key unverified — WKD/keyserver discovery is TOFU, not
+// eyeball verification — unless its fingerprint matches the one already pinned
+// in its slot, in which case this is just a refresh of the same key and any
+// existing source/verified provenance (e.g. a manual, eyeball-verified pin) is
+// preserved rather than downgraded. v4 and v6 each go to their own slot; a v6
+// key alone takes the original slot only when that holds no v4 key.
+func (kr *keyResolver) pin(email string, v4, v6 *wkdCert, source string) {
 	c, ok, err := findContact(kr.store, email)
 	if err != nil {
 		// Creating a contact here would pin a discovered key to a brand-new
@@ -110,16 +116,87 @@ func (kr *keyResolver) pin(email, armored, fingerprint, source string) {
 			DiscoveryCreated: true,
 		}
 	}
-	sameKey := ok && c.PGPKeyFingerprint != "" && strings.EqualFold(c.PGPKeyFingerprint, fingerprint)
-	c.PGPKey = armored
-	c.PGPKeyFingerprint = fingerprint
-	if !sameKey {
-		c.PGPKeySource = source
-		c.PGPKeyVerified = false
+	// A contact's keys sign for every address on it, so only a lookup of the
+	// address the whole record is about may install a NEW fingerprint (same
+	// rule as the Autocrypt harvest); any other lookup only renews pins the
+	// contact already holds.
+	whole := !ok || contacts.AuthenticatedForContact(c, email)
+	set := func(key, fp, src *string, verified *bool, cert *wkdCert) {
+		same := *fp != "" && strings.EqualFold(*fp, cert.Fingerprint)
+		if !same && !whole {
+			return
+		}
+		*key, *fp = cert.Armored, cert.Fingerprint
+		if !same {
+			*src, *verified = source, false
+		}
+	}
+	// A v4 key joining a v6 key held in the original slot moves that v6 key,
+	// with its pin and confirmation, to the v6 slot first.
+	if v4 != nil && whole && c.PGPKeyV6 == "" && keyVersionOf(c.PGPKey) == 6 {
+		c.PGPKeyV6, c.PGPKeyV6Fingerprint, c.PGPKeyV6Source, c.PGPKeyV6Verified = c.PGPKey, c.PGPKeyFingerprint, c.PGPKeySource, c.PGPKeyVerified
+		c.PGPKey, c.PGPKeyFingerprint, c.PGPKeySource, c.PGPKeyVerified, c.PGPKeyAutocryptDate = "", "", "", false, ""
+	}
+	if v4 != nil && keyVersionOf(c.PGPKey) != 6 {
+		set(&c.PGPKey, &c.PGPKeyFingerprint, &c.PGPKeySource, &c.PGPKeyVerified, v4)
+	}
+	if v6 != nil {
+		if c.PGPKey == "" || keyVersionOf(c.PGPKey) == 6 {
+			set(&c.PGPKey, &c.PGPKeyFingerprint, &c.PGPKeySource, &c.PGPKeyVerified, v6)
+		} else {
+			set(&c.PGPKeyV6, &c.PGPKeyV6Fingerprint, &c.PGPKeyV6Source, &c.PGPKeyV6Verified, v6)
+		}
 	}
 	// best-effort pin; a valid key still encrypts this send even if
 	// persistence fails
 	_, _ = kr.store.Upsert(c)
+}
+
+// pickWKD chooses, per OpenPGP version, the WKD certificate to use against the
+// contact's pins (certs come best first). A pinned version whose certificates
+// all differ from its pin is a key change; so is an answer none of whose
+// chosen certificates is pinned while the contact has a pin. A v6 key added
+// beside a pinned v4 key that is still served is neither.
+//
+// use is the certificate to encrypt to: the pinned one when the contact has a
+// pin (v4 first), so a newly served key never becomes the encryption target
+// beside a pinned one; otherwise v4, else v6.
+func pickWKD(c contacts.Contact, certs []wkdCert) (v4, v6, use *wkdCert, changed bool) {
+	pins := map[bool]string{} // keyed by "is v6"
+	if c.PGPKey != "" && c.PGPKeyFingerprint != "" {
+		pins[keyVersionOf(c.PGPKey) == 6] = c.PGPKeyFingerprint
+	}
+	if c.PGPKeyV6 != "" && c.PGPKeyV6Fingerprint != "" {
+		pins[true] = c.PGPKeyV6Fingerprint
+	}
+	chosen := map[bool]*wkdCert{}
+	continuity := len(pins) == 0
+	for _, isV6 := range []bool{false, true} {
+		pin, pinned := pins[isV6]
+		served := false
+		for i := range certs {
+			if certs[i].Class.V6 != isV6 {
+				continue
+			}
+			served = true
+			if !pinned {
+				chosen[isV6] = &certs[i]
+				break
+			}
+			if strings.EqualFold(certs[i].Fingerprint, pin) {
+				chosen[isV6], continuity = &certs[i], true
+				break
+			}
+		}
+		if pinned && served && chosen[isV6] == nil {
+			return nil, nil, nil, true
+		}
+	}
+	use = chosen[false]
+	if _, v4Pinned := pins[false]; use == nil || (len(pins) > 0 && !v4Pinned) {
+		use = chosen[true]
+	}
+	return chosen[false], chosen[true], use, !continuity
 }
 
 // resolve runs the discovery ladder for one recipient:
@@ -157,9 +234,12 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 			return resolvedKey{Tier: tierKeyChanged}
 		}
 		if st, err := pgpmail.CheckKeyStatus(c.PGPKey); err == nil && st.Usable() {
-			return resolvedKey{Armored: c.PGPKey, Fingerprint: c.PGPKeyFingerprint, Tier: tierContactVerified, Usable: true}
+			return resolvedKey{Armored: c.PGPKey, Fingerprint: c.PGPKeyFingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c)}
 		}
 		pinnedFP = c.PGPKeyFingerprint
+	}
+	if !hasContact {
+		c = contacts.Contact{}
 	}
 	if !kr.discover {
 		return resolvedKey{Tier: tierNone}
@@ -169,14 +249,19 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 		return resolvedKey{Tier: tierNone}
 	}
 
-	if armored, fp, err := fetchWKDKey(ctx, email); err == nil {
-		if pinnedFP != "" && !strings.EqualFold(pinnedFP, fp) {
+	if certs, err := fetchWKDKeys(ctx, email); err == nil {
+		v4, v6, use, changed := pickWKD(c, certs)
+		if changed {
 			return resolvedKey{Tier: tierKeyChanged}
 		}
 		if kr.settings.StoreDiscoveredKeys {
-			kr.pin(email, armored, fp, contacts.PGPSourceWKD)
+			kr.pin(email, v4, v6, contacts.PGPSourceWKD)
 		}
-		return resolvedKey{Armored: armored, Fingerprint: fp, Tier: tierWKD, Usable: true}
+		best := v4
+		if v6 != nil && (v4 == nil || v6.Class.rank() > v4.Class.rank()) {
+			best = v6
+		}
+		return resolvedKey{Armored: use.Armored, Fingerprint: use.Fingerprint, Tier: tierWKD, Usable: true, Capability: best.Class.capability()}
 	}
 
 	if _, fp, st, err := keyserverLookup(ctx, email); err == nil && st.Usable() {

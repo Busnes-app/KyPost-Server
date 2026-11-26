@@ -48,34 +48,6 @@ func findContactByEmail(store *contacts.Store, email string) (contacts.Contact, 
 	return contacts.Contact{}, false, nil
 }
 
-// authenticatedForContact reports whether storing a key proven for addr on
-// contact c stays within what that proof covers.
-//
-// True when the contact carries only addr (nothing else can inherit the key),
-// or when addr is the contact's primary address — the one a record-wide key is
-// legitimately about. False for a secondary address on a multi-address card,
-// where a record-wide write would silently authorize the key for the other
-// addresses too.
-func authenticatedForContact(c contacts.Contact, addr string) bool {
-	target := strings.ToLower(strings.TrimSpace(addr))
-	seen := map[string]bool{}
-	for _, e := range c.Emails {
-		v := strings.ToLower(strings.TrimSpace(e.Value))
-		if v != "" {
-			seen[v] = true
-		}
-	}
-	if len(seen) <= 1 {
-		return true
-	}
-	for _, e := range c.Emails {
-		if v := strings.ToLower(strings.TrimSpace(e.Value)); v != "" {
-			return v == target
-		}
-	}
-	return false
-}
-
 // harvestPinAutocryptKey applies the source-based precedence rule for a
 // validated, DKIM-authenticated Autocrypt key. Harvest is the weakest rung: it
 // never overrides a non-autocrypt key (manual/qr/wkd/keyserver), fills a gap
@@ -95,7 +67,7 @@ func harvestPinAutocryptKey(store *contacts.Store, addr, armored, fingerprint st
 	if err != nil {
 		return "", err
 	}
-	if ok && !authenticatedForContact(c, addr) {
+	if ok && !contacts.AuthenticatedForContact(c, addr) {
 		// DKIM proved control of `addr` and of nothing else. The key, however,
 		// is stored on the contact RECORD, and findContact,
 		// findContactByEmail and contactBindsAddress all match ANY address on
@@ -262,6 +234,9 @@ func validateAutocryptKey(keydata []byte, addr string) (armored, fingerprint str
 	key, err := crypto.NewKey(keydata)
 	if err != nil {
 		return "", "", fmt.Errorf("parse autocrypt key: %w", err)
+	}
+	if err := pgpmail.CheckKeyPolicy(keydata); err != nil {
+		return "", "", err
 	}
 	armored, err = key.GetArmoredPublicKey()
 	if err != nil {

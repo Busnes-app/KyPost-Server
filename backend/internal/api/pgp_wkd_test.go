@@ -174,10 +174,11 @@ func TestFetchWKDKeyDirectMethod(t *testing.T) {
 	wkdBaseURLOverride = srv.URL
 	defer func() { wkdBaseURLOverride = "" }()
 
-	armored, fp, err := fetchWKDKey(context.Background(), "bob@example.com")
+	certs, err := fetchWKDKeys(context.Background(), "bob@example.com")
 	if err != nil {
-		t.Fatalf("fetchWKDKey: %v", err)
+		t.Fatalf("fetchWKDKeys: %v", err)
 	}
+	armored, fp := certs[0].Armored, certs[0].Fingerprint
 	if fp != key.GetFingerprint() {
 		t.Fatalf("fingerprint = %q, want %q", fp, key.GetFingerprint())
 	}
@@ -195,7 +196,7 @@ func TestFetchWKDKeyNotFound(t *testing.T) {
 	wkdBaseURLOverride = srv.URL
 	defer func() { wkdBaseURLOverride = "" }()
 
-	if _, _, err := fetchWKDKey(context.Background(), "nobody@example.com"); err == nil {
+	if _, err := fetchWKDKeys(context.Background(), "nobody@example.com"); err == nil {
 		t.Fatalf("expected error when no key is published")
 	}
 }
