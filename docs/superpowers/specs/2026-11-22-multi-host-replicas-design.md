@@ -1963,11 +1963,49 @@ deployment serves a list of them, `KY_CELLS`, instead of one `KYPOST_REGION`. Wh
   `cells/<home_region>/bodies/<org>/` (amending "Object storage for message bodies" above). One
   bucket may then hold several cells (C2) and no deployment lists another's keys. KyPost has no
   object storage yet: MH11 builds `vol.Object` with this layout, from `tenancy.Org.HomeRegion`.
-- **Not built here.** The masked relay region code table, the disaster-recovery runbook (both
-  still MH9 rows above, needed before a second cell opens, not before K PR 7), MH10's routing, and
+- **Not built here.** The masked relay region code table and the disaster-recovery runbook
+  (built next: "MH9 region codes and recovery as built"), MH10's routing, and
   wiring `Server.cells` from `KY_CELLS` at a multi start, which K PR 7 does with the rest of the
   multi wiring (`Server.tenancy` and `staffOrg` are test-only until then).
 - **Tests.** `config` `TestCells`; `replica` `TestCellsAreSharedOnlyWhenSet`,
   `TestReplicaWithOtherCellsRefused` (PostgreSQL); `tenancy` `TestForeignOrg`; `api`
   `TestCellsServeOnlyTheirOwnOrgs`: two in-process hosts, one per cell, poll one KyIdentity, and
   each way in above is compared with an org no host knows; `app` `TestHostedBindForeignOrg`.
+
+## MH9 region codes and recovery as built (2026-11-26)
+
+The two MH9 rows left by "MH9 cells as built".
+
+- **Region code table.** `tenancy.relayCodes` maps each cell (KyIdentity `home_region` slug) to
+  its masked relay region code: one lowercase RFC 4648 base32 character (masked addresses spec
+  D3), so at most 32 cells, matching `config.MaxCells`. The code sits right after
+  `adjective.animal.` on the one hosted relay domain ("Mail per region"), and this PR changes
+  neither. `checkRelayTable` refuses a code outside the alphabet, a malformed cell, and a code or
+  cell listed twice.
+  - **The table is append only.** An entry, once released, is never changed, removed or reused,
+    and a closed cell keeps its entry: its addresses still exist. `TestRelayCodeTableIsStableAndUnique`
+    holds every released entry (`releasedRelayCodes`) as a prefix of the table, and
+    `TestRelayCodeTableRefuses` covers the refusals.
+  - **A multi start needs a code for every cell in `KY_CELLS`.** `app.Run` checks it
+    (`tenancy.CheckRelayCodes`) right after `CheckEnv`, before any store opens, so a release build
+    still refuses with the gate's message first (`check-release-image.sh`). In the test build
+    `TestRunRefusesMultiTenancy` expects `ErrNoRelayCode`. K PR 7 therefore never allocates a relay
+    address without a code.
+  - **The reverse lookup** (code to cell, with an unknown code going to the MX host's own cell) is
+    MH10's, and is not built.
+- **No cell has a code yet: owner decision.** No production cell is configured or documented. The
+  only cells anywhere are the e2e suite's `e2e-1` and `e2e-2` (KyCalendar
+  `e2e/suite/compose/compose.yml`) and spec examples. Until the owner names the launch cells and
+  their codes, every multi start refuses, `kye2e` test builds included. The suite's KyPost rows
+  wait for K PR 7 anyway. Whether the e2e cells take two of the 32 codes permanently is part of
+  that decision.
+- **Runbook.** `docs/CELL-RECOVERY.md`: region-code rules and opening a cell, and regional disaster
+  recovery under "Failover and split brain between regions" option 2, with capsules as the floor.
+  The order is fixed: record the loss window, fence the old cell, promote, check the promoted
+  database's `kypost_state.meta` record, move the hostname and MX records, start with the same
+  settings, keys and pins, then rebuild the old primary as a standby.
+  - `scripts/rehearse-cell-promotion.sh` (ci-docker, on `kypost-server:ci`) runs it on disposable
+    containers. A PostgreSQL 18 primary and a `pg_basebackup -R` standby, and a single-mode KyPost
+    server that writes its record. Then fence, promote and check the record. The same keys start;
+    another `totp-secret.key` is refused. The old primary is rebuilt as a standby.
+  - The multi-mode start (step 6 with `KY_CELLS`) is unproven until K PR 7.

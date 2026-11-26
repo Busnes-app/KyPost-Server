@@ -112,6 +112,17 @@ func Run(args []string) error {
 	if err = config.CheckEnv(); err != nil {
 		return err
 	}
+	// Past the release gate: every cell a multi start serves needs its masked relay region code
+	// (MH9), checked before any store opens.
+	if tmode, _, _ := config.Tenancy(); tmode == config.TenancyMulti {
+		cells, err := config.Cells(os.Getenv("KY_CELLS"))
+		if err == nil {
+			err = tenancy.CheckRelayCodes(cells)
+		}
+		if err != nil {
+			return err
+		}
+	}
 	if _, err := config.LoadBackupConfig(); err != nil {
 		return err
 	}
