@@ -89,7 +89,7 @@ export async function parseKeyring(raw: string): Promise<ParsedKeyring> {
 }
 
 /** IDs select candidates only; OpenPGP verifies the actual decryption. */
-export function decryptionKeysFor(keyring: ParsedKeyring, message: Message<string>): PrivateKey[] {
+export function decryptionKeysFor(keyring: { keys: PrivateKey[] }, message: Message<string>): PrivateKey[] {
   const ids = message.getEncryptionKeyIDs().map(id => id.toHex());
   // ponytail: bounded scan of at most 16 keys; index only if the ring cap grows.
   if (ids.some(id => /^0+$/.test(id))) return keyring.keys;

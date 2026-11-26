@@ -423,8 +423,30 @@ jobs:
           npm ci --prefix lint
           npm run lint
 
+      # gopenpgp wasm engine (evaluation, docs/superpowers/specs/2026-11-26-
+      # pqc-gopenpgp-wasm-evaluation.md): build it with go.mod's toolchain so
+      # the parity tests below must run, never skip.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: build gopenpgp wasm
+        run: ../scripts/build-pgp-wasm.sh
+
       - name: test
+        env:
+          KYPOST_REQUIRE_PGP_WASM: "1"
         run: npm test -- --run
+
+      - name: pgp suites on the wasm engine
+        env:
+          VITE_PGP_ENGINE: gopenpgp-wasm
+        run: npx vitest run src/lib/
+
+      - name: wasm bridge Go tests (under Node)
+        working-directory: backend
+        run: PATH="$(go env GOROOT)/lib/wasm:$PATH" GOOS=js GOARCH=wasm go test -count=1 ./cmd/pgpwasm
 
       - name: build
         run: npm run build
