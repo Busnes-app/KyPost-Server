@@ -24,6 +24,8 @@ const (
 	orgA     = "1a2b3c4d-0000-4000-8000-00000000000a"
 	orgB     = "1a2b3c4d-0000-4000-8000-00000000000b"
 	staffOrg = "1a2b3c4d-0000-4000-8000-0000000000ff"
+	// testCell is the one cell (KY_CELLS) a test server serves, and its orgs' home region.
+	testCell = "test-1"
 )
 
 // makeMultiTenant gives srv the side store a multi first start creates (PR 1's
@@ -31,7 +33,7 @@ const (
 // useTenancy makes s multi-tenant as PR 7's startup must: the side store, the staff org,
 // and the address tombstones every allocation consults first (K10).
 func (s *Server) useTenancy(db *sql.DB, staffOrg string) {
-	s.tenancy, s.staffOrg, s.users.StaffOrg = db, staffOrg, staffOrg
+	s.tenancy, s.staffOrg, s.users.StaffOrg, s.cells = db, staffOrg, staffOrg, []string{testCell}
 	if s.ssoLifecycle != nil {
 		s.ssoLifecycle.Tombstoned = func(address string) (bool, error) {
 			key, err := tenancy.TombstoneKey(context.Background(), db, config.SecretDir())
@@ -163,26 +165,40 @@ func TestTenancySyncRefusesEventsWithoutAValidOrg(t *testing.T) {
 	}
 }
 
-// The first event binds the subject; a later, replayed or reordered event naming
-// another org is refused before the revision fence and changes nothing.
-// An org missing from the cache is not deleted: a new org's first event before its poll,
-// and every org's right after a restore empties the cache (tenancy.ForgetRestored), apply.
-func TestTenancySyncAppliesEventsForAnUncachedOrg(t *testing.T) {
+// An org missing from the cache may be another cell's new org (MH9), so its event is
+// refused for now (503, KyIdentity retries) and writes nothing: a new org's before its
+// first poll, and every org's after a restore empties the cache (tenancy.ForgetRestored)
+// until the restore read lists them again. Once cached, the retry applies.
+func TestTenancySyncWaitsForAnUncachedOrg(t *testing.T) {
 	srv := newDirectoryTestServer(t)
 	db := makeMultiTenant(t, srv)
 	const orgNew = "1a2b3c4d-0000-4000-8000-00000000000c"
-	u := provisionMember(t, srv, db, "member-new", orgNew)
-	if !u.Active {
-		t.Fatal("an uncached org's member was provisioned inactive")
+	refusedForNow := func(sub, org string) {
+		t.Helper()
+		if rec := postDirectory(t, srv, testSyncKey, "user.created", "ev-"+sub, 1, orgUser(sub, org, true)); rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s: %d %s, want 503", sub, rec.Code, rec.Body)
+		}
+		if _, err := srv.users.GetBySSOSub(sub); err == nil || subjectOrgRow(t, srv, db, sub) != "" {
+			t.Fatalf("%s: a refused event wrote an account or a binding", sub)
+		}
+	}
+	refusedForNow("member-new", orgNew)
+	setOrg(t, db, orgNew, "active", true, `{}`)
+	if u := provisionMember(t, srv, db, "member-new", orgNew); !u.Active {
+		t.Fatal("an org's member was provisioned inactive once the poll listed it")
 	}
 	if err := tenancy.ForgetRestored(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
+	refusedForNow("member-restored", orgA)
+	setOrg(t, db, orgA, "active", true, `{}`)
 	if u := provisionMember(t, srv, db, "member-restored", orgA); !u.Active {
-		t.Fatal("a member was provisioned inactive after the restore emptied the cache")
+		t.Fatal("a member was provisioned inactive after the restore read")
 	}
 }
 
+// The first event binds the subject; a later, replayed or reordered event naming
+// another org is refused before the revision fence and changes nothing.
 func TestTenancySyncCannotMoveASubject(t *testing.T) {
 	srv := newDirectoryTestServer(t)
 	db := makeMultiTenant(t, srv)

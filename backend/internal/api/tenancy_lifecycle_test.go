@@ -279,7 +279,7 @@ func listed(id, status string, rev int64, quotas ...string) suitedir.Org {
 	if len(quotas) > 0 {
 		q = quotas[0]
 	}
-	return suitedir.Org{ID: id, Status: status, Revision: rev, Enabled: true, Quotas: json.RawMessage(q)}
+	return suitedir.Org{ID: id, Status: status, Revision: rev, Enabled: true, Quotas: json.RawMessage(q), HomeRegion: testCell}
 }
 
 func pointAtOrgs(t *testing.T, srv *Server, idp *orgsIdP, secret string) {

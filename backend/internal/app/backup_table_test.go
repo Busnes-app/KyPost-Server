@@ -70,6 +70,7 @@ func TestTableBackupCLISelectsDocumentsBeforeService(t *testing.T) {
 		t.Fatal("refused configuration changed schedule", err)
 	}
 	t.Setenv("KYPOST_TENANCY", "multi")
+	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", "00000000-0000-0000-0000-000000000001")
 	if err := runBackupCommand("deposit", nil, strings.NewReader(""), &output); !errors.Is(err, config.ErrMultiTenancyUnavailable) {
 		t.Fatal("CLI lifted hosted startup gate", err)

@@ -102,6 +102,24 @@ func (s *Server) bindDirectoryOrg(ctx context.Context, issuer, eventID string, b
 	if json.Unmarshal(body, &ev) != nil || !config.ValidOrgID(ev.OrgID) {
 		return "", http.StatusBadRequest, errors.New("invalid directory event: org_id is required")
 	}
+	// MH9 (C5): an org of another cell is refused for good, and one no poll has listed yet
+	// for now (KyIdentity retries), so an account exists in one cell only. Nothing is written.
+	if ev.OrgID != s.staffOrg {
+		o, err := tenancy.LookupOrg(ctx, s.tenancy, ev.OrgID)
+		foreign := false
+		if err == nil && !o.Known {
+			foreign, err = tenancy.Foreign(ctx, s.tenancy, ev.OrgID)
+		}
+		switch {
+		case err != nil:
+			return "", http.StatusInternalServerError, errors.New("failed to read the org's state")
+		case foreign:
+			s.logger.Info("directory event refused", "event_id", eventID, "reason", "org of another cell")
+			return "", http.StatusUnprocessableEntity, errors.New("directory event refused: the org is served by another cell")
+		case !o.Known:
+			return "", http.StatusServiceUnavailable, errors.New("directory event refused for now: the org is not cached yet; retry after the next org poll")
+		}
+	}
 	refused := func(userID string) (string, int, error) {
 		s.orgRefused("directory_event", userID)
 		s.logger.Info("directory event refused", "event_id", eventID, "reason", "org binding mismatch")

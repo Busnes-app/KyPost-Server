@@ -205,7 +205,7 @@ print("PASS replicas: receiving, rspamd and lan-dns overlays refuse to render wi
 # chain, and docker-compose.mx.yml alone on an MX host. Rendered only; multi mode cannot
 # start until the tenancy design's PR 7.
 hosted_files = files + ["docker-compose.hosted.yml"]
-hosted = {"KYPOST_STAFF_ORG_ID": "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d", "KYPOST_RECEIVING_SUBNET": "10.89.2.0/24",
+hosted = {"KYPOST_STAFF_ORG_ID": "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d", "KY_CELLS": "us-east-1", "KYPOST_RECEIVING_SUBNET": "10.89.2.0/24",
           "KYPOST_RECEIVING_A_IP": "10.89.2.10", "KYPOST_RECEIVING_B_IP": "10.89.2.11", "KYPOST_RECEIVING_PUBLISH_IP": "192.168.40.5"}
 for missing in hosted:
     result = compose(hosted_files, base_env | required | {k: v for k, v in hosted.items() if k != missing})
@@ -230,7 +230,7 @@ for name, ip, port in [("receiving-a", hosted["KYPOST_RECEIVING_A_IP"], "2601"),
     assert spam["read_only"] and spam["cap_drop"] == ["ALL"] and not spam.get("ports"), f"rspamd-{name[-1]} is exposed or writable"
 print("PASS hosted: two receiving servers on the shared volumes, each with its own pinned Rspamd, published only on the private address")
 
-mx_env = {"KYPOST_STAFF_ORG_ID": hosted["KYPOST_STAFF_ORG_ID"], "KYPOST_RECEIVING_HOSTNAME": "mx-a.example.test", "KYPOST_SMTP_BIND": "203.0.113.25",
+mx_env = {"KYPOST_STAFF_ORG_ID": hosted["KYPOST_STAFF_ORG_ID"], "KY_CELLS": hosted["KY_CELLS"], "KYPOST_RECEIVING_HOSTNAME": "mx-a.example.test", "KYPOST_SMTP_BIND": "203.0.113.25",
           "KYPOST_MADDY_BINARY": "/opt/maddy", "KYPOST_RECEIVING_TLS_DIR": "/etc/mx-tls", "KYPOST_MX_DIR": "/etc/kypost-mx"}
 for missing in mx_env:
     result = compose(["docker-compose.mx.yml"], base_env | {k: v for k, v in mx_env.items() if k != missing})

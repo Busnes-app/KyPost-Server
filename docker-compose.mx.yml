@@ -22,6 +22,7 @@ services:
     environment:
       KYPOST_TENANCY: multi
       KYPOST_STAFF_ORG_ID: ${KYPOST_STAFF_ORG_ID:?Set KYPOST_STAFF_ORG_ID, the staff org's id}
+      KY_CELLS: ${KY_CELLS:?Set KY_CELLS, the KyIdentity home regions this deployment serves}
       KYPOST_NATIVE_RECEIVER: "true"
       KYPOST_RECEIVING_REMOTE: /kypost/mx/remote.json
       KYPOST_RECEIVING_HOSTNAME: ${KYPOST_RECEIVING_HOSTNAME:?set this MX host's certificate hostname}

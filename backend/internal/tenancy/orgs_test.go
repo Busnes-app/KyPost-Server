@@ -168,3 +168,75 @@ func TestParseQuotas(t *testing.T) {
 		}
 	}
 }
+
+// MH9: an org of another cell is held as ID, cell and revision only. Every lookup misses
+// it, as it misses an org never listed; it still moves the poll cursor; a newer answer
+// placing it in this deployment's cells caches it again; a restore forgets it.
+func TestForeignOrg(t *testing.T) {
+	ctx := context.Background()
+	g := openCache(t)
+	foreign := suitedir.Org{ID: orgOne, Status: suitedir.OrgActive, Revision: 9, Enabled: true, HomeRegion: "eu-central-1"}
+	if err := apply(t, g, "active", 5, true, `{}`, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyForeignOrg(ctx, g.DB, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if o := lookup1(t, g); o != (Org{}) {
+		t.Fatalf("a foreign org is cached: %+v", o)
+	}
+	if err := g.Serve(ctx, orgOne); !errors.Is(err, ErrNotServed) || errors.Is(err, ErrStale) {
+		t.Fatalf("foreign org served: %v", err)
+	}
+	if known, err := KnownOrg(ctx, g.DB, orgOne); err != nil || known {
+		t.Fatalf("staff can select a foreign org: %v %v", known, err)
+	}
+	if ids, err := ReportableOrgs(ctx, g.DB); err != nil || len(ids) != 0 {
+		t.Fatalf("a foreign org is reported for: %v %v", ids, err)
+	}
+	if is, err := Foreign(ctx, g.DB, orgOne); err != nil || !is {
+		t.Fatalf("Foreign = %v %v", is, err)
+	}
+	if c, _ := OrgCursor(ctx, g.DB); c != 8 {
+		t.Fatalf("cursor %d, want 8", c)
+	}
+	// A stale own-cell answer changes nothing; a newer one caches it again.
+	if err := apply(t, g, "active", 8, true, `{}`, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if lookup1(t, g).Known {
+		t.Fatal("a stale answer cached a foreign org")
+	}
+	own := foreign
+	own.Revision, own.HomeRegion = 10, "us-east-1"
+	if err := ApplyOrg(ctx, g.DB, own, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if o := lookup1(t, g); !o.Known || o.HomeRegion != "us-east-1" {
+		t.Fatalf("own org: %+v", o)
+	}
+	if is, _ := Foreign(ctx, g.DB, orgOne); is {
+		t.Fatal("still foreign")
+	}
+	// A deleted tombstone is never dropped.
+	own.Revision, own.Status = 11, suitedir.OrgDeleted
+	if err := ApplyOrg(ctx, g.DB, own, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	foreign.Revision = 12
+	if err := ApplyForeignOrg(ctx, g.DB, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if o := lookup1(t, g); o.Status != suitedir.OrgDeleted {
+		t.Fatalf("tombstone dropped: %+v", o)
+	}
+	if err := ForgetRestored(ctx, g.DB); err != nil {
+		t.Fatal(err)
+	}
+	if is, _ := Foreign(ctx, g.DB, orgOne); is {
+		t.Fatal("a restore kept a foreign org")
+	}
+	if err := ApplyForeignOrg(ctx, g.DB, suitedir.Org{ID: "not-an-org", Status: suitedir.OrgActive, HomeRegion: "x-1"}); err == nil {
+		t.Fatal("malformed foreign org recorded")
+	}
+}

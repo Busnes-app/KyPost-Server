@@ -26,7 +26,10 @@ const (
 	Kind = "tenancy"
 )
 
-// The entitlement cache (orgs, K8) and the two org roots (K3/K4). user_orgs and
+// The entitlement cache (orgs, K8), its home_region new in this unreleased series (multi
+// startup is gated, so orgs has no prior shape), and foreign_orgs, the orgs of other cells
+// (MH9), held as ID, cell and revision only so no lookup ever finds them. The two org
+// roots (K3/K4). user_orgs and
 // subject_orgs are write-once: an UPDATE is refused, and writers use plain INSERT.
 // receiving_gateways holds the MX hosts' pinned keys (gateways.go); its rows are never
 // deleted and only gain revoked_at and retired_at. sender_blocks and sender_evidence are
@@ -44,7 +47,8 @@ CREATE TABLE IF NOT EXISTS orgs (
  id TEXT PRIMARY KEY,
  status TEXT NOT NULL CHECK(status IN ('active','suspended','deletion_scheduled','deleted')),
  revision INTEGER NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
- quotas_json TEXT NOT NULL, polled_at INTEGER NOT NULL);
+ quotas_json TEXT NOT NULL, polled_at INTEGER NOT NULL, home_region TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS foreign_orgs (id TEXT PRIMARY KEY, home_region TEXT NOT NULL, revision INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS user_orgs (user_id TEXT PRIMARY KEY, org_id TEXT NOT NULL CHECK(org_id <> ''));
 CREATE TABLE IF NOT EXISTS subject_orgs (
  issuer TEXT NOT NULL, subject TEXT NOT NULL, org_id TEXT NOT NULL CHECK(org_id <> ''),
@@ -94,7 +98,8 @@ CREATE TABLE IF NOT EXISTS orgs (
  id TEXT PRIMARY KEY,
  status TEXT NOT NULL CHECK(status IN ('active','suspended','deletion_scheduled','deleted')),
  revision BIGINT NOT NULL, enabled BIGINT NOT NULL CHECK(enabled IN (0,1)),
- quotas_json TEXT NOT NULL, polled_at BIGINT NOT NULL);
+ quotas_json TEXT NOT NULL, polled_at BIGINT NOT NULL, home_region TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS foreign_orgs (id TEXT PRIMARY KEY, home_region TEXT NOT NULL, revision BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS user_orgs (user_id TEXT PRIMARY KEY, org_id TEXT NOT NULL CHECK(org_id <> ''));
 CREATE TABLE IF NOT EXISTS subject_orgs (
  issuer TEXT NOT NULL, subject TEXT NOT NULL, org_id TEXT NOT NULL CHECK(org_id <> ''),

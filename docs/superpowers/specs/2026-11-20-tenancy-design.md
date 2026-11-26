@@ -1026,7 +1026,10 @@ wait, each on a KyIdentity change listed under the plan:
   `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Its per-mailbox import leases are part of that tier. PR 7 also
   needs multi-host replicas, PRs MH1–MH7 of
   `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md` (amendment, 2026-11-22, below),
-  and MH9, the cell record (second amendment, below).
+  and MH9, the cell record (second amendment, below). MH9 is built as KyIdentity's Cells (its
+  C1–C5): `KY_CELLS`, an orgs poll that caches only this deployment's cells, and refused
+  directory events for other cells' and not-yet-polled orgs (multi-host spec, "MH9 cells as
+  built"). An org of another cell answers as an uncached org on every way in.
 
 1. **Mode and inventory.** `KYPOST_TENANCY` (refused if `multi`), the multi-only `meta` record,
    the multi-only side tables (`orgs`, `user_orgs`, `subject_orgs`; PR 6 adds the purge tables), `users.User.OrgID`
