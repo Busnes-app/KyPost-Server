@@ -509,6 +509,11 @@ jobs:
       - name: supervisord.conf self-check
         run: scripts/supervisord.test.sh
 
+      # The PostgreSQL 17 -> 18 drill's log check (logged), on a stream that keeps writing after
+      # its marker; no Docker. GNU grep here is what made the old pipe form fail.
+      - name: PostgreSQL 17 -> 18 log check self-test
+        run: scripts/test-postgres-17-to-18-logged.test.sh
+
       # A variable .env.example offers but compose never passes does nothing.
       - name: env example reaches compose
         run: scripts/check-env-example.sh

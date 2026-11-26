@@ -30,6 +30,18 @@ cleanup() {
 }
 trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; "${new[@]}" logs postgres-17-dump postgres 2>&1 | tail -40 >&2 || true; exit 1; }
+# logged <pattern> <command...>: does the command's output (stderr too) match? It is read
+# whole first. `logs | grep -q` ended in SIGPIPE (141 under pipefail) when grep stopped at an
+# early match: a check whose marker was there failed (#749 ci-docker), and an `&& fail` check
+# was skipped. A failing command fails the test rather than reading as "not logged".
+logged() {
+  local pattern=$1 out
+  shift
+  out=$("$@" 2>&1) || fail "$* failed"
+  grep -q -- "$pattern" <<<"$out"
+}
+dump_since() { "${new[@]}" logs postgres-17-dump 2>&1 | tail -n +"$((seen + 1))"; } # since $seen
+dump_last() { "${new[@]}" logs postgres-17-dump 2>&1 | tail -n 1; }
 
 git cat-file -e "$prev:docker-compose.replicas.yml" 2>/dev/null || git fetch -q --no-tags --depth=1 origin "$prev"
 git show "$prev:docker-compose.yml" >"$work/old-base.yml"
@@ -80,8 +92,8 @@ in_vol kypost_postgres 'test ! -e /v/upgrade-from-17 && test ! -e /v/18' || fail
 echo "== 2. The next up -d, with the 17 stack still running (no down), moves it to 18"
 up "${new[@]}" || fail "18 did not start after the move"
 # Compose recreates (stops) 17 before it starts the dump, so the dump ran and found no server.
-"${new[@]}" logs postgres-17-dump 2>&1 | grep -q 'dumped /var/lib/postgresql/data' || fail "the dump did not run on up"
-"${new[@]}" logs postgres 2>&1 | grep -q 'restored' || fail "18 did not restore the dump"
+logged 'dumped /var/lib/postgresql/data' "${new[@]}" logs postgres-17-dump || fail "the dump did not run on up"
+logged 'restored' "${new[@]}" logs postgres || fail "18 did not restore the dump"
 [ "$(q 'show server_version_num' | cut -c1-2)" = 18 ] || fail "not PostgreSQL 18"
 [ "$(q "select count(*) || ',' || max(id) || ',' || sum((j->>'g')::int) from t")" = "50000,50000,1250025000" ] || fail "rows"
 [ "$(q "select string_agg(x, ',' order by x) from c" reader readerpass)" = "B,a,é" ] || fail "reader password or C collation"
@@ -101,7 +113,7 @@ down_db "${old[@]}"
 echo "== 3b. Back to 18: the dump refuses because 17 ran since, and 18 does not start"
 seen=$("${new[@]}" logs postgres-17-dump 2>&1 | wc -l)
 up "${new[@]}" 2>/dev/null && fail "18 started without what 17 wrote after the move"
-"${new[@]}" logs postgres-17-dump 2>&1 | tail -n +"$((seen + 1))" | grep -q 'has run on .* since it was moved to 18' || fail "no rollback message"
+logged 'has run on .* since it was moved to 18' dump_since || fail "no rollback message"
 [ -z "$("${new[@]}" ps -q postgres)" ] || fail "18 is running after the refusal"
 
 echo "== 3c. Move again as documented: rename 18/ and upgrade-from-17/; 18 gets the new row"
@@ -119,7 +131,7 @@ down_db "${new[@]}"
 up "${new[@]}" || fail "18 did not restart"
 dumps=$("${new[@]}" logs postgres-17-dump 2>&1 | tail -n +"$((seen + 1))")
 { ! grep -q "dumped" <<<"$dumps" && grep -q "already done" <<<"$dumps"; } || fail "the second up dumped again: $dumps"
-"${new[@]}" logs postgres 2>&1 | grep -q 'restored' && fail "the second up restored again"
+logged 'restored' "${new[@]}" logs postgres && fail "the second up restored again"
 [ "$(q 'select count(*) from t')" = 50001 ] || fail "rows after the second up"
 
 echo "== 4b. Keep 18 after a rollback: delete 18/moved-from-17.checkpoint, and it sticks"
@@ -153,7 +165,7 @@ echo "== 6. The documented clean-up of the dump (17 kept): 18 still starts"
 "${new[@]}" down >/dev/null 2>&1
 "${new[@]}" run --rm --no-deps --entrypoint rm postgres -r /var/lib/postgresql/upgrade-from-17 >/dev/null 2>&1 || fail "the dump clean-up rm failed"
 up "${new[@]}" || fail "18 did not start after removing upgrade-from-17"
-"${new[@]}" logs postgres-17-dump 2>&1 | tail -n 1 | grep -q 'already done' || fail "the dump did not accept the clean-up"
+logged 'already done' dump_last || fail "the dump did not accept the clean-up"
 [ "$(q 'select count(*) from t')" = 50001 ] || fail "rows after the dump clean-up"
 
 echo "== 6b. A rollback after that clean-up is still refused on the way back to 18"
@@ -163,7 +175,7 @@ up "${old[@]}" || fail "17 did not start after the dump clean-up"
 down_db "${old[@]}"
 seen=$("${new[@]}" logs postgres-17-dump 2>&1 | wc -l)
 up "${new[@]}" 2>/dev/null && fail "18 started after a rollback that followed the dump clean-up"
-"${new[@]}" logs postgres-17-dump 2>&1 | tail -n +"$((seen + 1))" | grep -q 'has run on .* since it was moved to 18' || fail "no rollback message after the clean-up"
+logged 'has run on .* since it was moved to 18' dump_since || fail "no rollback message after the clean-up"
 [ -z "$("${new[@]}" ps -q postgres)" ] || fail "18 is running after the refusal (clean-up)"
 "${new[@]}" down >/dev/null 2>&1
 "${new[@]}" run --rm --no-deps --entrypoint rm postgres /var/lib/postgresql/18/moved-from-17.checkpoint >/dev/null 2>&1 || fail "the keep-18 rm failed (clean-up)"
@@ -175,15 +187,15 @@ docker volume rm "${project}_kypost_pgdata" >/dev/null
 up "${new[@]}" || fail "18 did not start after the clean-up"
 [ "$(q 'select count(*) from t')" = 50001 ] || fail "rows after the clean-up"
 in_vol kypost_postgres 'test ! -e /v/upgrade-from-17' || fail "the dump is back"
-"${new[@]}" logs postgres-17-dump 2>&1 | tail -n 1 | grep -q 'already done' || fail "the dump ran again after the clean-up"
+logged 'already done' dump_last || fail "the dump ran again after the clean-up"
 
 echo "== 7. A fresh install initialises 18"
 "${new[@]}" down >/dev/null 2>&1 # frees its database network
 fresh_new=("${compose[@]}" -p "$fresh" -f docker-compose.yml -f docker-compose.replicas.yml)
 sed -i "s/^KYPOST_NETWORK=.*/KYPOST_NETWORK=${fresh}-net/; s/^KYPOST_SUBNET=10.197/KYPOST_SUBNET=10.195/; s/^KYPOST_IP=10.197/KYPOST_IP=10.195/; s/^KYPOST_REPLICA_SUBNET=10.196/KYPOST_REPLICA_SUBNET=10.194/; s/^KYPOST_PROXY_IP=10.196/KYPOST_PROXY_IP=10.194/" "$work/env"
 up "${fresh_new[@]}" || fail "a fresh 18 did not start"
-"${fresh_new[@]}" logs postgres-17-dump 2>&1 | grep -q 'nothing to move' || fail "a fresh install did not skip the dump"
-"${fresh_new[@]}" logs postgres 2>&1 | grep -q 'restored' && fail "a fresh install restored something"
+logged 'nothing to move' "${fresh_new[@]}" logs postgres-17-dump || fail "a fresh install did not skip the dump"
+logged 'restored' "${fresh_new[@]}" logs postgres && fail "a fresh install restored something"
 [ "$(client "$fresh" "$pg_pw" kypost "select current_setting('data_directory') || ',' || datcollate from pg_database where datname = 'kypost'")" = /var/lib/postgresql/18/docker,C ] ||
   fail "fresh data directory or locale"
 client "$fresh" wrong-password kypost 'select 1' >/dev/null 2>&1 && fail "a fresh install let a wrong password in"

@@ -18,6 +18,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- CI: the PostgreSQL 17 → 18 test reads each log whole before matching it. Piping a live log into `grep -q` could fail a check whose marker was there (SIGPIPE under `pipefail`); a self-test without Docker now covers that.
 - Refuse a new OpenPGP key unless it is a v4 Ed25519/Curve25519 or RSA-2048+ key (ML-KEM-768+X25519 subkeys allowed) or a v6 Ed25519/X25519 or ML-DSA-65+Ed25519 / ML-KEM-768+X25519 key, on every way a key enters: identity upload, contacts, vCard and CardDAV, WKD, the keyserver and Autocrypt. The error names the algorithm; stored keys keep working. See [key strength](docs/STRONG-CRYPTO.md).
 - Send a minimal Autocrypt key (the From User ID and the current encryption subkey), and neither send nor read an Autocrypt header over 10 KiB.
 - Add shared OpenPGP v6 and post-quantum (RFC 9980) test fixtures in `testdata/openpgp-v6/`, and pin incoming encryption to v4 keys byte for byte. No user's keys or mail change.
