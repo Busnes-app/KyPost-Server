@@ -317,8 +317,8 @@ Each has a recommendation. The first is the big one.
    per-user opt-in.**
 5. **Browser library.** (a) Build P0-P3 now and wait for an openpgp.js v7 release for P4. (b) Pin an
    openpgp.js v7 pre-release commit from `main` now. (c) Compile gopenpgp to WebAssembly so the browser runs
-   the same library as the server and the Mac (a large bundle, and Go WebAssembly gives weaker constant-time
-   guarantees).
+   the same library as the server and the Mac (a bundle of several MB, and the browser would no longer share
+   openpgp.js's interop testing).
    **Recommend (a), and track v7. If v7 has no release by the time P3 merges, revisit (b) with the
    cross-implementation test suite as the gate.**
 6. **Linux backend.** GnuPG cannot read v6. (a) Replace gpgme with gopenpgp built as a Go c-archive, the same
