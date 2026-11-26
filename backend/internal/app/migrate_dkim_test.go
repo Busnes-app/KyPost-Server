@@ -85,11 +85,11 @@ func TestMigrateNativeAddsDKIMKeysToDirectProfile(t *testing.T) {
 // setup-status reads the relay but reports only booleans.
 func TestSetupStatusHidesDKIMKey(t *testing.T) {
 	setupTestRoots(t)
-	b := setupBundle{Version: 1, SSO: &sso.SSOSettings{Enabled: true, IssuerURL: "https://identity.example.com", ClientID: "kypost", ClientSecret: "private-test-client-secret"}, PairingSecret: setupTestKey(t), Domains: []string{"example.com"}}
+	b := setupBundle{Version: 1, SSO: &sso.SSOSettings{Enabled: true, IssuerURL: "https://identity.example.test", ClientID: "kypost", ClientSecret: "private-test-client-secret"}, PairingSecret: setupTestKey(t), Domains: []string{"example.com"}}
 	if _, e := setupTestBundle(t, b); e != nil {
 		t.Fatal(e)
 	}
-	relay, err := mailmsg.SaveDomainRelay(context.Background(), filepath.Join(config.ConfigDir(), "native-relay.json"), filepath.Join(config.SecretDir(), "native-relay.key"), mailmsg.DomainRelay{Mode: "direct", Domains: []string{"example.com"}, Issuer: "https://identity.example.com", Host: "mail.example.com"})
+	relay, err := mailmsg.SaveDomainRelay(context.Background(), filepath.Join(config.ConfigDir(), "native-relay.json"), filepath.Join(config.SecretDir(), "native-relay.key"), mailmsg.DomainRelay{Mode: "direct", Domains: []string{"example.com"}, Issuer: "https://identity.example.test", Host: "mail.example.com"})
 	if err != nil || len(relay.DKIM) != 1 {
 		t.Fatal(err)
 	}

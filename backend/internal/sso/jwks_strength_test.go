@@ -15,6 +15,7 @@ import (
 // Every verifier KyPost uses: browser exchange, native sign-on and back-channel
 // logout. Undersized provider keys must be refused on each.
 func TestEveryTokenVerifierRefusesRSABelow2048(t *testing.T) {
+	releaseOnly(t)
 	for _, bits := range []int{1024, 2047} {
 		key, err := rsa.GenerateKey(rand.Reader, bits)
 		if err != nil {

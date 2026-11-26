@@ -42,13 +42,14 @@ func TestTenancy(t *testing.T) {
 	}
 }
 
-// Until hosted mail lands, every process refuses multi mode at startup.
+// Until hosted mail lands, every process refuses multi mode at startup in a release build;
+// only the end-to-end test build lets it through (taggedBuild, from the build tag).
 func TestCheckEnvRefusesMulti(t *testing.T) {
 	t.Setenv("KYPOST_TENANCY", "multi")
 	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d")
-	if err := CheckEnv(); err == nil || !strings.Contains(err.Error(), ErrMultiTenancyUnavailable.Error()) {
-		t.Fatalf("multi: %v", err)
+	if err := CheckEnv(); taggedBuild && err != nil || !taggedBuild && (err == nil || !strings.Contains(err.Error(), ErrMultiTenancyUnavailable.Error())) {
+		t.Fatalf("multi, test build %v: %v", taggedBuild, err)
 	}
 	t.Setenv("KYPOST_TENANCY", "bogus")
 	if err := CheckEnv(); err == nil || !strings.Contains(err.Error(), "KYPOST_TENANCY") {
@@ -61,6 +62,27 @@ func TestCheckEnvRefusesMulti(t *testing.T) {
 		if err := CheckEnv(); err != nil {
 			t.Fatalf("%q: %v", v, err)
 		}
+	}
+}
+
+// The end-to-end test build takes only an https issuer under the reserved .test domain.
+func TestCheckTestIssuer(t *testing.T) {
+	for issuer, ok := range map[string]bool{
+		"https://id.e2e.test": true, "https://ID.E2E.TEST/": true, "https://id.e2e.test:8443": true,
+		"": false, "http://id.e2e.test": false, "https://id.example": false, "https://test": false,
+		"https://id.test.example": false, "https://id.e2e.test.": false, "https://idtest": false,
+	} {
+		if err := CheckTestIssuer(issuer); (err == nil) != ok {
+			t.Errorf("%q: %v, want ok=%v", issuer, err, ok)
+		}
+	}
+}
+
+// The gate constant is the build tag's, and nothing else's: an edit to either gate file
+// fails here in that build, as well as in every test that expects one build's behaviour.
+func TestGateMatchesBuildTag(t *testing.T) {
+	if MultiTenantBuild != taggedBuild {
+		t.Fatalf("MultiTenantBuild is %v in a build tagged %v", MultiTenantBuild, taggedBuild)
 	}
 }
 

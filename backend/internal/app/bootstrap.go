@@ -33,10 +33,14 @@ const bootstrapPasswordFile = users.BootstrapPasswordFile
 // aggregator. MUST_CHANGE_PASSWORD narrows the window; it does not stop the
 // password sitting in a log forever.
 func BootstrapAdmin() error {
-	// Multi mode has no bootstrap administrator (tenancy design K6); a bad value stops here too.
+	// Multi mode has no bootstrap administrator (tenancy design K6), so the end-to-end test
+	// build has nothing to do; a release build refuses multi. A bad value stops here too.
 	if mode, _, err := config.Tenancy(); err != nil {
 		return err
 	} else if mode == config.TenancyMulti {
+		if config.MultiTenantBuild {
+			return nil
+		}
 		return config.ErrMultiTenancyUnavailable
 	}
 	configDir := config.ConfigDir()
