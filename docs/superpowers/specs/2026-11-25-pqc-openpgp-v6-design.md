@@ -1,6 +1,7 @@
 # KyPost OpenPGP v6 and post-quantum keys, design
 
-Date: 2026-11-25. Status: **approved** (see "Owner answers"). Only Q12 is unanswered. P0 is being built. Owner request (2026-11-25): move KyPost to OpenPGP v6 (RFC 9580) with post-quantum keys,
+Date: 2026-11-25. Status: **approved** (see "Owner answers", updated 2026-11-26).
+The P0 server groundwork landed in #747 and #749. Owner request (2026-11-25): move KyPost to OpenPGP v6 (RFC 9580) with post-quantum keys,
 then move the whole Ky stack to post-quantum cryptography. The suite-wide plan is
 `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-stack-plan.md` (**B**). The primary-source research both
 specs rely on is `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-research.md` (**R**).
@@ -8,41 +9,29 @@ specs rely on is `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-research.m
 ## Owner answers (2026-11-25)
 
 - **Approved as recommended:** Q1, Q2, Q3, Q4, Q6, Q8, Q11.
-- **Q5, changed: pin an openpgp.js v7 pre-release now, and keep it updatable by Dependabot.**
-  - No v7 is published to npm: `dist-tags` is `{latest: 6.3.3}` and there are no `7.*` versions, checked
-    2026-11-25. The pin is therefore a git dependency on an exact openpgpjs `main` commit, the line that carries
-    RFC 9980 (PR #2022).
-  - The PR that adds it proves two things: Dependabot opens an update for that git dependency (unproven so
-    far), and the build passes against the RFC 9980 fixtures.
-  - Browser **read** support moves forward into P3 (below).
-  - **Where openpgp.js cannot do a job, the browser runs gopenpgp compiled to WebAssembly**: the same library
-    and KyPost profile as the server and the Mac. A spike on Go 1.27.3 with gopenpgp v3.5.2 `profile.PQC()`,
-    run under Node 26 (not yet in a browser), passed:
-    - it generated a v6 key with algorithm 30 and a 13,680-byte public certificate (the estimate was ~13.8 KB);
-    - it encrypted, signed, decrypted and verified;
-    - each operation took 4-18 ms;
-    - the module is 8.8 MB, 2.4 MB gzipped.
-  - It is lazily loaded, and used only for what openpgp.js lacks. Today that is ML-KEM-1024+X448 and
-    ML-DSA-87+Ed448 (openpgp.js PR #2077, still open), and any RFC 9980 case where the cross-implementation
-    fixtures show openpgp.js v7 disagreeing with go-crypto and Bouncy Castle.
+- **Q5 approved (2026-11-26).** Replace the browser's openpgp.js engine with lazily loaded `gopenpgp`
+  WebAssembly for both v4 and v6. Use the same KyPost gopenpgp profile as the server and Mac/iOS.
+  P3 includes browser read support and v4 compatibility. P4 adds browser v6 generation and rollout.
+  The evaluation in [KyPost-Server #748](https://github.com/Busnes-app/KyPost-Server/pull/748) exercised
+  both engines and recorded size, startup and operation times, compatibility, and the CSP change required
+  by the WASM build. Production qualification still needs the browser and key handling checks below.
 - **Q9, overturned: a person's mail is encrypted to their v6 certificate, and KyPost uses v6 whenever
   possible.** Mail already stored is re-encrypted (new phase P6 below), and so is any message that still
   arrives encrypted to the v4 key.
 - **Second round (2026-11-25, later):**
-  - **Q5 extended:** since gopenpgp compiles to WebAssembly, *test it as a full replacement for openpgp.js*, not
-    only as a fallback. A draft evaluation PR (`feat/pqc-wasm-engine`) runs the existing browser test suite
-    against both engines and reports size, load time, interop, the CSP change and the secret-handling posture.
-    The choice between openpgp.js v7 and gopenpgp WASM is made on those numbers.
   - **Q7 approved:** category 3 (ML-KEM-768 / ML-DSA-65) for now.
   - **Q9 approved**, as overturned above (re-encrypt to v6, P6).
   - **Q10 approved:** sign with the key that matches each delivery; no dual signing.
-  - **Q12 not answered:** until it is, P3-P6 wait for the owner's merge approval; P0-P2 merge on the usual gate.
+- **Q12 approved (2026-11-26).** The merge owner may merge P3–P6 when CI, security review and the PR
+  Reviewer Guide pass on the current head. This approval covers every phase. The individual rollout and
+  interop gates still apply.
 
 Line references are to KyPost-Server `origin/main` at `928ba0be`. Server paths are relative to the repo
 root. Client references are to KyPost-for-Android `01f304bb` (**A:**), KyPost-for-Mac `165148e` (**M:**,
 one target for macOS and iOS) and KyPost-for-Linux `ae383bf` (**L:**). Server references were read in
 code; the client ones were read by a sub-agent and spot-checked at the headline level, so treat a client
-line number as "reported". **Nothing here was run.** "Unverified" marks a claim no one checked.
+line number as "reported". The source inventory describes that snapshot. "Unverified" marks a claim
+without executed evidence.
 
 ## Summary
 
@@ -57,9 +46,8 @@ line number as "reported". **Nothing here was run.** "Unverified" marks a claim 
   default profile (`backend/internal/pgpmail/mime.go:179`).
 - **The browser is the critical path.** The browser is the only place a KyPost account key is generated
   (`frontend/src/lib/pgpClient.ts:63-68`), and it decrypts and signs every client-custody message.
-  openpgp.js 6.3.3 (`frontend/package.json:20`) has no PQC. RFC 9980 support exists only on the unreleased
-  **openpgp.js v7** line (openpgpjs PR #2022, merged to `v7` on 2026-07-10). Its 6.x `pqc_*` enum
-  declarations use pre-RFC code points 105/107 and must never be used.
+  The existing openpgp.js 6.3.3 build (`frontend/package.json:20`) has no RFC 9980 support. The selected
+  gopenpgp WebAssembly path covers both versions using a shared profile and interoperable fixtures.
 - **The ecosystem is not ready for v6 keys from strangers.** GnuPG speaks LibrePGP and cannot process v6
   certificates; shipped Thunderbird (RNP 0.18) has no RFC 9980; Gmail has no OpenPGP; GPGTools, OpenKeychain
   and Mailvelope are v4-only (R §8). Per the 2026 OpenPGP Email Summit minutes, a v6 certificate or signature
@@ -74,8 +62,8 @@ line number as "reported". **Nothing here was run.** "Unverified" marks a claim 
   that carries the account private key or ring through the server is HPKE DHKEM(P-256)
   (`backend/internal/users/pgp_device_delivery.go:78`, `frontend/src/lib/deviceEnrollment.ts:380-397`).
   Anyone who records it and later breaks P-256 gets every message, past and future. Moving it to X-Wing
-  (ML-KEM-768+X25519), which ky-primitives already uses for backups, is phase P2 and does not wait for
-  openpgp.js v7.
+  (ML-KEM-768+X25519), which ky-primitives already uses for backups, is phase P2 and can proceed
+  independently of the browser OpenPGP engine migration.
 - **Mail already stored gets re-encrypted (owner, Q9).** Every incoming-encrypted INBOX message, Sent copy and
   draft so far is X25519 ECDH with SEIPDv1. The user's own client re-encrypts it to the v6 certificate in P6,
   because only the client holds the key.
@@ -99,7 +87,7 @@ Each row: where, what it does today, what v6 + PQC needs. Numbers in brackets ar
 
 | Item | Location | Today | v6 + PQC |
 |---|---|---|---|
-| Browser generator, the only one | `frontend/src/lib/pgpClient.ts:43-75` (call at `:63-68`; rationale comment `:36-41`) | openpgp.js `type:"ecc", curve:"curve25519Legacy"`: v4 EdDSA-legacy primary (algo 22) + v4 ECDH cv25519 subkey (algo 18). No passphrase (S2K usage 0); protection is the keyVault envelope. One key per account, one User ID per account address | Generate a second, v6 certificate: ML-DSA-65+Ed25519 (30) primary, ML-KEM-768+X25519 (35) subkey, needs openpgp.js v7 [P4]. Keep `passphrase` unset: all three native clients refuse protected keys by design (A:…/pgp/PgpKeyring.kt:142-145; M:…/GopenPGPCrypto.swift:301-309) |
+| Browser generator, the only one | `frontend/src/lib/pgpClient.ts:43-75` (call at `:63-68`; rationale comment `:36-41`) | openpgp.js `type:"ecc", curve:"curve25519Legacy"`: v4 EdDSA-legacy primary (algo 22) + v4 ECDH cv25519 subkey (algo 18). No passphrase (S2K usage 0); protection is the keyVault envelope. One key per account, one User ID per account address | Generate a second, v6 certificate: ML-DSA-65+Ed25519 (30) primary, ML-KEM-768+X25519 (35) subkey, with gopenpgp WebAssembly [P4]. Keep `passphrase` unset: all three native clients refuse protected keys by design (A:…/pgp/PgpKeyring.kt:142-145; M:…/GopenPGPCrypto.swift:301-309) |
 | Server generation and import | `backend/internal/api/server.go:928-929`; `docs/E2E_PGP.md:22-27` | Retired; the routes refuse | No change |
 | Legacy server-custody keys and the test helper | `backend/internal/pgpmail/pgpmailtest/pgpmailtest.go:30-40` | `crypto.PGP().KeyGeneration()`: v4 EdDSA | Test helper gains a v6 PQC variant [P0] |
 | Public-key upload validation | `backend/internal/pgpmail/identity.go:103-128`; refusal of revoked or expired `backend/internal/api/pgp_client_keys.go:96-106` | Parses, refuses private, re-armors, derives fingerprints itself. **No algorithm or version allowlist**: anything go-crypto parses is stored and published | Add an explicit allowlist: v4 {Ed25519-legacy, cv25519, RSA ≥ 2048, ID 35 subkey}, v6 {27, 25, 30, 35} (31/36 per Q7). Refuse pre-RFC 105/107 and anything else [P0] |
@@ -145,8 +133,8 @@ Each row: where, what it does today, what v6 + PQC needs. Numbers in brackets ar
 
 | Item | Location | Today | v6 + PQC |
 |---|---|---|---|
-| OpenPGP library | `frontend/package.json:20`, lock `frontend/package-lock.json:1999-2002` | openpgp.js 6.3.3, lazily imported (`pgpClient.ts:5-7,22-24`) | openpgp.js v7 (Q5). Cross-check its output against go-crypto and Bouncy Castle and the RFC 9980 test vectors |
-| Device sealing | `frontend/src/lib/deviceEnrollment.ts:380-397`; `@hpke/core` 1.10.1 | HPKE `HPKE-Base-P256-SHA256-A256GCM` | X-Wing (P2). The browser needs an X-Wing HPKE implementation (`@hpke/hybridkem-x-wing`, or noble post-quantum that openpgp.js v7 uses; neither checked) |
+| OpenPGP library | `frontend/package.json:20`, lock `frontend/package-lock.json:1999-2002` | openpgp.js 6.3.3, lazily imported (`pgpClient.ts:5-7,22-24`) | gopenpgp WebAssembly for v4 and v6 (Q5). Cross-check its output against go-crypto and Bouncy Castle using the RFC 9980 fixtures |
+| Device sealing | `frontend/src/lib/deviceEnrollment.ts:380-397`; `@hpke/core` 1.10.1 | HPKE `HPKE-Base-P256-SHA256-A256GCM` | X-Wing (P2). The browser uses the shared ky-primitives X-Wing WebAssembly implementation (spec B Q3) |
 | Probe | `docs/pgp-key-lifecycle-check.cjs` | Exercises the pinned openpgp.js | Extend to v6 and RFC 9980 |
 
 ### 6. Native clients
@@ -268,7 +256,7 @@ quantum-safe" before send (Q1).
 
 The rollout is a Tier 5 conversion (`docs/PGP_KEY_LIFECYCLE.md`) that keeps the v4 key active:
 
-1. The browser generates the v6 certificate (openpgp.js v7) on the next unlock, adds it to a v2 ring with both
+1. The browser generates the v6 certificate with gopenpgp WebAssembly on the next unlock, adds it to a v2 ring with both
    keys active, re-seals the password and recovery envelopes, and uploads the public certificate.
 2. The server validates it through the P0 allowlist and stores it beside the v4 key.
 3. Each enrolled device gets a new envelope (v6 X-Wing) with the v2 ring. Devices that cannot read v6 are
@@ -282,8 +270,8 @@ A Linux client on GnuPG cannot decrypt v6. Devices already publish the envelope 
 (`envelopeVersions`, `backend/internal/api/pgp_device_enrollment.go:53`, tested in
 `backend/internal/api/pgp_device_capabilities_test.go`). P3 adds an OpenPGP capability beside it (`openpgp:
 ["v4","v6","rfc9980"]`). The switch in step 4 waits for every device, so an account with a Linux device stays
-v4 until the Linux backend (Q6) ships. The browser has no enrolled-device record; it reads v6 once P4 ships,
-and P4 is the last step before any switch.
+v4 until the Linux backend (Q6) ships. The browser has no enrolled-device record. P3 qualifies browser
+v6 reads, and P4 is the last step before any switch.
 
 ### Existing stored mail (P6, owner Q9)
 
@@ -310,15 +298,15 @@ Limits:
 
 ## Phases
 
-Each phase is one PR or two, at most two stacked. P0-P2 change no user's keys and can merge on the
-usual gate. P3-P5 change what users' keys and mail can do, so each needs the owner's merge approval.
+Each phase is one PR or two, at most two stacked. The merge owner may merge P0–P6 when current-head CI,
+security review and the PR Reviewer Guide pass (Q12). Phase dependencies and the rollout gates below still apply.
 
 | Phase | Scope | Depends on |
 |---|---|---|
 | **P0 groundwork** | Server algorithm/version allowlist; multi-certificate WKD fetch; contacts hold v4 + v6 keys and pins; signer-binding parse cache, sender-only `pgp-payload` keys; Autocrypt minimization and 10 KiB cap both ways; 64-hex QR on all clients; shared v6 Ed25519 and RFC 9980 fixtures in `testdata/` (keys, ring, both message rows, signatures), made with go-crypto and cross-checked with BC 1.87; golden test for v4 incoming encryption; ML-DSA-65 timings in CI; fix the doc drift (SAS length in `docs/DEVICE_ENROLLMENT.md:101-117`, advertised versions at `:220-221`, the `GOTOOLCHAIN=go1.26.9` pin at `docs/PGP_KEY_LIFECYCLE.md:247`) | Nothing |
 | **P1 server profile** | The KyPost profile; `EncryptStoredMIME` encrypts to the v6 certificate when the account's switch is on (nothing can turn it on before P4, because no account has a v6 certificate until then) | P0 |
 | **P2 PQ device envelope** | Envelope v6 with X-Wing HPKE on server, browser and three clients; SAS v2; X-Wing device keys (Q8); v4/v5 stay accepted until every client ships v6, then the server stops issuing them | P0; ky-primitives HPKE helper from B |
-| **P3 clients read v6** | Android (BC 1.87), Mac/iOS (gopenpgp profile), Linux backend (gopenpgp c-archive, Q6), **browser (pinned openpgp.js v7 commit, gopenpgp WASM fallback, Q5)**: decrypt v6 PKESK + SEIPDv2 and ID 35, verify ML-DSA composites, v2 rings, larger caps, device capability report | P0 |
+| **P3 clients read v6** | Android (BC 1.87), Mac/iOS (gopenpgp profile), Linux backend (gopenpgp c-archive, Q6), **browser (gopenpgp WebAssembly, Q5)**: decrypt v6 PKESK + SEIPDv2 and ID 35, verify ML-DSA composites, v2 rings, larger caps, device capability report | P0 |
 | **P4 browser keys** | v6 generation; v2 ring; Tier 5 conversion keeping v4 active; capability-split delivery groups; "not quantum-safe" marking | P1-P3 |
 | **P6 archive to v6** | Re-encrypt every stored message still addressed to the v4 key to the v6 certificate (Q9) | P4 |
 | **P5 outside world** | Q4's ID 35 subkey on v4 certificates; Q3's v6 publication on WKD; Autocrypt v2 when it is more than an individual draft; key-replacement links (draft-ietf-openpgp-replacementkey) | An interop matrix run (below); P4 |
@@ -342,8 +330,9 @@ blocks that publication default.
 - Step 4 switch: incoming encryption stays v4 while any enrolled device lacks v6 capability.
 - P6: the server refuses a replacement whose PKESK names any key but the account's current v6 encryption
   subkey, and one whose compare-and-swap hash does not match the stored ciphertext.
-- P3: the browser decrypts the shared RFC 9980 fixtures with the pinned openpgp.js v7 and with the WASM fallback,
-  and both agree with go-crypto and Bouncy Castle.
+- P3: the browser uses gopenpgp WebAssembly to decrypt and verify the shared RFC 9980 fixtures and agrees
+  with go-crypto and Bouncy Castle. Verify v4 browser parity, keyring parsing, and signing trust under
+  the production CSP. Test the lazy load and key handling on a real browser before enabling the engine.
 
 ## Owner questions
 
@@ -372,12 +361,8 @@ Each has a recommendation. The first is the big one.
    The risk: per the summit minutes, older Thunderbird and go-crypto failed on unknown subkey algorithms.
    **Recommend yes, in P5, default-on only if the interop matrix shows no tool that errors; otherwise
    per-user opt-in.**
-5. **Browser library.** (a) Build P0-P3 now and wait for an openpgp.js v7 release for P4. (b) Pin an
-   openpgp.js v7 pre-release commit from `main` now. (c) Compile gopenpgp to WebAssembly so the browser runs
-   the same library as the server and the Mac (a bundle of several MB, and the browser would no longer share
-   openpgp.js's interop testing).
-   **Recommend (a), and track v7. If v7 has no release by the time P3 merges, revisit (b) with the
-   cross-implementation test suite as the gate.**
+5. **Browser library.** The owner selected gopenpgp WebAssembly as the browser engine for both v4 and v6
+   after the evaluation in #748. Use openpgp.js only as an interoperability target.
 6. **Linux backend.** GnuPG cannot read v6. (a) Replace gpgme with gopenpgp built as a Go c-archive, the same
    library and profile as the server and the Mac. (b) Sequoia (Rust, RFC 9980 since 2.4.0) through its C or
    Rust bindings. (c) Keep GnuPG; Linux users stay on v4 for their own mail, and accounts with a Linux device
@@ -410,5 +395,5 @@ Each has a recommendation. The first is the big one.
 11. **Dependency on Tier 5.** The rollout needs Tier 5 key conversion and native ring persistence on all three
     clients (`docs/PGP_KEY_LIFECYCLE.md`), which are designed, not shipped. **Recommend building the Tier 5
     conversion as part of P3/P4 rather than as a separate project first.**
-12. **Merge approval.** P0-P2 change no user's keys or mail. **Recommend: P0-P2 merge on the usual gate
-    (CI, security reviewer, Guide), and P3-P5 each wait for your explicit approval.**
+12. **Merge approval.** The owner approved P3–P6 for merge by the merge owner on the normal current-head
+    CI, security review and PR Reviewer Guide gates.
