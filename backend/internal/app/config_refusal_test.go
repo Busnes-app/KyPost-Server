@@ -1,10 +1,13 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 )
 
 // The api and daemon processes run the same Run, so a bad value stops both
@@ -46,9 +49,10 @@ func TestRunRefusesMultiTenancy(t *testing.T) {
 	for _, mode := range []string{"server", "daemon", "all", "bootstrap-admin"} {
 		err := Run([]string{"--mode", mode})
 		refused := err != nil && strings.Contains(err.Error(), "KYPOST_TENANCY=multi is not available")
-		// The end-to-end test build passes the gate: bootstrap has nothing to do, and the
-		// next multi requirement (PostgreSQL) refuses the rest.
-		if taggedBuild && (refused || mode != "bootstrap-admin" && err == nil) || !taggedBuild && !refused {
+		// The end-to-end test build passes the gate: bootstrap has nothing to do, and every
+		// other mode then refuses the cell that has no masked relay region code (MH9).
+		noCode := errors.Is(err, tenancy.ErrNoRelayCode)
+		if taggedBuild && (refused || mode != "bootstrap-admin" && !noCode) || !taggedBuild && !refused {
 			t.Fatalf("%s, test build %v: %v", mode, taggedBuild, err)
 		}
 	}

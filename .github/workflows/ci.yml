@@ -657,6 +657,10 @@ jobs:
       - name: Image is a release build
         run: scripts/check-release-image.sh kypost-server:ci
 
+      # docs/CELL-RECOVERY.md steps 1-4, 6 and 7 on disposable containers.
+      - name: cell promotion rehearsal
+        run: scripts/rehearse-cell-promotion.sh kypost-server:ci
+
       - name: supervisor drains separate groups serially
         run: docker run --rm --network none --user kypost --entrypoint python3 kypost-server:ci /opt/kypost/scripts/check-supervisor-shutdown.py --runtime-only
 

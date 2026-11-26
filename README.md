@@ -82,6 +82,7 @@ For Identity-first or Notes-only standalone installs, `bash scripts/ensure-netwo
 - [TLS](docs/TLS.md) — Inbound TLS and reverse-proxy configuration.
 - [Storage and recovery](docs/STORAGE-AND-RECOVERY.md) — Persistence, Backup and Restore. <a id="persistence"></a><a id="backup-and-restore"></a><a id="back-up"></a><a id="restore"></a><a id="verify-the-restore"></a>
 - [Restore runbook](docs/RESTORE.md) — Scratch restore verification and sealed-backup recovery.
+- [Cell recovery](docs/CELL-RECOVERY.md) — Hosted cells: masked relay region codes and regional disaster recovery.
 - [Logging](LOGGING.md) — Structured JSON logs, redaction, and supervisord log streams.
 - [Development](docs/DEVELOPMENT.md) — API Highlights, Build and Dev Checks. <a id="api-highlights"></a><a id="build-and-dev-checks"></a>
 - [Operations](docs/OPERATIONS.md) — Operations, Updating KyPost, Troubleshooting. <a id="operations"></a><a id="updating-kypost"></a><a id="verifying-an-image-by-hand"></a><a id="moving-a-locally-built-install-onto-published-images"></a><a id="troubleshooting"></a><a id="ollama-or-model-issues"></a><a id="imap-connection-issues"></a><a id="smtp-send-issues"></a><a id="kypost-does-not-apply-labels"></a><a id="pwa-installation-on-firefox"></a>
