@@ -1,16 +1,19 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
@@ -141,13 +144,26 @@ func wkdCandidateURLs(localPart, domain string) []string {
 	}
 }
 
-// fetchWKDKey attempts Web Key Directory discovery for email, trying the
-// advanced method then the direct method. It returns an armored public key
-// validated to carry email as a UID and to be currently usable.
-func fetchWKDKey(ctx context.Context, email string) (string, string, error) {
+// maxWKDCertificates bounds how many certificates of one WKD answer are
+// validated: each costs a parse and a status check, and the 1 MiB body cap
+// alone would admit hundreds.
+const maxWKDCertificates = 8
+
+// wkdCert is one validated certificate from a WKD answer.
+type wkdCert struct {
+	Armored     string
+	Fingerprint string
+	Class       keyClass
+}
+
+// fetchWKDKeys attempts Web Key Directory discovery for email, trying the
+// advanced method then the direct method. It returns every certificate in the
+// first answer that has any valid one, each validated to carry email as a UID
+// and to be currently usable, best first (keyClass.rank).
+func fetchWKDKeys(ctx context.Context, email string) ([]wkdCert, error) {
 	at := strings.LastIndex(email, "@")
 	if at <= 0 || at == len(email)-1 {
-		return "", "", fmt.Errorf("invalid email %q", email)
+		return nil, fmt.Errorf("invalid email %q", email)
 	}
 	localPart, domain := email[:at], email[at+1:]
 	client := newSSRFSafeHTTPClient(10 * time.Second)
@@ -157,7 +173,7 @@ func fetchWKDKey(ctx context.Context, email string) (string, string, error) {
 		// Distinguished from "no key published" on purpose: this address can
 		// never be looked up, so a caller retrying or caching a negative
 		// result is answering a different question.
-		return "", "", fmt.Errorf("invalid WKD domain %q", domain)
+		return nil, fmt.Errorf("invalid WKD domain %q", domain)
 	}
 
 	var lastErr error
@@ -186,25 +202,60 @@ func fetchWKDKey(ctx context.Context, email string) (string, string, error) {
 			lastErr = fmt.Errorf("wkd %s: status %d", u, resp.StatusCode)
 			continue
 		}
-		key, err := crypto.NewKey(body) // WKD serves binary keys
+		certs, err := wkdCertificates(body, email)
 		if err != nil {
-			lastErr = fmt.Errorf("wkd %s: parse: %w", u, err)
+			lastErr = fmt.Errorf("wkd %s: %w", u, err)
 			continue
 		}
-		armored, err := key.GetArmoredPublicKey()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		fp, err := validateDiscoveredKey(armored, email)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return armored, fp, nil
+		return certs, nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no WKD key for %s", email)
 	}
-	return "", "", lastErr
+	return nil, lastErr
+}
+
+// wkdCertificates reads every certificate in a WKD answer, which may hold
+// several concatenated (draft-koch-openpgp-webkey-service-22 §3.1). Reading
+// only the first let the server's ordering, not KyPost, decide which one we
+// use. Each must pass validateDiscoveredKey on its own; the rest are dropped.
+func wkdCertificates(body []byte, email string) ([]wkdCert, error) {
+	read := openpgp.ReadKeyRing // WKD serves binary keys
+	if bytes.HasPrefix(bytes.TrimSpace(body), []byte("-----BEGIN")) {
+		read = openpgp.ReadArmoredKeyRing
+	}
+	entities, err := read(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	var out []wkdCert
+	for i, e := range entities {
+		if i == maxWKDCertificates {
+			break
+		}
+		key, kerr := crypto.NewKeyFromEntity(e)
+		if kerr != nil {
+			err = kerr
+			continue
+		}
+		armored, kerr := key.GetArmoredPublicKey()
+		if kerr != nil {
+			err = kerr
+			continue
+		}
+		fp, kerr := validateDiscoveredKey(armored, email)
+		if kerr != nil {
+			err = kerr
+			continue
+		}
+		out = append(out, wkdCert{Armored: armored, Fingerprint: fp, Class: classOfEntity(e)})
+	}
+	if len(out) == 0 {
+		if err == nil {
+			err = fmt.Errorf("no certificate for %s", email)
+		}
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Class.rank() > out[j].Class.rank() })
+	return out, nil
 }

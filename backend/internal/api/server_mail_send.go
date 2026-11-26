@@ -210,17 +210,16 @@ func sanitizeHeaderValue(value string) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r", " "), "\n", " "))
 }
 
-// findContactPGPKey looks up email among the store's contacts (case-
-// insensitive) and returns its armored PGP public key, if the matching
-// contact has one on file.
-func findContactPGPKey(store *contacts.Store, email string) (string, bool, error) {
+// findKeyedContact looks up email among the store's contacts (case-
+// insensitive) and returns the first contact that has a PGP key on file.
+func findKeyedContact(store *contacts.Store, email string) (contacts.Contact, bool, error) {
 	target := strings.ToLower(strings.TrimSpace(email))
 	if target == "" {
-		return "", false, nil
+		return contacts.Contact{}, false, nil
 	}
 	all, err := store.List()
 	if err != nil {
-		return "", false, err
+		return contacts.Contact{}, false, err
 	}
 	for _, c := range all {
 		if c.PGPKey == "" {
@@ -228,11 +227,11 @@ func findContactPGPKey(store *contacts.Store, email string) (string, bool, error
 		}
 		for _, e := range c.Emails {
 			if strings.ToLower(strings.TrimSpace(e.Value)) == target {
-				return c.PGPKey, true, nil
+				return c, true, nil
 			}
 		}
 	}
-	return "", false, nil
+	return contacts.Contact{}, false, nil
 }
 
 // buildPGPRecipientPlan resolves each recipient's contact PGP key and

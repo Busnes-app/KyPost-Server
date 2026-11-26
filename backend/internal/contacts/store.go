@@ -387,13 +387,22 @@ func (s *Store) attemptConfirmPGPKey(uid, fingerprint string) (c Contact, ok boo
 	if !ok || c.Deleted {
 		return Contact{}, false, nil
 	}
-	pin := c.PGPKeyFingerprint
-	if pin == "" || !strings.EqualFold(strings.ReplaceAll(fingerprint, " ", ""), pin) || !strings.EqualFold(pgpKeyFingerprint(c.PGPKey), pin) {
+	fingerprint = strings.ReplaceAll(fingerprint, " ", "")
+	switch {
+	case pinConfirms(fingerprint, c.PGPKeyFingerprint, c.PGPKey):
+		c.PGPKeyVerified = true
+	case pinConfirms(fingerprint, c.PGPKeyV6Fingerprint, c.PGPKeyV6):
+		c.PGPKeyV6Verified = true
+	default:
 		return Contact{}, true, ErrPGPKeyMismatch
 	}
-	c.PGPKeyVerified = true
 	c, err = s.upsertLocked(c)
 	return c, true, err
+}
+
+// pinConfirms reports whether fingerprint is pin and key still matches it.
+func pinConfirms(fingerprint, pin, key string) bool {
+	return pin != "" && strings.EqualFold(fingerprint, pin) && strings.EqualFold(pgpKeyFingerprint(key), pin)
 }
 
 func (s *Store) upsertLocked(c Contact) (Contact, error) {
@@ -436,10 +445,15 @@ func (s *Store) applyUpsertLocked(c Contact) (Contact, error) {
 
 	// Never persist secret key material, whichever writer supplied it.
 	c.PGPKey = publicPGPKey(c.PGPKey)
+	c.PGPKeyV6 = publicPGPKey(c.PGPKeyV6)
+	existing, exists := s.getLocked(c.UID)
+	if err := splitV6Slot(&c, existing, exists && !existing.Deleted); err != nil {
+		return Contact{}, err
+	}
 
 	// Carry before pinning: a pin derived from the incoming key would count as
 	// explicit provenance and silently re-pin a key the stored pin disputes.
-	if existing, ok := s.getLocked(c.UID); ok {
+	if exists {
 		carryPGPProvenance(&c, existing)
 		keepUnconfirmedAutocrypt(&c, existing)
 	}
@@ -1065,11 +1079,7 @@ func (s *Store) attemptStripPrivatePGPKeys() error {
 	}
 	n := 0
 	for _, c := range s.contacts {
-		if c.Deleted || c.PGPKey == "" {
-			continue
-		}
-		key, err := crypto.NewKeyFromArmored(c.PGPKey)
-		if err != nil || !key.IsPrivate() {
+		if c.Deleted || (!isPrivateKey(c.PGPKey) && !isPrivateKey(c.PGPKeyV6)) {
 			continue
 		}
 		// Same key, so the pin and provenance are kept; the sink strips it.
@@ -1087,6 +1097,11 @@ func (s *Store) attemptStripPrivatePGPKeys() error {
 	slog.Info("contacts private key migration", "actor", "contacts-store", "task_id", "strip-private-pgp-keys",
 		"action", "migrate", "target", "contacts", "result", "stripped", "contact_count", n)
 	return nil
+}
+
+func isPrivateKey(armored string) bool {
+	key, err := crypto.NewKeyFromArmored(armored)
+	return err == nil && key.IsPrivate()
 }
 
 // liveContactCountLocked counts contacts that are not tombstoned. Tombstones
@@ -1146,7 +1161,7 @@ func pgpBindingOf(c Contact) string {
 		}
 	}
 	sort.Strings(addrs)
-	return c.PGPKey + "\x00" + c.PGPKeyFingerprint + "\x00" + strings.Join(addrs, ",")
+	return c.PGPKey + "\x00" + c.PGPKeyFingerprint + "\x00" + c.PGPKeyV6 + "\x00" + c.PGPKeyV6Fingerprint + "\x00" + strings.Join(addrs, ",")
 }
 
 // bumpPGPKeyGenIfBindingChanged advances the generation when before and after

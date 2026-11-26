@@ -56,7 +56,15 @@ type Contact struct {
 	PGPKeyVerified    bool     `json:"pgpKeyVerified,omitempty"`    // user eyeballed the fingerprint / came via QR
 	// PGPKeyAutocryptDate is the RFC 3339 effective date of the Autocrypt
 	// message that supplied PGPKey; older Autocrypt headers are ignored.
-	PGPKeyAutocryptDate string               `json:"pgpKeyAutocryptDate,omitempty"`
+	PGPKeyAutocryptDate string `json:"pgpKeyAutocryptDate,omitempty"`
+	// The v6 slot. A contact holds at most two keys: PGPKey (the original
+	// slot, normally v4; a key stored before this slot existed stays there
+	// whatever its version) and here one OpenPGP v6 key beside a v4 one, with
+	// its own TOFU pin, source and confirmation. See splitV6Slot.
+	PGPKeyV6            string               `json:"pgpKeyV6,omitempty"`
+	PGPKeyV6Source      string               `json:"pgpKeyV6Source,omitempty"`
+	PGPKeyV6Fingerprint string               `json:"pgpKeyV6Fingerprint,omitempty"`
+	PGPKeyV6Verified    bool                 `json:"pgpKeyV6Verified,omitempty"`
 	IMs                 []ContactIM          `json:"ims,omitempty"`
 	Websites            []ContactURL         `json:"websites,omitempty"`
 	Relations           []ContactRelation    `json:"relations,omitempty"`
@@ -170,6 +178,7 @@ func (c *Contact) tombstone() {
 	c.PhotoRef = ""
 	c.GroupIDs = nil
 	c.PGPKey = ""
+	c.PGPKeyV6 = ""
 	c.PGPKeyAutocryptDate = ""
 	c.PGPKeyRemovedAutocrypt = ""
 	c.IMs = nil

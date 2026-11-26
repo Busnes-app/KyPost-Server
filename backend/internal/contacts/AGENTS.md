@@ -91,6 +91,14 @@ derived from it must be invalidated by a mechanism the daemon can reach — see
   carrying means same fingerprint, since the sink re-armors. `New` runs
   `stripPrivatePGPKeys`, an idempotent migration for keys stored before the sink
   stripped them (logs a count only).
+- **A contact holds at most one v4 and one v6 key** (`PGPKey`, the original
+  slot, and `PGPKeyV6*`), each with its own pin, source and confirmation;
+  `splitV6Slot` in the sink routes them before carry and pin. A v6 key written
+  to `PGPKey` over a stored v4 key moves to the v6 slot (an addition, never a
+  key change); a write that omits the slot keeps it; a write with no `PGPKey`
+  clears both. Old records read unchanged. The slot is part of `pgpBindingOf`,
+  `ConfirmPGPKey`, dedupe's key move and the private-key strip
+  (`v6slot_test.go`).
 - `ContactPrecondition.KeepAbsentPGPKey` (CardDAV PUT) keeps the stored key and
   pin when the write carries none; many CardDAV clients drop KEY.
 - `PGPKeyVerified` becomes true only through `ConfirmPGPKey` (fingerprint must

@@ -98,6 +98,9 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 		Fingerprint string `json:"fingerprint,omitempty"`
 		Tier        string `json:"tier"`
 		Usable      bool   `json:"usable"`
+		// Capability is the recipient's best key class: "pq", "v6" or "v4".
+		// Additive; publicKey stays the v4 key whenever there is one.
+		Capability string `json:"capability,omitempty"`
 	}
 	seen := map[string]bool{}
 	results := make([]result, 0, len(addresses))
@@ -114,6 +117,7 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 			Fingerprint: rk.Fingerprint,
 			Tier:        string(rk.Tier),
 			Usable:      rk.Usable,
+			Capability:  rk.Capability,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
