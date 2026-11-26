@@ -283,6 +283,8 @@ production does").
 - No real Android device or memory cap. The "Android Chrome-class" numbers are 4x CPU throttling on desktop
   Chromium, with memory reported, not limited.
 - Timing side channels: unmeasured for both engines.
-- wasm build reproducibility: unchecked.
+- wasm build reproducibility: **not reproducible across environments.** The module built on Major and the
+  one built in the image differ in bytes (8,951,242 against 8,950,891 B), though both use Go 1.27.4 and
+  `-trimpath`; the cause is not investigated.
 - Memory erasure of key material inside wasm: not proven by any test.
 - Sequoia and openpgp.js v7 interop: not run.
