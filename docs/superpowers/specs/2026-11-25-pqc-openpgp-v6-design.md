@@ -37,6 +37,23 @@ specs rely on is `ky-primitives/docs/superpowers/specs/2026-11-25-pqc-research.m
   - **Q9 approved**, as overturned above (re-encrypt to v6, P6).
   - **Q10 approved:** sign with the key that matches each delivery; no dual signing.
   - **Q12 not answered:** until it is, P3-P6 wait for the owner's merge approval; P0-P2 merge on the usual gate.
+- **Giving others both keys (owner question, approved 2026-11-25): yes, as two separate certificates, never as one
+  file.** Tested with `scripts/pqc-interop/run.sh` (Debian trixie: GnuPG 2.4.7, RNP 0.17.1, Sequoia sq 1.3.1):
+
+  | Given | GnuPG 2.4.7 | RNP 0.17.1 | sq 1.3.1 |
+  |---|---|---|---|
+  | v4 alone | imports | imports | parses |
+  | v6 alone (Ed25519 or PQC) | refuses ("unknown version 6"); keyring still usable | refuses; keyring still usable | parses; PQC shows as "Unknown algo 30/35" |
+  | v4 + v6 in one file, v4 first | **imports nothing** | imports v4, stops at v6 | parses both |
+  | v4 + v6 in one file, v6 first | imports nothing | imports nothing | parses both |
+
+  A combined answer would cut every GnuPG user off from the v4 key too. So:
+  - **Automatic lookups (WKD, Autocrypt, keyserver)** serve v4 only.
+  - **Channels a person chooses** offer both as two separate certificates. These are "Share my keys" downloads,
+    QR, the contact card (`KEY` properties) and a key attached to a message. The v6 one is labelled
+    "post-quantum: needs a v6-capable app".
+  - **Between KyPost users,** v6 is used automatically.
+  - **The P5 interop matrix** re-runs this script before v6 is ever served over WKD.
 
 Line references are to KyPost-Server `origin/main` at `928ba0be`. Server paths are relative to the repo
 root. Client references are to KyPost-for-Android `01f304bb` (**A:**), KyPost-for-Mac `165148e` (**M:**,
@@ -125,6 +142,7 @@ Each row: where, what it does today, what v6 + PQC needs. Numbers in brackets ar
 | Autocrypt harvest | `backend/internal/processor/autocrypt_harvest.go:195-367` | DKIM-gated, one header, any size | Cap at 10 KiB; accept v4+ID 35. No gossip exists |
 | Keyserver | `backend/internal/api/pgp_keyserver.go:20-63` | keys.openpgp.org VKS by-email lookup, user-confirmed, no upload | Whether VKS serves v6/PQC certificates is unverified; keep confirm-only |
 | vCard KEY | `backend/internal/api/dav_server.go:586,748-765,883-890` | Armored v4 | Validate through the P0 allowlist; serve v4 |
+| Share both keys (owner, 2026-11-25) | new | — | A "Share my keys" download, QR and contact card offer v4 and v6 as two separate certificates, never concatenated [P4] |
 | QR share | `backend/internal/api/pgp_qr_handlers.go:14-87`; client checks A:…/PgpKeyActivity.kt:414-433, M:…/PgpQrClient.swift:118-139, L:core/net/PgpQrClient.cpp:80-104 | `#fp=` accepted as 40 hex only on every client | Accept 64-hex v6 fingerprints (RFC 9580 §5.5.4.3) [P0] |
 
 ### 4. Encrypt, sign, decrypt, verify
