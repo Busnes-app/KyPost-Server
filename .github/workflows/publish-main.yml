@@ -114,6 +114,25 @@ jobs:
           set -euo pipefail
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
+      # Before anything is pushed: the build carries no end-to-end test tag and refuses
+      # multi-tenant startup. The push below reuses this build's layers.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        if: steps.gate.outputs.publish == 'true'
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - name: Build the image locally
+        if: steps.gate.outputs.publish == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: kypost-server:release-check
+          cache-from: type=gha
+      - name: Require a release build
+        if: steps.gate.outputs.publish == 'true'
+        run: scripts/check-release-image.sh kypost-server:release-check
+
       - name: Build and publish main tag
         if: steps.gate.outputs.publish == 'true'
         id: build

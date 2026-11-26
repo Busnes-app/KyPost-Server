@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -131,5 +133,19 @@ func TestBootstrapAdminDoesNotWriteAnOperatorSuppliedPasswordToDisk(t *testing.T
 	}
 	if _, err := os.Stat(filepath.Join(dir, bootstrapPasswordFile)); !os.IsNotExist(err) {
 		t.Fatal("wrote a password file for a password the operator already has")
+	}
+}
+
+// A release build refuses multi mode at bootstrap, before it writes anything.
+func TestBootstrapAdminRefusesMulti(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONFIG_DIR", dir)
+	t.Setenv("KYPOST_TENANCY", "multi")
+	t.Setenv("KYPOST_STAFF_ORG_ID", "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d")
+	if err := BootstrapAdmin(); !errors.Is(err, config.ErrMultiTenancyUnavailable) {
+		t.Fatalf("BootstrapAdmin in multi mode: %v", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("refused bootstrap wrote %v", entries)
 	}
 }

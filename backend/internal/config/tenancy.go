@@ -2,6 +2,8 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -42,5 +44,17 @@ func Tenancy() (mode, staffOrg string, err error) {
 }
 
 // ErrMultiTenancyUnavailable refuses KYPOST_TENANCY=multi until hosted mail is built
-// (docs/superpowers/specs/2026-11-20-tenancy-design.md, build plan PR 7).
+// (docs/superpowers/specs/2026-11-20-tenancy-design.md, build plan PR 7). Only the build-tagged
+// constant MultiTenantBuild lifts it; a constant, so no environment value or -ldflags -X can.
 var ErrMultiTenancyUnavailable = errors.New("KYPOST_TENANCY=multi is not available in this release; unset it or set it to single")
+
+// CheckTestIssuer refuses an issuer outside the reserved .test domain (RFC 2606). The
+// end-to-end test build applies it to every issuer it saves or loads, so a test image
+// deployed by mistake cannot take tokens from a real issuer.
+func CheckTestIssuer(issuer string) error {
+	u, err := url.Parse(issuer)
+	if err != nil || u.Scheme != "https" || !strings.HasSuffix(strings.ToLower(u.Hostname()), ".test") {
+		return fmt.Errorf("this end-to-end test build serves only an https issuer under .test, got %q", issuer)
+	}
+	return nil
+}

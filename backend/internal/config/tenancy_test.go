@@ -57,3 +57,16 @@ func TestCheckEnvRefusesMulti(t *testing.T) {
 		}
 	}
 }
+
+// The end-to-end test build takes only an https issuer under the reserved .test domain.
+func TestCheckTestIssuer(t *testing.T) {
+	for issuer, ok := range map[string]bool{
+		"https://id.e2e.test": true, "https://ID.E2E.TEST/": true, "https://id.e2e.test:8443": true,
+		"": false, "http://id.e2e.test": false, "https://id.example": false, "https://test": false,
+		"https://id.test.example": false, "https://id.e2e.test.": false, "https://idtest": false,
+	} {
+		if err := CheckTestIssuer(issuer); (err == nil) != ok {
+			t.Errorf("%q: %v, want ok=%v", issuer, err, ok)
+		}
+	}
+}
