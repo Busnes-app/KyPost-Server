@@ -150,22 +150,26 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 		Revoked bool   `json:"revoked"`
 		Expired bool   `json:"expired"`
 		Tier    string `json:"tier"`
+		// Capability is the best key class held for the address ("pq",
+		// "v6", "v4"), omitted without a usable key. Additive.
+		Capability string `json:"capability,omitempty"`
 	}
 	statuses := make([]addressStatus, 0, len(req.Addresses))
 	for _, addr := range req.Addresses {
 		status := addressStatus{Address: addr, Tier: string(tierNone)}
-		key, ok, err := findContactPGPKey(contactsStore, addr)
+		c, ok, err := findKeyedContact(contactsStore, addr)
 		if err != nil {
 			http.Error(w, "failed to read contacts", http.StatusInternalServerError)
 			return
 		}
 		if ok {
-			if ks, err := pgpmail.CheckKeyStatus(key); err == nil {
+			if ks, err := pgpmail.CheckKeyStatus(c.PGPKey); err == nil {
 				status.Revoked = ks.Revoked
 				status.Expired = ks.Expired
 				status.HasKey = ks.Usable()
 				if status.HasKey {
 					status.Tier = string(tierContactVerified)
+					status.Capability = contactCapability(c)
 				}
 			}
 		}

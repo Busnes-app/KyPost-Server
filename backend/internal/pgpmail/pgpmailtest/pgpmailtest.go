@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
+	"github.com/ProtonMail/gopenpgp/v3/profile"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
@@ -46,6 +47,21 @@ func GenerateIdentity(name, email string, additionalEmails ...string) (*pgpmail.
 		return nil, err
 	}
 	return pgpmail.ParsePrivateKey(armored)
+}
+
+// GenerateV6PublicKey returns an armored OpenPGP v6 public key for email:
+// ML-DSA-65+Ed25519 with an ML-KEM-768+X25519 subkey (RFC 9980) when pqc is
+// set, else Ed25519 with an X25519 subkey (RFC 9580).
+func GenerateV6PublicKey(name, email string, pqc bool) (string, error) {
+	p := profile.RFC9580()
+	if pqc {
+		p = profile.PQC()
+	}
+	key, err := crypto.PGPWithProfile(p).KeyGeneration().AddUserId(name, email).New().GenerateKey()
+	if err != nil {
+		return "", fmt.Errorf("pgpmailtest: generate v6 key: %w", err)
+	}
+	return key.GetArmoredPublicKey()
 }
 
 func normalize(email string) string { return strings.ToLower(strings.TrimSpace(email)) }

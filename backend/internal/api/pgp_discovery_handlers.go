@@ -163,6 +163,7 @@ func (s *Server) handlePGPDiscoverySuppressContact(w http.ResponseWriter, r *htt
 	c.PGPKeySource = ""
 	c.PGPKeyFingerprint = ""
 	c.PGPKeyVerified = false
+	c.PGPKeyV6 = ""
 	updated, err := store.Upsert(c)
 	if err != nil {
 		http.Error(w, "failed to update contact", documentStatus(err, http.StatusInternalServerError))
