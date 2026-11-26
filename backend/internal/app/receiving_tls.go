@@ -33,6 +33,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 )
@@ -476,9 +477,12 @@ func validRemoteRoute(servers, pins []string) bool {
 func (c *receivingRemote) own() receivingEndpoint { return receivingEndpoint{c.Servers, c.tls} }
 
 // route is the cell a recipient's bind goes to (MH10): on the relay domain, the cell whose
-// region code is the character after adjective.animal.; everything else, and a code that
-// names no cell this host forwards to, goes to this host's own cell, which answers it.
+// region code is the character after adjective.animal., read without a +tag (sso.PlusBase,
+// as bind resolves it); everything else, and a code that names no cell this host forwards
+// to, goes to this host's own cell, which answers it. The bind still carries the recipient
+// as received.
 func (c *receivingRemote) route(recipient string) receivingEndpoint {
+	recipient = sso.PlusBase(recipient)
 	at := strings.LastIndexByte(recipient, '@')
 	if len(c.Cells) == 0 || at < 0 || !strings.EqualFold(recipient[at+1:], c.RelayDomain) {
 		return c.own()

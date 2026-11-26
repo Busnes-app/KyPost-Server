@@ -162,6 +162,11 @@ func TestCrossCellRelayDelivers(t *testing.T) {
 	if a.state(t, "mx-a", "tx-b") != "gone" || b.state(t, "mx-a", "tx-b") != "pending" {
 		t.Fatalf("accept left A %s, B %s; want B pending and nothing in A", a.state(t, "mx-a", "tx-b"), b.state(t, "mx-a", "tx-b"))
 	}
+	// A +tag on B's masked address still routes by its code, and B resolves it.
+	tagged := strings.Replace(b.masked, "@", "+shop@", 1)
+	if code := helperBind("tx-tag", tagged, probeSource); code != 0 || b.state(t, "mx-a", "tx-tag") != "staged" || a.state(t, "mx-a", "tx-tag") != "gone" {
+		t.Fatalf("bind %s: exit %d, A %s, B %s; want it staged in B only", tagged, code, a.state(t, "mx-a", "tx-tag"), b.state(t, "mx-a", "tx-tag"))
+	}
 
 	for _, rcpt := range []string{a.masked, b.masked, "one@example.test"} {
 		if code := helperBind("tx-ab", rcpt, probeSource); code != 0 {
