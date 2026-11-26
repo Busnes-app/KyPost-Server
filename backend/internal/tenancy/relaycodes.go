@@ -32,7 +32,7 @@ func checkRelayTable(table []relayCode) error {
 	codes, cells := map[byte]bool{}, map[string]bool{}
 	for _, e := range table {
 		switch {
-		case e.code == 0 || !strings.ContainsRune(relayAlphabet, rune(e.code)):
+		case !strings.ContainsRune(relayAlphabet, rune(e.code)):
 			return fmt.Errorf("tenancy: masked relay code %q for %s is not a lowercase base32 character", e.code, e.cell)
 		case !cellSlug.MatchString(e.cell):
 			return fmt.Errorf("tenancy: masked relay code %q names %q, not a KyIdentity home region slug", e.code, e.cell)
