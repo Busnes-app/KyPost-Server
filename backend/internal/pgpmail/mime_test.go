@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -393,5 +395,126 @@ func TestEncryptStoredMIMEPreservesOriginalAndReadableAttachments(t *testing.T) 
 	body, _, attachments, err := pgpmailtest.ParseContent(result.Content)
 	if err != nil || body != "secret body" || len(attachments) != 1 || string(attachments[0].Content) != "attachment contents" {
 		t.Fatalf("body=%q attachments=%v err=%v", body, attachments, err)
+	}
+}
+
+func TestEncryptMIMEV6ProducesV6SEIPDv2AndRoundTrips(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		subkeyAlgo packet.PublicKeyAlgorithm
+	}{
+		{"v6-pqc", packet.PubKeyAlgoMlkem768X25519},
+		{"v6", packet.PubKeyAlgoX25519},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pub := string(readFixture(t, tc.name+".pub.asc"))
+			sec, err := pgpmail.ParsePrivateKey(string(readFixture(t, tc.name+".sec.asc")))
+			if err != nil {
+				t.Fatalf("ParsePrivateKey(%s): %v", tc.name, err)
+			}
+
+			original := mailmsg.Message{
+				From:    "sender@example.org",
+				To:      []string{tc.name + "@example.org"},
+				Subject: "v6 secret subject",
+				Body:    "v6 secret body",
+				Mode:    "plain",
+			}.Build()
+
+			stored, err := pgpmail.EncryptStoredMIME(original, pub)
+			if err != nil {
+				t.Fatalf("EncryptStoredMIME(%s): %v", tc.name, err)
+			}
+			assertV6SEIPDv2Payload := func(t *testing.T, rawMIME []byte) string {
+				t.Helper()
+				payload, ok := extractOctetStreamPart(t, rawMIME)
+				if !ok {
+					t.Fatal("missing OpenPGP payload")
+				}
+				block, err := armor.Decode(strings.NewReader(payload))
+				if err != nil {
+					t.Fatalf("armor.Decode: %v", err)
+				}
+				raw, err := io.ReadAll(block.Body)
+				if err != nil {
+					t.Fatalf("read armor body: %v", err)
+				}
+				pkesks, seipd := messagePackets(t, raw)
+				if len(pkesks) != 1 || pkesks[0].Version != 6 || pkesks[0].Algo != tc.subkeyAlgo {
+					t.Fatalf("PKESK = %+v, want one v6 packet with algo %d", pkesks, tc.subkeyAlgo)
+				}
+				if seipd.Version != 2 || seipd.Cipher != packet.CipherAES256 || seipd.Mode != packet.AEADModeOCB {
+					t.Fatalf("SEIPD = v%d %v/%v, want v2 AES256/OCB", seipd.Version, seipd.Cipher, seipd.Mode)
+				}
+				return payload
+			}
+
+			storedPayload := assertV6SEIPDv2Payload(t, stored)
+			res, err := pgpmailtest.DecryptMIME(storedPayload, sec, nil)
+			if err != nil {
+				t.Fatalf("DecryptMIME(stored): %v", err)
+			}
+			if !bytes.Contains(res.Content, original) {
+				t.Fatal("stored original message not preserved")
+			}
+			if subj, ok := pgpmailtest.ExtractProtectedSubject(res.Content); !ok || subj != "v6 secret subject" {
+				t.Fatalf("stored subject = (%q, %v), want (\"v6 secret subject\", true)", subj, ok)
+			}
+
+			signed, err := pgpmail.EncryptMIME(original, []string{pub}, sec)
+			if err != nil {
+				t.Fatalf("EncryptMIME(%s signed): %v", tc.name, err)
+			}
+			signedPayload := assertV6SEIPDv2Payload(t, signed)
+			signedRes, err := pgpmailtest.DecryptMIME(signedPayload, sec, []string{pub})
+			if err != nil {
+				t.Fatalf("DecryptMIME(signed): %v", err)
+			}
+			if !signedRes.Verified || signedRes.SignerFingerprint != sec.Fingerprint {
+				t.Fatalf("signed verify = (%v, %q), want (true, %q)", signedRes.Verified, signedRes.SignerFingerprint, sec.Fingerprint)
+			}
+			body, _, _, err := pgpmailtest.ParseContent(signedRes.Content)
+			if err != nil || body != "v6 secret body" {
+				t.Fatalf("signed body = %q (%v), want \"v6 secret body\"", body, err)
+			}
+		})
+	}
+}
+
+func TestEncryptMIMERefusesMixedV4AndV6Keys(t *testing.T) {
+	v4Pub := string(readFixture(t, "v4.pub.asc"))
+	v6Pub := string(readFixture(t, "v6-pqc.pub.asc"))
+	v4Sec, err := pgpmail.ParsePrivateKey(string(readFixture(t, "v4.sec.asc")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v6Sec, err := pgpmail.ParsePrivateKey(string(readFixture(t, "v6-pqc.sec.asc")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg := mailmsg.Message{
+		From:    "sender@example.org",
+		To:      []string{"recipient@example.org"},
+		Subject: "mixed",
+		Body:    "body",
+		Mode:    "plain",
+	}.Build()
+
+	for _, tc := range []struct {
+		name       string
+		recipients []string
+		signer     *pgpmail.Identity
+	}{
+		{"v4_then_v6_recipients", []string{v4Pub, v6Pub}, nil},
+		{"v6_then_v4_recipients", []string{v6Pub, v4Pub}, nil},
+		{"v4_signer_v6_recipient", []string{v6Pub}, v4Sec},
+		{"v6_signer_v4_recipient", []string{v4Pub}, v6Sec},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pgpmail.EncryptMIME(msg, tc.recipients, tc.signer); err == nil {
+				t.Fatalf("EncryptMIME(%s) unexpectedly succeeded", tc.name)
+			}
+		})
 	}
 }

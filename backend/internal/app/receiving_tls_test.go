@@ -644,3 +644,86 @@ func TestReceivingGatewayKeys(t *testing.T) {
 		t.Fatalf("%q %v", out.String(), err)
 	}
 }
+
+// Both sides of the KyPost<->MX receiving transport require X25519MLKEM768: a normal peer
+// negotiates it, and a classical-only peer fails the handshake in either direction.
+func TestReceivingTLSRequiresX25519MLKEM768(t *testing.T) {
+	f := multiReceivingFixture(t)
+	addr, _ := f.serve(t)
+	keyPath, _ := f.key(t, "pqc", "mx-pqc")
+	clientCert, err := receivingCertificate(readKey(t, keyPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Normal client and server negotiate X25519MLKEM768.
+	conn, err := tls.Dial("tcp", addr, pinVerifiedClientTLS(clientCert, []string{f.pin}))
+	if err != nil {
+		t.Fatalf("hybrid client->server handshake: %v", err)
+	}
+	if got := conn.ConnectionState().CurveID; got != tls.X25519MLKEM768 {
+		_ = conn.Close()
+		t.Fatalf("negotiated curve = %v, want %v", got, tls.X25519MLKEM768)
+	}
+	_ = conn.Close()
+
+	classical := []struct {
+		name  string
+		curve tls.CurveID
+	}{
+		{"X25519", tls.X25519},
+		{"P256", tls.CurveP256},
+	}
+
+	// Classical-only client against serveTLS must fail the handshake.
+	for _, tc := range classical {
+		t.Run("client_classical_"+tc.name, func(t *testing.T) {
+			c, err := tls.Dial("tcp", addr, &tls.Config{
+				MinVersion:         tls.VersionTLS13,
+				CurvePreferences:   []tls.CurveID{tc.curve},
+				Certificates:       []tls.Certificate{clientCert},
+				InsecureSkipVerify: true, //nolint:gosec // test checks curve negotiation against loopback serveTLS
+			})
+			if err == nil {
+				_ = c.Close()
+				t.Fatalf("classical-only client (%s) completed handshake with serveTLS", tc.name)
+			}
+		})
+	}
+
+	// pinVerifiedClientTLS client against a classical-only server must fail the handshake.
+	for _, tc := range classical {
+		t.Run("server_classical_"+tc.name, func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ln.Close() })
+			serverErr := make(chan error, 1)
+			go func() {
+				raw, err := ln.Accept()
+				if err != nil {
+					serverErr <- err
+					return
+				}
+				defer raw.Close()
+				sc := tls.Server(raw, &tls.Config{
+					MinVersion:       tls.VersionTLS13,
+					CurvePreferences: []tls.CurveID{tc.curve},
+					Certificates:     []tls.Certificate{f.cert},
+					ClientAuth:       tls.RequireAnyClientCert,
+				})
+				serverErr <- sc.Handshake()
+			}()
+
+			c, err := tls.Dial("tcp", ln.Addr().String(), pinVerifiedClientTLS(clientCert, []string{f.pin}))
+			if err == nil {
+				_ = c.Close()
+				t.Fatalf("pinVerifiedClientTLS completed handshake with classical-only server (%s)", tc.name)
+			}
+			if serr := <-serverErr; serr == nil {
+				t.Fatalf("classical-only server (%s) unexpectedly completed handshake", tc.name)
+			}
+		})
+	}
+}

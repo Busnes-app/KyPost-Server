@@ -320,9 +320,11 @@ func runReceivingServeTLS(address string) error {
 func (r *receivingRuntime) serveTLS(raw net.Conn, db *sql.DB, cert tls.Certificate) {
 	var gateway string
 	conn := tls.Server(raw, &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{cert},
-		ClientAuth:   tls.RequireAnyClientCert,
+		MinVersion: tls.VersionTLS13,
+		// ponytail: inline until ky-primitives v0.11.0 pqtls.HybridOnly is tagged
+		CurvePreferences: []tls.CurveID{tls.X25519MLKEM768},
+		Certificates:     []tls.Certificate{cert},
+		ClientAuth:       tls.RequireAnyClientCert,
 		// No resumption: every connection presents its key and meets a fresh pin check.
 		SessionTicketsDisabled: true,
 		VerifyConnection: func(cs tls.ConnectionState) error {
@@ -505,7 +507,9 @@ func (c *receivingRemote) route(recipient string) receivingEndpoint {
 // verification is skipped, and a handshake whose server key is not pinned fails.
 func pinVerifiedClientTLS(cert tls.Certificate, pins []string) *tls.Config {
 	return &tls.Config{
-		MinVersion:         tls.VersionTLS13,
+		MinVersion: tls.VersionTLS13,
+		// ponytail: inline until ky-primitives v0.11.0 pqtls.HybridOnly is tagged
+		CurvePreferences:   []tls.CurveID{tls.X25519MLKEM768},
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true, //nolint:gosec // replaced by the pin check in VerifyConnection
 		VerifyConnection: func(cs tls.ConnectionState) error {
