@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/hybridsig"
 	"github.com/Busnes-app/ky-primitives/syncauth"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -627,5 +628,138 @@ func TestNativeSignOnProofRefusalsLeaveJTIUnspent(t *testing.T) {
 				t.Fatalf("right proof after a refusal: status %d body %s", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+func mustHybridSignOnKey(t *testing.T) *hybridsig.PrivateKey {
+	t.Helper()
+	k, err := hybridsig.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
+func hybridThumb(k *hybridsig.PrivateKey) string {
+	sum := sha256.Sum256(k.Public().Bytes())
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func hybridSignProof(t *testing.T, k *hybridsig.PrivateKey, origin, idToken string) string {
+	t.Helper()
+	sig, err := k.Sign(signOnProofLabel, signOnProofMessage(origin, idToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(sig)
+}
+
+func TestNativeSignOnHybridProof(t *testing.T) {
+	srv, idp := nativeSignOnServer(t)
+	origin := "https://" + ssoTestHost
+	hk := mustHybridSignOnKey(t)
+	pubB64 := base64.StdEncoding.EncodeToString(hk.Public().Bytes())
+	idp.SetClaims(deviceClaims(map[string]any{
+		"jti": "jti-hybrid-1",
+		"cnf": map[string]any{"spki#S256": hybridThumb(hk)},
+	}))
+	tok := idp.IDToken()
+
+	// A bad hybrid proof is refused without burning jti.
+	other := mustHybridSignOnKey(t)
+	rec := httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnBody(tok, pubB64, hybridSignProof(t, other, origin, tok)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong hybrid signer: status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// Valid hybrid proof succeeds and mints a usable pairing deep link.
+	rec = httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnBody(tok, pubB64, hybridSignProof(t, hk, origin, tok)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid hybrid proof: status %d body %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		DeepLink   string `json:"deepLink"`
+		Configured bool   `json:"configured"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if !body.Configured || !strings.HasPrefix(body.DeepLink, "kypost://native-pair?") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+	if reg := registerWithPairingToken(t, srv, body.DeepLink); reg.Code != http.StatusOK {
+		t.Fatalf("register with hybrid sign-on token: %d %s", reg.Code, reg.Body.String())
+	}
+
+	// Replay is rejected.
+	rec = httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnBody(tok, pubB64, hybridSignProof(t, hk, origin, tok)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("hybrid replay status %d", rec.Code)
+	}
+}
+
+func TestVerifySignOnProofHybrid(t *testing.T) {
+	hk := mustHybridSignOnKey(t)
+	other := mustHybridSignOnKey(t)
+	origin := "https://" + ssoTestHost
+	idToken := "eyJhbGciOiJNTC1EU0EtNjUifQ." + strings.Repeat("a", 5000) + ".sig"
+	pubBytes := hk.Public().Bytes()
+	pubB64 := base64.StdEncoding.EncodeToString(pubBytes)
+	thumb := hybridThumb(hk)
+	sigBytes, err := hk.Sign(signOnProofLabel, signOnProofMessage(origin, idToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sigB64 := base64.StdEncoding.EncodeToString(sigBytes)
+
+	if !verifySignOnProof(thumb, origin, idToken, pubB64, sigB64) {
+		t.Fatal("valid hybridsig proof rejected")
+	}
+
+	// Verify an ML-DSA-65-sized token + hybridsig proofKey + hybridsig proof
+	// comfortably fits within the 16 KiB request body limit.
+	wire, err := json.Marshal(map[string]string{
+		"idToken":  idToken,
+		"proofKey": pubB64,
+		"proof":    sigB64,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wire) >= 16*1024 {
+		t.Fatalf("ML-DSA-65 + hybridsig signon body is %d bytes, exceeds 16 KiB cap", len(wire))
+	}
+
+	// Flip a byte in the ML-DSA-65 half (near start after 16-byte tag) and in
+	// the Ed25519 half (last 64 bytes).
+	badMLDSA := append([]byte(nil), sigBytes...)
+	badMLDSA[20] ^= 0xff
+	badEd := append([]byte(nil), sigBytes...)
+	badEd[len(badEd)-1] ^= 0xff
+
+	wrongLabelSig, err := hk.Sign("wrong-label/1", signOnProofMessage(origin, idToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badTagKey := append([]byte(nil), pubBytes...)
+	badTagKey[0] ^= 0xff
+	badTagSum := sha256.Sum256(badTagKey)
+
+	for name, args := range map[string][5]string{
+		"wrongThumb":     {hybridThumb(other), origin, idToken, pubB64, sigB64},
+		"wrongOrigin":    {thumb, "https://evil.example", idToken, pubB64, sigB64},
+		"wrongToken":     {thumb, origin, idToken + "x", pubB64, sigB64},
+		"wrongSigner":    {thumb, origin, idToken, pubB64, hybridSignProof(t, other, origin, idToken)},
+		"corruptMLDSA":   {thumb, origin, idToken, pubB64, base64.StdEncoding.EncodeToString(badMLDSA)},
+		"corruptEd25519": {thumb, origin, idToken, pubB64, base64.StdEncoding.EncodeToString(badEd)},
+		"wrongLabel":     {thumb, origin, idToken, pubB64, base64.StdEncoding.EncodeToString(wrongLabelSig)},
+		"p256Downgrade":  {thumb, origin, idToken, pubB64, signProof(signOnKey, origin, idToken)},
+		"badKeyTag":      {base64.RawURLEncoding.EncodeToString(badTagSum[:]), origin, idToken, base64.StdEncoding.EncodeToString(badTagKey), sigB64},
+		"urlSafeProof":   {thumb, origin, idToken, pubB64, strings.NewReplacer("+", "-", "/", "_").Replace(sigB64)},
+	} {
+		if verifySignOnProof(args[0], args[1], args[2], args[3], args[4]) {
+			t.Errorf("%s verified", name)
+		}
 	}
 }
