@@ -57,9 +57,10 @@ type fakeIMAPServer struct {
 	// connection closed underneath us.
 	refuseSelectionOption bool
 
-	commandHook func(tag, command string) (string, bool)
-	appendHook  func(command string, raw []byte) error
-	mu          sync.Mutex
+	commandHook   func(tag, command string) (string, bool)
+	appendHook    func(command string, raw []byte) error
+	appendUIDHook func() int
+	mu            sync.Mutex
 	folders     []fakeFolder
 	commands    []string
 	logins      int
@@ -211,7 +212,16 @@ func (s *fakeIMAPServer) readAppendLiteral(conn net.Conn, r *bufio.Reader, tag, 
 		_, err := conn.Write([]byte(tag + " NO [TRYCREATE] Mailbox doesn't exist\r\n"))
 		return err
 	}
-	_, err = conn.Write([]byte(tag + " OK [APPENDUID 1 1] APPEND completed\r\n"))
+	s.mu.Lock()
+	uidHook := s.appendUIDHook
+	s.mu.Unlock()
+	appendedUID := 1
+	if uidHook != nil {
+		if u := uidHook(); u > 0 {
+			appendedUID = u
+		}
+	}
+	_, err = fmt.Fprintf(conn, "%s OK [APPENDUID 1 %d] APPEND completed\r\n", tag, appendedUID)
 	return err
 }
 

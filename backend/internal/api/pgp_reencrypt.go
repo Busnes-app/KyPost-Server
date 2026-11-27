@@ -142,7 +142,7 @@ func (s *Server) handlePGPReencryptCandidates(w http.ResponseWriter, r *http.Req
 		}
 		limit = parsed
 	}
-	startFolder := strings.TrimSpace(r.URL.Query().Get("folder"))
+	startFolder := r.URL.Query().Get("folder")
 	afterUID := 0
 	if rawAfter := strings.TrimSpace(r.URL.Query().Get("afterUid")); rawAfter != "" {
 		parsed, err := strconv.Atoi(rawAfter)
@@ -274,7 +274,7 @@ func (s *Server) handlePGPReencryptRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
+	folder := r.URL.Query().Get("folder")
 	uid, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("messageId")))
 	if folder == "" || err != nil || uid <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "folder and positive messageId are required"})
@@ -330,7 +330,6 @@ func (s *Server) handlePGPReencryptReplace(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
 		return
 	}
-	req.Folder = strings.TrimSpace(req.Folder)
 	req.ExpectedSHA256 = strings.ToLower(strings.TrimSpace(req.ExpectedSHA256))
 	if req.Folder == "" || req.MessageID <= 0 || len(req.ExpectedSHA256) != 64 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "folder, positive messageId, and 64-hex expectedSha256 are required"})

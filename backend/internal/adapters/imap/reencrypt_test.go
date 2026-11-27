@@ -32,6 +32,10 @@ type reencryptFixture struct {
 	// unsolicitedOtherSnapshot prepends an unsolicited FETCH carrying different
 	// FLAGS and a higher MODSEQ for UID 99 ahead of UID 7's snapshot response.
 	unsolicitedOtherSnapshot bool
+	// failVerifyRawForUID causes BODY.PEEK[] fetch for this UID to return an
+	// empty body so post-APPEND verification fails.
+	failVerifyRawForUID int
+	lastAppendedUID     int
 }
 
 func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *reencryptFixture) {
@@ -50,6 +54,11 @@ func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *re
 	server.mu.Lock()
 	server.commandHook = f.respond
 	server.appendHook = f.append
+	server.appendUIDHook = func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.lastAppendedUID
+	}
 	server.mu.Unlock()
 	client := server.client("INBOX")
 	t.Cleanup(func() { _ = client.Close() })
@@ -62,6 +71,7 @@ func (f *reencryptFixture) append(_ string, raw []byte) error {
 	f.appendCount++
 	uid := f.nextUID
 	f.nextUID++
+	f.lastAppendedUID = uid
 	f.messages[uid] = bytes.Clone(raw)
 	f.flags[uid] = []string{`\Seen`}
 	f.modseq[uid] = 1
@@ -126,6 +136,9 @@ func (f *reencryptFixture) respond(tag, command string) (string, bool) {
 		upper := strings.ToUpper(command)
 		switch {
 		case strings.Contains(upper, "BODY.PEEK[]"):
+			if f.failVerifyRawForUID == uid {
+				return tag + " NO temporary fetch failure\r\n", true
+			}
 			return fmt.Sprintf("* 1 FETCH (UID %d BODY[] {%d}\r\n%s)\r\n", uid, len(raw), string(raw)) + ok, true
 		case strings.Contains(upper, "MODSEQ"):
 			flagList := strings.Join(f.flags[uid], " ")
@@ -312,5 +325,49 @@ func TestReplaceRawMessageCASIgnoresUnsolicitedSnapshotForOtherUID(t *testing.T)
 	}
 	if !strings.Contains(gotFlags, `\Seen`) {
 		t.Fatalf("replacement lost UID 7 \\Seen flag: %q", gotFlags)
+	}
+}
+
+func TestReplaceRawMessageCASCleansUpAppendUIDOnVerifyFailure(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	f.failVerifyRawForUID = 8
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+		t.Fatal("expected error when post-APPEND verification fetch fails")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.messages[7]; !ok {
+		t.Fatal("original UID 7 was deleted despite verification failure")
+	}
+	if _, leaked := f.messages[8]; leaked {
+		t.Fatal("appended UID 8 was leaked instead of cleaned up after verification failure")
+	}
+}
+
+func TestListAllFoldersPreservesLeadingAndTrailingSpaces(t *testing.T) {
+	server := newFakeIMAPServer(t, "/", true, []fakeFolder{
+		{name: "INBOX"},
+		{name: " Archive"},
+		{name: "Archive "},
+	})
+	client := server.client("INBOX")
+	t.Cleanup(func() { _ = client.Close() })
+
+	folders, err := client.ListAllFolders(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllFolders: %v", err)
+	}
+	want := []string{" Archive", "Archive ", "INBOX"}
+	if len(folders) != len(want) {
+		t.Fatalf("folders = %q, want %q", folders, want)
+	}
+	for i := range want {
+		if folders[i] != want[i] {
+			t.Fatalf("folders[%d] = %q, want %q (all=%q)", i, folders[i], want[i], folders)
+		}
 	}
 }
