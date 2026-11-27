@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
@@ -94,7 +97,7 @@ func (s *Server) handlePGPUpgradePQC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pgpV6Ready(u users.User) bool {
-	if u.PGPPublicKeyV6 == "" || u.PGPKeyring == nil || u.PGPKeyring.Version != 2 {
+	if u.PGPPublicKeyV6 == "" || u.PGPKeyring == nil || u.PGPKeyring.Version != 2 || !pgpmail.EncryptsNow(u.PGPPublicKeyV6) {
 		return false
 	}
 	store, err := s.userStore(u.ID)
@@ -105,39 +108,100 @@ func (s *Server) pgpV6Ready(u users.User) bool {
 	return err == nil && ready
 }
 
-// Internal discovery uses only the sender's own organization. Existing contact
-// pins still veto a changed certificate; adding v6 never replaces the v4 pin.
+// preferV6 is false only for a signed send by a v4-only sender: a v6 delivery
+// needs a v6 signing certificate, so that sender keeps the recipient's v4 key.
+func preferV6(sender users.User, sign bool) bool {
+	return !sign || sender.PGPPublicKeyV6 != ""
+}
+
+// resolveRecipient is the contact/WKD ladder, then internal PQ discovery when
+// the resolver may choose v6. A broken pin is never overridden.
+func (s *Server) resolveRecipient(ctx context.Context, sender users.User, address string, resolver *keyResolver) (resolvedKey, error) {
+	rk := resolver.resolve(ctx, address)
+	if rk.Err != nil || rk.Tier == tierKeyChanged || !resolver.preferV6 {
+		return rk, rk.Err
+	}
+	local, found, err := s.localPQRecipient(sender, address, resolver)
+	if err != nil {
+		return resolvedKey{}, err
+	}
+	if found {
+		return local, nil
+	}
+	return rk, nil
+}
+
+// provenAddresses are the addresses that stand for this account to other
+// accounts: the native mailbox, else DKIM domain-proven send-as aliases. The
+// IMAP login and code-confirmed aliases are self-declared and never count.
+func (s *Server) provenAddresses(userID string) ([]string, error) {
+	a, native, err := s.nativeMailAssignment(context.Background(), userID)
+	if err != nil || native {
+		return []string{a.Address}, err
+	}
+	store, err := s.userSendAsStore(userID)
+	if err != nil {
+		return nil, err
+	}
+	verified, err := store.ListVerified()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, alias := range verified {
+		if alias.DomainProven() {
+			out = append(out, strings.TrimSpace(alias.Email))
+		}
+	}
+	return out, nil
+}
+
+// Internal discovery uses only the sender's own organization and only proven
+// address bindings; an address two accounts prove is ambiguous and yields no
+// internal key. Existing contact pins still veto a changed certificate;
+// adding v6 never replaces the v4 pin.
 func (s *Server) localPQRecipient(sender users.User, address string, resolver *keyResolver) (resolvedKey, bool, error) {
 	accounts, err := s.users.List()
 	if err != nil {
 		return resolvedKey{}, false, err
 	}
-	for _, u := range accounts {
-		if !u.Active || u.OrgID != sender.OrgID || !s.orgAdmit(AuthContext{OrgID: sender.OrgID}, u) || u.PGPProtection() != users.PGPProtectionClient || !s.pgpV6Ready(u) {
+	var owner *users.User
+	claims := 0
+	for i, u := range accounts {
+		if !u.Active || u.OrgID != sender.OrgID || !s.orgAdmit(AuthContext{OrgID: sender.OrgID}, u) {
 			continue
 		}
-		owned := false
-		for _, addr := range s.accountAddresses(u.ID) {
-			if strings.EqualFold(addr, address) {
-				owned = true
-			}
-		}
-		if !owned {
-			continue
-		}
-		c, found, err := findContact(resolver.store, address)
+		addresses, err := s.provenAddresses(u.ID)
 		if err != nil {
-			return resolvedKey{}, false, err
+			// Unknown ownership closes internal discovery, not the whole resolve.
+			s.logger.Error("internal PQ discovery could not read proven addresses", "user_id", u.ID, "error", err.Error())
+			return resolvedKey{}, false, nil
 		}
-		v4Pin := u.PGPFingerprint
-		if keyVersionOf(c.PGPKey) == 6 {
-			v4Pin = u.PGPFingerprintV6
+		if !slices.ContainsFunc(addresses, func(a string) bool { return strings.EqualFold(a, address) }) {
+			continue
 		}
-		if found && ((c.PGPKeyFingerprint != "" && !strings.EqualFold(c.PGPKeyFingerprint, v4Pin)) ||
-			(c.PGPKeyV6Fingerprint != "" && !strings.EqualFold(c.PGPKeyV6Fingerprint, u.PGPFingerprintV6))) {
-			return resolvedKey{Tier: tierKeyChanged}, true, nil
+		if claims++; u.PGPProtection() == users.PGPProtectionClient && s.pgpV6Ready(u) {
+			owner = &accounts[i]
 		}
-		return resolvedKey{Armored: u.PGPPublicKeyV6, Fingerprint: u.PGPFingerprintV6, Tier: tierContactVerified, Usable: true, Capability: "pq"}, true, nil
 	}
-	return resolvedKey{}, false, nil
+	if claims > 1 {
+		s.logger.Warn("internal PQ discovery refused an address proven by two accounts", "address", address)
+	}
+	if claims != 1 || owner == nil {
+		return resolvedKey{}, false, nil
+	}
+	u := *owner
+	c, found, err := findContact(resolver.store, address)
+	if err != nil {
+		return resolvedKey{}, false, err
+	}
+	v4Pin := u.PGPFingerprint
+	if keyVersionOf(c.PGPKey) == 6 {
+		v4Pin = u.PGPFingerprintV6
+	}
+	if found && ((c.PGPKeyFingerprint != "" && !strings.EqualFold(c.PGPKeyFingerprint, v4Pin)) ||
+		(c.PGPKeyV6Fingerprint != "" && !strings.EqualFold(c.PGPKeyV6Fingerprint, u.PGPFingerprintV6))) {
+		return resolvedKey{Tier: tierKeyChanged}, true, nil
+	}
+	return resolvedKey{Armored: u.PGPPublicKeyV6, Fingerprint: u.PGPFingerprintV6, Tier: tierContactVerified, Usable: true, Capability: "pq"}, true, nil
 }

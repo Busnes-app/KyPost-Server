@@ -122,6 +122,7 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 	}
 	var req struct {
 		Addresses []string `json:"addresses"`
+		Sign      bool     `json:"sign"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -160,7 +161,7 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 		writeUserStoreError(w, err)
 		return
 	}
-	resolver := &keyResolver{store: contactsStore, preferV6: true}
+	resolver := &keyResolver{store: contactsStore, preferV6: preferV6(sender, req.Sign)}
 	statuses := make([]addressStatus, 0, len(req.Addresses))
 	for _, addr := range req.Addresses {
 		status := addressStatus{Address: addr, Tier: string(tierNone)}
@@ -181,20 +182,10 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 			}
 		}
 		if sender.PGPProtection() == users.PGPProtectionClient {
-			rk := resolver.resolve(r.Context(), addr)
-			if rk.Err != nil {
+			rk, err := s.resolveRecipient(r.Context(), sender, addr, resolver)
+			if err != nil {
 				http.Error(w, "recipient keys unavailable", http.StatusInternalServerError)
 				return
-			}
-			if rk.Tier != tierKeyChanged {
-				local, found, err := s.localPQRecipient(sender, addr, resolver)
-				if err != nil {
-					http.Error(w, "recipient keys unavailable", http.StatusInternalServerError)
-					return
-				}
-				if found {
-					rk = local
-				}
 			}
 			status.HasKey, status.Tier, status.Capability = rk.Usable, string(rk.Tier), rk.Capability
 		}

@@ -85,8 +85,9 @@ export async function deletePGPIdentity(password: string, expectedRevision: numb
   return withSSOStepUp((h) => deleteJSON<{ ok: boolean }>("/api/pgp/identity", body, h));
 }
 
-export function checkPGPRecipients(addresses: string[]): Promise<{ results: PGPRecipientStatus[] }> {
-  return postJSON<{ results: PGPRecipientStatus[] }>("/api/pgp/recipients/check", { addresses });
+/** `sign` lets a v4-only sender keep v4 keys it can sign for. */
+export function checkPGPRecipients(addresses: string[], sign = false): Promise<{ results: PGPRecipientStatus[] }> {
+  return postJSON<{ results: PGPRecipientStatus[] }>("/api/pgp/recipients/check", { addresses, sign });
 }
 
 export function getPGPDiscoverySettings(): Promise<DiscoverySettings> {
@@ -401,8 +402,8 @@ export type ResolvedRecipientKey = {
 };
 
 /** Resolves recipients to actual public keys, running the server's discovery ladder. */
-export function resolveRecipientKeys(addresses: string[]): Promise<{ results: ResolvedRecipientKey[] }> {
-  return postJSON<{ results: ResolvedRecipientKey[] }>("/api/pgp/recipients/resolve", { addresses });
+export function resolveRecipientKeys(addresses: string[], sign = false): Promise<{ results: ResolvedRecipientKey[] }> {
+  return postJSON<{ results: ResolvedRecipientKey[] }>("/api/pgp/recipients/resolve", { addresses, sign });
 }
 
 export type ClientEncryptedDelivery = { recipients: string[]; ciphertext: string };

@@ -17,6 +17,7 @@ import (
 	"mime/quotedprintable"
 	"net/textproto"
 	"strings"
+	"time"
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 	"github.com/ProtonMail/gopenpgp/v3/profile"
@@ -60,6 +61,17 @@ func GenerateV6PublicKey(name, email string, pqc bool) (string, error) {
 	key, err := crypto.PGPWithProfile(p).KeyGeneration().AddUserId(name, email).New().GenerateKey()
 	if err != nil {
 		return "", fmt.Errorf("pgpmailtest: generate v6 key: %w", err)
+	}
+	return key.GetArmoredPublicKey()
+}
+
+// GenerateExpiringV6PublicKey returns a PQ certificate that expires ttl from now.
+func GenerateExpiringV6PublicKey(name, email string, ttl time.Duration) (string, error) {
+	born := time.Now().Add(-time.Hour)
+	key, err := crypto.PGPWithProfile(profile.PQC()).KeyGeneration().AddUserId(name, email).
+		GenerationTime(born.Unix()).Lifetime(int32((time.Hour + ttl) / time.Second)).New().GenerateKey()
+	if err != nil {
+		return "", fmt.Errorf("pgpmailtest: generate expiring v6 key: %w", err)
 	}
 	return key.GetArmoredPublicKey()
 }

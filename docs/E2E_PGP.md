@@ -1329,15 +1329,20 @@ refusals still apply. The route cannot retire v4 or overwrite an installed v6 ke
 Bootstrap adds `publicKeyV6`, `fingerprintV6`, and boolean `v6Ready`. Readiness is
 computed from all paired devices on each use, requiring `openpgp` v6+rfc9980 and
 confirmed X-Wing delivery of the current complete ring. No-device accounts are
-ready; failed state reads are never readiness. Until ready, incoming encryption,
+ready; failed state reads are never readiness. A v6 certificate that is expired,
+revoked or cannot encrypt now is never ready. Until ready, incoming encryption,
 Sent, drafts and autosaves use v4. The browser validates its unlocked ring against
 a fresh snapshot before self-encryption; missing or changed inventories refuse.
 Device delivery refuses the PQ ring to a device without the required codecs or
 v6 transport. Device-local old keys and pairing remain intact during conversion.
 
 Browser recipient resolution prefers usable pinned v6 certificates and eligible
-same-organization KyPost accounts, preserving both TOFU pins. Server-custody senders
-keep their existing v4 resolver. To/Cc are partitioned by actual key version and
+same-organization KyPost accounts, preserving both TOFU pins. An account owns an
+address for internal discovery only through its native mailbox or a DKIM
+domain-proven send-as alias, never its self-declared IMAP login; an address two
+accounts prove yields no internal key. `check` and `resolve` take `sign`: a signed
+send by a sender without a v6 certificate keeps v4 keys, since a v6 delivery needs
+a v6 signing certificate. Server-custody senders keep their existing v4 resolver. To/Cc are partitioned by actual key version and
 selected encryption algorithm; every Bcc remains alone. Each copy retains identical
 visible To/Cc headers and uses the matching active signing certificate, never dual
 signatures. Sign-only mail uses v4. The WASM engine independently refuses mixed

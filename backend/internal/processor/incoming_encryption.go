@@ -125,7 +125,7 @@ func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg ima
 		return err
 	}
 	publicKey := u.PGPPublicKey
-	if u.PGPPublicKeyV6 != "" && u.PGPKeyring != nil && u.PGPKeyring.Version == 2 {
+	if u.PGPPublicKeyV6 != "" && u.PGPKeyring != nil && u.PGPKeyring.Version == 2 && pgpmail.EncryptsNow(u.PGPPublicKeyV6) {
 		ready, err := uc.store.PGPV6Ready(u.PGPKeyring.MaterialGeneration, u.PGPFingerprint)
 		if err != nil {
 			return err

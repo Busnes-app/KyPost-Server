@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
@@ -17,8 +18,12 @@ import (
 )
 
 func TestIncomingPQCWaitsForEveryDevice(t *testing.T) {
-	for _, capable := range []bool{false, true} {
-		t.Run(map[bool]string{false: "Linux still classical", true: "all confirmed"}[capable], func(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		capable, expired bool
+	}{{"Linux still classical", false, false}, {"all confirmed", true, false}, {"expired v6 falls back to v4", true, true}} {
+		capable := tc.capable
+		t.Run(tc.name, func(t *testing.T) {
 			p, uc, mailbox := incomingPollerForTest(t)
 			uc.autoLabelEnabled = false
 			u, _ := p.users.Get(uc.id)
@@ -28,6 +33,9 @@ func TestIncomingPQCWaitsForEveryDevice(t *testing.T) {
 			}
 			old, _ := pgpmail.ReadPublicKey(u.PGPPublicKey)
 			pq, err := pgpmailtest.GenerateV6PublicKey("Alice", "alice@example.com", true)
+			if tc.expired {
+				pq, err = pgpmailtest.GenerateExpiringV6PublicKey("Alice", "alice@example.com", 3*time.Second)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -57,6 +65,14 @@ func TestIncomingPQCWaitsForEveryDevice(t *testing.T) {
 					t.Fatal(ok, err)
 				}
 			}
+			for deadline := time.Now().Add(10 * time.Second); tc.expired && pgpmail.EncryptsNow(pq); time.Sleep(100 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Fatal("certificate never expired")
+				}
+			}
+			if ready, err := uc.store.PGPV6Ready(1, u.PGPFingerprint); err != nil || ready != capable {
+				t.Fatal("device gate", ready, err)
+			}
 			if err := p.encryptIncomingMessage(context.Background(), uc, imapadapter.Message{ID: "7", Sender: "bob@example.com", SentTo: "alice@example.com", Subject: "secret subject", Body: "secret body"}); err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +91,7 @@ func TestIncomingPQCWaitsForEveryDevice(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := 3
-			if capable {
+			if capable && !tc.expired {
 				want = 6
 			}
 			key, ok := pk.(*packet.EncryptedKey)
@@ -88,7 +104,7 @@ func TestIncomingPQCWaitsForEveryDevice(t *testing.T) {
 			}
 			encrypted, ok := data.(*packet.SymmetricallyEncrypted)
 			expected := 1
-			if capable {
+			if capable && !tc.expired {
 				expected = 2
 			}
 			if !ok || encrypted.Version != expected {

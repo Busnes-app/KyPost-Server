@@ -630,7 +630,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     }
     let cancelled = false;
     const timeoutId = setTimeout(() => {
-      checkPGPRecipients(addresses)
+      checkPGPRecipients(addresses, composeSign)
         .then(({ results }) => {
           if (cancelled) return;
           const missing = results.filter((r) => !r.hasKey).map((r) => r.address);
@@ -652,7 +652,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [composeEncrypt, composeTo, composeCc, composeBcc]);
+  }, [composeEncrypt, composeSign, composeTo, composeCc, composeBcc]);
 
   // Derived, not stored: the wording depends on composeSendLinkForKeyless, which
   // the user can flip without triggering a fresh recipient-key check, so this
@@ -792,7 +792,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     const bccList = splitAddressList(serializeRecipientField(composeBcc));
     const toList = splitAddressList(to);
 
-    const { results } = await resolveRecipientKeys([...toList, ...ccList, ...bccList]);
+    const { results } = await resolveRecipientKeys([...toList, ...ccList, ...bccList], composeSign);
     const keyFor = new Map(results.filter((r) => r.usable && r.publicKey).map((r) => [r.address.toLowerCase(), r.publicKey!]));
     const missing = [...toList, ...ccList, ...bccList].filter((addr) => !keyFor.has(addr.toLowerCase()));
 

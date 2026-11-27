@@ -232,7 +232,7 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 		if !slotMatchesPin(c.PGPKeyV6, c.PGPKeyV6Fingerprint) || (c.PGPKey != "" && !keyMatchesPin(c)) {
 			return resolvedKey{Tier: tierKeyChanged}
 		}
-		if st, err := pgpmail.CheckKeyStatus(c.PGPKeyV6); err == nil && st.Usable() {
+		if pgpmail.EncryptsNow(c.PGPKeyV6) {
 			return resolvedKey{Armored: c.PGPKeyV6, Fingerprint: c.PGPKeyV6Fingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c)}
 		}
 	}

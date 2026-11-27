@@ -6,6 +6,7 @@ import (
 	"github.com/ProtonMail/gopenpgp/v3/armor"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 	"strings"
+	"time"
 )
 
 // InspectPQCKey narrows the public-key allowlist to the account's P4 profile.
@@ -38,4 +39,15 @@ func InspectPQCKey(armored string) (PublicKeyInfo, error) {
 		return PublicKeyInfo{}, errors.New("expected a usable v6 ML-DSA-65+Ed25519 / ML-KEM-768+X25519 certificate")
 	}
 	return info, nil
+}
+
+// EncryptsNow reports whether armored can be encrypted to at this moment:
+// parseable, not revoked or expired, with a currently valid encryption subkey.
+func EncryptsNow(armored string) bool {
+	key, err := crypto.NewKeyFromArmored(armored)
+	if err != nil {
+		return false
+	}
+	now := time.Now().Unix()
+	return !key.IsRevoked(now) && !key.IsExpired(now) && key.CanEncrypt(now)
 }
