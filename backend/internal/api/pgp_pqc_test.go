@@ -258,3 +258,48 @@ func TestExpiredV6FallsBackToV4(t *testing.T) {
 		t.Fatalf("expired v6 did not fall back to v4: %+v", got)
 	}
 }
+
+// When the sender's installed v6 certificate expires, signed sends must fall
+// back to the recipient's v4 key instead of selecting a v6 delivery the sender
+// can no longer sign; unsigned sends may still prefer v6.
+func TestExpiredSenderV6FallsBackToV4ForSignedSend(t *testing.T) {
+	s := newTestServer(t)
+	const address = "bob@example.invalid"
+	const internalAddr = "internal@example.invalid"
+	senderV6 := must1(pgpmailtest.GenerateExpiringV6PublicKey("Sender", "sender@example.invalid", 3*time.Second))
+	sender := pqAccount(t, s, "expiring-sender", senderV6)
+	recipient := pqAccount(t, s, "bob", testV6Key(t, address, true))
+	internal := pqAccount(t, s, "internal", testV6Key(t, internalAddr, true))
+	proveAlias(t, s, internal.ID, internalAddr)
+	must1(must1(s.userContactsStore(sender.ID)).Upsert(contacts.Contact{
+		FormattedName:       "Bob",
+		Emails:              []contacts.ContactValue{{Value: address}},
+		PGPKey:              recipient.PGPPublicKey,
+		PGPKeyFingerprint:   recipient.PGPFingerprint,
+		PGPKeyV6:            recipient.PGPPublicKeyV6,
+		PGPKeyV6Fingerprint: recipient.PGPFingerprintV6,
+	}))
+	if got := askRecipient(t, s, sender.ID, "resolve", address, true); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKeyV6) {
+		t.Fatalf("fresh sender v6 should prefer recipient v6 for signed send: %+v", got)
+	}
+	if got := askRecipient(t, s, sender.ID, "check", internalAddr, true); got.Capability != "pq" {
+		t.Fatalf("fresh sender v6 should discover internal PQ for signed send: %+v", got)
+	}
+	for deadline := time.Now().Add(10 * time.Second); pgpmail.SignsNow(senderV6); time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("sender v6 certificate never expired")
+		}
+	}
+	if got := askRecipient(t, s, sender.ID, "resolve", address, true); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKey) {
+		t.Fatalf("expired sender v6 signed resolve did not fall back to v4: %+v", got)
+	}
+	if got := askRecipient(t, s, sender.ID, "check", internalAddr, true); got.Capability == "pq" {
+		t.Fatalf("expired sender v6 signed check should not select internal PQ: %+v", got)
+	}
+	if got := askRecipient(t, s, sender.ID, "resolve", address, false); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKeyV6) {
+		t.Fatalf("expired sender v6 unsigned resolve should still prefer v6: %+v", got)
+	}
+	if got := askRecipient(t, s, sender.ID, "check", internalAddr, false); got.Capability != "pq" {
+		t.Fatalf("expired sender v6 unsigned check should still discover internal PQ: %+v", got)
+	}
+}

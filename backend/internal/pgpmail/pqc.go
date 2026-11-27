@@ -51,3 +51,14 @@ func EncryptsNow(armored string) bool {
 	now := time.Now().Unix()
 	return !key.IsRevoked(now) && !key.IsExpired(now) && key.CanEncrypt(now)
 }
+
+// SignsNow reports whether armored can sign at this moment:
+// parseable, not revoked or expired, with a currently valid signing key.
+func SignsNow(armored string) bool {
+	key, err := crypto.NewKeyFromArmored(armored)
+	if err != nil {
+		return false
+	}
+	now := time.Now().Unix()
+	return !key.IsRevoked(now) && !key.IsExpired(now) && key.CanVerify(now)
+}

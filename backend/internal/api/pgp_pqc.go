@@ -108,10 +108,11 @@ func (s *Server) pgpV6Ready(u users.User) bool {
 	return err == nil && ready
 }
 
-// preferV6 is false only for a signed send by a v4-only sender: a v6 delivery
-// needs a v6 signing certificate, so that sender keeps the recipient's v4 key.
+// preferV6 is false only for a signed send when the sender has no currently
+// usable v6 signing certificate: a v6 delivery needs a valid v6 signing
+// certificate, so that sender keeps the recipient's v4 key.
 func preferV6(sender users.User, sign bool) bool {
-	return !sign || sender.PGPPublicKeyV6 != ""
+	return !sign || (sender.PGPPublicKeyV6 != "" && pgpmail.SignsNow(sender.PGPPublicKeyV6))
 }
 
 // resolveRecipient is the contact/WKD ladder, then internal PQ discovery when
@@ -185,7 +186,7 @@ func (s *Server) localPQRecipient(sender users.User, address string, resolver *k
 		}
 	}
 	if claims > 1 {
-		s.logger.Warn("internal PQ discovery refused an address proven by two accounts", "address", address)
+		s.logger.Warn("internal PQ discovery refused an address proven by two accounts", "user_id", sender.ID)
 	}
 	if claims != 1 || owner == nil {
 		return resolvedKey{}, false, nil
