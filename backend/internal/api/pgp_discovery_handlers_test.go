@@ -16,6 +16,7 @@ type discoverySettingsResp struct {
 	StoreDiscoveredKeys     bool `json:"storeDiscoveredKeys"`
 	AdvertiseAutocrypt      bool `json:"advertiseAutocrypt"`
 	PublishWKD              bool `json:"publishWKD"`
+	PublishWKDV6            bool `json:"publishWKDV6"`
 }
 
 func TestDiscoverySettingsRoundTrip(t *testing.T) {
@@ -184,6 +185,53 @@ func TestDiscoverySettingsPutPublishWKDExplicitFalseAndOmissionKeepsCurrent(t *t
 	}
 	if getResp.PublishWKD {
 		t.Fatalf("persisted publishWKD mismatch: %+v", getResp)
+	}
+}
+
+func TestDiscoverySettingsPutPublishWKDV6OptInAndOmissionKeepsCurrent(t *testing.T) {
+	srv := newTestServer(t)
+	all, _ := srv.users.List()
+	userID := all[0].ID
+
+	// Default is false (opt-in).
+	getRec0 := doJSONAuth(srv, srv.withAuth(srv.handlePGPDiscoverySettings), http.MethodGet,
+		"/api/pgp/discovery/settings", nil, userID)
+	var getResp0 discoverySettingsResp
+	if err := json.NewDecoder(getRec0.Body).Decode(&getResp0); err != nil {
+		t.Fatalf("decode initial GET: %v", err)
+	}
+	if getResp0.PublishWKDV6 {
+		t.Fatalf("expected publishWKDV6 to default false, got %+v", getResp0)
+	}
+
+	// Explicit opt-in sets publishWKDV6=true.
+	putRec := doJSONAuth(srv, srv.withAuth(srv.handlePGPDiscoverySettings), http.MethodPut,
+		"/api/pgp/discovery/settings",
+		map[string]bool{"publishWKDV6": true}, userID)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT: expected 200, got %d: %s", putRec.Code, putRec.Body.String())
+	}
+	var putResp discoverySettingsResp
+	if err := json.NewDecoder(putRec.Body).Decode(&putResp); err != nil {
+		t.Fatalf("decode PUT: %v", err)
+	}
+	if !putResp.PublishWKDV6 {
+		t.Fatalf("expected publishWKDV6=true after opt-in, got %+v", putResp)
+	}
+
+	// Omitting publishWKDV6 on a later PUT preserves the stored opt-in.
+	putRec2 := doJSONAuth(srv, srv.withAuth(srv.handlePGPDiscoverySettings), http.MethodPut,
+		"/api/pgp/discovery/settings",
+		map[string]bool{"autoEncryptWhenKeyKnown": true}, userID)
+	if putRec2.Code != http.StatusOK {
+		t.Fatalf("PUT 2: expected 200, got %d: %s", putRec2.Code, putRec2.Body.String())
+	}
+	var putResp2 discoverySettingsResp
+	if err := json.NewDecoder(putRec2.Body).Decode(&putResp2); err != nil {
+		t.Fatalf("decode PUT 2: %v", err)
+	}
+	if !putResp2.PublishWKDV6 {
+		t.Fatalf("omitting publishWKDV6 clobbered stored opt-in: %+v", putResp2)
 	}
 }
 

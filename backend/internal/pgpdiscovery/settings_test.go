@@ -93,7 +93,7 @@ func TestDefaultsWhenAbsent(t *testing.T) {
 
 func TestSaveThenLoad(t *testing.T) {
 	dir := t.TempDir()
-	want := pgpdiscovery.Settings{AutoEncryptWhenKeyKnown: true, StoreDiscoveredKeys: false}
+	want := pgpdiscovery.Settings{AutoEncryptWhenKeyKnown: true, StoreDiscoveredKeys: false, PublishWKDV6: true}
 	if _, err := pgpdiscovery.Update(dir, func(pgpdiscovery.Settings) pgpdiscovery.Settings { return want }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -103,5 +103,28 @@ func TestSaveThenLoad(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("round-trip mismatch: got %+v want %+v", got, want)
+	}
+}
+
+func TestLoadDefaultsPublishWKDV6Off(t *testing.T) {
+	dir := t.TempDir()
+	s, err := pgpdiscovery.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PublishWKDV6 {
+		t.Fatal("PublishWKDV6 should default to false when no file exists")
+	}
+	// Legacy settings files that predate publishWKDV6 must also keep it off.
+	if err := os.WriteFile(filepath.Join(dir, "pgp-discovery.json"),
+		[]byte(`{"autoEncryptWhenKeyKnown":false,"storeDiscoveredKeys":true,"publishWKD":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err = pgpdiscovery.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PublishWKDV6 {
+		t.Fatal("legacy file (no publishWKDV6 field) must load PublishWKDV6=false")
 	}
 }

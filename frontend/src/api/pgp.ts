@@ -48,6 +48,10 @@ export type DiscoverySettings = {
   // domain's Web Key Directory location, once an admin has verified that
   // domain via the (admin-only) WKD domain endpoints below. Default true.
   publishWKD: boolean;
+  // publishWKDV6 appends the user's OpenPGP v6 post-quantum certificate beside
+  // their v4 certificate on WKD. Opt-in (default false) because older GnuPG
+  // releases reject multi-certificate / v6 WKD answers.
+  publishWKDV6?: boolean;
 };
 
 export function getPGPIdentity(): Promise<PGPIdentity> {
