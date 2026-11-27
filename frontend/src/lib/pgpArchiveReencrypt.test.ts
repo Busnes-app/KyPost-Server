@@ -308,3 +308,46 @@ it("does not run when v6Ready is false and pauses when server v6Fingerprint disa
   expect(state).toEqual({ kind: "paused", reason: "not_ready", reencrypted: 0, skipped: 0, failed: 0 });
   expect(getPGPReencryptRaw).not.toHaveBeenCalled();
 });
+
+it("persists continuation cursor when maxPages is reached and resumes from it on the next run", async () => {
+  const engine = await pgpEngine();
+  unlockWithArmoredKey(ringPlaintext);
+
+  const msg = await engine.encrypt({ text: "Deep archive message", encryptionKeys: [v4.armoredPublicKey] });
+
+  vi.mocked(listPGPReencryptCandidates)
+    .mockResolvedValueOnce({
+      candidates: [],
+      nextCursor: { folder: "Archive", afterUid: 5000 },
+      done: false,
+      v6Fingerprint: v6.fingerprint
+    })
+    .mockResolvedValueOnce({
+      candidates: [{ folder: "Archive", messageId: 5001, sizeBytes: msg.length }],
+      done: true,
+      v6Fingerprint: v6.fingerprint
+    });
+  vi.mocked(getPGPReencryptRaw).mockResolvedValueOnce({
+    folder: "Archive",
+    messageId: 5001,
+    sha256: "hash-5001",
+    armoredCiphertext: msg,
+    sizeBytes: msg.length
+  });
+  vi.mocked(replacePGPReencryptedMessage).mockResolvedValueOnce({
+    ok: true,
+    folder: "Archive",
+    oldMessageId: 5001,
+    newMessageId: 5001
+  });
+
+  const first = await startArchiveReencrypt({ bootstrap, userId: "user-1", delayMs: 0, maxPages: 1 });
+  expect(first).toEqual({ kind: "incomplete", reencrypted: 0, skipped: 0, failed: 0, pageLimitReached: true });
+
+  const second = await startArchiveReencrypt({ bootstrap, userId: "user-1", delayMs: 0, maxPages: 1 });
+  expect(second).toEqual({ kind: "done", reencrypted: 1, skipped: 0, failed: 0 });
+  expect(vi.mocked(listPGPReencryptCandidates).mock.calls[1][0]).toMatchObject({
+    folder: "Archive",
+    afterUid: 5000
+  });
+});

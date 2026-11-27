@@ -556,6 +556,12 @@ type APIClient struct {
 	// dropped by invalidateFolderIndexLocked whenever this client changes the
 	// folder tree.
 	folders *folderIndex
+
+	// uidScanCache retains a short-lived sorted UID snapshot for the folder
+	// currently being paginated by ListFolderMessageUIDs so scanning large
+	// IMAP mailboxes does not re-transfer the remaining UID suffix on every page.
+	// Guarded by opMu.
+	uidScanCache *folderUIDScanCache
 }
 
 type storedIMAPConfig struct {

@@ -95,8 +95,19 @@ func (c *APIClient) ListAllFolders(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+const uidScanCacheTTL = 60 * time.Second
+
+type folderUIDScanCache struct {
+	folder    string
+	afterUID  int
+	uids      []int
+	fetchedAt time.Time
+}
+
 // ListFolderMessageUIDs returns up to limit message UIDs strictly greater than
-// afterUID in ascending order for folder.
+// afterUID in ascending order for folder. Within a folder scan it reuses a
+// short-lived sorted UID snapshot so paginating a large mailbox does not
+// re-download the remaining UID suffix on every batch.
 func (c *APIClient) ListFolderMessageUIDs(ctx context.Context, folder string, afterUID int, limit int) ([]int, error) {
 	if err := ValidateMailboxName(folder); err != nil {
 		return nil, err
@@ -109,32 +120,61 @@ func (c *APIClient) ListFolderMessageUIDs(ctx context.Context, folder string, af
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	d, err := c.ensureConnectedLocked()
-	if err != nil {
-		return nil, err
-	}
-	if err := d.SelectFolder(folder); err != nil {
-		return nil, err
-	}
-	startUID := afterUID + 1
-	if startUID < 1 {
-		startUID = 1
-	}
-	uids, err := incomingSearch(d, fmt.Sprintf("UID %d:*", startUID))
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]int, 0, len(uids))
-	for _, uid := range uids {
-		if uid > afterUID {
-			filtered = append(filtered, uid)
+
+	var sortedUIDs []int
+	if afterUID > 0 &&
+		c.uidScanCache != nil &&
+		c.uidScanCache.folder == folder &&
+		afterUID >= c.uidScanCache.afterUID &&
+		time.Since(c.uidScanCache.fetchedAt) < uidScanCacheTTL {
+		sortedUIDs = c.uidScanCache.uids
+	} else {
+		d, err := c.ensureConnectedLocked()
+		if err != nil {
+			return nil, err
 		}
+		if err := d.SelectFolder(folder); err != nil {
+			return nil, err
+		}
+		startUID := afterUID + 1
+		if startUID < 1 {
+			startUID = 1
+		}
+		uids, err := incomingSearch(d, fmt.Sprintf("UID %d:*", startUID))
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]int, 0, len(uids))
+		for _, uid := range uids {
+			if uid > afterUID {
+				filtered = append(filtered, uid)
+			}
+		}
+		sort.Ints(filtered)
+		c.uidScanCache = &folderUIDScanCache{
+			folder:    folder,
+			afterUID:  afterUID,
+			uids:      filtered,
+			fetchedAt: time.Now(),
+		}
+		sortedUIDs = filtered
 	}
-	sort.Ints(filtered)
-	if len(filtered) > limit {
-		filtered = filtered[:limit]
+
+	idx := sort.SearchInts(sortedUIDs, afterUID+1)
+	if idx >= len(sortedUIDs) {
+		c.uidScanCache = nil
+		return nil, nil
 	}
-	return filtered, nil
+	end := idx + limit
+	if end > len(sortedUIDs) {
+		end = len(sortedUIDs)
+	}
+	out := make([]int, end-idx)
+	copy(out, sortedUIDs[idx:end])
+	if end >= len(sortedUIDs) {
+		c.uidScanCache = nil
+	}
+	return out, nil
 }
 
 // GetRawMessage fetches the exact stored RFC 5322 bytes for (folder, uid).

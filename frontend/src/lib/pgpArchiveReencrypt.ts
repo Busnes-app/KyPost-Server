@@ -40,14 +40,26 @@ export type ArchiveReencryptOptions = {
   delayMs?: number;
   /** Maximum plaintext bytes allowed by WASM decryption/re-encryption. */
   maxBytes?: number;
+  /** Maximum cursor pages inspected per run. Defaults to 10,000. */
+  maxPages?: number;
   /** Optional engine override for tests. */
   engine?: PgpEngine;
+};
+
+type SavedResumeCursor = {
+  key: string;
+  cursor: PGPReencryptCursor;
 };
 
 let currentState: ArchiveReencryptState = { kind: "idle" };
 let activeRunId = 0;
 let activeController: AbortController | null = null;
+let savedResumeCursor: SavedResumeCursor | null = null;
 const listeners = new Set<(state: ArchiveReencryptState) => void>();
+
+function resumeScopeKey(userId: string | undefined, v6Fingerprint: string): string {
+  return `${userId ?? ""}|${v6Fingerprint.toUpperCase()}`;
+}
 
 function emit(next: ArchiveReencryptState): void {
   currentState = next;
@@ -90,6 +102,7 @@ export function stopArchiveReencrypt(reason: ArchiveReencryptPauseReason = "abor
 /** Resets state to idle (used on logout or test teardown). */
 export function resetArchiveReencryptState(): void {
   stopArchiveReencrypt("aborted");
+  savedResumeCursor = null;
   emit({ kind: "idle" });
 }
 
@@ -263,7 +276,9 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
   const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
   const delayMs = options.delayMs ?? DEFAULT_DELAY_MS;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const maxPages = Math.max(1, options.maxPages ?? MAX_PAGES_PER_RUN);
   const userId = options.userId;
+  const scopeKey = resumeScopeKey(userId, materials.v6Fingerprint);
 
   let reencrypted = 0;
   let skipped = 0;
@@ -288,8 +303,9 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
   emit({ kind: "running", reencrypted, skipped, failed });
 
   try {
-    let cursor: PGPReencryptCursor | undefined;
-    for (let page = 0; page < MAX_PAGES_PER_RUN; page++) {
+    let cursor: PGPReencryptCursor | undefined =
+      savedResumeCursor && savedResumeCursor.key === scopeKey ? savedResumeCursor.cursor : undefined;
+    for (let page = 0; page < maxPages; page++) {
       if (!isStillCurrent()) {
         return finish({
           kind: "paused",
@@ -384,12 +400,16 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
       }
 
       if (listing.done || !listing.nextCursor) {
+        if (savedResumeCursor?.key === scopeKey) {
+          savedResumeCursor = null;
+        }
         if (skipped > 0 || failed > 0) {
           return finish({ kind: "incomplete", reencrypted, skipped, failed });
         }
         return finish({ kind: "done", reencrypted, skipped: 0, failed: 0 });
       }
       cursor = listing.nextCursor;
+      savedResumeCursor = { key: scopeKey, cursor };
     }
 
     return finish({ kind: "incomplete", reencrypted, skipped, failed, pageLimitReached: true });
