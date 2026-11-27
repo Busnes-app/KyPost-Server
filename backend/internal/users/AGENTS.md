@@ -18,6 +18,8 @@ Account validation, mutations, indexes, deep-copy snapshots, table transactions 
 - Account pools use row writes; document pools keep the schema writer lock. Never pass an account pool to a document table. Commit fences returned by recovery callbacks remain held through the account commit. Restore deactivation commits before its external finalizer; a finalizer failure must not roll it back or replay it.
 - The document writer locks the retained account FOR KEY SHARE before any derived body/key creation. Purge deletes accounts before documents. Offline capsule readers validate account routing columns and use exactly one file/table authority.
 
+- Device slots have one writer, `SetPGPDeviceEnvelope`: v4 for legacy single-key material, v5 for converted complete rings, or v6 X-Wing for either. Validate v6 framing and the canonical enrollment key before mutation; preserve revision, fingerprint and generation binding. The wire contract is [device enrollment](../../../docs/DEVICE_ENROLLMENT.md).
+
 ## Work Guidance
 
 Keep product identity policy in the existing store methods. Use the registered volume schema and existing database copy path; no second account database or serialized account-list document.

@@ -88,7 +88,7 @@ type NativeDevice struct {
 	// cannot decrypt. Mirrors NotificationSubscription's fields for browser push.
 	P256DH string `json:"p256dh,omitempty"`
 	Auth   string `json:"auth,omitempty"`
-	// EnrollmentPublicKey is this device's EC P-256 public key for encrypted-mail
+	// EnrollmentPublicKey is this device's X-Wing (v6) or P-256 public key for encrypted-mail
 	// enrollment, published by the device under its own pairing credential. A
 	// public key is not a capability: it lets a browser seal TO this device and
 	// confers nothing by itself, which is why a device may publish its own while

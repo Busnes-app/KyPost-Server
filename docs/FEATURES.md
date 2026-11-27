@@ -78,3 +78,10 @@ Native direct outbound delivery is available as an explicit protected-API profil
 ## HR address allocation
 
 KyIdentity can request a unique native work address before creating an SSO identity. Stable issuer/subject reservations survive retries and same-name collisions receive numeric suffixes. Address-only reservations create no usable account, mailbox storage or live receiving route. Normal signed directory provisioning consumes them after activation and app assignment. See [HR address reservations](NATIVE_PROVISIONING.md#hr-address-reservations).
+
+## Post-quantum device enrollment
+
+The server and browser support X-Wing HPKE device envelopes (v6, KEM 0x647A) with
+SAS v2 binding the entire device public key. Existing P-256 v4/v5 enrollment stays
+supported while native clients upgrade. This upgrades private-key delivery, independently
+of an account’s OpenPGP certificate version. See [device enrollment](DEVICE_ENROLLMENT.md#normative-the-x-wing-hpke-envelope-v6).

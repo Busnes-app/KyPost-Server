@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Busnes-app/ky-primitives/xwing"
 )
 
 // Device delivery: the transport copy of a sealing prepared for one paired
@@ -17,19 +19,32 @@ import (
 // never receives a sealing that was not meant for exactly its current key and
 // the account's current material.
 //
-// New deliveries are RFC 9180 HPKE only (v4/v5). The custom ECDH+HKDF+GCM
+// New deliveries are RFC 9180 HPKE only (v4/v5/v6). The custom ECDH+HKDF+GCM
 // v2/v3 formats are refused here; deliveries already stored under them stay
 // readable until they expire, because nothing here rewrites stored slots.
 
 var (
-	ErrInvalidDeviceEnvelope    = errors.New("device envelope is not a well-formed v4 or v5 sealing")
-	ErrRetiredDeviceEnvelope    = errors.New("device envelope v2/v3 is retired; new deliveries must be v4 or v5 (RFC 9180 HPKE). Update KyPost on that device")
-	ErrDeviceEnvelopeVersion    = errors.New("device envelope version does not match the account: a converted account takes v5, a legacy account v4")
+	ErrInvalidDeviceEnvelope    = errors.New("device envelope is not a well-formed v4, v5 or v6 sealing")
+	ErrRetiredDeviceEnvelope    = errors.New("device envelope v2/v3 is retired; new deliveries must be v4, v5 or v6 (HPKE). Update KyPost on that device")
+	ErrDeviceEnvelopeVersion    = errors.New("device envelope version does not match the account: a converted account takes v5/v6, a legacy account v4/v6")
 	ErrDeviceDeliveryIncomplete = errors.New("device delivery needs the enrollment key it was sealed to and the expected fingerprint")
 	ErrPGPGenerationChanged     = errors.New("PGP key material changed; reload and prepare the delivery again")
 )
 
 const hpkeDeviceEnvelopeAlg = "HPKE-Base-P256-SHA256-A256GCM"
+const xwingDeviceEnvelopeAlg = "HPKE-Base-XWing-SHA256-A256GCM"
+
+// ValidateXWingEnrollmentKey validates the canonical wire encoding and the KEM key.
+func ValidateXWingEnrollmentKey(key string) error {
+	raw, ok := canonicalBase64(key)
+	if !ok {
+		return ErrInvalidDeviceEnvelope
+	}
+	if _, err := xwing.ParsePublicKey(raw); err != nil {
+		return ErrInvalidDeviceEnvelope
+	}
+	return nil
+}
 
 // DeviceDelivery is one sealing the browser prepared for one device.
 type DeviceDelivery struct {
@@ -47,8 +62,8 @@ type DeviceDelivery struct {
 }
 
 // ParseDeviceEnvelopeVersion checks the framing of a new device envelope
-// without decrypting it and returns its version: v4/v5 (HPKE) exactly
-// {v, alg, enc, ct} with a P-256 point and at least a tag, in canonical
+// without decrypting it and returns its version: v4/v5/v6 (HPKE) exactly
+// {v, alg, enc, ct} with a suite-sized enc and at least a tag, in canonical
 // base64. Retired v2/v3 get ErrRetiredDeviceEnvelope; anything else is
 // refused before it reaches the store.
 func ParseDeviceEnvelopeVersion(envelope string) (int, error) {
@@ -64,18 +79,25 @@ func ParseDeviceEnvelopeVersion(envelope string) (int, error) {
 	switch probe.V {
 	case 2, 3:
 		return 0, ErrRetiredDeviceEnvelope
-	case 4, 5:
+	case 4, 5, 6:
 		var e struct {
 			V   int    `json:"v"`
 			Alg string `json:"alg"`
 			Enc string `json:"enc"`
 			CT  string `json:"ct"`
 		}
-		if !decodeExact(envelope, &e, "v", "alg", "enc", "ct") || e.Alg != hpkeDeviceEnvelopeAlg {
+		if !decodeExact(envelope, &e, "v", "alg", "enc", "ct") {
 			return 0, ErrInvalidDeviceEnvelope
 		}
 		enc, ok := canonicalBase64(e.Enc)
-		if !ok || len(enc) != 65 || enc[0] != 0x04 {
+		if !ok {
+			return 0, ErrInvalidDeviceEnvelope
+		}
+		if e.V == 6 {
+			if e.Alg != xwingDeviceEnvelopeAlg || len(enc) != xwing.EncapsulationBytes {
+				return 0, ErrInvalidDeviceEnvelope
+			}
+		} else if e.Alg != hpkeDeviceEnvelopeAlg || len(enc) != 65 || enc[0] != 0x04 {
 			return 0, ErrInvalidDeviceEnvelope
 		}
 		if ct, ok := canonicalBase64(e.CT); !ok || len(ct) < 16 {
@@ -126,8 +148,8 @@ func canonicalBase64(s string) ([]byte, bool) {
 // SetPGPDeviceEnvelope stores the transport copy for one device and returns
 // the envelope version it recorded. It is the only writer of device slots.
 //
-// A converted account (one with a keyring) accepts only v5, which carries
-// the complete ring; a legacy account only v4. The caller's expected
+// A converted account (one with a keyring) accepts v5 or v6, carrying
+// the complete ring; a legacy account accepts v4 or v6 with one key. The caller's expected
 // fingerprint, revision and material generation must all be the account's
 // current ones, so a sealing prepared from a stale snapshot is refused rather
 // than delivered. The record keeps the version, generation, fingerprint and
@@ -146,6 +168,15 @@ func (s *Store) SetPGPDeviceEnvelope(id string, d DeviceDelivery) (User, int, er
 	if strings.TrimSpace(d.EnrollmentKey) == "" || strings.TrimSpace(d.ExpectedFingerprint) == "" {
 		return User{}, 0, ErrDeviceDeliveryIncomplete
 	}
+	if version == 6 {
+		if err := ValidateXWingEnrollmentKey(d.EnrollmentKey); err != nil {
+			return User{}, 0, err
+		}
+	} else if raw, ok := canonicalBase64(d.EnrollmentKey); ok && len(raw) == xwing.PublicKeyBytes {
+		// A published X-Wing key can never receive a classical envelope.
+		return User{}, 0, ErrInvalidDeviceEnvelope
+	}
+
 	expiresAt := time.Now().UTC().Add(DeviceEnvelopeTTL).Format(time.RFC3339)
 	u, err := s.mutatePGP(id, d.ExpectedRevision, func(u *User) error {
 		if u.PGPFingerprint == "" {
@@ -161,7 +192,7 @@ func (s *Store) SetPGPDeviceEnvelope(id string, d DeviceDelivery) (User, int, er
 		if u.PGPKeyring != nil {
 			generation, want = u.PGPKeyring.MaterialGeneration, 5
 		}
-		if version != want {
+		if version != want && version != 6 {
 			return ErrDeviceEnvelopeVersion
 		}
 		if d.ExpectedGeneration != generation {

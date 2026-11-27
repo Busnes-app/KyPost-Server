@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,10 +23,8 @@ import (
 // device entirely. See
 // docs/DEVICE_ENROLLMENT.md.
 
-// maxEnrollmentPublicKeyBytes bounds the published key. An uncompressed P-256
-// point is 65 bytes raw and a few hundred base64-wrapped in any sane encoding;
-// this leaves generous headroom while keeping an unbounded string out of the
-// device table.
+// maxEnrollmentPublicKeyBytes bounds the publish body. X-Wing keys are 1216
+// bytes (1624 in canonical base64); legacy P-256 keys remain accepted.
 const maxEnrollmentPublicKeyBytes = 4 << 10
 
 // handlePGPPublishEnrollmentKey records the calling device's enrollment public
@@ -66,6 +65,12 @@ func (s *Server) handlePGPPublishEnrollmentKey(w http.ResponseWriter, r *http.Re
 		http.Error(w, "publicKey is required", http.StatusBadRequest)
 		return
 	}
+	if slices.Contains(req.EnvelopeVersions, 6) {
+		if err := users.ValidateXWingEnrollmentKey(publicKey); err != nil {
+			http.Error(w, "v6 requires a valid canonical 1216-byte X-Wing publicKey", http.StatusBadRequest)
+			return
+		}
+	}
 	store, err := s.userStore(userID)
 	if err != nil {
 		http.Error(w, "state unavailable", http.StatusInternalServerError)
@@ -99,9 +104,9 @@ func (s *Server) handlePGPPublishEnrollmentKey(w http.ResponseWriter, r *http.Re
 // password-derived key. An earlier version of this comment claimed the opposite
 // and contradicted the docs.
 //
-// Serving this one envelope to this one device is safe: it is sealed to a key
-// whose private half is non-extractable from that device's secure element, so
-// no other caller gains anything by obtaining it.
+// The transport copy is sealed to the device’s locally protected key (P-256
+// hardware agreement or X-Wing platform storage, docs/DEVICE_ENROLLMENT.md Q8).
+// Obtaining the copy alone does not grant decryption.
 func (s *Server) handlePGPDeviceEnvelope(w http.ResponseWriter, r *http.Request) {
 	userID, device, ok, retryAfter := s.deviceAuthFromRequest(r)
 	if !ok {

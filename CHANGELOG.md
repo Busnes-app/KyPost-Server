@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add post-quantum device enrollment v6 (X-Wing HPKE, KEM 0x647A) and SAS v2 in the server and browser. Keep v4/v5 delivery and opening for P-256 devices while native clients upgrade; validate full X-Wing keys and encapsulation sizes. No existing identity or mail is rewritten.
+
 - Let a hosted MX host (not startable yet) forward relay-domain mail to the cell its region code names, over the pinned receiving transport. A message to several cells is answered `250` only when every cell holding recipients committed it, and `451` otherwise. Ordinary installs and single-cell MX hosts are unchanged.
 - Add the masked relay region code table and the cell disaster-recovery runbook ([CELL-RECOVERY.md](docs/CELL-RECOVERY.md)), rehearsed in CI on throwaway containers. A multi-tenant start (not startable yet) now refuses a cell without a region code; no cell has one until the launch cells are named. Ordinary installs are unchanged.
 - CI: the PostgreSQL 17 → 18 test reads each log whole before matching it. Piping a live log into `grep -q` could fail a check whose marker was there (SIGPIPE under `pipefail`); a self-test without Docker now covers that.

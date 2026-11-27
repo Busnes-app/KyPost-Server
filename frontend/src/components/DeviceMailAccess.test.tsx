@@ -1,3 +1,4 @@
+import xwingFixture from "../../../testdata/device-envelope-xwing.json";
 import { acceptCommittedPGPKey } from "../lib/pgpSession";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -673,7 +674,7 @@ describe("a converted account", () => {
     expect(sealSpy).not.toHaveBeenCalled();
     expect(sealKeyringSpy).toHaveBeenCalledWith({
       publicKeyB64: HONEST_KEY, deviceId: "d1", typedCode: code, raw: ring,
-      snapshot: { fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring }
+      snapshot: { fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring }, version: 5
     });
     expect(putDeviceEnvelope).toHaveBeenCalledWith("d1", expect.objectContaining({ v: 5 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", 4);
   });
@@ -697,4 +698,29 @@ describe("a converted account", () => {
     await userEvent.click(screen.getByRole("button", { name: "Enroll again" }));
     expect(await screen.findByLabelText("Code from your device")).toBeTruthy();
   });
+});
+
+
+it("delivers a real X-Wing v6 envelope only after the matching SAS v2", async () => {
+  const key = xwingFixture.publicKey;
+  render(<Harness dev={device({enrollmentPublicKey:key,enrollmentEnvelopeVersions:[4,5,6]})} />);
+  await startCeremony();
+  await submitCeremony(await codeFor(key));
+  await vi.waitFor(() => expect(putDeviceEnvelope, document.body.textContent ?? "").toHaveBeenCalledTimes(1), { timeout: 10000 });
+  expect(putDeviceEnvelope.mock.calls[0][1]).toMatchObject({v:6,alg:"HPKE-Base-XWing-SHA256-A256GCM"});
+  expect(sealSpy.mock.calls[0][0]).toBe(key);
+  expect(sealSpy.mock.calls[0][4]).toBe(6);
+});
+
+it("refuses a substituted X-Wing key before sealing or uploading", async () => {
+  const changed=Uint8Array.from(atob(xwingFixture.publicKey),c=>c.charCodeAt(0));
+  changed[1215]^=1;
+  const substituted=btoa(String.fromCharCode(...changed));
+  render(<Harness dev={device({enrollmentPublicKey:substituted,enrollmentEnvelopeVersions:[6]})} />);
+  await startCeremony();
+  await submitCeremony(await codeFor(xwingFixture.publicKey));
+  expect(await screen.findByText(/not the key on that device/i)).toBeTruthy();
+  await vi.waitFor(() => expect(screen.getByRole("button",{name:"Cancel"}).hasAttribute("disabled")).toBe(false));
+  expect(sealSpy).not.toHaveBeenCalled();
+  expect(putDeviceEnvelope).not.toHaveBeenCalled();
 });
