@@ -198,12 +198,34 @@ func (s *Server) internalPQIndexFor(sender users.User, resolver *keyResolver) (*
 }
 
 // provenAddresses are the addresses that stand for this account to other
-// accounts: the native mailbox, else DKIM domain-proven send-as aliases. The
-// IMAP login and code-confirmed aliases are self-declared and never count.
+// accounts: for native accounts, all active addresses across the primary
+// mailbox and active prepared extra mailboxes; otherwise, DKIM domain-proven
+// send-as aliases. The IMAP login and code-confirmed aliases are self-declared
+// and never count.
 func (s *Server) provenAddresses(userID string) ([]string, error) {
 	a, native, err := s.nativeMailAssignment(context.Background(), userID)
-	if err != nil || native {
-		return []string{a.Address}, err
+	if err != nil {
+		return nil, err
+	}
+	if native {
+		out := []string{a.Address}
+		if s.ssoLifecycle != nil {
+			all, err := s.ssoLifecycle.NativeMailboxesOf(userID)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range all {
+				if m.User != userID || (m.Kind == "extra" && (m.State != "active" || !m.Prepared)) {
+					continue
+				}
+				for _, x := range m.Addresses {
+					if x.State == "active" {
+						out = append(out, strings.TrimSpace(x.Address))
+					}
+				}
+			}
+		}
+		return out, nil
 	}
 	store, err := s.userSendAsStore(userID)
 	if err != nil {
