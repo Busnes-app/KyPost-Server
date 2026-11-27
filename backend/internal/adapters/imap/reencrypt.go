@@ -179,6 +179,85 @@ func parseFetchFlagsAndModSeqForUID(resp string, uid int) ([]string, uint64, err
 	return nil, 0, errors.New("cannot parse original message flags and MODSEQ for target UID")
 }
 
+// fetchOriginalDeleteState checks whether uid is still present in the currently
+// selected folder and whether its FLAGS include \Deleted, ignoring unsolicited
+// FETCH responses for other UIDs.
+func fetchOriginalDeleteState(d *goimap.Dialer, uid int) (present bool, hasDeleted bool, err error) {
+	found, err := incomingSearch(d, "UID "+strconv.Itoa(uid))
+	if err != nil {
+		return false, false, err
+	}
+	if len(found) == 0 {
+		return false, false, nil
+	}
+	resp, err := d.Exec(fmt.Sprintf("UID FETCH %d (UID FLAGS)", uid), true, 0, nil)
+	if err != nil {
+		return true, false, err
+	}
+	wantUID := strconv.Itoa(uid)
+	for _, rawLine := range strings.Split(resp, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "*") || !strings.Contains(strings.ToUpper(line), "FETCH") {
+			continue
+		}
+		uidMatch := uidTokenResponse.FindStringSubmatch(line)
+		if len(uidMatch) != 2 || uidMatch[1] != wantUID {
+			continue
+		}
+		flagMatch := flagsResponse.FindStringSubmatch(line)
+		if len(flagMatch) != 2 {
+			continue
+		}
+		for _, tok := range strings.Fields(flagMatch[1]) {
+			if strings.EqualFold(tok, `\Deleted`) {
+				return true, true, nil
+			}
+		}
+		return true, false, nil
+	}
+	return true, false, errors.New("cannot determine deletion state for target UID")
+}
+
+// reconcileConditionalDeleteErrorLocked handles a command/transport failure on
+// conditional UID STORE +FLAGS (\Deleted). Because the server may have applied
+// \Deleted right before the connection dropped, rolling back copyUID blindly
+// would delete the verified replacement while leaving the original marked
+// \Deleted. Instead, reconnect once and inspect the original UID:
+//   - If original is already gone: replacement is live -> return copyUID, nil.
+//   - If original is marked \Deleted: finish expunging original -> return copyUID, nil.
+//   - If original is confirmed present and NOT marked \Deleted: safely roll
+//     back copyUID and return the store error.
+//   - If reconciliation fails (ambiguous outcome): preserve copyUID and return
+//     the error so no message is lost.
+func (c *APIClient) reconcileConditionalDeleteErrorLocked(folder string, uid, copyUID int, storeErr error) (int, error) {
+	if c.dialer != nil {
+		_ = c.dialer.Close()
+		c.dialer = nil
+	}
+	fresh, err := c.ensureConnectedLocked()
+	if err != nil {
+		return 0, fmt.Errorf("mark original message deleted (replacement %d preserved; reconnect failed: %v): %w", copyUID, err, storeErr)
+	}
+	if err := fresh.SelectFolder(folder); err != nil {
+		return 0, fmt.Errorf("mark original message deleted (replacement %d preserved; select failed: %v): %w", copyUID, err, storeErr)
+	}
+	present, hasDeleted, err := fetchOriginalDeleteState(fresh, uid)
+	if err != nil {
+		return 0, fmt.Errorf("mark original message deleted (replacement %d preserved; state check failed: %v): %w", copyUID, err, storeErr)
+	}
+	if !present {
+		return copyUID, nil
+	}
+	if hasDeleted {
+		if expErr := c.finishExpungeLocked(fresh, folder, uid); expErr != nil {
+			return 0, fmt.Errorf("expunge original message after replacement %d committed: %w", copyUID, expErr)
+		}
+		return copyUID, nil
+	}
+	c.cleanupCopyUIDLocked(fresh, folder, copyUID)
+	return 0, fmt.Errorf("mark original message deleted: %w", storeErr)
+}
+
 // finishExpungeLocked executes UID EXPUNGE for uid and, on failure (such as a
 // dropped connection after the server already processed the expunge or a
 // transient error), reconnects once to verify whether uid is already gone and
@@ -457,8 +536,7 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 	// \Deleted only when UNCHANGEDSINCE succeeded.
 	storeResp, err := d.Exec(fmt.Sprintf(`UID STORE %d (UNCHANGEDSINCE %d) +FLAGS (\Deleted)`, uid, origModSeq), true, 0, nil)
 	if err != nil {
-		c.cleanupCopyUIDLocked(d, folder, copyUID)
-		return 0, fmt.Errorf("mark original message deleted: %w", err)
+		return c.reconcileConditionalDeleteErrorLocked(folder, uid, copyUID, err)
 	}
 	if !fetchResponseHasDeletedUID(storeResp, uid) {
 		c.cleanupCopyUIDLocked(d, folder, copyUID)
