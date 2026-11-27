@@ -44,10 +44,21 @@ func TestPQCConversionHTTPAndReadiness(t *testing.T) {
 	body := map[string]any{"expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "publicKeyV6": pq,
 		"wrapped": `{"v":2,"ring":"password"}`, "recoveryEnvelope": `{"v":2,"ring":"recovery"}`, "authSecret": secret,
 		"keyring": users.PGPKeyringState{Version: 2, MaterialGeneration: 1, PrimaryFingerprints: []string{u.PGPFingerprint, info.Fingerprint}, KeyFingerprints: append(old.KeyFingerprints, info.KeyFingerprints...)}}
+	// Build one stable session: authRequestAs itself updates the account's
+	// onboarding timestamp and must not run inside a no-mutation assertion.
+	sessionRequest := httptest.NewRequest("POST", "/api/pgp/identity/pqc", nil)
+	authRequestAs(s, sessionRequest, u.ID)
+	u, err = s.users.Get(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	post := func() *httptest.ResponseRecorder {
 		encoded, _ := json.Marshal(body)
 		r := httptest.NewRequest("POST", "/api/pgp/identity/pqc", bytes.NewReader(encoded))
-		authRequestAs(s, r, u.ID)
+		for _, cookie := range sessionRequest.Cookies() {
+			r.AddCookie(cookie)
+		}
+		r.Header.Set("X-CSRF-Token", sessionRequest.Header.Get("X-CSRF-Token"))
 		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, r)
 		return w

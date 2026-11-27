@@ -113,7 +113,7 @@ func (s *Server) localPQRecipient(sender users.User, address string, resolver *k
 		return resolvedKey{}, false, err
 	}
 	for _, u := range accounts {
-		if !u.Active || u.OrgID != sender.OrgID || u.PGPProtection() != users.PGPProtectionClient || !s.pgpV6Ready(u) {
+		if !u.Active || u.OrgID != sender.OrgID || !s.orgAdmit(AuthContext{OrgID: sender.OrgID}, u) || u.PGPProtection() != users.PGPProtectionClient || !s.pgpV6Ready(u) {
 			continue
 		}
 		owned := false
@@ -129,12 +129,11 @@ func (s *Server) localPQRecipient(sender users.User, address string, resolver *k
 		if err != nil {
 			return resolvedKey{}, false, err
 		}
-		if found && ((c.PGPKeyFingerprint != "" && !strings.EqualFold(c.PGPKeyFingerprint, func() string {
-			if keyVersionOf(c.PGPKey) == 6 {
-				return u.PGPFingerprintV6
-			}
-			return u.PGPFingerprint
-		}())) ||
+		v4Pin := u.PGPFingerprint
+		if keyVersionOf(c.PGPKey) == 6 {
+			v4Pin = u.PGPFingerprintV6
+		}
+		if found && ((c.PGPKeyFingerprint != "" && !strings.EqualFold(c.PGPKeyFingerprint, v4Pin)) ||
 			(c.PGPKeyV6Fingerprint != "" && !strings.EqualFold(c.PGPKeyV6Fingerprint, u.PGPFingerprintV6))) {
 			return resolvedKey{Tier: tierKeyChanged}, true, nil
 		}
