@@ -548,7 +548,7 @@ export function MailKeys({
     setDrillDate("");
     try {
       // Read server bytes again: a drill must test the copy currently offered.
-      if (restoreSource.kind === "file" && restoreSource.file.size > (512 << 10)) {
+      if (restoreSource.kind === "file" && restoreSource.file.size > (2 << 20)) {
         throw new Error("The recovery backup is too large.");
       }
       const raw = restoreSource.kind === "file" ? await restoreSource.file.text() : JSON.stringify(await getRecoveryBackup());

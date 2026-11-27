@@ -85,3 +85,14 @@ The server and browser support X-Wing HPKE device envelopes (v6, KEM 0x647A) wit
 SAS v2 binding the entire device public key. Existing P-256 v4/v5 enrollment stays
 supported while native clients upgrade. This upgrades private-key delivery, independently
 of an account’s OpenPGP certificate version. See [device enrollment](DEVICE_ENROLLMENT.md#normative-the-x-wing-hpke-envelope-v6).
+
+
+## OpenPGP v6 readers (Spec A P3)
+
+The browser's gopenpgp WASM engine reads RFC 9580 v6 and RFC 9980 composite keys,
+decrypts ML-KEM-768+X25519 / ML-KEM-1024+X448 messages and verifies ML-DSA-65+Ed25519 /
+ML-DSA-87+Ed448 signatures. Complete keyring v2 backups retain separate v4/v6 active
+members plus all historical keys; v1 remains readable. Sealed envelopes allow 512 KiB;
+recovery files allow 2 MiB. Devices report their OpenPGP codecs on both enrollment
+endpoints and the device inventory exposes them. This does not switch existing
+accounts or new-key generation to v6. See [wire contract](E2E_PGP.md#keyring-v2-reader-contract-spec-a-p3).

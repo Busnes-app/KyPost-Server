@@ -372,13 +372,8 @@ func TestClearPGPIdentityDropsSlots(t *testing.T) {
 	}
 }
 
-// TestWrappedEnvelopeByteBoundIsEnforcedByTheStore is run-7 finding F4.
-//
-// maxWrappedEnvelopeSlots' safety argument is "32 slots x 128 KiB", but the byte
-// half of that product lived only in package api as an io.LimitReader on the
-// request body — and PGPPrivateKeyWrapped has a second writer, POST
-// /api/auth/password, whose reader allowed 1 MiB. A package's own invariant
-// cannot depend on a bound another package may or may not apply.
+// Every store writer enforces the envelope bound, including password changes;
+// the slot budget must not depend on a transport's separate request limit.
 func TestWrappedEnvelopeByteBoundIsEnforcedByTheStore(t *testing.T) {
 	store := newTestStore(t)
 	u, err := store.Create(context.Background(), "someone", "correct-horse-battery-staple", RoleUser)

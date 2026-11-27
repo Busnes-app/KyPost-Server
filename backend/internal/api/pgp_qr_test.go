@@ -7,13 +7,50 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
+
+func TestPGPQRV6Preserves64HexFingerprint(t *testing.T) {
+	s := newTestServer(t)
+	u := clientProtectedUser(t, s)
+	pub, err := os.ReadFile("../../../testdata/openpgp-v6/v6-pqc.pub.asc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := pgpmail.InspectPublicKey(string(pub))
+	if err != nil || len(info.Fingerprint) != 64 {
+		t.Fatal(info, err)
+	}
+	if _, err := s.users.SetPGPIdentityClientProtected(u.ID, info.Fingerprint, info.KeyID, string(pub), `{"v":2}`, "imported", "now", nil); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/api/pgp/qr/token", nil)
+	authRequestAs(s, req, u.ID)
+	w := httptest.NewRecorder()
+	s.withAuth(s.handlePGPQRToken).ServeHTTP(w, req)
+	var token struct {
+		Token string `json:"token"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &token) != nil {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	s.handlePGPQRKey(w, httptest.NewRequest("GET", "/api/pgp/qr/key?t="+token.Token, nil))
+	var response struct {
+		Fingerprint string `json:"fingerprint"`
+		PublicKey   string `json:"publicKey"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil || response.Fingerprint != info.Fingerprint || response.PublicKey != string(pub) {
+		t.Fatal("QR truncated/replaced fingerprint", w.Code, w.Body.String())
+	}
+}
 
 func TestPGPQRTokenAndKeyRoundTrip(t *testing.T) {
 	srv := newTestServer(t)

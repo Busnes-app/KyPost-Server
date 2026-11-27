@@ -20,6 +20,8 @@ Account validation, mutations, indexes, deep-copy snapshots, table transactions 
 
 - Device slots have one writer, `SetPGPDeviceEnvelope`: v4 for legacy single-key material, v5 for converted complete rings, or v6 X-Wing for either. Validate v6 framing and the canonical enrollment key before mutation; preserve revision, fingerprint and generation binding. The wire contract is [device enrollment](../../../docs/DEVICE_ENROLLMENT.md).
 
+- Existing keyring metadata versions 1 and 2 accept whole-ring password/recovery rewraps with revision guards and preserve the version, inventories and generation. Legacy single-key writers refuse either ring. P3 exposes no conversion or active-v6 switch. Each opaque envelope is capped at 512 KiB.
+
 ## Work Guidance
 
 Keep product identity policy in the existing store methods. Use the registered volume schema and existing database copy path; no second account database or serialized account-list document.

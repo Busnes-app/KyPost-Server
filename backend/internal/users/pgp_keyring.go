@@ -203,7 +203,11 @@ func (s *Store) CommitPGPKeyring(ctx context.Context, id string, update PGPKeyri
 		if update.MaterialGeneration != generation {
 			return ErrInvalidPGPKeyring
 		}
-		u.PGPKeyring = &PGPKeyringState{Version: 1, MaterialGeneration: generation, PrimaryFingerprints: primaries, KeyFingerprints: inventory}
+		version := 1
+		if !conversion {
+			version = u.PGPKeyring.Version
+		}
+		u.PGPKeyring = &PGPKeyringState{Version: version, MaterialGeneration: generation, PrimaryFingerprints: primaries, KeyFingerprints: inventory}
 		u.PGPFingerprint, u.PGPKeyID, u.PGPPublicKey = info.Fingerprint, info.KeyID, publicKey
 		u.PGPPrivateKeyWrapped, u.PGPPrivateKeyEnc, u.PGPKeyProtection = update.PasswordEnvelope, "", PGPProtectionClient
 		now := time.Now().UTC().Format(time.RFC3339)

@@ -696,14 +696,14 @@ should deactivate an actively compromised account to stop concurrent use. Unknow
 Account conversion is not exposed by an HTTP route.
 
 Snapshots include optional `keyring` (null/absent for legacy accounts):
-`{version: 1, materialGeneration, primaryFingerprints, keyFingerprints}`. Inventories
+`{version: 1|2, materialGeneration, primaryFingerprints, keyFingerprints}`. Inventories
 contain uppercase full fingerprints; the complete list includes subkeys. The
 internal whole-ring transaction stores both sealed envelopes, active public key,
 metadata and an optional derived credential under one revision/file lock. Initial
 conversion keeps the same active identity and starts material generation at 1;
 subsequent inventory growth increments it. Password/recovery rewrap leaves it
 unchanged. Inventories never shrink (16 primary keys, 256 total fingerprints), and
-each envelope is limited to 128 KiB. Conversion or inventory growth clears device
+each envelope is limited to 512 KiB. Conversion or inventory growth clears device
 slots; a new active key must be previously absent and usable for encryption.
 Same-active public packet edits are refused pending preservation rules. This
 metadata cannot prove opaque ciphertext contains the claimed keys: complete client
@@ -716,7 +716,7 @@ password route. A forced-change snapshot withholds `wrappedPrivateKey`; the brow
 changes the credential with the supplied revision and preserves the existing
 opaque key for recovery after sign-in. Ordinary changes unwrap and re-seal the
 snapshot's envelope, then submit that envelope and revision together. Converted
-accounts opt in with `keyringVersion: 1` on `POST /api/auth/password`, alongside
+accounts opt in with `keyringVersion: 1|2` (matching the snapshot) on `POST /api/auth/password`, alongside
 `rewrappedPgpKey`, `expectedRevision` and the existing derived credential fields.
 The browser validates every member and current public packets before wrapping the
 original complete bytes. The server binds the revision to the verified credential
@@ -727,6 +727,27 @@ forced-reset sessions cannot use it. Existing session/device revocation still
 runs after commit. Conversion and other lifecycle writes remain unavailable. Missing
 revision, failed snapshot reads and corrupt ordinary envelopes abort preparation.
 
+### Keyring v2 reader contract (Spec A P3)
+
+The browser reads both `kypost-pgp-keyring-v1` and `kypost-pgp-keyring-v2`.
+V2 keeps `materialGeneration`, `keyFingerprints` and `keys`, replacing
+`activeFingerprint` with `active: {"v4":"<40-hex>","v6":"<64-hex>"}`. Either
+slot may be omitted, but at least one must name a matching-version primary member.
+Each inventory must match every parsed primary/subkey; all private packets must be
+unlocked. No duplicate keys, ambiguous active fields or active subkeys are accepted.
+The browser retains both actives and all history, with v4 preferred. Snapshot metadata
+version matches the ring (1 or 2); rewrap APIs require that version and preserve it.
+Public-packet checks use the snapshot's selected active member; fingerprint equality
+alone does not prove that UID certifications or revocations match.
+
+The gopenpgp WASM reader opens RFC 9580 v6 and RFC 9980 composite keys/messages and
+verifies ML-DSA-65+Ed25519 and ML-DSA-87+Ed448 signatures. ML-KEM-768+X25519 and
+ML-KEM-1024+X448 are supported WASM reader inputs. Server key admission retains
+the Spec A Q7 category-3 allowlist; level-5 keys are refused at that boundary.
+V4 generation and default outbound selection
+remain unchanged. Device codec reporting is specified in
+[device enrollment](DEVICE_ENROLLMENT.md#normative-device-openpgp-capabilities-spec-a-p3).
+
 ### Browser recovery
 
 Complete-ring records support offline export and read-only drills using
@@ -734,20 +755,20 @@ Complete-ring records support offline export and read-only drills using
 conversion and older-backup merging remain unavailable. The file is `{format, fingerprint, publicKey, keyring, envelope}`:
 `keyring` has the same version/generation/inventory shape as the authenticated
 snapshot; `envelope` uses the unchanged v2 PBKDF2/AES-GCM wrapper and seals the
-original complete `kypost-pgp-keyring-v1` plaintext, including unpublished revocation
+original complete `kypost-pgp-keyring-v1` or `kypost-pgp-keyring-v2` plaintext, including unpublished revocation
 certificates. Public identity and fingerprint metadata are outside the encryption;
 private key material and revocation certificates stay sealed.
 
 Creation reopens the serialized file and compares the entire original plaintext
 before offering the download. Limits are 16 primary keys, 256 total primary/subkey
-fingerprints, 128 KiB serialized envelope (including base64 expansion), and 512 KiB
+fingerprints, 512 KiB serialized envelope (including base64 expansion), and 2 MiB
 UTF-8 recovery file. Refuse capacity overflow rather than dropping history.
 
-Matching-ring restoration posts `keyringVersion: 1`, `wrapped`, `expectedFingerprint`
+Matching-ring restoration posts `keyringVersion: 1|2` (matching the snapshot), `wrapped`, `expectedFingerprint`
 and `expectedRevision` to `/api/pgp/identity/rewrap` with the existing account step-up.
-The rewrap request is bounded to 384 KiB to allow JSON quoting and credential
-fields; the embedded envelope retains its 128 KiB store limit.
-Only existing client-protected v1 rings with derived authentication and no forced
+The rewrap request is bounded to 1536 KiB to allow JSON quoting and credential
+fields; the embedded envelope retains its 512 KiB store limit.
+Only existing client-protected v1/v2 rings with derived authentication and no forced
 password change can opt in. The server binds the request revision before step-up
 and checks it under the mutation lock. Only password ciphertext changes; recovery
 slots, credentials, public identity, inventories and material generation survive.
@@ -769,12 +790,12 @@ snapshot does not reuse the old date.
 
 After saved-secret acknowledgement, a prepared v2 backup is reopened locally and
 validated against current bootstrap at its original preparation revision. The
-browser sends `keyringVersion: 1`, `envelope`, `expectedFingerprint` and
+browser sends `keyringVersion: 1|2` (matching the snapshot), `envelope`, `expectedFingerprint` and
 `expectedRevision` with account step-up to `PUT /api/pgp/identity/envelope/recovery`.
-No other slot accepts this opt-in. Existing v1 client rings with derived auth and
+No other slot accepts this opt-in. Existing v1/v2 client rings with derived auth and
 no forced password change are required. Only recovery ciphertext/timestamps change;
 password ciphertext, credentials, public identity and material generation survive.
-The request allows 384 KiB of JSON/credential overhead; the envelope remains 128 KiB.
+The request allows 1536 KiB of JSON/credential overhead; the envelope remains 512 KiB.
 Confirmation compares exact ciphertext, original revision + 1 and complete public
 metadata from one slot GET response. Lost responses never trigger automatic retries.
 Session/page liveness is checked immediately before PUT and accepting confirmation.

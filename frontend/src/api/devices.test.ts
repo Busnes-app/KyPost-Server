@@ -53,3 +53,14 @@ it.each([[2, 2], [1], [65536], [2.5], ["3"], false, Array.from({ length: 17 }, (
   getJSON.mockResolvedValue({ devices: [{ deviceId: "d", enrollmentEnvelopeVersions: value }] });
   await expect(listNativeDevices()).rejects.toThrow(/Invalid device enrollment versions/);
 });
+
+
+it("reads OpenPGP codecs independently of envelope support and defaults old devices to v4", async () => {
+  getJSON.mockResolvedValue({ devices: [{ deviceId: "old" }, { deviceId: "new", openpgp: ["rfc9980", "v6", "v4", "v6"] }] });
+  const { devices } = await listNativeDevices();
+  expect(devices.map(device => device.openpgp)).toEqual([["v4"], ["v4", "v6", "rfc9980"]]);
+});
+it.each([[], ["v5"], [null], "v6", [4], false])("rejects malformed OpenPGP capability %j", async openpgp => {
+  getJSON.mockResolvedValue({ devices: [{ deviceId: "bad", openpgp }] });
+  await expect(listNativeDevices()).rejects.toThrow(/Invalid device OpenPGP/);
+});

@@ -198,7 +198,7 @@ export function knownSignerKeys(): BoundSignerKey[] {
 export async function rewrappedEnvelopeFor(
   oldPassword: string,
   newPassword: string
-): Promise<{ expectedRevision: number; rewrappedPgpKey?: string; keyringVersion?: 1 }> {
+): Promise<{ expectedRevision: number; rewrappedPgpKey?: string; keyringVersion?: 1 | 2 }> {
   const bootstrap = await getPasswordSnapshot();
   const expectedRevision = requirePGPRevision(bootstrap);
   if (bootstrap.mustChangePassword || bootstrap.protection !== "client") return { expectedRevision };
@@ -214,10 +214,10 @@ export async function rewrappedEnvelopeFor(
     await validateKeyringSnapshot(raw, { ...current, keyring: bootstrap.keyring });
     await validateKeyringSnapshot(raw, { ...current, keyring: current.keyring });
     const rewrappedPgpKey = JSON.stringify(await wrapPrivateKey(raw, newPassword));
-    if (new TextEncoder().encode(rewrappedPgpKey).length > 128 << 10) {
+    if (new TextEncoder().encode(rewrappedPgpKey).length > 512 << 10) {
       throw new Error("The complete keyring exceeds storage capacity. No password was changed.");
     }
-    return { expectedRevision, rewrappedPgpKey, keyringVersion: 1 };
+    return { expectedRevision, rewrappedPgpKey, keyringVersion: current.keyring.version };
   }
   requireSinglePrivateKey(raw);
   return { expectedRevision, rewrappedPgpKey: JSON.stringify(await wrapPrivateKey(raw, newPassword)) };
@@ -253,10 +253,10 @@ export async function restorePGPKeyring(raw: string, secret: string, snapshot: P
   if (snapshot.protection !== "client") throw new Error("This account does not use a complete client keyring.");
   await validateKeyringSnapshot(raw, { ...snapshot, keyring: snapshot.keyring });
   const wrapped = JSON.stringify(await wrapPrivateKey(raw, secret));
-  if (new TextEncoder().encode(wrapped).length > (128 << 10)) throw new Error("The complete keyring exceeds storage capacity.");
+  if (new TextEncoder().encode(wrapped).length > (512 << 10)) throw new Error("The complete keyring exceeds storage capacity.");
   if (!isCurrent()) throw new Error("The signed-in session changed. Reload before restoring.");
   try {
-    await rewrapPGPKeyring({ wrapped, password, expectedFingerprint: snapshot.fingerprint, expectedRevision, isCurrent });
+    await rewrapPGPKeyring({ wrapped, password, expectedFingerprint: snapshot.fingerprint, expectedRevision, isCurrent, keyringVersion: snapshot.keyring?.version });
   } catch {
     // The request may have committed. Never retry or attach a newer revision.
   }
@@ -288,7 +288,7 @@ export async function storePGPKeyringRecovery(backup: RecoveryBackup, secret: st
   const envelope = JSON.stringify(backup.envelope);
   try {
     if (!isCurrent()) throw new Error("session changed");
-    const stored = await putPGPKeyringRecovery({ envelope,password,expectedFingerprint:current.fingerprint,expectedRevision,isCurrent });
+    const stored = await putPGPKeyringRecovery({ envelope,password,expectedFingerprint:current.fingerprint,expectedRevision,isCurrent,keyringVersion:backup.keyring.version });
     if (!stored || typeof stored !== "object" || !("envelope" in stored) || stored.envelope !== envelope ||
         !("pgpRevision" in stored) || stored.pgpRevision !== expectedRevision+1 ||
         !("fingerprint" in stored) || typeof stored.fingerprint !== "string" ||

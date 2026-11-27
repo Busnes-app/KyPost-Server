@@ -36,6 +36,18 @@ v2 with a single-key plaintext. These checkouts do not prove released binaries.
 Previously enrolled Linux devices retaining history does not help a newly paired
 device. Never silently put JSON or concatenated keys inside a v2 envelope.
 
+## P3 read compatibility
+
+The browser reads `kypost-pgp-keyring-v2` and v1 rings; conversion remains unavailable.
+V2 replaces `activeFingerprint` with `active: {"v4":"<40-hex>","v6":"<64-hex>"}`.
+Either slot may be omitted, but at least one is required, and each must name a primary
+of that version in `keys`. The complete fingerprint inventory and all original private
+armor/certificates survive recovery, password rewrap and device delivery. Snapshot
+`keyring.version` matches the plaintext format (1 or 2). Recovery continues to use
+`kypost-pgp-recovery-v2` for either complete ring. V4 stays preferred and single-key
+writers still refuse rings; generation, account conversion and outbound switching
+are P4/P5 work. Limits below are the current P3 bounds.
+
 ## One sealed keyring
 
 Keep the existing v2 PBKDF2-SHA256/AES-GCM password wrapper and its parameters.
@@ -66,10 +78,10 @@ public-only keys and, for JSON rings, any missing or still-passphrase-protected
 private packet. Legacy armor keeps its prior decryption policy, including GnuPG
 exports with a dummy primary and usable encryption subkey, large UID/certification
 sets, and text surrounding armor. JSON ring plaintext parsing is bounded to
-128 KiB before JSON/OpenPGP work; recovery creation also enforces the serialized
+512 KiB before JSON/OpenPGP work; recovery creation also enforces the serialized
 sealed-envelope limit below, including base64 expansion. Reader capacity is broader
-than storage admission: both password and recovery envelopes must fit 128 KiB,
-so the effective stored plaintext ceiling is below 96 KiB. Wrapping the same bytes
+than storage admission: both password and recovery envelopes must fit 512 KiB,
+so the effective stored plaintext ceiling is below 384 KiB. Wrapping the same bytes
 with either secret produces equal envelope sizes; keep the broader reader bound
 for inspection and salvage.
 
@@ -83,10 +95,10 @@ active member without opening or modifying the sealed payload.
 
 The internal store caps a keyring at 16 primary keys, 256 total primary/subkey
 fingerprints, and each serialized sealed envelope at
-the existing 128 KiB bound, whichever is reached first. Refuse growth with an
+the existing 512 KiB bound, whichever is reached first. Refuse growth with an
 explicit capacity error; never evict history. Large imported keys may hit the byte
 limit earlier. A lifecycle request containing public material and two envelopes
-needs an explicit aggregate body bound (proposed 1 MiB), with individual bounds
+needs an explicit aggregate body bound (proposed 2 MiB), with individual bounds
 still enforced before expensive parsing. Revisit limits with representative RSA
 and ECC fixtures before finalizing the wire schema.
 
@@ -222,12 +234,12 @@ The device ID is nonempty and unchanged (no trimming, normalization or case
 folding), at most 65,535 UTF-8 bytes. The active fingerprint is uppercase hex
 without whitespace, computed from the validated active key (40 or 64 bytes).
 Lengths count UTF-8 bytes, not characters. Plaintext is the original UTF-8
-`kypost-pgp-keyring-v1` JSON, including every historical private key and optional
+`kypost-pgp-keyring-v1` or `-v2` JSON, including every historical private key and optional
 revocation certificate. Do not re-export a parsed key to construct it. Apply the
-ring bounds above and a 128 KiB UTF-8 limit on the serialized sealed envelope;
-base64 expansion can reject a ring that fits the reader's 128 KiB plaintext cap.
+ring bounds above and a 512 KiB UTF-8 limit on the serialized sealed envelope;
+base64 expansion can reject a ring that fits the reader's 512 KiB plaintext cap.
 
-The browser's `sealKeyringForDevice` (now v5 only) requires caller-supplied current snapshot
+The browser's `sealKeyringForDevice` (v5 or v6) requires caller-supplied current snapshot
 metadata/public material, validates the entire ring, and verifies the existing
 SAS against the same device key/ID immediately before sealing. It only returns
 ciphertext. It does not upload, persist, install keys or establish that a native
@@ -346,7 +358,7 @@ native compatibility remain implementation gates.
 
 ## Implemented password writer
 
-`POST /api/auth/password` accepts `keyringVersion: 1` only for existing rings,
+`POST /api/auth/password` accepts matching `keyringVersion: 1|2` only for existing rings,
 with the complete rewrapped password envelope, derived credential and expected
 revision. Client validation binds exact plaintext to matching password/bootstrap
 snapshots. The store mutation changes only credential and password ciphertext;

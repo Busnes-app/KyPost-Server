@@ -298,11 +298,11 @@ export async function rewrapPGPPrivateKey(wrapped: string, password: string, exp
 }
 
 /** Explicit complete-ring writer; older servers reject it through their legacy guard. */
-export async function rewrapPGPKeyring(input: { wrapped: string; password: string; expectedFingerprint: string; expectedRevision: number; isCurrent: () => boolean }): Promise<void> {
+export async function rewrapPGPKeyring(input: { wrapped: string; password: string; expectedFingerprint: string; expectedRevision: number; isCurrent: () => boolean; keyringVersion?: 1 | 2 }): Promise<void> {
   const credential = await stepUp(input.password);
   if (!input.isCurrent()) throw new Error("The restore session changed. Reload before restoring.");
   const body = { wrapped: input.wrapped, expectedFingerprint: input.expectedFingerprint,
-    expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: 1, ...credential };
+    expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: input.keyringVersion ?? 1, ...credential };
   await withSSOStepUp((h) => postJSON<unknown>("/api/pgp/identity/rewrap", body, h));
 }
 
@@ -314,12 +314,12 @@ export async function putRecoveryEnvelope(envelope: WrappedKeyEnvelope, password
 }
 
 /** A single versioned write followed by an exact-slot confirmation read. */
-export async function putPGPKeyringRecovery(input: { envelope: string; password: string; expectedFingerprint: string; expectedRevision: number; isCurrent: () => boolean }): Promise<unknown> {
+export async function putPGPKeyringRecovery(input: { envelope: string; password: string; expectedFingerprint: string; expectedRevision: number; isCurrent: () => boolean; keyringVersion?: 1 | 2 }): Promise<unknown> {
   const credential = await stepUp(input.password);
   if (!input.isCurrent()) throw new Error("The recovery session changed. Reload before storing this copy.");
   try {
     const body = { envelope: input.envelope, expectedFingerprint: input.expectedFingerprint,
-      expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: 1, ...credential };
+      expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: input.keyringVersion ?? 1, ...credential };
     await withSSOStepUp((h) => putJSON("/api/pgp/identity/envelope/recovery", body, h));
   } catch {
     // A lost response may follow a commit; confirm by read, never retry the write.

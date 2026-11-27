@@ -13,7 +13,7 @@ const bin = fileURLToPath(new URL('../.browser/server', import.meta.url));
 const dir = await mkdtemp(join(tmpdir(), 'kypost-browser-'));
 const env = {
   PATH: process.env.PATH,
-  PUSH_RELAY_URL: "", APNS_RELAY_URL: "",
+  PUSH_RELAY_URL: "", APNS_RELAY_URL: "", KY_PUSH_ENABLED: "false",
   CONFIG_DIR: join(dir, 'config'), STATE_DIR: join(dir, 'state'),
   LOG_DIR: join(dir, 'logs'), SECRET_DIR: join(dir, 'secrets'),
   FRONTEND_DIR: fileURLToPath(new URL('../dist', import.meta.url)),

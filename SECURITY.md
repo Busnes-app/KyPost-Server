@@ -133,6 +133,16 @@ and displays a warning; newer typing remains only in the open compose window.
 TLS and native-client policies are separate boundaries. See
 [the user-facing key policy](docs/PGP-KEYS.md).
 
+P3 adds v6/RFC 9980 reader and v1/v2 complete-ring compatibility; default
+generation and outbound selection stay v4, and server key admission retains
+Spec A's category-3 allowlist. A device's authenticated `openpgp` report is a
+codec claim, not attestation or proof of key custody; it enables no account switch.
+Each opaque envelope is bounded to 512 KiB, with at most 32 extra slots
+(16 MiB per account), and recovery files to 2 MiB. The server cannot inspect
+sealed ring contents; clients validate the complete inventory and refuse
+capacity overflow without dropping history. See the
+[P3 reader contract](docs/E2E_PGP.md#keyring-v2-reader-contract-spec-a-p3).
+
 ### Key strength
 
 KyPost's own code refuses RSA keys below 2048 bits in OIDC provider JWKS,

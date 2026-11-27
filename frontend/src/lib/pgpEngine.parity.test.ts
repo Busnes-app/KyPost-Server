@@ -83,17 +83,44 @@ describe("openpgp.js and gopenpgp wasm agree", () => {
 const fixtures = resolve(import.meta.dirname, "../../../testdata/openpgp-v6");
 describe("P0 fixtures", () => {
   const read = (name: string) => readFileSync(`${fixtures}/${name}`, "utf8");
+  for (const name of ["v4", "v4-pqc", "v6", "v6-pqc"]) {
+    it(`inspects and imports ${name} without changing the default generator`, async () => {
+      const engine = await pgpEngine();
+      const pub = await engine.inspect(read(`${name}.pub.asc`));
+      const imported = await engine.importPrivate(read(`${name}.sec.asc`), "");
+      expect(imported.fingerprint).toBe(pub.fingerprint);
+      expect(imported.fingerprint).toHaveLength(name.startsWith("v6") ? 64 : 40);
+      expect(imported.armoredPrivateKey).toBe(read(`${name}.sec.asc`));
+      // The fixture set has no classical v6 message; make one to the fixture
+      // key, then use that original private key to read it.
+      if (name === "v6") {
+        const armoredMessage = await engine.encrypt({ text: "RFC 9580", encryptionKeys: [read("v6.pub.asc")], signingKey: read("v6.sec.asc") });
+        const out = await engine.decrypt({ armoredMessage, decryptionKeys: [read("v6.sec.asc")], verificationKeys: [read("v6.pub.asc")], maxBytes: MAX });
+        expect(out.data).toBe("RFC 9580");
+        expect(out.signatures.map(s => s.valid)).toEqual([true]);
+      }
+    });
+  }
   for (const name of ["v4", "v4-pqc", "v6-pqc"]) {
     it(`wasm opens ${name}.msg.asc`, async () => {
       const wasm = await pgpEngine();
       const out = await wasm.decrypt({ armoredMessage: read(`${name}.msg.asc`), decryptionKeys: [read(`${name}.sec.asc`)], verificationKeys: [read(`${name}.pub.asc`)], maxBytes: MAX });
       expect(out.data.replace(/\r\n/g, "\n")).toBe(read("message.txt").replace(/\r\n/g, "\n"));
+      const ciphertext = await wasm.dearmor(read(`${name}.msg.asc`));
+      ciphertext[ciphertext.length - 1] ^= 1;
+      await expect(wasm.decrypt({ armoredMessage: await wasm.armor(ciphertext, "PGP MESSAGE"), decryptionKeys: [read(`${name}.sec.asc`)], verificationKeys: [], maxBytes: MAX })).rejects.toThrow();
+      await expect(wasm.decrypt({ armoredMessage: read(`${name}.msg.asc`), decryptionKeys: [read("v6.sec.asc")], verificationKeys: [], maxBytes: MAX })).rejects.toThrow();
+      await expect(wasm.decrypt({ armoredMessage: read(`${name}.msg.asc`), decryptionKeys: [read(`${name}.sec.asc`)], verificationKeys: [], maxBytes: 8 })).rejects.toThrow();
     });
   }
   it("wasm verifies v6-pqc.sig.asc over message.txt", async () => {
     const wasm = await pgpEngine();
     const checks = await wasm.verifyDetached({ data: readFileSync(`${fixtures}/message.txt`), armoredSignature: read("v6-pqc.sig.asc"), verificationKeys: [read("v6-pqc.pub.asc")] });
     expect(checks.map((s) => s.valid)).toEqual([true]);
+    for (const [data, key] of [[read("message.txt") + "tampered", "v6-pqc.pub.asc"], [read("message.txt"), "v6.pub.asc"]]) {
+      const bad = await wasm.verifyDetached({ data: new TextEncoder().encode(data), armoredSignature: read("v6-pqc.sig.asc"), verificationKeys: [read(key)] });
+      expect(bad.map(s => s.valid)).toEqual([false]);
+    }
   });
   it("openpgp.js 6.3 opens v4.msg.asc and refuses the PQC ones", async () => {
     const js = openpgpEngine;

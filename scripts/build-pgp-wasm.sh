@@ -12,6 +12,6 @@ cd "$root/backend"
 GOTOOLCHAIN="$(awk '$1 == "toolchain" { print $2 }' go.mod)"
 export GOTOOLCHAIN
 GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -trimpath -ldflags=-s -o "$out/kypost-pgp.wasm" ./cmd/pgpwasm
-cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" "$out/wasm_exec.js"
+install -m 644 "$(go env GOROOT)/lib/wasm/wasm_exec.js" "$out/wasm_exec.js"
 go env GOVERSION > "$out/GOVERSION"
 test "$(cat "$out/GOVERSION")" = "$GOTOOLCHAIN"

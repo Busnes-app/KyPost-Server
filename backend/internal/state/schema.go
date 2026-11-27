@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS native_devices (
 	enrollment_public_key TEXT NOT NULL DEFAULT '',
 	enrollment_key_at     TEXT NOT NULL DEFAULT '',
 	enrollment_envelope_versions TEXT NOT NULL DEFAULT '[]',
+	openpgp TEXT NOT NULL DEFAULT '["v4"]',
 	encryption_enrolled   INTEGER NOT NULL DEFAULT 0,
 	enrolled_version      INTEGER NOT NULL DEFAULT 0,
 	enrolled_generation   INTEGER NOT NULL DEFAULT 0,
@@ -426,6 +427,7 @@ var additiveColumns = []struct{ table, column, ddl string }{
 	{"native_devices", "enrollment_public_key", "TEXT NOT NULL DEFAULT ''"},
 	{"native_devices", "enrollment_key_at", "TEXT NOT NULL DEFAULT ''"},
 	{"native_devices", "enrollment_envelope_versions", "TEXT NOT NULL DEFAULT '[]'"},
+	{"native_devices", "openpgp", `TEXT NOT NULL DEFAULT '["v4"]'`},
 	{"native_devices", "encryption_enrolled", "INTEGER NOT NULL DEFAULT 0"},
 	// What the device last acknowledged holding. 0 and "" are the truth for a
 	// device that acknowledged only the legacy boolean, or nothing.

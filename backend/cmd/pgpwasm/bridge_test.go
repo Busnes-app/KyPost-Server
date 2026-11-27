@@ -10,13 +10,55 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpprofile"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
+	"github.com/ProtonMail/gopenpgp/v3/constants"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
 type pair struct{ priv, pub string }
+
+// High-security keys are read/verify interoperability inputs, never a new UI
+// generation default. Exercise the actual js/wasm target, including Ed448.
+func TestReadVerifyRFC9980Level5(t *testing.T) {
+	key, err := pgpprofile.V6().KeyGeneration().AddUserId("Level 5", "level5@example.test").New().GenerateKeyWithSecurity(constants.HighSecurity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer key.ClearPrivateParams()
+	priv, err := key.Armor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := key.GetArmoredPublicKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := inspect([]byte(pub))
+	if err != nil || info.Version != 6 || len(info.Fingerprint) != 64 || len(info.Algorithms) != 2 || info.Algorithms[0] != 31 || info.Algorithms[1] != 36 {
+		t.Fatalf("level5 inspect: %+v %v", info, err)
+	}
+	msg, err := encrypt([]byte("level5 read"), [][]byte{[]byte(pub)}, []byte(priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, sigs, err := decrypt([]byte(msg), [][]byte{[]byte(priv)}, [][]byte{[]byte(pub)}, 1<<20)
+	if err != nil || string(data) != "level5 read" || len(sigs) != 1 || !sigs[0].Valid {
+		t.Fatalf("level5 decrypt: %q %+v %v", data, sigs, err)
+	}
+	sig, _, err := signDetached([]byte("signed"), []byte(priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"signed", "tampered"} {
+		checks, err := verifyDetached([]byte(text), []byte(sig), [][]byte{[]byte(pub)})
+		if err != nil || len(checks) != 1 || checks[0].Valid != (text == "signed") {
+			t.Fatalf("level5 verify %q: %+v %v", text, checks, err)
+		}
+	}
+}
 
 func gen(t *testing.T, profile, email string) pair {
 	t.Helper()

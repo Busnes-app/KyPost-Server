@@ -389,8 +389,8 @@ export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, 
     throw new Error("Device verification code does not match. Check the code on the device.");
   }
   const envelope = await sealHpkePayload(publicKeyB64, deviceId, fingerprint, raw, version);
-  if (new TextEncoder().encode(JSON.stringify(envelope)).length > 128 << 10) {
-    throw new Error("The complete device envelope exceeds 128 KiB. No key was delivered.");
+  if (new TextEncoder().encode(JSON.stringify(envelope)).length > 512 << 10) {
+    throw new Error("The complete device envelope exceeds 512 KiB. No key was delivered.");
   }
   return envelope;
 }

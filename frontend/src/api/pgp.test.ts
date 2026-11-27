@@ -123,12 +123,13 @@ describe("versioned server recovery snapshots", () => {
   const fingerprint = "A".repeat(40);
   const keyring = { version: 1, materialGeneration: 3, primaryFingerprints: [fingerprint], keyFingerprints: [fingerprint] };
   const envelope = { v: 2, kdf: "PBKDF2-SHA256", iterations: 600000, salt: "AA==", iv: "AA==", ciphertext: "AA==" };
-  it("constructs a v2 copy from a converted snapshot without downgrading metadata", async () => {
+  it.each([1, 2])("constructs a recovery copy from ring v%i without downgrading metadata", async version => {
+    const keyring = { version, materialGeneration: 3, primaryFingerprints: [fingerprint], keyFingerprints: [fingerprint] };
     getJSON.mockResolvedValue({ fingerprint, publicKey: "PUBLIC", keyring, envelope: JSON.stringify(envelope) });
     expect(await getRecoveryBackup()).toEqual({ format: "kypost-pgp-recovery-v2", fingerprint, publicKey: "PUBLIC", keyring, envelope });
   });
   it("refuses unknown metadata instead of returning a legacy backup", async () => {
-    getJSON.mockResolvedValue({ fingerprint, publicKey: "PUBLIC", keyring: { ...keyring, version: 2 }, envelope: JSON.stringify(envelope) });
+    getJSON.mockResolvedValue({ fingerprint, publicKey: "PUBLIC", keyring: { ...keyring, version: 3 }, envelope: JSON.stringify(envelope) });
     await expect(getRecoveryBackup()).rejects.toThrow();
   });
 });

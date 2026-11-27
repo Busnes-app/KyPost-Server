@@ -94,24 +94,24 @@ describe("complete keyring recovery", () => {
   }, 30_000);
 
   it("enforces the sealed-envelope cap including base64 expansion before offering a file", async () => {
-    const large = JSON.stringify({ ...fixture.ring, keys: [{ ...fixture.ring.keys[0], revocationCertificate: "x".repeat(99 << 10) }, fixture.ring.keys[1]] });
-    expect(new TextEncoder().encode(large).length).toBeLessThan(128 << 10);
+    const large = JSON.stringify({ ...fixture.ring, keys: [{ ...fixture.ring.keys[0], revocationCertificate: "x".repeat(390 << 10) }, fixture.ring.keys[1]] });
+    expect(new TextEncoder().encode(large).length).toBeLessThan(512 << 10);
     // Reader capacity does not imply store admission: password storage also refuses this size.
-    expect(JSON.stringify(await wrapPrivateKey(large, "password")).length).toBeGreaterThan(128 << 10);
+    expect(JSON.stringify(await wrapPrivateKey(large, "password")).length).toBeGreaterThan(512 << 10);
     await expect(createRecoveryBackup(large, { fingerprint: fixture.ring.activeFingerprint, publicKey, keyring })).rejects.toThrow(/envelope capacity/);
-    await expect(createRecoveryBackup(" ".repeat(128 << 10) + raw, { fingerprint: fixture.ring.activeFingerprint, publicKey, keyring })).rejects.toThrow(/invalid/);
+    await expect(createRecoveryBackup(" ".repeat(512 << 10) + raw, { fingerprint: fixture.ring.activeFingerprint, publicKey, keyring })).rejects.toThrow(/invalid/);
     if (created.backup.format !== "kypost-pgp-recovery-v2") throw new Error("expected v2");
-    await expect(restoreRecoveryBackup(JSON.stringify({ ...created.backup, envelope: { ...created.backup.envelope, ciphertext: "A".repeat(128 << 10) } }), created.secret)).rejects.toThrow(/envelope capacity/);
+    await expect(restoreRecoveryBackup(JSON.stringify({ ...created.backup, envelope: { ...created.backup.envelope, ciphertext: "A".repeat(512 << 10) } }), created.secret)).rejects.toThrow(/envelope capacity/);
   }, 30_000);
 
   it("backs up a near-capacity storable ring with the same envelope size as password wrapping", async () => {
     const active = { ...fixture.ring.keys[0], revocationCertificate: "" };
     const ring = { ...fixture.ring, keys: [active, fixture.ring.keys[1]] };
-    active.revocationCertificate = "x".repeat((95 << 10) - new TextEncoder().encode(JSON.stringify(ring)).length);
+    active.revocationCertificate = "x".repeat((380 << 10) - new TextEncoder().encode(JSON.stringify(ring)).length);
     const plaintext = JSON.stringify(ring);
-    expect(new TextEncoder().encode(plaintext).length).toBe(95 << 10);
+    expect(new TextEncoder().encode(plaintext).length).toBe(380 << 10);
     const passwordEnvelope = await wrapPrivateKey(plaintext, "password");
-    expect(JSON.stringify(passwordEnvelope).length).toBeLessThanOrEqual(128 << 10);
+    expect(JSON.stringify(passwordEnvelope).length).toBeLessThanOrEqual(512 << 10);
     const backup = await createRecoveryBackup(plaintext, { fingerprint: ring.activeFingerprint, publicKey, keyring });
     expect(JSON.stringify(backup.backup.envelope).length).toBe(JSON.stringify(passwordEnvelope).length);
     expect((await restoreRecoveryBackup(JSON.stringify(backup.backup), backup.secret)).privateKey).toBe(plaintext);

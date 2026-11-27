@@ -1058,8 +1058,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		verified := u.PGPRevision
 		req.ExpectedRevision = &verified
 	}
-	if req.KeyringVersion != nil && (*req.KeyringVersion != 1 || req.NewAuthSecret == "" || req.RewrappedPGPKey == "") {
-		http.Error(w, "keyringVersion 1 requires a complete rewrapped keyring and derived credential", http.StatusBadRequest)
+	if req.KeyringVersion != nil && ((*req.KeyringVersion != 1 && *req.KeyringVersion != 2) || (u.PGPKeyring != nil && *req.KeyringVersion != u.PGPKeyring.Version) || req.NewAuthSecret == "" || req.RewrappedPGPKey == "") {
+		http.Error(w, "keyringVersion 1 or 2 requires a complete rewrapped keyring and derived credential", http.StatusBadRequest)
 		return
 	}
 
