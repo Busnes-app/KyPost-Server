@@ -235,7 +235,7 @@ interpretable, and because the HPKE `info` reuses its AAD layout.
 
 ### NORMATIVE: the HPKE envelope (v4/v5)
 
-v4 carries one armored private key, v5 the complete `kypost-pgp-keyring-v1` ring, sealed with
+v4 carries one armored private key, v5 the complete `kypost-pgp-keyring-v1` or `-v2` ring, sealed with
 RFC 9180 HPKE. They remain accepted for devices with P-256 keys: v5 for a converted account, v4
 for a legacy one, with no v2/v3 fallback. X-Wing devices use v6 below. A device that does not advertise the version its
 account needs, including one with no claim (no longer read as `[2]`), is refused before any
@@ -259,7 +259,7 @@ code or password is asked for, with "Update KyPost on that device".
   The opener builds `info` from its **own** device ID and the fingerprint it checked, and
   the version from the server-recorded delivery, never from the envelope; it refuses an
   envelope whose `v` differs.
-- v5 keeps v3's 128 KiB serialized-envelope cap and 40- or 64-hex fingerprint.
+- v5 keeps v3's 512 KiB serialized-envelope cap and 40- or 64-hex fingerprint.
 
 Vectors, all public test data:
 
@@ -299,9 +299,9 @@ the wrong key instead of failing authentication.
   context, never from untrusted envelope fields. The opener refuses a version mismatch.
 - `xwing.Seal` returns `0x01 || enc || ct`; the JSON carries only `enc` and `ct`. Reconstruct
   that library framing for `xwing.Open`. The `0x01` is not part of the 1120-byte `enc`.
-- Plaintext is the complete `kypost-pgp-keyring-v1` ring for a converted account (recorded
+- Plaintext is the complete `kypost-pgp-keyring-v1` or `-v2` ring for a converted account (recorded
   material generation > 0), or one armored private key for a legacy account (generation 0).
-  The 128 KiB serialized-envelope cap, current revision, fingerprint, generation, TTL,
+  The 512 KiB serialized-envelope cap, current revision, fingerprint, generation, TTL,
   delivery acknowledgement and device-credential ownership rules remain unchanged.
 - A v6 client publishes `envelopeVersions:[4,5,6]` if it can still open those legacy
   formats, or `[6]` otherwise. This list is a codec claim, not proof of durable import.
@@ -490,11 +490,28 @@ building the Android client:
 The requirement is architectural — *this marker must not depend on any push transport* —
 so it is stated that way rather than patched per transport.
 
+### NORMATIVE: device OpenPGP capabilities (Spec A P3)
+
+Both `POST /api/pgp/device/enrollment-key` and `POST /api/pgp/device/enrollment-state`
+accept optional `openpgp: ["v4", "v6", "rfc9980"]`. Publish on **both** endpoints:
+already-enrolled clients report their upgraded reader without repeating enrollment.
+This is independent of the HPKE `envelopeVersions` report. Omitted/null means legacy
+`["v4"]`, including on downgrade; an explicit empty list or unknown token is 400.
+Reports are bounded to 16 tokens, trimmed, ASCII case-normalized, deduplicated and
+returned in `v4`, `v6`, `rfc9980` order. The claim describes codecs, never key custody.
+
+The device credential identifies the only row updated. A validated report is stored
+atomically with an accepted enrollment-key/state write. Failed validation or a failed
+acknowledgement does not replace the report. SQLite and PostgreSQL upgrades initialize
+old rows to `["v4"]`. Push registration and identity/enrollment resets preserve codec
+reports. `GET /api/notifications/native/devices` exposes `openpgp` on each device.
+No P3 report enables a v6 account switch; P4/P5 must check all enrolled devices.
+
 ### NORMATIVE: `POST /api/pgp/device/enrollment-state`
 
 - **Auth:** device credential headers only, `X-Kypost-Device-Id` / `X-Kypost-Device-Secret`.
   Not a session.
-- **Body:** `{"encryptionEnrolled": true|false}`. **Required.** Unlike the tri-state
+- **Body:** `{"encryptionEnrolled": true|false, "openpgp": ["v4","v6","rfc9980"]}` (optional `openpgp`). **Required.** Unlike the tri-state
   pointer on registration — where absent means "no opinion", so an older client is never
   silently marked un-enrolled — stating an opinion is this route's entire purpose. An
   absent field is `400`, because accepting it as `false` would let a truncated body mark

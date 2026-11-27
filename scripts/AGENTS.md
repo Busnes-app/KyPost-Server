@@ -44,6 +44,8 @@ All files under `scripts/`.
 
 `startretries` is 20 on the four long-running programs (including the optional receiver). Not 3 (supervisord's default, which gives up silently) and not a very large number: supervisord does **not** back off between restart attempts, so a program that exits immediately restarts as fast as the machine allows, forever, on a box that is also running an LLM. 20 covers the transient case — a dependency not ready yet — and `crashexit` handles what comes after.
 
+- `build-pgp-wasm.sh` rebuilds with the backend toolchain and installs its `wasm_exec.js` at mode 0644, replacing a read-only module-cache copy on repeated builds. ABI/runtime pins must match; generated assets remain ignored.
+
 ## Work Guidance
 
 - `setup-mail.sh` is host-only and interactive on Linux x86_64. Keep its wizard-template library unchanged. Validate public dotenv values and owned regular private env files before writes; never source dotenv or collect account/provider credentials. Confirm base rebuild (which pauses reception), new-spool initialization and profile launch. Reuse existing UI and production receiving admission; leave external TLS/DNS/delivery observations explicit. Final `setup-status` reports local configuration blockers; its successful exit is not deployment acceptance.

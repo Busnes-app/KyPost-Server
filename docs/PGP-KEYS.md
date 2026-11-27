@@ -134,3 +134,13 @@ Other PGP boundaries:
   An encrypted send to a keyless recipient refuses unless the user enables
   the fallback. See
   [sealed pickup links](E2E_PGP.md#sealed-pickup-links).
+
+
+## Reading OpenPGP v6 and post-quantum mail
+
+The browser can open RFC 9580 v6 and RFC 9980 composite mail and verify its signatures,
+including both standardized composite security levels. It reads complete v1/v2 keyrings
+and preserves historical keys in recovery copies. New identities still use v4 for
+compatibility; this reader upgrade does not convert accounts or rewrite mail. Device
+OpenPGP support is reported separately from X-Wing enrollment support. See the
+[keyring reader contract](E2E_PGP.md#keyring-v2-reader-contract-spec-a-p3).

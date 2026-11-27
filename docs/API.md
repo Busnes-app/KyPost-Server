@@ -276,3 +276,16 @@ Logs (admin only):
 `PUT /api/admin/mail-relay` accepts explicit `mode:"direct"` with an EHLO `host` and the proved domain set; port/credentials are omitted. GET adds `mode` and reports `transport:"mx-starttls"`, `authRequired:false`, `port:0`, `dkim:[{domain,selector,recordName:"<selector>._domainkey.<domain>",recordType:"TXT",recordValue:"v=DKIM1; k=rsa; p=<SPKI>"}]` one entry per key with `state` (`active|next|retiring|removable`) and `createdAt`; `active` adds `ageDays`, `rotationRecommendedAt` (`createdAt` + 180 days) and `rotationRecommended`; `retiring`/`removable` add `retiredAt` and `keepPublishedUntil`; `removable` has no `recordValue`; and `recommended` SPF (`v=spf1 a:<host> -all`) and DMARC (`v=DMARC1; p=quarantine; adkim=s; aspf=s`) records `{domain,kind,recordName,recordType,recordValue}`; it does no DNS I/O. Saving creates one DKIM key per sending domain that lacks one; keys are never returned. Existing administrator, CSRF, request-bound confirmation, generation and restore gates apply. Saved-relay login tests refuse direct profiles. [Direct delivery](DIRECT_DELIVERY.md) specifies egress/TLS and rollback.
 
 Direct send responses preserve primary-acceptance `ok`/HTTP semantics and add `deliveryMode:"per-recipient"`, `deliveriesConfirmed`, `deliveriesTotal`; other recipients can have accepted even when the primary returns 503. Inspect each existing owner-scoped outbox sequence before resubmission. This is not a queued-success or exactly-once API.
+
+
+### Spec A P3 OpenPGP compatibility
+
+`POST /api/pgp/device/enrollment-key` and `POST /api/pgp/device/enrollment-state` both
+accept optional `openpgp: ["v4","v6","rfc9980"]`, persisted for the authenticated device.
+Omitted/null reports are legacy `["v4"]`; invalid/empty lists are 400. The native-device
+list returns `openpgp` per device, separately from `enrollmentEnvelopeVersions`.
+See [normalization and upgrade behavior](DEVICE_ENROLLMENT.md#normative-device-openpgp-capabilities-spec-a-p3).
+Wrapped envelopes are bounded to 512 KiB and recovery files to 2 MiB. Complete-ring
+snapshot metadata and existing rewrap/password/recovery writers accept ring versions
+1 and 2, with the submitted version matching the current snapshot. Conversion is not
+exposed. See [keyring v2](E2E_PGP.md#keyring-v2-reader-contract-spec-a-p3).

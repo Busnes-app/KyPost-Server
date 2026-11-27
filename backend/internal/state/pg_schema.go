@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS native_devices (
  enrollment_envelope_versions TEXT NOT NULL DEFAULT '[]', encryption_enrolled BIGINT NOT NULL DEFAULT 0,
  enrolled_version BIGINT NOT NULL DEFAULT 0, enrolled_generation BIGINT NOT NULL DEFAULT 0,
  enrolled_fingerprint TEXT NOT NULL DEFAULT '', p256dh TEXT NOT NULL DEFAULT '', auth TEXT NOT NULL DEFAULT '');
+ALTER TABLE native_devices ADD COLUMN IF NOT EXISTS openpgp TEXT NOT NULL DEFAULT '["v4"]';
 CREATE INDEX IF NOT EXISTS native_devices_push ON native_devices(push_token, platform);
 CREATE TABLE IF NOT EXISTS pull_notifications (
  seq BIGINT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '',

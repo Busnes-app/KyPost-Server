@@ -112,7 +112,7 @@ describe("keyVault wrapping", () => {
   }, TIMEOUT);
 
   it("rejects an oversized recovery backup", async () => {
-    const huge = "x".repeat(512 * 1024 + 1);
+    const huge = "x".repeat(2 * 1024 * 1024 + 1);
     await expect(restoreRecoveryBackup(huge, "0000-0000-0000-0000-0000-0000-0000-0000")).rejects.toThrow(/too large/);
   });
 

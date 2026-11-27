@@ -234,6 +234,9 @@ func TestEnrollmentColumnsAreAddedToAnExistingDatabase(t *testing.T) {
 	if !slices.Equal(devices[0].EnrollmentEnvelopeVersions, []int{}) {
 		t.Fatal("migration defaulted capabilities to a version")
 	}
+	if !slices.Equal(devices[0].OpenPGP, []string{"v4"}) {
+		t.Fatal("migration overstated legacy OpenPGP support", devices[0])
+	}
 	// Absent, not enrolled — and able to become enrolled.
 	if devices[0].EnrollmentPublicKey != "" || devices[0].EncryptionEnrolled {
 		t.Fatalf("a legacy row decoded as enrolled: %+v", devices[0])

@@ -196,8 +196,9 @@ export function App() {
     }
   }
 
+  const initializeAuth = useEffectEvent(() => { void refreshAuth(); });
   useEffect(() => {
-    refreshAuth();
+    initializeAuth();
   }, []);
 
   // A KyCalendar task's link, /read?flag=<ref> (docs/KYCALENDAR.md, Tasks): open the flagged

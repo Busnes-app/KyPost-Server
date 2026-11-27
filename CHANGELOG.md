@@ -18,6 +18,9 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add Spec A P3 reads: OpenPGP v6 and RFC 9980 reader compatibility in the server/browser (server key admission stays category 3), v1/v2 keyrings with v4/v6 active slots, 512 KiB sealed envelopes and 2 MiB recovery files. Track device `openpgp` codecs on enrollment-key and enrollment-state, including already-enrolled upgrades, with additive SQLite/PostgreSQL migration and inventory exposure. Preserve v4 generation/outbound defaults and release multi-tenant refusal.
+- Bound uncompressed browser-decrypted plaintext as well as decompressed packets; repeat WASM rebuilds now replace the toolchain's read-only runtime copy safely.
+
 - Add post-quantum device enrollment v6 (X-Wing HPKE, KEM 0x647A) and SAS v2 in the server and browser. Keep v4/v5 delivery and opening for P-256 devices while native clients upgrade; validate full X-Wing keys and encapsulation sizes. No existing identity or mail is rewritten.
 
 - Let a hosted MX host (not startable yet) forward relay-domain mail to the cell its region code names, over the pinned receiving transport. A message to several cells is answered `250` only when every cell holding recipients committed it, and `451` otherwise. Ordinary installs and single-cell MX hosts are unchanged.

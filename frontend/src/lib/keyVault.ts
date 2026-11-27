@@ -84,9 +84,9 @@ export type RecoveryBackup = RecoveryFields & (
   { format: "kypost-pgp-recovery-v2"; keyring: KeyringMetadata }
 );
 
-const MAX_KEYRING_ENVELOPE_BYTES = 128 << 10;
+const MAX_KEYRING_ENVELOPE_BYTES = 512 << 10;
 const RECOVERY_SECRET_BYTES = 16;
-const MAX_RECOVERY_BACKUP_CHARS = 512 << 10;
+const MAX_RECOVERY_BACKUP_CHARS = 2 << 20;
 
 export class VaultLockedError extends Error {
   constructor() {

@@ -15,7 +15,7 @@ import (
 // Curve25519 private key is a couple of KB; an imported RSA-4096 key with
 // many User IDs is still well under this. The server never parses the blob,
 // so a cap is the only validation available to it.
-const maxWrappedKeyBytes = 128 << 10
+const maxWrappedKeyBytes = users.MaxWrappedEnvelopeBytes
 
 // handlePGPWrappedKey returns the caller's own wrapped private key envelope
 // so their browser can unwrap it locally.
@@ -191,8 +191,8 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 	}
 	var u users.User
 	if req.KeyringVersion != nil {
-		if *req.KeyringVersion != 1 || req.ExpectedRevision == nil || strings.TrimSpace(req.ExpectedFingerprint) == "" {
-			http.Error(w, "keyringVersion 1 requires an expected revision and fingerprint", http.StatusBadRequest)
+		if (*req.KeyringVersion != 1 && *req.KeyringVersion != 2) || (snapshot.PGPKeyring != nil && *req.KeyringVersion != snapshot.PGPKeyring.Version) || req.ExpectedRevision == nil || strings.TrimSpace(req.ExpectedFingerprint) == "" {
+			http.Error(w, "keyringVersion 1 or 2 requires an expected revision and fingerprint", http.StatusBadRequest)
 			return
 		}
 		if *req.ExpectedRevision != snapshot.PGPRevision {
@@ -342,7 +342,7 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 	}
 	if deviceID, isDevice := strings.CutPrefix(r.PathValue("slot"), users.EnvelopeSlotDevicePrefix); isDevice {
 		if req.KeyringVersion != nil {
-			http.Error(w, "keyringVersion 1 requires the recovery slot, revision and fingerprint", http.StatusBadRequest)
+			http.Error(w, "keyringVersion 1 or 2 requires the recovery slot, revision and fingerprint", http.StatusBadRequest)
 			return
 		}
 		// A stale snapshot is refused before the device is even looked up;
@@ -357,8 +357,8 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 	}
 	var u users.User
 	if req.KeyringVersion != nil {
-		if *req.KeyringVersion != 1 || r.PathValue("slot") != users.EnvelopeSlotRecovery || req.ExpectedRevision == nil || strings.TrimSpace(req.ExpectedFingerprint) == "" {
-			http.Error(w, "keyringVersion 1 requires the recovery slot, revision and fingerprint", http.StatusBadRequest)
+		if (*req.KeyringVersion != 1 && *req.KeyringVersion != 2) || (snapshot.PGPKeyring != nil && *req.KeyringVersion != snapshot.PGPKeyring.Version) || r.PathValue("slot") != users.EnvelopeSlotRecovery || req.ExpectedRevision == nil || strings.TrimSpace(req.ExpectedFingerprint) == "" {
+			http.Error(w, "keyringVersion 1 or 2 requires the recovery slot, revision and fingerprint", http.StatusBadRequest)
 			return
 		}
 		if *req.ExpectedRevision != snapshot.PGPRevision {

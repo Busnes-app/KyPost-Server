@@ -29,6 +29,17 @@ beforeEach(() => {
 });
 
 describe("ConfirmPGPKey", () => {
+  it.each([40, 64])("shows and submits all %i fingerprint digits", async length => {
+    const fingerprint = "abcd".repeat(length / 4);
+    const contact = { ...bob, pgpKeyFingerprint: fingerprint };
+    render(<ConfirmPGPKey contact={contact} onConfirmed={() => {}} />);
+    expect(screen.getByText(Array(length / 4).fill("ABCD").join(" "))).toBeTruthy();
+    await userEvent.type(screen.getByLabelText(/account password/i), "account-password");
+    await userEvent.click(screen.getByRole("button", { name: /confirm key/i }));
+    await waitFor(() => expect(postJSON).toHaveBeenCalledWith("/api/contacts/bob-1/pgp-key/confirm", {
+      fingerprint, authSecret: "derived-account-credential"
+    }));
+  });
   it("shows the pinned fingerprint and confirms exactly it with the account password", async () => {
     const onConfirmed = vi.fn();
     render(<ConfirmPGPKey contact={bob} onConfirmed={onConfirmed} />);

@@ -137,12 +137,12 @@ describe("HPKE device envelopes (v4/v5)", () => {
   it("refuses incomplete, stale, single-key or oversized ring material", async () => {
     const input = await keyringInput(fixture.vectors[1]);
     const ring = await parseKeyring(input.raw);
-    for (const material of [fixture.vectors[0].plaintext, input.raw.replace(ring.keys[1].info.fingerprint, "0".repeat(40)), input.raw + " ".repeat(128 << 10)]) {
+    for (const material of [fixture.vectors[0].plaintext, input.raw.replace(ring.keys[1].info.fingerprint, "0".repeat(40)), input.raw + " ".repeat(512 << 10)]) {
       await expect(sealKeyringForDevice({ ...input, raw: material })).rejects.toThrow(/keyring is invalid or unsupported/);
     }
     await expect(sealKeyringForDevice({ ...input, snapshot: { ...input.snapshot, keyring: { ...input.snapshot.keyring, materialGeneration: 3 } } })).rejects.toThrow(/complete keyring/);
-    // The parser accepts up to 128 KiB; base64 expansion makes storage admission tighter.
-    await expect(sealKeyringForDevice({ ...input, raw: input.raw.padEnd(100 << 10) })).rejects.toThrow(/128 KiB/);
+    // The parser accepts up to 512 KiB; base64 expansion makes storage admission tighter.
+    await expect(sealKeyringForDevice({ ...input, raw: input.raw.padEnd(400 << 10) })).rejects.toThrow(/512 KiB/);
   });
 
   // v2/v3 are retired: a device that advertises only them gets nothing sealed.

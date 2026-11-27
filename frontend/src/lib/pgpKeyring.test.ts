@@ -126,7 +126,7 @@ describe("keyring readers", () => {
   });
 
   it("rejects oversized, concatenated, public-only and still-encrypted material", async () => {
-    await expect(parseKeyring(" ".repeat(128 << 10) + raw)).rejects.toThrow(/invalid/);
+    await expect(parseKeyring(" ".repeat(512 << 10) + raw)).rejects.toThrow(/invalid/);
     const concatenated = structuredClone(fixture.ring);
     concatenated.keys[0].privateKey += historical.privateKey;
     await expect(parseKeyring(JSON.stringify(concatenated))).rejects.toThrow(/invalid/);

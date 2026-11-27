@@ -44,6 +44,32 @@ func keyringCandidate(t *testing.T) (*Store, string, PGPKeyringUpdate) {
 	}
 }
 
+func TestPGPKeyringV2RewrapPreservesVersionAndInventory(t *testing.T) {
+	s, id, update := keyringCandidate(t)
+	u, err := s.CommitPGPKeyring(context.Background(), id, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Seed an already-converted v2 record. P3 deliberately exposes no conversion
+	// route or active-certificate switch; it must still preserve existing rings.
+	u, err = s.mutate(id, func(u *User) error { u.PGPKeyring.Version = 2; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := u.PGPKeyring
+	u, err = s.RewrapPGPKeyring(id, strings.Repeat("x", 200<<10), u.PGPFingerprint, &u.PGPRevision)
+	if err != nil || !reflect.DeepEqual(u.PGPKeyring, before) {
+		t.Fatal("v2 rewrap lost metadata", err)
+	}
+	u, err = s.SetPGPKeyringRecovery(id, "complete recovery", "now", u.PGPFingerprint, &u.PGPRevision)
+	if err != nil || !reflect.DeepEqual(u.PGPKeyring, before) {
+		t.Fatal("v2 recovery lost metadata", err)
+	}
+	if _, err = s.RewrapPGPPrivateKey(id, "single key", u.PGPFingerprint, &u.PGPRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatal("legacy writer replaced v2", err)
+	}
+}
+
 func TestPGPKeyringAtomicConversionRetirementAndPassword(t *testing.T) {
 	s, id, update := keyringCandidate(t)
 	owner, _ := s.Get(id)

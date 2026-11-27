@@ -302,6 +302,9 @@ func signatures(res *crypto.VerifyResult) []signatureCheck {
 }
 
 func decrypt(message []byte, decryptionKeys, verificationKeys [][]byte, maxBytes int64) ([]byte, []signatureCheck, error) {
+	if maxBytes < 1 {
+		return nil, nil, errors.New("decrypt: invalid plaintext size limit")
+	}
 	keys, _, err := loadKeys(decryptionKeys, true, false)
 	if err != nil {
 		return nil, nil, err
@@ -324,6 +327,12 @@ func decrypt(message []byte, decryptionKeys, verificationKeys [][]byte, maxBytes
 		return nil, nil, err
 	}
 	data := res.Bytes()
+	// gopenpgp's MaxDecompressedMessageSize bounds compressed packets only;
+	// uncompressed RFC 9580/9980 literals must obey the caller's bound too.
+	if int64(len(data)) > maxBytes {
+		clear(data)
+		return nil, nil, errors.New("decrypt: plaintext exceeds size limit")
+	}
 	if res.Metadata().IsUtf8() {
 		// openpgp.js turns a text literal's canonical CRLF back into LF.
 		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))

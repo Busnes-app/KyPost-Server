@@ -52,7 +52,7 @@ func pgpState(u User) pgpRevisionState {
 // is a real expectation for records predating revisions, not "skip the guard".
 func (s *Store) mutatePGP(id string, expected *uint64, fn func(*User) error) (User, error) {
 	guard := func(_ []User, u User) error {
-		if u.PGPKeyring != nil && (u.PGPKeyring.Version != 1 || expected == nil) {
+		if u.PGPKeyring != nil && ((u.PGPKeyring.Version != 1 && u.PGPKeyring.Version != 2) || expected == nil) {
 			return ErrPGPKeyringUpgradeRequired
 		}
 		if expected != nil {

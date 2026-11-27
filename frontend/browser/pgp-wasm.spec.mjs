@@ -46,15 +46,20 @@ test('the shipped engine runs under the production CSP', async ({ page }) => {
     // History openpgp.js wrote: the shared keyring fixture.
     const history = await e.decrypt({ armoredMessage: ring.ciphertext, decryptionKeys: ring.ring.keys.map((k) => k.privateKey), verificationKeys: [], maxBytes: 1 << 20 });
     // RFC 9980 fixtures (go-crypto, cross-checked with Bouncy Castle).
-    const pq = {};
+    const pq = {}, pqTamper = {};
     for (const name of ['v4', 'v4-pqc', 'v6-pqc']) {
       pq[name] = (await e.decrypt({ armoredMessage: fx[`${name}.msg.asc`], decryptionKeys: [fx[`${name}.sec.asc`]], verificationKeys: [], maxBytes: 1 << 20 })).data;
+      const binary = await e.dearmor(fx[`${name}.msg.asc`]); binary[binary.length - 1] ^= 1;
+      pqTamper[name] = await e.decrypt({ armoredMessage: await e.armor(binary, 'PGP MESSAGE'), decryptionKeys: [fx[`${name}.sec.asc`]], verificationKeys: [], maxBytes: 1 << 20 }).then(() => 'opened', () => 'refused');
     }
     const pqSig = await e.verifyDetached({ data: new TextEncoder().encode(fx['message.txt']), armoredSignature: fx['v6-pqc.sig.asc'], verificationKeys: [fx['v6-pqc.pub.asc']] });
+    const badSig = await e.verifyDetached({ data: new TextEncoder().encode(fx['message.txt'] + 'changed'), armoredSignature: fx['v6-pqc.sig.asc'], verificationKeys: [fx['v6-pqc.pub.asc']] });
+    const classical = await e.encrypt({ text: 'RFC 9580', encryptionKeys: [fx['v6.pub.asc']], signingKey: fx['v6.sec.asc'] });
+    const v6Read = await e.decrypt({ armoredMessage: classical, decryptionKeys: [fx['v6.sec.asc']], verificationKeys: [fx['v6.pub.asc']], maxBytes: 1 << 20 });
     const v6 = await e.inspect(fx['v6-pqc.pub.asc']);
-    return { loadMs, opened, wrongRecipient, good, wrongSigner, history: history.data, pq, pqSig, v6: { version: v6.version, algorithms: v6.algorithms },
+    return { loadMs, opened, wrongRecipient, good, wrongSigner, history: history.data, pq, pqTamper, pqSig, badSig, v6Read, v6: { version: v6.version, algorithms: v6.algorithms, fingerprintLength: v6.fingerprint.length },
       heap: performance.memory?.usedJSHeapSize ?? null };
-  }, [chunk, Object.fromEntries(['v4.msg.asc', 'v4.sec.asc', 'v4-pqc.msg.asc', 'v4-pqc.sec.asc', 'v6-pqc.msg.asc', 'v6-pqc.sec.asc', 'v6-pqc.sig.asc', 'v6-pqc.pub.asc', 'message.txt'].map((n) => [n, fx(n)])), ring]);
+  }, [chunk, Object.fromEntries(['v4.msg.asc', 'v4.sec.asc', 'v4-pqc.msg.asc', 'v4-pqc.sec.asc', 'v6-pqc.msg.asc', 'v6-pqc.sec.asc', 'v6-pqc.sig.asc', 'v6-pqc.pub.asc', 'v6.pub.asc', 'v6.sec.asc', 'message.txt'].map((n) => [n, fx(n)])), ring]);
 
   const wasm = await wasmResponse;
   expect(wasm.headers()['content-type']).toBe('application/wasm');
@@ -67,7 +72,11 @@ test('the shipped engine runs under the production CSP', async ({ page }) => {
   expect(out.history).toBe(ring.plaintext);
   for (const name of ['v4', 'v4-pqc', 'v6-pqc']) expect(out.pq[name].replace(/\r\n/g, '\n')).toBe(fx('message.txt').replace(/\r\n/g, '\n'));
   expect(out.pqSig.map((s) => s.valid)).toEqual([true]);
-  expect(out.v6).toEqual({ version: 6, algorithms: [30, 35] });
+  expect(Object.values(out.pqTamper)).toEqual(['refused', 'refused', 'refused']);
+  expect(out.badSig.map(s => s.valid)).toEqual([false]);
+  expect(out.v6Read.data).toBe('RFC 9580');
+  expect(out.v6Read.signatures.map(s => s.valid)).toEqual([true]);
+  expect(out.v6).toEqual({ version: 6, algorithms: [30, 35], fingerprintLength: 64 });
   expect(violations).toEqual([]);
   // Evidence for the PR, not a pass condition.
   test.info().annotations.push({ type: 'engine', description: JSON.stringify({ loadMs: Math.round(out.loadMs), heapBytes: out.heap, wasmBytes: (await wasm.body()).length }) });

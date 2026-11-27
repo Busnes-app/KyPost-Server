@@ -225,20 +225,10 @@ const (
 // and kept free of whitespace rather than trusted.
 const maxDeviceSlotIDLen = 128
 
-// maxWrappedEnvelopeSlots bounds how many non-password sealings one identity
-// may accumulate. Real use is one recovery slot plus one sealing per enrolled
-// device; 32 is generous for that (nobody enrolls 31 devices) and still small
-// next to users.json, which Store.mutate rewrites whole under a global file
-// lock on every write and which every authenticated request reads through —
-// an unbounded slot count is an unbounded per-account share of that shared,
-// instance-wide cost. This package only bounds the COUNT; the per-envelope
-// byte bound (128 KiB, `maxWrappedKeyBytes`) that turns a slot count into an
-// actual size budget is enforced by `io.LimitReader` in package `api`
-// (pgp_client_keys.go), which this package cannot see or enforce itself —
-// the two bounds are a dependency, not something this constant can reason
-// about alone. Enforced only when ADDING a slot; replacing an existing
-// one must keep working at the cap, or a user who reaches it can never
-// rotate a sealing again.
+// maxWrappedEnvelopeSlots bounds non-password sealings: one recovery slot plus
+// device deliveries. With MaxWrappedEnvelopeBytes this permits at most 16 MiB
+// of extra opaque material per account. Enforce the count only when adding a
+// slot: replacing a sealing must still work at capacity.
 const maxWrappedEnvelopeSlots = 32
 
 // DeviceEnvelopeTTL bounds how long the server keeps a device: transport copy.
@@ -249,21 +239,11 @@ const maxWrappedEnvelopeSlots = 32
 // ceremony; nothing is lost but the ceremony.
 const DeviceEnvelopeTTL = 7 * 24 * time.Hour
 
-// MaxWrappedEnvelopeBytes bounds a single client-wrapped envelope, whichever
-// field it lands in.
-//
-// This used to live only in package api, as an io.LimitReader on the request
-// body, and maxWrappedEnvelopeSlots' reasoning depended on it — "32 slots x 128
-// KiB" is the budget that makes the slot count safe. That dependency did not
-// hold: PGPPrivateKeyWrapped has a second writer, SetDerivedAuthAndRewrapPGP via
-// POST /api/auth/password, whose reader allows 1 MiB and whose store path
-// checked nothing. So the field the comment reasons about could be eight times
-// the bound it reasons from.
-//
-// A byte bound that a package's own invariants depend on belongs in that
-// package. api keeps its LimitReader — refusing an oversized body before
-// buffering it is still worth doing — but the store no longer trusts it.
-const MaxWrappedEnvelopeBytes = 128 << 10
+// MaxWrappedEnvelopeBytes bounds every stored opaque envelope, including
+// password changes, recovery and device delivery. API request limits allow
+// additional space for JSON quoting and metadata; the store enforces this
+// individual bound regardless of which route writes the field.
+const MaxWrappedEnvelopeBytes = 512 << 10
 
 // ErrWrappedEnvelopeTooLarge is returned for an envelope past
 // MaxWrappedEnvelopeBytes.
@@ -2062,7 +2042,7 @@ func (s *Store) rewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, exp
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		if keyring {
-			if u.PGPKeyring == nil || u.PGPKeyring.Version != 1 || u.MustChangePassword || !u.UsesDerivedAuth() || expectedFingerprint == "" {
+			if u.PGPKeyring == nil || (u.PGPKeyring.Version != 1 && u.PGPKeyring.Version != 2) || u.MustChangePassword || !u.UsesDerivedAuth() || expectedFingerprint == "" {
 				return ErrPGPKeyringUpgradeRequired
 			}
 		} else if u.PGPKeyring != nil {
@@ -2125,7 +2105,7 @@ func (s *Store) setPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFinge
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		if keyring {
-			if u.PGPKeyring == nil || u.PGPKeyring.Version != 1 || u.MustChangePassword || !u.UsesDerivedAuth() || expectedFingerprint == "" || slot != EnvelopeSlotRecovery {
+			if u.PGPKeyring == nil || (u.PGPKeyring.Version != 1 && u.PGPKeyring.Version != 2) || u.MustChangePassword || !u.UsesDerivedAuth() || expectedFingerprint == "" || slot != EnvelopeSlotRecovery {
 				return ErrPGPKeyringUpgradeRequired
 			}
 		} else if u.PGPKeyring != nil {
@@ -2788,7 +2768,7 @@ func (s *Store) setDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, 
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		if keyring {
-			if u.PGPKeyring == nil || u.PGPKeyring.Version != 1 || u.MustChangePassword || !u.UsesDerivedAuth() || strings.TrimSpace(rewrapped) == "" {
+			if u.PGPKeyring == nil || (u.PGPKeyring.Version != 1 && u.PGPKeyring.Version != 2) || u.MustChangePassword || !u.UsesDerivedAuth() || strings.TrimSpace(rewrapped) == "" {
 				return ErrPGPKeyringUpgradeRequired
 			}
 		} else if u.PGPKeyring != nil && (rewrapped != "" || (!requireChange && !u.MustChangePassword)) {

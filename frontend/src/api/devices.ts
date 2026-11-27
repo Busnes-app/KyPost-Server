@@ -48,6 +48,8 @@ export type NativeDevice = {
    * so the device re-reports it on every registration.
    */
   encryptionEnrolled: boolean;
+  /** Device-reported OpenPGP codecs; omitted on old servers means v4 only. */
+  openpgp?: ("v4" | "v6" | "rfc9980")[];
   /**
    * What the server delivered to this device and the device confirmed: the
    * envelope version, material generation and active fingerprint. Absent on
@@ -75,12 +77,22 @@ export async function listNativeDevices(): Promise<{
   devices: NativeDevice[];
   deliveryMode?: NativeDeliveryMode;
 }> {
-  const result = await getJSON<{ devices: (Omit<NativeDevice, "enrollmentEnvelopeVersions"> & {
+  const result = await getJSON<{ devices: (Omit<NativeDevice, "enrollmentEnvelopeVersions" | "openpgp"> & {
     enrollmentEnvelopeVersions?: unknown;
+    openpgp?: unknown;
   })[]; deliveryMode?: NativeDeliveryMode }>("/api/notifications/native/devices");
   return { ...result, devices: result.devices.map(device => ({
-    ...device, enrollmentEnvelopeVersions: enrollmentVersions(device.enrollmentEnvelopeVersions),
+    ...device, openpgp: openpgpCapabilities(device.openpgp), enrollmentEnvelopeVersions: enrollmentVersions(device.enrollmentEnvelopeVersions),
   })) };
+}
+
+function openpgpCapabilities(value: unknown): ("v4" | "v6" | "rfc9980")[] {
+  if (value === undefined || value === null) return ["v4"];
+  if (!Array.isArray(value) || value.length < 1 || value.length > 16 ||
+      !value.every((v: unknown): v is "v4" | "v6" | "rfc9980" => v === "v4" || v === "v6" || v === "rfc9980")) {
+    throw new Error("Invalid device OpenPGP capabilities. Refresh the device list.");
+  }
+  return (["v4", "v6", "rfc9980"] as const).filter(v => value.includes(v));
 }
 
 function enrollmentVersions(value: unknown): number[] {

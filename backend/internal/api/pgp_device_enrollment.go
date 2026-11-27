@@ -48,8 +48,9 @@ func (s *Server) handlePGPPublishEnrollmentKey(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req struct {
-		PublicKey        string `json:"publicKey"`
-		EnvelopeVersions []int  `json:"envelopeVersions"`
+		PublicKey        string   `json:"publicKey"`
+		EnvelopeVersions []int    `json:"envelopeVersions"`
+		OpenPGP          []string `json:"openpgp"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollmentPublicKeyBytes))
 	if err := decoder.Decode(&req); err != nil {
@@ -58,6 +59,11 @@ func (s *Server) handlePGPPublishEnrollmentKey(w http.ResponseWriter, r *http.Re
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	caps, err := state.NormalizeOpenPGP(req.OpenPGP)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	publicKey := strings.TrimSpace(req.PublicKey)
@@ -78,7 +84,7 @@ func (s *Server) handlePGPPublishEnrollmentKey(w http.ResponseWriter, r *http.Re
 	}
 	// device.DeviceID comes from the verified credential, never from the body.
 	if _, err := store.SetNativeDeviceEnrollmentKey(device.DeviceID, publicKey,
-		time.Now().UTC().Format(time.RFC3339), req.EnvelopeVersions); err != nil {
+		time.Now().UTC().Format(time.RFC3339), req.EnvelopeVersions, caps); err != nil {
 		if errors.Is(err, state.ErrInvalidEnrollmentVersions) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -176,13 +182,24 @@ func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.R
 		return
 	}
 	var req struct {
-		EncryptionEnrolled *bool   `json:"encryptionEnrolled"`
-		EnvelopeVersion    int     `json:"envelopeVersion"`
-		MaterialGeneration *uint64 `json:"materialGeneration"`
-		Fingerprint        string  `json:"fingerprint"`
+		EncryptionEnrolled *bool    `json:"encryptionEnrolled"`
+		EnvelopeVersion    int      `json:"envelopeVersion"`
+		MaterialGeneration *uint64  `json:"materialGeneration"`
+		Fingerprint        string   `json:"fingerprint"`
+		OpenPGP            []string `json:"openpgp"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxEnrollmentStateBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollmentStateBytes))
+	if err := decoder.Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	caps, err := state.NormalizeOpenPGP(req.OpenPGP)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if req.EncryptionEnrolled == nil {
@@ -196,7 +213,7 @@ func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.R
 	}
 	// device.DeviceID comes from the verified credential, never from the body.
 	if !*req.EncryptionEnrolled {
-		if err := store.SetNativeDeviceEncryptionEnrolled(device.DeviceID, false); err != nil {
+		if err := store.SetNativeDeviceEncryptionEnrolled(device.DeviceID, false, caps); err != nil {
 			http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
 			return
 		}
@@ -224,7 +241,7 @@ func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.R
 			})
 			return
 		}
-		if err := store.SetNativeDeviceEncryptionEnrolled(device.DeviceID, true); err != nil {
+		if err := store.SetNativeDeviceEncryptionEnrolled(device.DeviceID, true, caps); err != nil {
 			http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
 			return
 		}
@@ -252,7 +269,7 @@ func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.R
 	confirmed := false
 	if current {
 		var err error
-		confirmed, err = store.ConfirmNativeDeviceEnrollment(device.DeviceID, state.DeviceEnrollment{Version: req.EnvelopeVersion, Generation: *req.MaterialGeneration, Fingerprint: u.PGPFingerprint})
+		confirmed, err = store.ConfirmNativeDeviceEnrollment(device.DeviceID, state.DeviceEnrollment{Version: req.EnvelopeVersion, Generation: *req.MaterialGeneration, Fingerprint: u.PGPFingerprint}, caps)
 		if err != nil {
 			http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
 			return
