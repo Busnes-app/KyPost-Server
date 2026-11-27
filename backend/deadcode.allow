@@ -52,9 +52,5 @@ github.com/Busnes-app/kypost-server/backend/internal/dbbackend.KindsForTest
 # refusal tests; panics outside a test binary.
 github.com/Busnes-app/kypost-server/backend/internal/backup.SetImportHooksForTest
 
-# Installs the org storage pool check; only api's multi-tenant tests call it
-# until build plan PR 7 installs it where it sets Server.tenancy (tenancy
-# design "Org storage pool as built"). Delete this entry then.
-github.com/Busnes-app/kypost-server/backend/internal/mailbox.SetPoolCheck
 # Test-only: fences a root's locks while its documents stay files (MH4 fence audit).
 github.com/Busnes-app/kypost-server/backend/internal/vol.FenceRootForTest

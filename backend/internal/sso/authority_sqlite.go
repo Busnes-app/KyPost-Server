@@ -90,7 +90,7 @@ func detectAuthority(dir string) (authorityFormat, error) {
 	}
 	if tombstone {
 		for _, name := range []string{NativeDomainsFile, nativeProvisioningFile} {
-			if _, err := os.Lstat(filepath.Join(dir, name)); err != nil {
+			if ok, err := vol.Exists(filepath.Join(dir, name)); err != nil || !ok {
 				return 0, ErrNativeMigration
 			}
 		}

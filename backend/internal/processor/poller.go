@@ -118,6 +118,11 @@ type Poller struct {
 	contactsStores    map[string]*contacts.Store
 	rate              map[string][]time.Time
 
+	// orgGate gates multi-tenant outbound queueing (out-of-office replies); nil in single mode.
+	orgGate interface {
+		Serve(ctx context.Context, org string) error
+	}
+
 	// The embedding sorter (hybrid engine). embed is nil when it is off, and
 	// then every message goes to the LLM exactly as before. heads caches each
 	// user's trained head; all three are guarded by userMu. See sorter.go.
@@ -386,6 +391,14 @@ func (p *Poller) SetConfigPath(path string) {
 	p.cfgMu.Lock()
 	p.cfgPath = strings.TrimSpace(path)
 	p.cfgMu.Unlock()
+}
+
+// SetOrgGate installs the multi-tenant org entitlement gate for outbound
+// out-of-office queueing. Nil disables gating (single-tenant mode).
+func (p *Poller) SetOrgGate(g interface {
+	Serve(ctx context.Context, org string) error
+}) {
+	p.orgGate = g
 }
 
 func (p *Poller) Run() {

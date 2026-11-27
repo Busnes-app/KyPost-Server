@@ -110,6 +110,15 @@ func runReceivingServe(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	mode, _, err := config.Tenancy()
+	if err != nil {
+		return err
+	}
+	releaseDocuments, err := startDocuments(ctx, config.ConfigDir(), config.StateDir(), config.SecretDir(), mode)
+	if err != nil {
+		return err
+	}
+	defer releaseDocuments()
 	open, cancel := context.WithTimeout(ctx, 30*time.Second)
 	r, err := openReceivingRuntime(open, false)
 	cancel()

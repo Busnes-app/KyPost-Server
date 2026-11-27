@@ -35,13 +35,20 @@ const bootstrapPasswordFile = users.BootstrapPasswordFile
 func BootstrapAdmin() error {
 	// Multi mode has no bootstrap administrator (tenancy design K6), so the end-to-end test
 	// build has nothing to do; a release build refuses multi. A bad value stops here too.
-	if mode, _, err := config.Tenancy(); err != nil {
+	mode, _, err := config.Tenancy()
+	if err != nil {
 		return err
-	} else if mode == config.TenancyMulti {
+	}
+	if mode == config.TenancyMulti {
 		if config.MultiTenantBuild {
 			return nil
 		}
 		return config.ErrMultiTenancyUnavailable
+	}
+	if table, err := documentTableMode(context.Background(), config.StateDir(), mode); err != nil {
+		return err
+	} else if table {
+		return nil
 	}
 	configDir := config.ConfigDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {

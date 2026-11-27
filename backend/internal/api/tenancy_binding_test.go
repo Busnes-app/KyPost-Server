@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -33,17 +32,7 @@ const (
 // useTenancy makes s multi-tenant as PR 7's startup must: the side store, the staff org,
 // and the address tombstones every allocation consults first (K10).
 func (s *Server) useTenancy(db *sql.DB, staffOrg string) {
-	s.tenancy, s.staffOrg, s.users.StaffOrg, s.cells = db, staffOrg, staffOrg, []string{testCell}
-	if s.ssoLifecycle != nil {
-		s.ssoLifecycle.Tombstoned = func(address string) (bool, error) {
-			key, err := tenancy.TombstoneKey(context.Background(), db, config.SecretDir())
-			if err != nil {
-				return false, err
-			}
-			return tenancy.Tombstoned(context.Background(), db, tenancy.Tombstone(key, address))
-		}
-		s.ssoLifecycle.Purged = s.mailboxPurged // tests may replace ssoLifecycle after NewServer
-	}
+	s.UseTenancy(db, staffOrg, []string{testCell})
 }
 
 func makeMultiTenant(t *testing.T, srv *Server) *sql.DB {

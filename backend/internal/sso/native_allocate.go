@@ -121,20 +121,37 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 		username = "native-" + id
 	}
 	if !eligible {
-		_, err = s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, "", limits, false, org != "", nil)
+		_, err = s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, "", limits, false, org != "", false, nil)
 		return users.User{}, err
 	}
+	tableManifest := vol.OpenDocument(filepath.Join(root, "users", id, "native-mailbox.json")).IsTable()
 	prepare := func() (string, error) {
-		a, e := s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, proof.Domain, limits, false, org != "", func(root string, o mailbox.Owner, address string, l mailbox.Limits) (string, error) {
+		if tableManifest {
+			a, e := s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, proof.Domain, limits, false, org != "", true, func(root string, o mailbox.Owner, address string, l mailbox.Limits) (string, error) {
+				return mailbox.PrepareAccountStorageContext(ctx, root, o, address, l)
+			})
+			return a.Source, e
+		}
+		a, e := s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, proof.Domain, limits, false, org != "", false, func(root string, o mailbox.Owner, address string, l mailbox.Limits) (string, error) {
 			return mailbox.PrepareAccountContext(ctx, root, o, address, l)
 		})
 		return a.Source, e
 	}
 	user, err := accounts.PublishPreparedSSOUser(ctx, id, username, role, issuer, subject, d.Resource.UserName, d.Resource.Email(), org, prepare)
 	if errors.Is(err, users.ErrUsernameTaken) {
-		return accounts.PublishPreparedSSOUser(ctx, id, "native-"+id, role, issuer, subject, d.Resource.UserName, d.Resource.Email(), org, prepare)
+		user, err = accounts.PublishPreparedSSOUser(ctx, id, "native-"+id, role, issuer, subject, d.Resource.UserName, d.Resource.Email(), org, prepare)
 	}
-	return user, err
+	if err != nil {
+		return users.User{}, err
+	}
+	if tableManifest {
+		if _, err = s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, proof.Domain, limits, false, org != "", false, func(root string, o mailbox.Owner, address string, l mailbox.Limits) (string, error) {
+			return mailbox.PrepareAccountContext(ctx, root, o, address, l)
+		}); err != nil {
+			return users.User{}, err
+		}
+	}
+	return user, nil
 }
 
 // hostedMailDomains reads the suite allowlist only for hosted allocation. DNS proof

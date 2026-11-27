@@ -214,6 +214,9 @@ func (s *Service) bulkKey(ctx context.Context) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := cryptutil.RefuseCreate(idPath); err != nil {
+			return nil, err
+		}
 		return key, fsutil.AtomicWriteFile(idPath, []byte(id+"\n"), 0600)
 	}
 	if err != nil {
@@ -228,6 +231,9 @@ func (s *Service) bulkKey(ctx context.Context) ([]byte, error) {
 	}
 	recorded, err := os.ReadFile(idPath)
 	if errors.Is(err, os.ErrNotExist) {
+		if err := cryptutil.RefuseCreate(idPath); err != nil {
+			return nil, err
+		}
 		return key, fsutil.AtomicWriteFile(idPath, []byte(id+"\n"), 0600)
 	}
 	if err != nil {

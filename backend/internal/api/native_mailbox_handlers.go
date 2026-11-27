@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // mailboxHeader selects one of the caller's mailboxes on mail endpoints.
@@ -96,7 +96,7 @@ func (s *Server) extraMailboxIDs(userID string) []string {
 		if m.User != userID || m.Kind != "extra" {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(s.mailboxStateDir(userID, m.ID), "native-mailbox.json")); err == nil {
+		if ok, err := vol.Exists(filepath.Join(s.mailboxStateDir(userID, m.ID), "native-mailbox.json")); err == nil && ok {
 			ids = append(ids, m.ID)
 		}
 	}

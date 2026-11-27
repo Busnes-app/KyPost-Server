@@ -14,6 +14,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // migrateLegacySingleUserData copies the pre-multi-user global files into
@@ -47,16 +48,18 @@ func migrateLegacySingleUserData(logger *logging.Logger, usersStore *users.Store
 	userStateDir := filepath.Join(stateDir, "users", admin.ID)
 	userConfigDir := filepath.Join(configDir, "users", admin.ID)
 
-	// Mailbox state: checkpoint/processed set and the decisions audit trail.
-	copyIfMissing(logger, filepath.Join(stateDir, "state.json"), filepath.Join(userStateDir, "state.json"))
-	copyIfMissing(logger, filepath.Join(stateDir, "decisions.json"), filepath.Join(userStateDir, "decisions.json"))
+	if !users.TableMode(configDir) {
+		// Mailbox state: checkpoint/processed set and the decisions audit trail.
+		copyIfMissing(logger, filepath.Join(stateDir, "state.json"), filepath.Join(userStateDir, "state.json"))
+		copyIfMissing(logger, filepath.Join(stateDir, "decisions.json"), filepath.Join(userStateDir, "decisions.json"))
 
-	// Encrypted IMAP credentials (still encrypted under the global master key).
-	//
-	// consumeIfPresent, not copyIfMissing: this source must be retired, and the
-	// other two must not be. See consumeIfPresent.
-	legacyIMAP := config.SecretFile("IMAP_CONFIG_FILE", "imap-config.json")
-	consumeIfPresent(logger, legacyIMAP, filepath.Join(userConfigDir, "imap-config.json"))
+		// Encrypted IMAP credentials (still encrypted under the global master key).
+		//
+		// consumeIfPresent, not copyIfMissing: this source must be retired, and the
+		// other two must not be. See consumeIfPresent.
+		legacyIMAP := config.SecretFile("IMAP_CONFIG_FILE", "imap-config.json")
+		consumeIfPresent(logger, legacyIMAP, filepath.Join(userConfigDir, "imap-config.json"))
+	}
 
 	// Tuning prompt: first existing legacy candidate wins.
 	tuningCandidates := []string{strings.TrimSpace(os.Getenv("TUNING_FILE")), filepath.Join(configDir, "TUNING.md"), "TUNING.md", "/opt/kypost/TUNING.md"}
@@ -73,7 +76,7 @@ func migrateLegacySingleUserData(logger *logging.Logger, usersStore *users.Store
 	// Notification delivery preferences captured from the legacy global
 	// config.yaml before LoadOrInit rewrote it with the trimmed schema.
 	userSettingsPath := filepath.Join(userConfigDir, "config.yaml")
-	if _, err := os.Stat(userSettingsPath); errors.Is(err, os.ErrNotExist) && legacyPrefsOK {
+	if _, err := vol.OpenDocument(userSettingsPath).Read(); errors.Is(err, os.ErrNotExist) && legacyPrefsOK {
 		settings := config.DefaultUserSettings()
 		settings.Notifications = legacyPrefs
 		if err := config.SaveUserSettings(userSettingsPath, settings); err != nil {
@@ -112,6 +115,31 @@ func consumeIfPresent(logger *logging.Logger, src, dst string) {
 }
 
 func copyIfMissing(logger *logging.Logger, src, dst string) {
+	doc := vol.OpenDocument(dst)
+	if doc.IsTable() {
+		if _, err := doc.Read(); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			logger.Error("failed to migrate legacy file", "src", src, "dst", dst, "error", err.Error())
+			return
+		}
+		b, err := os.ReadFile(src)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				logger.Error("failed to migrate legacy file", "src", src, "dst", dst, "error", err.Error())
+			}
+			return
+		}
+		if err := doc.Write(b); err != nil {
+			if errors.Is(err, vol.ErrStale) {
+				return
+			}
+			logger.Error("failed to migrate legacy file", "src", src, "dst", dst, "error", err.Error())
+			return
+		}
+		logger.Info("migrated legacy file", "src", src, "dst", dst)
+		return
+	}
 	if _, err := os.Stat(dst); err == nil {
 		return
 	}

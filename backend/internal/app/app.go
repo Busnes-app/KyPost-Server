@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -235,6 +236,19 @@ func Run(args []string) error {
 	}); err != nil {
 		return err
 	}
+	var tenancyDB *sql.DB
+	var cells []string
+	if tenancyMode == config.TenancyMulti {
+		cells, err = config.Cells(os.Getenv("KY_CELLS"))
+		if err != nil {
+			return err
+		}
+		tenancyDB, err = tenancy.Open(paths.StateDir, false)
+		if err != nil {
+			return fmt.Errorf("open tenancy store: %w", err)
+		}
+		defer func() { _ = tenancyDB.Close() }()
+	}
 	if !dbbackend.Postgres() {
 		// Deferred after the instance lock, so it runs first: the log is folded in while this
 		// process still holds the lock and after every worker has returned.
@@ -274,6 +288,9 @@ func Run(args []string) error {
 		users:             usersStore,
 		health:            healthSvc,
 		wkdStore:          wkdStore,
+		tenancy:           tenancyDB,
+		staffOrg:          staffOrg,
+		cells:             cells,
 	}
 
 	if dbbackend.Postgres() {
@@ -332,6 +349,9 @@ type runDeps struct {
 	users             *users.Store
 	health            *health.Service
 	wkdStore          *wkdpublish.Store
+	tenancy           *sql.DB
+	staffOrg          string
+	cells             []string
 }
 
 // defaultEmbedModelDir is where the Dockerfile installs potion-base-8M,
@@ -378,6 +398,32 @@ func configureSorter(log *logging.Logger, poller *processor.Poller) error {
 	return nil
 }
 
+func orgPoolCheck(db *sql.DB, staffOrg string) mailbox.PoolCheck {
+	return func(ctx context.Context, owner mailbox.Owner, add int64) error {
+		if add <= 0 {
+			return nil
+		}
+		org, err := tenancy.SubjectOrg(ctx, db, owner.Issuer, owner.Subject)
+		if err != nil {
+			return err
+		}
+		if org != "" && org == staffOrg {
+			return nil
+		}
+		if org == "" {
+			return mailbox.ErrPoolFull
+		}
+		ok, err := tenancy.ReserveStorage(ctx, db, org, add, time.Now())
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return mailbox.ErrPoolFull
+		}
+		return nil
+	}
+}
+
 func runDaemon(ctx context.Context, d runDeps) error {
 	_, release, err := startReplica(ctx, d, "daemon")
 	if err != nil {
@@ -387,6 +433,10 @@ func runDaemon(ctx context.Context, d runDeps) error {
 		return err
 	}
 	defer release()
+	if d.tenancy != nil {
+		mailbox.SetPoolCheck(orgPoolCheck(d.tenancy, d.staffOrg))
+		defer mailbox.SetPoolCheck(nil)
+	}
 	ctx, restart := context.WithCancelCause(ctx)
 	defer restart(nil)
 	go monitorHealth(ctx, d.logger, d.health, healthCheckInterval, restart)
@@ -436,6 +486,9 @@ func runDaemonRole(owned context.Context, d runDeps, backups *sync.WaitGroup) er
 	}
 	poller.SetConfigPath(d.configPath)
 	poller.SetKyCalendar(d.kycal)
+	if d.tenancy != nil {
+		poller.SetOrgGate(&tenancy.Gate{DB: d.tenancy, StaffOrg: d.staffOrg})
+	}
 	if d.nativeMail {
 		poller.EnableNativeMail()
 	}
@@ -544,6 +597,10 @@ func runServer(ctx context.Context, d runDeps) error {
 	}
 	defer release()
 	srv := newAPIServer(d, nil)
+	if d.tenancy != nil {
+		mailbox.SetPoolCheck(srv.StoragePoolCheck)
+		defer mailbox.SetPoolCheck(nil)
+	}
 	if instance != "" {
 		srv.SetReplicaInstance(instance, d.store.InstanceLive)
 	}
@@ -592,6 +649,9 @@ func newAPIServer(d runDeps, onConfigUpdated func(config.Config)) *api.Server {
 	if dbbackend.Postgres() {
 		srv.UseSharedState(d.store)
 	}
+	if d.tenancy != nil {
+		srv.UseTenancy(d.tenancy, d.staffOrg, d.cells)
+	}
 	return srv
 }
 
@@ -627,6 +687,10 @@ func runAll(ctx context.Context, d runDeps) error {
 	}
 	ctx, restart := context.WithCancelCause(ctx)
 	defer restart(nil)
+	if d.tenancy != nil {
+		mailbox.SetPoolCheck(orgPoolCheck(d.tenancy, d.staffOrg))
+		defer mailbox.SetPoolCheck(nil)
+	}
 	go monitorHealth(ctx, d.logger, d.health, healthCheckInterval, restart)
 	outboundCtx, cancelOutbound := context.WithCancel(ctx)
 	outboundDone := startNativeOutbound(outboundCtx, d)
@@ -657,6 +721,10 @@ func runAll(ctx context.Context, d runDeps) error {
 	poller.SetConfigPath(d.configPath)
 	srv := newAPIServer(d, poller.UpdateConfig)
 	poller.SetKyCalendar(d.kycal)
+	if d.tenancy != nil {
+		poller.SetOrgGate(&tenancy.Gate{DB: d.tenancy, StaffOrg: d.staffOrg})
+		mailbox.SetPoolCheck(srv.StoragePoolCheck)
+	}
 	if d.nativeMail {
 		poller.EnableNativeMail()
 	}

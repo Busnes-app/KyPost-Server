@@ -47,26 +47,34 @@ func enterTableMode(t *testing.T, st *state.Store, configDir, stateDir, secretDi
 	t.Cleanup(release)
 }
 
-// A table-mode replica refuses to start, before it registers or writes anything, while a
-// store is still written to the host's disk, and when a root is not on the documents table.
+// With every store off the host's disk (MH7), a table-mode replica starts and registers
+// itself without writing replica-volume.id on disk; assertVolumeFree still refuses any
+// store marked TargetFile or any root off the documents table.
 func TestTableModeStartRunsTheVolumeFreeAssertion(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	t.Setenv("POW_SECRET", "")
 	d := newGracefulShutdownTestDeps(t)
 	secret := os.Getenv("SECRET_DIR")
 	enterTableMode(t, d.store, d.configDir, d.stateDir, secret)
-	_, _, err := startReplica(context.Background(), d, "api")
-	if !errors.Is(err, tenancy.ErrHostFiles) {
-		t.Fatalf("table-mode start with stores on the host's disk: %v", err)
+	instance, release, err := startReplica(context.Background(), d, "api")
+	if err != nil {
+		t.Fatalf("table-mode start failed: %v", err)
+	}
+	defer release()
+	if instance == "" {
+		t.Fatal("table-mode start returned an empty instance id")
 	}
 	live, lerr := d.store.LiveInstances(context.Background())
-	if lerr != nil || len(live) != 0 {
-		t.Fatalf("a refused start registered %+v (%v)", live, lerr)
+	if lerr != nil || len(live) != 1 || live[0].ID != instance {
+		t.Fatalf("table-mode start live instances = %+v (%v), want [%s]", live, lerr, instance)
 	}
 	for _, dir := range []string{d.configDir, d.stateDir, secret} {
 		if _, err := os.Stat(filepath.Join(dir, replica.VolumeIDFile)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("a refused start wrote %s in %s: %v", replica.VolumeIDFile, dir, err)
+			t.Fatalf("table-mode start wrote %s in %s: %v", replica.VolumeIDFile, dir, err)
 		}
+	}
+	if err := assertVolumeFree(d.configDir, d.stateDir, map[string]tenancy.Target{"on-disk.json": tenancy.TargetFile}); !errors.Is(err, tenancy.ErrHostFiles) {
+		t.Fatalf("a TargetFile store must refuse start: %v", err)
 	}
 	resolved := map[string]tenancy.Target{"contacts.json": tenancy.TargetDocuments}
 	if err := assertVolumeFree(d.configDir, d.stateDir, resolved); err != nil {
