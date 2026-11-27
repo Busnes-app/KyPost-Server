@@ -284,9 +284,9 @@ function EnrollPanel({
       const envelope = keyring && bootstrap
         ? await sealKeyringForDevice({
             publicKeyB64: publicKey, deviceId: device.deviceId, typedCode: code, raw: material,
-            snapshot: { fingerprint: bootstrap.fingerprint, publicKey: bootstrap.publicKey, keyring }
+            snapshot: { fingerprint: bootstrap.fingerprint, publicKey: bootstrap.publicKey, keyring }, version: version === 6 ? 6 : 5
           })
-        : await sealEnvelopeForDevice(publicKey, device.deviceId, fingerprint, material);
+        : await sealEnvelopeForDevice(publicKey, device.deviceId, fingerprint, material, version === 6 ? 6 : 4);
       await putDeviceEnvelope(device.deviceId, envelope, password, snapshot.pgpRevision, publicKey, snapshot.fingerprint, keyring?.materialGeneration);
 
       // PAST THE POINT OF FAILURE. The sealing is stored; nothing below may

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/ky-primitives/xwing"
+
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -431,5 +433,52 @@ func TestHPKEDeviceDeliveryFollowsAdvertisedVersions(t *testing.T) {
 	}
 	if d := deviceByID(t, srv, u.ID, "mac"); !d.EncryptionEnrolled || d.EnrolledVersion != 5 || d.EnrolledGeneration != 1 {
 		t.Fatalf("v5 enrollment not confirmed: %+v", d)
+	}
+}
+
+func TestV6DeviceDeliveryAndAcknowledgement(t *testing.T) {
+	srv := newTestServer(t)
+	u := convertedUser(t, srv)
+	authDevice, _ := publishDevice(t, srv, u.ID, "phone", []int{4, 5})
+	key, err := xwing.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := base64.StdEncoding.EncodeToString(key.Public().Bytes())
+	if rec := deviceJSON(t, srv, authDevice, http.MethodPost, "/api/pgp/device/enrollment-key", map[string]any{"publicKey": publicKey, "envelopeVersions": []int{4, 5, 6}}); rec.Code != http.StatusOK {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	sealed, err := xwing.Seal(key.Public(), []byte("kypost-device-envelope/v6"), nil, []byte("public test payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := map[string]any{"v": 6, "alg": "HPKE-Base-XWing-SHA256-A256GCM", "enc": base64.StdEncoding.EncodeToString(sealed[1:1121]), "ct": base64.StdEncoding.EncodeToString(sealed[1121:])}
+	put := func() *httptest.ResponseRecorder {
+		raw, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": string(raw), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": publicKey, "materialGeneration": 1, "authSecret": deliveryAuth})
+	}
+	for _, size := range []int{65, 1119, 1121} {
+		envelope["enc"] = base64.StdEncoding.EncodeToString(make([]byte, size))
+		if rec := put(); rec.Code != http.StatusBadRequest {
+			t.Fatal("accepted wrong enc length", size, rec.Code, rec.Body.String())
+		}
+	}
+	envelope["enc"] = base64.StdEncoding.EncodeToString(sealed[1:1121])
+	if rec := put(); rec.Code != http.StatusOK {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	if rec := deviceJSON(t, srv, authDevice, http.MethodGet, "/api/pgp/device/envelope", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"version":6`) {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	ack := map[string]any{"encryptionEnrolled": true, "envelopeVersion": 6, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}
+	if rec := deviceJSON(t, srv, authDevice, http.MethodPost, "/api/pgp/device/enrollment-state", ack); rec.Code != http.StatusOK {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	d := deviceByID(t, srv, u.ID, "phone")
+	if !d.EncryptionEnrolled || d.EnrolledVersion != 6 || d.EnrolledGeneration != 1 {
+		t.Fatal("v6 acknowledgement lost")
 	}
 }

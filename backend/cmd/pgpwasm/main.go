@@ -3,12 +3,14 @@
 // Command pgpwasm is gopenpgp compiled to WebAssembly for KyPost's browser
 // client (frontend/src/lib/pgpEngineWasm.ts). It registers globalThis.kypostPGP;
 // each function takes one object and returns one object, or {error}.
-// Build: frontend/scripts/build-pgp-wasm.sh.
+// Build: scripts/build-pgp-wasm.sh.
 package main
 
 import (
 	"fmt"
 	"syscall/js"
+
+	"github.com/Busnes-app/ky-primitives/xwing"
 )
 
 var (
@@ -24,7 +26,15 @@ func bytesOf(v js.Value) []byte {
 		v = textEnc.Call("encode", v)
 	}
 	if !v.InstanceOf(uint8Array) {
-		panic("expected Uint8Array")
+		// Typed arrays from another realm (for example a browser frame) have
+		// a different constructor. Copy a genuine Uint8Array into this realm
+		// before CopyBytesToGo, whose runtime uses instanceof too.
+		if !js.Global().Get("ArrayBuffer").Call("isView", v).Bool() ||
+			js.Global().Get("Object").Get("prototype").Get("toString").Call("call", v).String() != "[object Uint8Array]" {
+			panic("expected Uint8Array")
+		}
+		v = uint8Array.New(v)
+		defer v.Call("fill", 0) // this normalization copy is ours, not the caller’s
 	}
 	b := make([]byte, v.Get("length").Int())
 	js.CopyBytesToGo(b, v)
@@ -108,6 +118,48 @@ func keyResult(priv, pub, fp string, err error) (map[string]any, error) {
 
 func main() {
 	api := map[string]any{
+		"xwingGenerate": op(func(req js.Value) (map[string]any, error) {
+			key, err := xwing.Generate()
+			if err != nil {
+				return nil, err
+			}
+			seed := key.Seed()
+			defer zero(seed)
+			return map[string]any{"seed": toJS(seed), "publicKey": toJS(key.Public().Bytes())}, nil
+		}),
+		"xwingSeal": op(func(req js.Value) (map[string]any, error) {
+			pub, err := xwing.ParsePublicKey(bytesOf(req.Get("publicKey")))
+			if err != nil {
+				return nil, err
+			}
+			plaintext := bytesOf(req.Get("plaintext"))
+			defer zero(plaintext)
+			sealed, err := xwing.Seal(pub, bytesOf(req.Get("info")), nil, plaintext)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"enc": toJS(sealed[1 : 1+xwing.EncapsulationBytes]), "ct": toJS(sealed[1+xwing.EncapsulationBytes:])}, nil
+		}),
+		"xwingOpen": op(func(req js.Value) (map[string]any, error) {
+			seed := bytesOf(req.Get("seed"))
+			defer zero(seed)
+			key, err := xwing.FromSeed(seed)
+			if err != nil {
+				return nil, err
+			}
+			enc, ct := bytesOf(req.Get("enc")), bytesOf(req.Get("ct"))
+			if len(enc) != xwing.EncapsulationBytes || len(ct) < 16 {
+				return nil, fmt.Errorf("invalid v6 envelope framing")
+			}
+			sealed := append([]byte{xwing.Version}, enc...)
+			sealed = append(sealed, ct...)
+			plaintext, err := xwing.Open(key, bytesOf(req.Get("info")), nil, sealed)
+			if err != nil {
+				return nil, err
+			}
+			defer zero(plaintext)
+			return map[string]any{"plaintext": toJS(plaintext)}, nil
+		}),
 		"generate": op(func(req js.Value) (map[string]any, error) {
 			var ids []userID
 			list := req.Get("userIDs")

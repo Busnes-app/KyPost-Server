@@ -34,10 +34,10 @@ where explicitly labeled; they do not re-enable this retired mode.
 
 ### Device keyring preparation (gated)
 
-The browser has a validated complete-ring preparation helper, now sealing only
-v5 (RFC 9180 HPKE); the retired [v3 contract](PGP_KEY_LIFECYCLE.md#v3-framing-and-interoperability-vectors)
-stays as the reference for its shared vectors. New enrollment delivers v4/v5
-only; native complete-ring persistence,
+The browser has a validated complete-ring preparation helper, sealing complete rings with
+v5 P-256 or v6 X-Wing HPKE; the retired [v3 contract](PGP_KEY_LIFECYCLE.md#v3-framing-and-interoperability-vectors)
+stays as the reference for its shared vectors. New enrollment delivers v4/v5/v6
+HPKE only; native complete-ring persistence,
 server delivery and account conversion are not enabled by this helper. Devices
 can publish envelope-version support as described below; a claim does not prove
 that a client durably imported a ring.
@@ -520,14 +520,16 @@ Implemented:
   keyring's current generation, else `409 {"pgpStateChanged": true,
   "materialGeneration": <current>}`. The envelope's own `v` selects the
   version and the server checks its framing without decrypting, refusing
-  anything else with 400: only v4/v5, exactly
+  anything else with 400: v4/v5/v6, exactly
   `{v, alg:"HPKE-Base-P256-SHA256-A256GCM", enc, ct}` in canonical padded
-  base64 (`enc` 65 bytes starting `0x04`, `ct` at least 16 bytes; see
+  base64 (`enc` 65 bytes starting `0x04` for v4/v5; v6 uses
+  `alg:"HPKE-Base-XWing-SHA256-A256GCM"` and exactly 1120-byte `enc`;
+  `ct` at least 16 bytes; see
   [DEVICE_ENROLLMENT.md](DEVICE_ENROLLMENT.md#normative-the-hpke-envelope-v4v5)).
   Retired v2/v3 are refused with 400 and a "retired … update KyPost on that
   device" message; v2/v3 slots stored before the retirement are served
-  unchanged until their TTL. It accepts only `v: 5` on a converted account
-  and only `v: 4` on a legacy one (`409 {"deviceEnvelopeVersion": true}`
+  unchanged until their TTL. It accepts `v: 5` or `v: 6` on a converted account
+  and `v: 4` or `v: 6` on a legacy one (`409 {"deviceEnvelopeVersion": true}`
   otherwise), and
   refuses a version the
   device did not advertise (`409 {"enrollmentChanged": true,
@@ -543,7 +545,7 @@ Implemented:
   `withAuth` would exclude the device entirely. Both resolve the caller through
   `deviceAuthFromRequest`, which returns the **verified** device record, so
   neither reads an identity out of the request.
-  - `POST .../enrollment-key` publishes the device's EC P-256 enrollment public
+  - `POST .../enrollment-key` publishes the device's X-Wing (v6) or legacy P-256 enrollment public
     key. A device may publish its own because a public key is not a
     capability — it only lets a browser seal **to** that device. The device id
     is taken from the credential and never from the body: a device that could
@@ -551,19 +553,22 @@ Implemented:
     to, which is precisely the substitution the verification code exists to
     catch.
     The optional `envelopeVersions` field publishes codec support with that key:
-    `{"publicKey":"<base64 SEC1 point>","envelopeVersions":[4,5]}`. Omitted or
+    `{"publicKey":"<base64 X-Wing key>","envelopeVersions":[4,5,6]}`.
+    Advertising v6 requires a valid canonical 1216-byte X-Wing key, also checked
+    on delivery. P-256 clients keep `[4,5]`. See SAS v2 and the exact v6
+    framing in [DEVICE_ENROLLMENT.md](DEVICE_ENROLLMENT.md#normative-the-x-wing-hpke-envelope-v6). Omitted or
     `null` means no claim (`[]`, never `[2]`), including on re-publication of
     the same key; this resets a stale claim when an older client republishes.
     Explicit lists contain
     1–16 distinct integers from 2 through 65535 and are stored sorted. Empty,
     duplicate, fractional or out-of-range lists return 400 without changing the
     key or capabilities. Future version numbers are retained, not interpreted
-    as support by this server. The browser seals only RFC 9180 HPKE: v5 for a
-    converted account, v4 for a legacy one, with no v2/v3 fallback; a device
+    as support by this server. The browser prefers X-Wing v6 when advertised;
+    otherwise P-256 v5 for a converted account, v4 for a legacy one, with no
+    v2/v3 fallback; a device
     that does not advertise it is told to update KyPost on that device. A
-    device opens by the server-recorded delivery `version`, and current clients
-    advertise and open only `[4,5]`, so trimming the list cannot downgrade them
-    to a custom construction. The entire JSON request is bounded to 4 KiB;
+    device opens by the server-recorded delivery `version`; P-256 and X-Wing
+    device keys cannot be interchanged to downgrade the delivery suite. The entire JSON request is bounded to 4 KiB;
     trailing JSON or oversized padding is refused.
 
     Key and versions are written together. Push registration cannot set them

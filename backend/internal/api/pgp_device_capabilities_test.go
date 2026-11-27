@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"github.com/Busnes-app/ky-primitives/xwing"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -103,5 +105,43 @@ func TestEnrollmentCapabilitiesRejectInvalidRequestsWithoutMutation(t *testing.T
 	srv.handlePGPPublishEnrollmentKey(rec, req)
 	if rec.Code == http.StatusOK {
 		t.Fatal("session credential published device capabilities")
+	}
+}
+
+func TestV6EnrollmentKeyPublicationValidatesXWing(t *testing.T) {
+	srv, userID, deviceID, authDevice := newPairedDeviceForTest(t)
+	key, err := xwing.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := base64.StdEncoding.EncodeToString(key.Public().Bytes())
+	invalid := make([]byte, 1216)
+	for i := range invalid {
+		invalid[i] = 255
+	}
+	for _, pub := range []string{"P256", base64.StdEncoding.EncodeToString(make([]byte, 65)), base64.StdEncoding.EncodeToString(invalid), good} {
+		body, err := json.Marshal(map[string]any{"publicKey": pub, "envelopeVersions": []int{4, 5, 6}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/pgp/device/enrollment-key", strings.NewReader(string(body)))
+		authDevice(req)
+		rec := httptest.NewRecorder()
+		srv.handlePGPPublishEnrollmentKey(rec, req)
+		want := http.StatusBadRequest
+		if pub == good {
+			want = http.StatusOK
+		}
+		if rec.Code != want {
+			t.Fatalf("status %d want %d: %s", rec.Code, want, rec.Body.String())
+		}
+		d := deviceByID(t, srv, userID, deviceID)
+		if pub == good {
+			if d.EnrollmentPublicKey != good || !slices.Equal(d.EnrollmentEnvelopeVersions, []int{4, 5, 6}) {
+				t.Fatal("v6 capabilities missing")
+			}
+		} else if d.EnrollmentPublicKey != "" {
+			t.Fatal("invalid publication mutated device")
+		}
 	}
 }

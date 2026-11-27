@@ -1,10 +1,8 @@
 # Device enrollment: giving a paired device its own sealing of the PGP key
 
-**Status: design.** This is Change 2 of
-`2026-08-04-multi-wrapped-key-custody-design.md`. Change 1's server side has shipped
-(PR #70): an identity can now carry several wrapped envelopes, and a `device:<id>`
-slot is already a valid, writable slot with nothing yet minting one. This spec says
-how one gets minted.
+**Status:** server and browser implement HPKE v4/v5 and post-quantum v6. Native
+clients roll out v6 separately; v4/v5 stay accepted until every native client ships v6.
+Envelope versions describe device transport, independently of OpenPGP key versions.
 
 ## What this is for
 
@@ -13,26 +11,17 @@ QR and never learns that password, so it cannot open the envelope. This
 motivated the device-envelope design. Server custody has since been retired: its old keys remain only for migration. Native support depends on each
 client’s implementation; an unenrolled or unsupported client uses webmail.
 
-Device enrollment gives each paired device its own sealing of the same key, opened by
-the device's secure element rather than by a passphrase. The device never learns the
-account password, and revocation is per-device.
+Device enrollment gives each paired device its own sealing of the same key, opened using the device’s locally protected key rather than the account password. The
+device never learns that password. Removing a delivery stops future pickup; it cannot
+erase a private key already imported by a device (see revocation below).
 
 ## Scope
 
-This spans four subsystems and is deliberately decomposed. **This spec covers 2a and
-2b**, which together define the wire format and the ceremony; 2c and 2d implement it.
-
-- **2a — Server.** Enrollment public key on `NativeDevice`, the publish endpoint,
-  shared code derivation. *This spec.*
-- **2b — Browser.** Device list, the verification UI, ECDH seal, upload to the
-  `device:` slot. *This spec.*
-- **2c — Android.** Keystore/StrongBox keypair, publish, code display, local re-seal.
-  Written against this spec.
-- **2d — Qt clients.** Deferred. `2026-08-04-multi-wrapped-key-custody-design.md`
-  already flags the platform keystore story as unproven; if those clients cannot hold
-  a non-extractable key they stay on the passphrase tier, and that must not block 2a-2c.
-
-Nothing is user-visible until 2a+2b+2c all land. That is the minimum viable unit.
+The server owns authenticated key publication, version admission, opaque delivery storage,
+pickup and acknowledgement. The browser verifies SAS and seals the complete current
+material. Native clients own platform key protection, envelope opening and durable import.
+This server/browser change adds v6; native v6 ports ship separately and existing P-256
+v4/v5 clients keep working. Platform protection follows Spec A Q8 below.
 
 ## The ceremony
 
@@ -48,9 +37,12 @@ changed.
 
 The steps:
 
-1. The device generates an EC P-256 keypair with `PURPOSE_AGREE_KEY`, StrongBox-backed
-   where the hardware allows, private half non-extractable. `minSdk = 31` on Android
-   makes this available everywhere it supports; `PURPOSE_AGREE_KEY` landed in API 31.
+1. A v6 device generates an X-Wing keypair (ML-KEM-768 + X25519). Android keeps its
+   private seed encrypted under its StrongBox/TEE AES-256-GCM key with per-use user
+   authentication. Apple uses Secure Enclave ML-KEM-768 where available, otherwise
+   CryptoKit X-Wing in Keychain with `ThisDeviceOnly` and user presence; the Secure
+   Enclave cannot wrap arbitrary keys. Linux uses its existing secret store (Spec A Q8).
+   Legacy v4/v5 devices retain their hardware-backed P-256 keys.
 2. The device publishes the **public** half under its existing pairing credential.
 3. The user starts enrollment. The device displays a code derived from its own public
    key and the current time bucket, valid for two minutes.
@@ -58,13 +50,13 @@ The steps:
 5. The browser fetches the device public key from the server, derives the same code
    from **what it was handed**, and compares against what the user typed. **On mismatch
    it refuses to seal.**
-6. On match, the browser does ECDH against an ephemeral keypair, seals the private key,
-   and `PUT`s it to `device:<deviceId>`.
-7. The device fetches the sealed envelope, opens it by ECDH inside its secure element,
-   and re-seals it locally under a secure-element AES-GCM key carrying
-   `setUserAuthenticationRequired`.
-
-Step 7 needs an endpoint that does not exist yet — see "A gap in Change 1" below.
+6. On match, the browser seals with X-Wing HPKE v6 (or P-256 HPKE v4/v5 for a legacy
+   device) and `PUT`s it to `device:<deviceId>`. A converted account seals its complete
+   ring; a legacy account seals its one armored private key.
+7. The device fetches its own envelope, opens it using the server-recorded version and
+   its own device ID and checked fingerprint, then protects the imported material in
+   its platform’s local store. It confirms that exact version, fingerprint and material
+   generation to the enrollment-state endpoint.
 
 ## The verification, and why it points this way
 
@@ -107,7 +99,36 @@ because it excludes the character pairs people transcribe wrongly.
 **Valid for two minutes**, matching `GET /api/pgp/qr/token`'s existing TTL. Reuse that
 number rather than inventing a second one; if it moves, both should move together.
 
-### NORMATIVE: the exact bytes
+### NORMATIVE: SAS v2 (X-Wing)
+
+`publicKey` is standard padded canonical base64 of the **1216-byte X-Wing public key**:
+ML-KEM-768 encapsulation key (1184 bytes), then X25519 public key (32 bytes). Publication
+advertising v6 and every v6 delivery validate it with `xwing.ParsePublicKey`; a valid
+length alone is insufficient. Do not publish a P-256 key with a v6 capability claim.
+
+```
+bucket   = floor(unixSeconds / 120)
+preimage = UTF8("kypost-device-sas/v2")
+        || uint16BE(1216) || rawXWingPublicKey
+        || uint16BE(byteLength(deviceIdUtf8)) || deviceIdUtf8
+        || uint64BE(bucket)
+H        = SHA-256(preimage)
+```
+
+There is **no NUL or separator after the domain**. Take the first 70 bits, most-significant
+first, using the same Crockford alphabet, grouping and normalization below. Current and
+previous bucket only. Hash all 1216 bytes, including both KEM components; never hash only
+the X25519 suffix or the base64 text. SAS is a byte hash, so key parsing is a separate
+publication/sealing boundary. P-256 devices retain SAS v1 unchanged; the two key lengths
+unambiguously select the SAS version. Neither SAS version proves safety against a server
+actively replacing the browser JavaScript.
+
+The shared public fixture [`device-envelope-xwing.json`](../testdata/device-envelope-xwing.json)
+pins a seed, key, bucket, SAS and Go-sealed v6 payload. Go and browser tests each flip every
+key byte and require a changed SAS. A browser-sealed peer fixture is opened by Go. These
+are public test secrets, never production keys.
+
+### NORMATIVE: legacy SAS v1 (P-256)
 
 Added 2026-08-05. The paragraph above reads like a specification and is not one — `‖` has
 no byte meaning, `timeBucket` has no encoding, and "70 bits" does not say which. Three
@@ -215,12 +236,12 @@ interpretable, and because the HPKE `info` reuses its AAD layout.
 ### NORMATIVE: the HPKE envelope (v4/v5)
 
 v4 carries one armored private key, v5 the complete `kypost-pgp-keyring-v1` ring, sealed with
-RFC 9180 HPKE. They are the only formats for new deliveries: v5 for a converted account, v4
-for a legacy one, with no v2/v3 fallback. A device that does not advertise the version its
+RFC 9180 HPKE. They remain accepted for devices with P-256 keys: v5 for a converted account, v4
+for a legacy one, with no v2/v3 fallback. X-Wing devices use v6 below. A device that does not advertise the version its
 account needs, including one with no claim (no longer read as `[2]`), is refused before any
 code or password is asked for, with "Update KyPost on that device".
 
-**Clients:** all three advertise `[4,5]`: KyPost-for-Android `OPENABLE_ENVELOPE_VERSIONS`
+**Legacy client baseline:** all three advertised `[4,5]` at the inventory snapshot: KyPost-for-Android `OPENABLE_ENVELOPE_VERSIONS`
 (`pgp/DeviceEnvelope.kt`), KyPost-for-Mac `supportedEnvelopeVersions`
 (`Domain/Security/DeviceEnvelope.swift`) and KyPost-for-Linux
 `core/net/PgpDeviceEnrollmentClient.cpp` (read on each `origin/main`, 2026-11-25).
@@ -262,6 +283,37 @@ an envelope minted for one device being replayed at another; binding the fingerp
 an envelope surviving an identity rotation and decrypting into a key the account no longer
 advertises. Without both, a substituted or replayed envelope decrypts successfully into
 the wrong key instead of failing authentication.
+
+### NORMATIVE: the X-Wing HPKE envelope (v6)
+
+```json
+{"v":6,"alg":"HPKE-Base-XWing-SHA256-A256GCM","enc":"<base64>","ct":"<base64>"}
+```
+
+- Exactly those four keys, once each and case-sensitive; integer `v:6`; standard padded
+  canonical base64. `enc` is **exactly 1120 bytes**, `ct` at least the 16-byte tag.
+- HPKE mode_base, KEM **0x647A X-Wing**, KDF 0x0001 HKDF-SHA256, AEAD 0x0002 AES-256-GCM.
+  Use `github.com/Busnes-app/ky-primitives/xwing` v0.11.0 or later; do not implement the KEM.
+- `info` has the v4/v5 length-prefixed layout with domain `kypost-device-envelope/v6`.
+  HPKE `aad` is empty. Device ID and normalized fingerprint come from the verified delivery
+  context, never from untrusted envelope fields. The opener refuses a version mismatch.
+- `xwing.Seal` returns `0x01 || enc || ct`; the JSON carries only `enc` and `ct`. Reconstruct
+  that library framing for `xwing.Open`. The `0x01` is not part of the 1120-byte `enc`.
+- Plaintext is the complete `kypost-pgp-keyring-v1` ring for a converted account (recorded
+  material generation > 0), or one armored private key for a legacy account (generation 0).
+  The 128 KiB serialized-envelope cap, current revision, fingerprint, generation, TTL,
+  delivery acknowledgement and device-credential ownership rules remain unchanged.
+- A v6 client publishes `envelopeVersions:[4,5,6]` if it can still open those legacy
+  formats, or `[6]` otherwise. This list is a codec claim, not proof of durable import.
+  The browser prefers v6 when advertised and refuses a key/suite mismatch. One publication
+  has one key; a P-256 envelope cannot be delivered to an X-Wing key. Republish and repeat
+  SAS when changing keys. The server retains v4/v5 acceptance for P-256 devices during rollout.
+- The browser calls the existing lazily loaded `backend/cmd/pgpwasm` bridge for X-Wing key
+  generation, sealing and opening. The bridge uses the shared library and stores no key.
+  Private seeds returned for an ephemeral browser recipient remain caller-owned memory;
+  Go clears byte-buffer copies on return (Go runtime key objects cannot be reliably erased).
+  `openDeviceEnvelope` retains v4/v5 opening via `@hpke/core`. No `.wasm` binary is committed;
+  build it with `npm run build:pgp-wasm`. Only the app-shell CSP permits `'wasm-unsafe-eval'`.
 
 ### NORMATIVE: test vectors
 
@@ -337,7 +389,7 @@ the better-libraried starting point, and it deserves its own spec.
 
 ## Wire format (2a)
 
-**Storage.** `NativeDevice` (`backend/internal/state/store.go:67`) gains an enrollment
+**Storage.** `NativeDevice` (`backend/internal/state/store.go`) carries an enrollment
 public key and the time it was published. That record already carries the device
 identity and is per-user isolated, and `MFAApprover` on the same struct is the
 precedent for adding a field that older rows decode as absent.
@@ -374,30 +426,24 @@ The TTL helps here rather than hurting: it bounds how long the easy revocation w
 stays open, and makes the hard case explicit instead of letting "revocation is
 per-device" read as stronger than it is.
 
-### A gap in Change 1
+### The device-scoped envelope read
 
-Change 1 registered all three envelope-slot routes as `withAuth`, on the reasoning that
-a paired device must not be able to mint a sealing. That is right for `PUT` and
-`DELETE` and wrong for `GET`, which the ceremony's step 7 needs: **the device cannot
-currently read the envelope that was just sealed for it.** The blanket rule was correct
-for the threat it was written against and too broad for this one.
+`PUT` and `DELETE /api/pgp/identity/envelope/{slot}` stay session-only: a paired device
+cannot mint or destroy a sealing. `GET /api/pgp/device/envelope` instead resolves the
+calling device through its verified credential and serves only `device:<callerDeviceId>`.
+It accepts no slot parameter. The general envelope-slot GET stays session-only, so a
+device cannot name another device’s slot through this route.
 
-2a must add a narrow device-authenticated read: a `withMailAuth` route that serves
-**only** the calling device's own `device:<callerDeviceId>` slot, with the slot name
-taken from the authenticated device record and never from the request. It must not
-accept a slot parameter at all — a device asking for another device's envelope, or for
-`password`, is the whole reason the general `GET` stays session-only.
-
-Serving that one envelope to that one device is safe: it is sealed to a key whose
-private half is non-extractable from that device's secure element, so no other caller
-gains anything by obtaining it. The distinction to hold onto is the one Change 1
+The transport copy is sealed to the device’s locally protected key: obtaining the
+copy alone does not grant decryption. P-256 hardware agreement and X-Wing platform
+protection differ; follow the approved Q8 requirements in the ceremony above. The distinction to hold onto is the one Change 1
 established and this narrows rather than reverses — **a device may publish a public key
 and read what was sealed for it; only a session may mint or destroy a sealing.**
 
 ### The transport copy expires; the enrollment record does not
 
 After step 7 the device holds a locally re-sealed copy and the server still holds the
-ECDH-sealed one. The server's copy **expires seven days after it is written**, reusing
+HPKE-sealed one. The server's copy **expires seven days after it is written**, reusing
 the pickup-link retention window rather than inventing a third number.
 
 A TTL rather than a delete, because expiry needs no caller. The ceremony's last step

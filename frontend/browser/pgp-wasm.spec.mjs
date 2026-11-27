@@ -90,3 +90,31 @@ for (const [name, fault] of [['missing', (route) => route.fulfill({ status: 404,
     expect(second).toBe(40);
   });
 }
+
+
+test('X-Wing v6 device envelopes run under the app-shell CSP', async ({ page }) => {
+  const { violations, csp } = await openApp(page);
+  expect(csp).toContain("'wasm-unsafe-eval'");
+  const vector = JSON.parse(readFileSync(new URL('../../testdata/device-envelope-xwing.json', import.meta.url), 'utf8'));
+  const out = await page.evaluate(async ([chunk, v]) => {
+    const { loadBridge } = await import(chunk);
+    const bridge = await loadBridge();
+    const b = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+    const seed = b(v.seed);
+    const fields = [v.deviceId, v.fingerprint].map((s) => new TextEncoder().encode(s));
+    const prefix = new TextEncoder().encode('kypost-device-envelope/v6');
+    const info = new Uint8Array(prefix.length + fields.reduce((n, f) => n + 2 + f.length, 0));
+    info.set(prefix); let at = prefix.length;
+    for (const f of fields) { info[at++] = f.length >> 8; info[at++] = f.length & 255; info.set(f, at); at += f.length; }
+    try {
+      const go = bridge.xwingOpen({ seed, info, enc:b(v.envelope.enc), ct:b(v.envelope.ct) });
+      const sealed = bridge.xwingSeal({ publicKey:b(v.publicKey), info, plaintext:new TextEncoder().encode(v.plaintext) });
+      const opened = bridge.xwingOpen({ seed, info, enc:sealed.enc, ct:sealed.ct });
+      const wrong = info.slice(); wrong[wrong.length - 1] ^= 1;
+      const refused = bridge.xwingOpen({ seed, info:wrong, enc:sealed.enc, ct:sealed.ct });
+      return { go:new TextDecoder().decode(go.plaintext), opened:new TextDecoder().decode(opened.plaintext), encBytes:sealed.enc.length, refused:typeof refused.error === 'string' };
+    } finally { seed.fill(0); }
+  }, [chunk, vector]);
+  expect(out).toEqual({ go:vector.plaintext, opened:vector.plaintext, encBytes:1120, refused:true });
+  expect(violations).toEqual([]);
+});

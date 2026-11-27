@@ -62,25 +62,28 @@ const envelopeDomain = (version: EnvelopeVersion) => `kypost-device-envelope/v${
 const RAW_KEY_BYTES = 65; // 0x04 || X(32) || Y(32)
 
 /**
- * v4 carries one armored key, v5 the complete ring, sealed with RFC 9180 HPKE.
+ * v4 carries one armored key, v5 the complete ring (P-256 HPKE). v6 upgrades
+ * either payload to X-Wing HPKE, with its own binding domain and SAS v2.
  * The custom ECDH+HKDF+GCM v2/v3 formats are retired: never sealed here, and
  * the server refuses them for new deliveries (docs/DEVICE_ENROLLMENT.md).
  */
-export type HpkeDeviceEnvelope = {
+export type HpkeDeviceEnvelope = ({
   v: 4 | 5;
   alg: "HPKE-Base-P256-SHA256-A256GCM";
-  enc: string;
-  ct: string;
-};
+} | {
+  v: 6;
+  alg: "HPKE-Base-XWing-SHA256-A256GCM";
+}) & { enc: string; ct: string };
 
-type EnvelopeVersion = 4 | 5;
+type EnvelopeVersion = 4 | 5 | 6;
 
 /**
- * The version to seal for a device: v5 (the complete ring) for a converted
- * account, v4 (the single key) for a legacy one. Null when the device does not
+ * Prefer v6 X-Wing when advertised; otherwise v5 (the complete ring) for a
+ * converted account, v4 (the single key) for a legacy one. Null when the device does not
  * advertise it; there is no v2/v3 fallback, the device's app must be updated.
  */
 export function deviceEnvelopeVersion(converted: boolean, advertised: readonly number[]): EnvelopeVersion | null {
+  if (advertised.includes(6)) return 6;
   const version = converted ? 5 : 4;
   return advertised.includes(version) ? version : null;
 }
@@ -95,6 +98,13 @@ function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+// The Go runtime and caller can have different realm constructors. Validate
+// bridge byte views without instanceof, and refuse shared backing memory.
+function isBridgeBytes(value: unknown): value is Uint8Array<ArrayBuffer> {
+  return ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === "[object Uint8Array]" &&
+    Object.prototype.toString.call(value.buffer) === "[object ArrayBuffer]";
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   for (const b of bytes) binary += String.fromCharCode(b);
@@ -104,8 +114,8 @@ function bytesToBase64(bytes: Uint8Array): string {
 /**
  * Decodes and shape-checks the device's published public key.
  *
- * The server stores this opaquely and never validates it, so the browser is the
- * first party to look at it. Rejecting the wrong shape here keeps a malformed
+ * The server validates X-Wing publication; legacy P-256 keys were stored
+ * opaquely. Rejecting the wrong shape here keeps a malformed
  * value from reaching the hash as bytes that happen to differ from what the
  * device hashed.
  */
@@ -116,8 +126,9 @@ function decodeRawKey(publicKeyB64: string): Uint8Array<ArrayBuffer> {
   } catch {
     throw new Error("device public key is not valid base64");
   }
+  if (raw.length === 1216) return raw;
   if (raw.length !== RAW_KEY_BYTES) {
-    throw new Error(`device public key must be ${RAW_KEY_BYTES} bytes, got ${raw.length}`);
+    throw new Error(`device public key must be ${RAW_KEY_BYTES} or 1216 bytes, got ${raw.length}`);
   }
   if (raw[0] !== 0x04) {
     throw new Error("device public key is not an uncompressed SEC1 point");
@@ -152,15 +163,12 @@ function uint64BE(n: number): Uint8Array {
 /**
  * Derives the fourteen-character code for a key, device and bucket.
  *
- * Hashes the RAW 65 bytes rather than the base64 text: hashing the transport
+ * Hashes the raw key bytes (SAS v2 domain/length for X-Wing), not base64 text: hashing the transport
  * encoding would make padding or alphabet drift between implementations a
  * silent mismatch that presents to the user as a hostile server.
  *
- * deviceId is length-prefixed defensively rather than out of present necessity:
- * it sits between a fixed 65-byte key and a fixed 8-byte bucket, so today its
- * boundaries are already unambiguous. The prefix is what keeps that true if a
- * second variable-width field is ever added, which is the point at which the
- * ambiguity would otherwise appear silently and only across implementations.
+ * Legacy P-256 keeps its original preimage. X-Wing uses a distinct SAS v2
+ * domain and a u16-prefixed full key, followed by the same ID and bucket.
  */
 export async function deriveEnrollmentCode(
   publicKeyB64: string,
@@ -170,8 +178,16 @@ export async function deriveEnrollmentCode(
   const raw = decodeRawKey(publicKeyB64);
   const id = new TextEncoder().encode(deviceId);
 
-  const preimage = new Uint8Array(raw.length + 2 + id.length + 8);
-  let off = 0;
+  if (!id.length || id.length > 0xffff || !Number.isSafeInteger(bucket) || bucket < 0) {
+    throw new Error("Invalid enrollment device ID or bucket");
+  }
+  // SAS v2 domain and key length are present only for X-Wing. Legacy SAS is unchanged.
+  const prefix = raw.length === 1216 ? new TextEncoder().encode("kypost-device-sas/v2") : new Uint8Array();
+  const keyLength = raw.length === 1216 ? uint16BE(raw.length) : new Uint8Array();
+  const preimage = new Uint8Array(prefix.length + keyLength.length + raw.length + 2 + id.length + 8);
+  preimage.set(prefix);
+  preimage.set(keyLength, prefix.length);
+  let off = prefix.length + keyLength.length;
   preimage.set(raw, off);
   off += raw.length;
   preimage.set(uint16BE(id.length), off);
@@ -182,7 +198,7 @@ export async function deriveEnrollmentCode(
 
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", preimage));
 
-  // First 50 bits, most-significant first, five bits per character.
+  // First 70 bits, most-significant first, five bits per character.
   let out = "";
   for (let i = 0; i < CODE_BITS; i += 5) {
     let v = 0;
@@ -349,17 +365,19 @@ export async function sealEnvelopeForDevice(
   deviceId: string,
   pgpFingerprint: string,
   armoredPrivateKey: string,
+  version: 4 | 6 = base64ToBytes(publicKeyB64).length === 1216 ? 6 : 4,
 ): Promise<HpkeDeviceEnvelope> {
-  return sealHpkePayload(publicKeyB64, deviceId, pgpFingerprint, armoredPrivateKey, 4);
+  return sealHpkePayload(publicKeyB64, deviceId, pgpFingerprint, armoredPrivateKey, version);
 }
 
-/** V5 preparation only: no upload or capability negotiation. Never deliver this through v4. */
-export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, raw, snapshot }: {
+/** Complete-ring preparation only: no upload or capability negotiation. Never deliver this through v4. */
+export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, raw, snapshot, version = base64ToBytes(publicKeyB64).length === 1216 ? 6 : 5 }: {
   publicKeyB64: string;
   deviceId: string;
   typedCode: string;
   raw: string;
   snapshot: Parameters<typeof validateKeyringSnapshot>[1];
+  version?: 5 | 6;
 }): Promise<HpkeDeviceEnvelope> {
   const ring = await validateKeyringSnapshot(raw, snapshot);
   const fingerprint = ring.activeKey.info.fingerprint;
@@ -370,7 +388,7 @@ export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, 
   if (!await verifyEnrollmentCode(publicKeyB64, deviceId, typedCode)) {
     throw new Error("Device verification code does not match. Check the code on the device.");
   }
-  const envelope = await sealHpkePayload(publicKeyB64, deviceId, fingerprint, raw, 5);
+  const envelope = await sealHpkePayload(publicKeyB64, deviceId, fingerprint, raw, version);
   if (new TextEncoder().encode(JSON.stringify(envelope)).length > 128 << 10) {
     throw new Error("The complete device envelope exceeds 128 KiB. No key was delivered.");
   }
@@ -380,10 +398,22 @@ export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, 
 // RFC 9180 mode_base, suite 0x0010/0x0001/0x0002; info is the length-prefixed
 // binding above and the HPKE aad is empty. The opener rebuilds info from its own ID.
 async function sealHpkePayload(
-  publicKeyB64: string, deviceId: string, pgpFingerprint: string, plaintext: string, version: 4 | 5,
+  publicKeyB64: string, deviceId: string, pgpFingerprint: string, plaintext: string, version: EnvelopeVersion,
 ): Promise<HpkeDeviceEnvelope> {
+  const rawKey = decodeRawKey(publicKeyB64);
+  if (version === 6) {
+    if (rawKey.length !== 1216) throw new Error("v6 requires an X-Wing device key");
+    const bridge = await (await import("./pgpEngineWasm")).loadBridge();
+    const payload = new TextEncoder().encode(plaintext);
+    let out;
+    try { out = bridge.xwingSeal({ publicKey: rawKey, info: envelopeAad(deviceId, pgpFingerprint, version), plaintext: payload }); }
+    finally { payload.fill(0); }
+    if (out.error) throw new Error(out.error);
+    if (!isBridgeBytes(out.enc) || !isBridgeBytes(out.ct)) throw new Error("Invalid X-Wing bridge response");
+    return { v: 6, alg: "HPKE-Base-XWing-SHA256-A256GCM", enc: bytesToBase64(out.enc), ct: bytesToBase64(out.ct) };
+  }
   const suite = new CipherSuite({ kem: new DhkemP256HkdfSha256(), kdf: new HkdfSha256(), aead: new Aes256Gcm() });
-  const recipientPublicKey = await suite.kem.deserializePublicKey(decodeRawKey(publicKeyB64));
+  const recipientPublicKey = await suite.kem.deserializePublicKey(rawKey);
   const { enc, ct } = await suite.seal(
     { recipientPublicKey, info: envelopeAad(deviceId, pgpFingerprint, version) },
     new TextEncoder().encode(plaintext),
@@ -451,4 +481,38 @@ export async function explainEnrollmentFailure(
     if (codesEqual(expected, candidate)) return "expired";
   }
   return "mismatch";
+}
+
+/** Open using the version and binding from the verified delivery, never envelope-supplied context.
+ * privateKey is the 32-byte X-Wing seed for v6 or the raw P-256 scalar for v4/v5.
+ * Callers own this memory; nothing is persisted here.
+ */
+export async function openDeviceEnvelope({ envelope, version, privateKey, deviceId, fingerprint }: {
+  envelope: unknown; version: EnvelopeVersion; privateKey: Uint8Array<ArrayBuffer>; deviceId: string; fingerprint: string;
+}): Promise<string> {
+  if (typeof envelope !== "object" || envelope === null || Object.keys(envelope).length !== 4 ||
+      !("v" in envelope) || envelope.v !== version || !("alg" in envelope) ||
+      envelope.alg !== (version === 6 ? "HPKE-Base-XWing-SHA256-A256GCM" : "HPKE-Base-P256-SHA256-A256GCM") ||
+      !("enc" in envelope) || typeof envelope.enc !== "string" || !("ct" in envelope) || typeof envelope.ct !== "string") {
+    throw new Error("Invalid device envelope framing");
+  }
+  const enc = base64ToBytes(envelope.enc), ct = base64ToBytes(envelope.ct);
+  if (bytesToBase64(enc) !== envelope.enc || bytesToBase64(ct) !== envelope.ct || ct.length < 16 ||
+      enc.length !== (version === 6 ? 1120 : 65) || (version !== 6 && enc[0] !== 4)) {
+    throw new Error("Invalid device envelope framing");
+  }
+  const info = envelopeAad(deviceId, fingerprint, version);
+  if (version === 6) {
+    const bridge = await (await import("./pgpEngineWasm")).loadBridge();
+    const out = bridge.xwingOpen({ seed: privateKey, enc, ct, info });
+    if (out.error) throw new Error(out.error);
+    if (!isBridgeBytes(out.plaintext)) throw new Error("Invalid X-Wing bridge response");
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(out.plaintext); }
+    finally { out.plaintext.fill(0); }
+  }
+  const suite = new CipherSuite({ kem: new DhkemP256HkdfSha256(), kdf: new HkdfSha256(), aead: new Aes256Gcm() });
+  const recipientKey = await suite.kem.deserializePrivateKey(privateKey);
+  const plaintext = new Uint8Array(await suite.open({ recipientKey, enc, info }, ct));
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(plaintext); }
+  finally { plaintext.fill(0); }
 }
