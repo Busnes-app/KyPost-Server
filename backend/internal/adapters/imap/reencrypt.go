@@ -14,35 +14,6 @@ import (
 	goimap "github.com/BrianLeishman/go-imap"
 )
 
-// Matches UIDNEXT inside the STATUS attribute list, which ends the line, so a
-// mailbox name containing "UIDNEXT n" cannot supply the value.
-var uidNextResponse = regexp.MustCompile(`(?im)\([^()]*\bUIDNEXT\s+(\d+)[^()]*\)\s*$`)
-
-// folderMinAppendedUID returns a lower bound for the UID assigned to a message
-// appended next to folder using O(1) IMAP commands (STATUS UIDNEXT, falling
-// back to UID SEARCH RETURN (MAX) 1:*).
-func folderMinAppendedUID(d *goimap.Dialer, folder string, origUID int) (int, error) {
-	if resp, err := d.Exec(`STATUS "`+goimap.AddSlashes.Replace(folder)+`" (UIDNEXT)`, true, 0, nil); err == nil {
-		if match := uidNextResponse.FindStringSubmatch(resp); len(match) == 2 {
-			if uidNext, parseErr := strconv.Atoi(match[1]); parseErr == nil && uidNext > 0 {
-				bound := uidNext
-				if bound <= origUID {
-					bound = origUID + 1
-				}
-				return bound, nil
-			}
-		}
-	}
-	maxUID, err := d.GetMaxUID()
-	if err != nil {
-		return 0, err
-	}
-	if maxUID < origUID {
-		maxUID = origUID
-	}
-	return maxUID + 1, nil
-}
-
 var (
 	// ErrCASMismatch indicates the stored raw message bytes changed before
 	// compare-and-swap replacement could commit.
@@ -190,7 +161,13 @@ func parseFetchFlagsAndModSeqForUID(resp string, uid int) ([]string, uint64, err
 		if len(flagMatch) != 2 {
 			continue
 		}
-		flags, err := incomingFlags(strings.Fields(flagMatch[1]))
+		rawFlags := strings.Fields(flagMatch[1])
+		for _, f := range rawFlags {
+			if strings.EqualFold(f, `\Deleted`) {
+				return nil, 0, fmt.Errorf("%w: original message is already marked deleted", ErrCASMismatch)
+			}
+		}
+		flags, err := incomingFlags(rawFlags)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -200,6 +177,36 @@ func parseFetchFlagsAndModSeqForUID(resp string, uid int) ([]string, uint64, err
 		return nil, 0, ErrCondstoreUnsupported
 	}
 	return nil, 0, errors.New("cannot parse original message flags and MODSEQ for target UID")
+}
+
+// finishExpungeLocked executes UID EXPUNGE for uid and, on failure (such as a
+// dropped connection after the server already processed the expunge or a
+// transient error), reconnects once to verify whether uid is already gone and
+// retries UID EXPUNGE if it is still present.
+func (c *APIClient) finishExpungeLocked(d *goimap.Dialer, folder string, uid int) error {
+	expungeCmd := fmt.Sprintf("UID EXPUNGE %d", uid)
+	if _, err := d.Exec(expungeCmd, false, 0, nil); err == nil {
+		return nil
+	}
+	if c.dialer != nil {
+		_ = c.dialer.Close()
+		c.dialer = nil
+	}
+	fresh, err := c.ensureConnectedLocked()
+	if err != nil {
+		return err
+	}
+	if err := fresh.SelectFolder(folder); err != nil {
+		return err
+	}
+	found, searchErr := incomingSearch(fresh, "UID "+strconv.Itoa(uid))
+	if searchErr == nil && len(found) == 0 {
+		return nil
+	}
+	if _, err := fresh.Exec(expungeCmd, false, 0, nil); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *APIClient) cleanupCopyUIDLocked(d *goimap.Dialer, folder string, copyUID int) {
@@ -276,7 +283,7 @@ func (c *APIClient) ListFolderMessageUIDs(ctx context.Context, folder string, af
 		if startUID < 1 {
 			startUID = 1
 		}
-		uids, err := incomingSearch(d, fmt.Sprintf("UID %d:*", startUID))
+		uids, err := incomingSearch(d, fmt.Sprintf("NOT DELETED UID %d:*", startUID))
 		if err != nil {
 			return nil, err
 		}
@@ -397,7 +404,8 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 	}
 
 	// Capture FLAGS and MODSEQ atomically in one UID FETCH snapshot so no
-	// concurrent flag change can slip between reading flags and MODSEQ.
+	// concurrent flag change can slip between reading flags and MODSEQ, and
+	// refuse to append again if uid is already marked \Deleted.
 	flags, origModSeq, err := fetchFlagsAndModSeq(d, uid)
 	if err != nil {
 		return 0, err
@@ -411,11 +419,6 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		date = time.Now().UTC()
 	}
 
-	minNewUID, err := folderMinAppendedUID(d, folder, uid)
-	if err != nil {
-		return 0, fmt.Errorf("read folder UIDNEXT before append: %w", err)
-	}
-
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -424,44 +427,21 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		return 0, fmt.Errorf("append replacement message: %w", err)
 	}
 
-	// Prefer the RFC 4315 APPENDUID returned by UIDPLUS so any post-APPEND
-	// verification error can immediately clean up the newly appended copy
-	// without leaking duplicates on retry. Fall back to a bounded UIDNEXT
-	// search only if the server omitted APPENDUID.
-	copyUID := 0
-	if appendedUID > 0 && appendedUID != uid {
-		candRaw, err := incomingRaw(d, appendedUID)
-		if err != nil || !bytes.Equal(candRaw, newRaw) {
-			c.cleanupCopyUIDLocked(d, folder, appendedUID)
-			if err != nil {
-				return 0, fmt.Errorf("verify appended replacement message: %w", err)
-			}
-			return 0, errors.New("appended replacement message failed byte verification; original preserved")
-		}
-		copyUID = appendedUID
-	} else {
-		candUIDs, err := incomingSearch(d, fmt.Sprintf("UID %d:*", minNewUID))
-		if err != nil {
-			return 0, fmt.Errorf("locate appended replacement message: %w", err)
-		}
-		sort.Sort(sort.Reverse(sort.IntSlice(candUIDs)))
-		for _, cand := range candUIDs {
-			if cand < minNewUID || cand == uid {
-				continue
-			}
-			candRaw, err := incomingRaw(d, cand)
-			if err != nil {
-				continue
-			}
-			if bytes.Equal(candRaw, newRaw) {
-				copyUID = cand
-				break
-			}
-		}
-		if copyUID == 0 {
-			return 0, errors.New("appended replacement message could not be verified; original preserved")
-		}
+	// Require an unambiguous RFC 4315 APPENDUID from UIDPLUS/IMAP4rev2 rather
+	// than guessing a UID by byte equality, which could match another session's
+	// concurrent append and delete an unrelated message on rollback.
+	if appendedUID <= 0 || appendedUID == uid {
+		return 0, errors.New("IMAP server omitted APPENDUID for replacement; refusing ambiguous replacement")
 	}
+	candRaw, err := incomingRaw(d, appendedUID)
+	if err != nil || !bytes.Equal(candRaw, newRaw) {
+		c.cleanupCopyUIDLocked(d, folder, appendedUID)
+		if err != nil {
+			return 0, fmt.Errorf("verify appended replacement message: %w", err)
+		}
+		return 0, errors.New("appended replacement message failed byte verification; original preserved")
+	}
+	copyUID := appendedUID
 
 	if len(flags) > 0 {
 		if _, err := d.Exec(fmt.Sprintf("UID STORE %d FLAGS.SILENT (%s)", copyUID, strings.Join(flags, " ")), false, 0, nil); err != nil {
@@ -484,8 +464,8 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		c.cleanupCopyUIDLocked(d, folder, copyUID)
 		return 0, ErrCASMismatch
 	}
-	if _, err := d.Exec(fmt.Sprintf("UID EXPUNGE %d", uid), false, 0, nil); err != nil {
-		return 0, fmt.Errorf("expunge original message: %w", err)
+	if err := c.finishExpungeLocked(d, folder, uid); err != nil {
+		return 0, fmt.Errorf("expunge original message after replacement %d committed: %w", copyUID, err)
 	}
 	return copyUID, nil
 }

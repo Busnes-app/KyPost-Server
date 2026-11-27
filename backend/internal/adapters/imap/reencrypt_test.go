@@ -36,6 +36,13 @@ type reencryptFixture struct {
 	// empty body so post-APPEND verification fails.
 	failVerifyRawForUID int
 	lastAppendedUID     int
+	// omitAppendUID omits the RFC 4315 APPENDUID response code from APPEND.
+	omitAppendUID bool
+	// expungeFailuresRemaining fails the next N UID EXPUNGE commands with NO.
+	expungeFailuresRemaining int
+	// expungeDeletesBeforeFail deletes the message on the server even while
+	// returning an error to the client (simulating an interrupted expunge).
+	expungeDeletesBeforeFail bool
 }
 
 func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *reencryptFixture) {
@@ -57,6 +64,9 @@ func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *re
 	server.appendUIDHook = func() int {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.omitAppendUID {
+			return 0
+		}
 		return f.lastAppendedUID
 	}
 	server.mu.Unlock()
@@ -112,16 +122,17 @@ func (f *reencryptFixture) respond(tag, command string) (string, bool) {
 	switch strings.ToUpper(fields[1]) {
 	case "SEARCH":
 		var matched []string
+		excludeDeleted := strings.Contains(strings.ToUpper(command), "NOT DELETED")
 		spec := fields[len(fields)-1]
 		if strings.HasSuffix(spec, ":*") {
 			minUID, _ := strconv.Atoi(strings.TrimSuffix(spec, ":*"))
 			for uid := range f.messages {
-				if uid >= minUID {
+				if uid >= minUID && (!excludeDeleted || !f.deleted[uid]) {
 					matched = append(matched, strconv.Itoa(uid))
 				}
 			}
 		} else if uid, err := strconv.Atoi(spec); err == nil {
-			if _, exists := f.messages[uid]; exists {
+			if _, exists := f.messages[uid]; exists && (!excludeDeleted || !f.deleted[uid]) {
 				matched = append(matched, strconv.Itoa(uid))
 			}
 		}
@@ -141,7 +152,11 @@ func (f *reencryptFixture) respond(tag, command string) (string, bool) {
 			}
 			return fmt.Sprintf("* 1 FETCH (UID %d BODY[] {%d}\r\n%s)\r\n", uid, len(raw), string(raw)) + ok, true
 		case strings.Contains(upper, "MODSEQ"):
-			flagList := strings.Join(f.flags[uid], " ")
+			allFlags := append([]string(nil), f.flags[uid]...)
+			if f.deleted[uid] {
+				allFlags = append(allFlags, `\Deleted`)
+			}
+			flagList := strings.Join(allFlags, " ")
 			prefix := ""
 			if f.unsolicitedOtherSnapshot {
 				prefix = "* 99 FETCH (UID 99 FLAGS (\\Flagged) MODSEQ (999))\r\n"
@@ -179,6 +194,16 @@ func (f *reencryptFixture) respond(tag, command string) (string, bool) {
 
 	case "EXPUNGE":
 		uid, _ := strconv.Atoi(fields[2])
+		if f.expungeFailuresRemaining > 0 {
+			f.expungeFailuresRemaining--
+			if f.expungeDeletesBeforeFail && f.deleted[uid] {
+				delete(f.messages, uid)
+				delete(f.flags, uid)
+				delete(f.modseq, uid)
+				delete(f.deleted, uid)
+			}
+			return tag + " NO temporary expunge failure\r\n", true
+		}
 		if f.deleted[uid] {
 			delete(f.messages, uid)
 			delete(f.flags, uid)
@@ -345,6 +370,114 @@ func TestReplaceRawMessageCASCleansUpAppendUIDOnVerifyFailure(t *testing.T) {
 	}
 	if _, leaked := f.messages[8]; leaked {
 		t.Fatal("appended UID 8 was leaked instead of cleaned up after verification failure")
+	}
+}
+
+func TestReplaceRawMessageCASRejectsMissingAppendUIDWithoutTouchingConcurrentCopy(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+	// Simulate another session concurrently appending identical bytes at a
+	// higher UID while the server omits APPENDUID.
+	f.omitAppendUID = true
+	f.mutateOnAppend = true
+	f.messages[99] = bytes.Clone(newRaw)
+	f.flags[99] = []string{`\Seen`}
+	f.modseq[99] = 10
+
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+		t.Fatal("expected error when server omits APPENDUID")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.messages[7]; !ok {
+		t.Fatal("original UID 7 should be preserved when APPENDUID is missing")
+	}
+	if _, ok := f.messages[99]; !ok {
+		t.Fatal("unrelated concurrent copy UID 99 was mistakenly deleted")
+	}
+}
+
+func TestReplaceRawMessageCASReconcilesInterruptedExpunge(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+	// First UID EXPUNGE completes on the server but errors on the wire.
+	f.expungeFailuresRemaining = 1
+	f.expungeDeletesBeforeFail = true
+
+	newUID, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err != nil {
+		t.Fatalf("expected interrupted expunge reconciliation to succeed, got %v", err)
+	}
+	if newUID != 8 {
+		t.Fatalf("expected newUID 8, got %d", newUID)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.messages[7]; ok {
+		t.Fatal("original UID 7 should be gone")
+	}
+	if f.appendCount != 1 {
+		t.Fatalf("expected 1 append, got %d", f.appendCount)
+	}
+}
+
+func TestReplaceRawMessageCASRetriesTransientExpungeFailure(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+	// First UID EXPUNGE fails without deleting; reconnect retry completes it.
+	f.expungeFailuresRemaining = 1
+
+	newUID, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err != nil {
+		t.Fatalf("expected transient expunge retry to succeed, got %v", err)
+	}
+	if newUID != 8 {
+		t.Fatalf("expected newUID 8, got %d", newUID)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.messages[7]; ok {
+		t.Fatal("original UID 7 should have been expunged on retry")
+	}
+	if f.appendCount != 1 {
+		t.Fatalf("expected 1 append, got %d", f.appendCount)
+	}
+}
+
+func TestReplaceRawMessageCASRefusesRetryOverAlreadyDeletedOriginal(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+	// Both initial expunge and reconnect retry fail, leaving UID 7 \Deleted.
+	f.expungeFailuresRemaining = 10
+
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+		t.Fatal("expected error when both expunge attempts fail")
+	}
+
+	// Scanning candidates must skip the already-\Deleted UID 7, and retrying
+	// ReplaceRawMessageCAS against UID 7 must refuse with ErrCASMismatch
+	// without appending a duplicate replacement.
+	uids, err := client.ListFolderMessageUIDs(context.Background(), "INBOX", 0, 50)
+	if err != nil {
+		t.Fatalf("ListFolderMessageUIDs: %v", err)
+	}
+	for _, u := range uids {
+		if u == 7 {
+			t.Fatalf("ListFolderMessageUIDs returned already-\\Deleted UID 7: %v", uids)
+		}
+	}
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); !errors.Is(err, ErrCASMismatch) {
+		t.Fatalf("expected ErrCASMismatch on retry against \\Deleted original, got %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.appendCount != 1 {
+		t.Fatalf("retry appended duplicate replacement: appendCount=%d, want 1", f.appendCount)
 	}
 }
 
