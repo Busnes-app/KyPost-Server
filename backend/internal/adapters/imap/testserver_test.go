@@ -61,10 +61,10 @@ type fakeIMAPServer struct {
 	appendHook    func(command string, raw []byte) error
 	appendUIDHook func() int
 	mu            sync.Mutex
-	folders     []fakeFolder
-	commands    []string
-	logins      int
-	closed      bool
+	folders       []fakeFolder
+	commands      []string
+	logins        int
+	closed        bool
 }
 
 // newFakeIMAPServer starts a TLS listener on localhost and serves until the
