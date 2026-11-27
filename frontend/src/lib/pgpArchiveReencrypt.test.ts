@@ -351,3 +351,23 @@ it("persists continuation cursor when maxPages is reached and resumes from it on
     afterUid: 5000
   });
 });
+
+it("prevents overlapping concurrent runs started while initialization is in flight", async () => {
+  unlockWithArmoredKey(ringPlaintext);
+
+  vi.mocked(listPGPReencryptCandidates).mockResolvedValue({
+    candidates: [],
+    done: true,
+    v6Fingerprint: v6.fingerprint
+  });
+
+  // Start two calls back-to-back before async key-ring parsing completes.
+  const [first, second] = await Promise.all([
+    startArchiveReencrypt({ bootstrap, userId: "user-1", delayMs: 0 }),
+    startArchiveReencrypt({ bootstrap, userId: "user-1", delayMs: 0 })
+  ]);
+
+  expect(first).toEqual({ kind: "done", reencrypted: 0, skipped: 0, failed: 0 });
+  expect(second).toEqual({ kind: "idle" });
+  expect(listPGPReencryptCandidates).toHaveBeenCalledTimes(1);
+});

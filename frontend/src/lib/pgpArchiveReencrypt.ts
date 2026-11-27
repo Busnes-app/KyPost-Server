@@ -263,12 +263,8 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
     return currentState;
   }
 
-  const engine = options.engine ?? (await pgpEngine());
-  const materials = await loadUnlockedV6Ring(bootstrap, engine);
-  if (!materials) {
-    return currentState;
-  }
-
+  // Reserve the single-run slot synchronously before any async initialization
+  // so overlapping calls cannot race past the guard and leak an untracked run.
   const runId = ++activeRunId;
   const controller = new AbortController();
   activeController = controller;
@@ -278,7 +274,6 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxPages = Math.max(1, options.maxPages ?? MAX_PAGES_PER_RUN);
   const userId = options.userId;
-  const scopeKey = resumeScopeKey(userId, materials.v6Fingerprint);
 
   let reencrypted = 0;
   let skipped = 0;
@@ -300,9 +295,37 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
     return currentState;
   };
 
-  emit({ kind: "running", reencrypted, skipped, failed });
-
   try {
+    const engine = options.engine ?? (await pgpEngine());
+    if (!isStillCurrent()) {
+      return finish({
+        kind: "paused",
+        reason: isUnlocked() ? "aborted" : "locked",
+        reencrypted,
+        skipped,
+        failed
+      });
+    }
+    const materials = await loadUnlockedV6Ring(bootstrap, engine);
+    if (!isStillCurrent()) {
+      return finish({
+        kind: "paused",
+        reason: isUnlocked() ? "aborted" : "locked",
+        reencrypted,
+        skipped,
+        failed
+      });
+    }
+    if (!materials) {
+      if (activeController === controller) {
+        activeController = null;
+      }
+      return currentState;
+    }
+
+    const scopeKey = resumeScopeKey(userId, materials.v6Fingerprint);
+    emit({ kind: "running", reencrypted, skipped, failed });
+
     let cursor: PGPReencryptCursor | undefined =
       savedResumeCursor && savedResumeCursor.key === scopeKey ? savedResumeCursor.cursor : undefined;
     for (let page = 0; page < maxPages; page++) {

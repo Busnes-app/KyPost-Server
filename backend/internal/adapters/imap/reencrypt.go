@@ -95,6 +95,67 @@ func (c *APIClient) ListAllFolders(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// Matches MODSEQ (n) in a UID FETCH response.
+var modSeqResponse = regexp.MustCompile(`(?i)\bMODSEQ\s+\((\d+)\)`)
+
+func supportsCondstore(d *goimap.Dialer) bool {
+	resp, err := d.Exec("CAPABILITY", true, 0, nil)
+	if err != nil {
+		return false
+	}
+	for _, tok := range strings.Fields(strings.ToUpper(resp)) {
+		if tok == "CONDSTORE" || tok == "IMAP4REV2" {
+			return true
+		}
+	}
+	return false
+}
+
+func fetchMessageModSeq(d *goimap.Dialer, uid int) (uint64, bool) {
+	resp, err := d.Exec(fmt.Sprintf("UID FETCH %d (MODSEQ)", uid), true, 0, nil)
+	if err != nil {
+		return 0, false
+	}
+	match := modSeqResponse.FindStringSubmatch(resp)
+	if len(match) != 2 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(match[1], 10, 64)
+	if err != nil || v == 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+func equalFlagSets(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	norm := func(in []string) []string {
+		out := make([]string, len(in))
+		for i, f := range in {
+			out[i] = strings.ToLower(strings.TrimSpace(f))
+		}
+		sort.Strings(out)
+		return out
+	}
+	na, nb := norm(a), norm(b)
+	for i := range na {
+		if na[i] != nb[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func cleanupCopyUID(d *goimap.Dialer, copyUID int) {
+	if copyUID <= 0 {
+		return
+	}
+	_, _ = d.Exec(fmt.Sprintf(`UID STORE %d +FLAGS.SILENT (\Deleted)`, copyUID), false, 0, nil)
+	_, _ = d.Exec(fmt.Sprintf("UID EXPUNGE %d", copyUID), false, 0, nil)
+}
+
 const uidScanCacheTTL = 60 * time.Second
 
 type folderUIDScanCache struct {
@@ -270,6 +331,12 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		date = time.Now().UTC()
 	}
 
+	var origModSeq uint64
+	hasModSeq := false
+	if supportsCondstore(d) {
+		origModSeq, hasModSeq = fetchMessageModSeq(d, uid)
+	}
+
 	minNewUID, err := folderMinAppendedUID(d, folder, uid)
 	if err != nil {
 		return 0, fmt.Errorf("read folder UIDNEXT before append: %w", err)
@@ -309,11 +376,45 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 
 	if len(flags) > 0 {
 		if _, err := d.Exec(fmt.Sprintf("UID STORE %d FLAGS.SILENT (%s)", copyUID, strings.Join(flags, " ")), false, 0, nil); err != nil {
+			cleanupCopyUID(d, copyUID)
 			return 0, fmt.Errorf("preserve flags on replacement copy: %w", err)
 		}
 	}
-	if _, err := d.Exec(fmt.Sprintf(`UID STORE %d +FLAGS.SILENT (\Deleted)`, uid), false, 0, nil); err != nil {
-		return 0, fmt.Errorf("mark original message deleted: %w", err)
+
+	// Re-verify that the original message's flags did not change while the
+	// replacement was being appended and verified. If they changed, remove our
+	// newly appended copy and return ErrCASMismatch so the caller retries cleanly
+	// without losing user flag updates (read/starred/etc.).
+	latestOv, err := incomingMetadata(d, uid)
+	if err != nil || latestOv == nil {
+		cleanupCopyUID(d, copyUID)
+		return 0, ErrCASMismatch
+	}
+	latestFlags, err := incomingFlags(latestOv.Flags)
+	if err != nil || !equalFlagSets(flags, latestFlags) {
+		cleanupCopyUID(d, copyUID)
+		return 0, ErrCASMismatch
+	}
+
+	if hasModSeq {
+		// Use non-silent +FLAGS with buildResponse=true because go-imap omits
+		// the tagged OK [MODIFIED] line from Exec's return string. Under
+		// RFC 7162, the server emits an untagged FETCH carrying \Deleted only
+		// when UNCHANGEDSINCE succeeded.
+		storeResp, err := d.Exec(fmt.Sprintf(`UID STORE %d (UNCHANGEDSINCE %d) +FLAGS (\Deleted)`, uid, origModSeq), true, 0, nil)
+		if err != nil {
+			cleanupCopyUID(d, copyUID)
+			return 0, fmt.Errorf("mark original message deleted: %w", err)
+		}
+		if !strings.Contains(strings.ToLower(storeResp), `\deleted`) {
+			cleanupCopyUID(d, copyUID)
+			return 0, ErrCASMismatch
+		}
+	} else {
+		if _, err := d.Exec(fmt.Sprintf(`UID STORE %d +FLAGS.SILENT (\Deleted)`, uid), false, 0, nil); err != nil {
+			cleanupCopyUID(d, copyUID)
+			return 0, fmt.Errorf("mark original message deleted: %w", err)
+		}
 	}
 	if _, err := d.Exec(fmt.Sprintf("UID EXPUNGE %d", uid), false, 0, nil); err != nil {
 		return 0, fmt.Errorf("expunge original message: %w", err)
