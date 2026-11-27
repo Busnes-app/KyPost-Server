@@ -24,7 +24,8 @@ export type ArchiveReencryptPauseReason = "locked" | "aborted" | "not_ready";
 export type ArchiveReencryptState =
   | { kind: "idle" }
   | { kind: "running"; reencrypted: number; skipped: number; failed: number }
-  | { kind: "done"; reencrypted: number; skipped: number; failed: number }
+  | { kind: "done"; reencrypted: number; skipped: 0; failed: 0 }
+  | { kind: "incomplete"; reencrypted: number; skipped: number; failed: number; pageLimitReached?: boolean }
   | { kind: "paused"; reason: ArchiveReencryptPauseReason; reencrypted: number; skipped: number; failed: number }
   | { kind: "error"; message: string; reencrypted: number; skipped: number; failed: number };
 
@@ -383,12 +384,15 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
       }
 
       if (listing.done || !listing.nextCursor) {
-        return finish({ kind: "done", reencrypted, skipped, failed });
+        if (skipped > 0 || failed > 0) {
+          return finish({ kind: "incomplete", reencrypted, skipped, failed });
+        }
+        return finish({ kind: "done", reencrypted, skipped: 0, failed: 0 });
       }
       cursor = listing.nextCursor;
     }
 
-    return finish({ kind: "done", reencrypted, skipped, failed });
+    return finish({ kind: "incomplete", reencrypted, skipped, failed, pageLimitReached: true });
   } catch (err) {
     if (err instanceof SessionExpiredError || signal.aborted) {
       return finish({

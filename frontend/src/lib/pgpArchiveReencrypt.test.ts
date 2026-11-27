@@ -223,9 +223,38 @@ it("retries once on CAS 409 conflict and skips foreign-key messages without abor
     .mockResolvedValueOnce({ ok: true, folder: "INBOX", oldMessageId: 11, newMessageId: 11 });
 
   const finalState = await startArchiveReencrypt({ bootstrap, delayMs: 0 });
-  expect(finalState).toEqual({ kind: "done", reencrypted: 1, skipped: 1, failed: 0 });
+  expect(finalState).toEqual({ kind: "incomplete", reencrypted: 1, skipped: 1, failed: 0 });
   expect(replacePGPReencryptedMessage).toHaveBeenCalledTimes(2);
   expect(vi.mocked(replacePGPReencryptedMessage).mock.calls[1][0].expectedSha256).toBe("fresh-hash");
+});
+
+it("reports incomplete instead of done when server rejects a replacement with HTTP 400", async () => {
+  const engine = await pgpEngine();
+  unlockWithArmoredKey(ringPlaintext);
+
+  const ownV4 = await engine.encrypt({
+    text: "Message whose replacement is rejected",
+    encryptionKeys: [v4.armoredPublicKey]
+  });
+
+  vi.mocked(listPGPReencryptCandidates).mockResolvedValueOnce({
+    candidates: [{ folder: "INBOX", messageId: 42, sizeBytes: ownV4.length }],
+    done: true,
+    v6Fingerprint: v6.fingerprint
+  });
+  vi.mocked(getPGPReencryptRaw).mockResolvedValueOnce({
+    folder: "INBOX",
+    messageId: 42,
+    sha256: "hash-42",
+    armoredCiphertext: ownV4,
+    sizeBytes: ownV4.length
+  });
+  vi.mocked(replacePGPReencryptedMessage).mockRejectedValueOnce(
+    new HttpError("request failed: 400 - bad ciphertext", 400, { error: "bad ciphertext" })
+  );
+
+  const finalState = await startArchiveReencrypt({ bootstrap, delayMs: 0 });
+  expect(finalState).toEqual({ kind: "incomplete", reencrypted: 0, skipped: 0, failed: 1 });
 });
 
 it("pauses immediately when the vault locks mid-run", async () => {

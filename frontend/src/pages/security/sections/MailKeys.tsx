@@ -94,6 +94,16 @@ function archiveReencryptSummary(state: ArchiveReencryptState, unlocked: boolean
       return state.reencrypted > 0
         ? `Stored v4 mail updated to v6 (${state.reencrypted} re-encrypted).`
         : "Stored encrypted mail is up to date on v6.";
+    case "incomplete": {
+      const parts: string[] = [];
+      if (state.reencrypted > 0) parts.push(`${state.reencrypted} re-encrypted`);
+      if (state.skipped > 0) parts.push(`${state.skipped} skipped`);
+      if (state.failed > 0) parts.push(`${state.failed} failed`);
+      const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+      return state.pageLimitReached
+        ? `Stored v4 mail scan paused at the page limit${detail} and will continue on the next unlock.`
+        : `Stored v4 mail scan finished with unconverted messages${detail}. Remaining mail will be retried on the next unlock.`;
+    }
     case "paused":
       return state.reason === "locked"
         ? "Unlock your key to continue re-encrypting stored v4 mail to v6."

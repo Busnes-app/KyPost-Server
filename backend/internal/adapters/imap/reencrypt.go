@@ -5,11 +5,43 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	goimap "github.com/BrianLeishman/go-imap"
 )
+
+// Matches UIDNEXT inside the STATUS attribute list, which ends the line, so a
+// mailbox name containing "UIDNEXT n" cannot supply the value.
+var uidNextResponse = regexp.MustCompile(`(?im)\([^()]*\bUIDNEXT\s+(\d+)[^()]*\)\s*$`)
+
+// folderMinAppendedUID returns a lower bound for the UID assigned to a message
+// appended next to folder using O(1) IMAP commands (STATUS UIDNEXT, falling
+// back to UID SEARCH RETURN (MAX) 1:*).
+func folderMinAppendedUID(d *goimap.Dialer, folder string, origUID int) (int, error) {
+	if resp, err := d.Exec(`STATUS "`+goimap.AddSlashes.Replace(folder)+`" (UIDNEXT)`, true, 0, nil); err == nil {
+		if match := uidNextResponse.FindStringSubmatch(resp); len(match) == 2 {
+			if uidNext, parseErr := strconv.ParseUint(match[1], 10, 32); parseErr == nil && uidNext > 0 {
+				bound := int(uidNext)
+				if bound <= origUID {
+					bound = origUID + 1
+				}
+				return bound, nil
+			}
+		}
+	}
+	maxUID, err := d.GetMaxUID()
+	if err != nil {
+		return 0, err
+	}
+	if maxUID < origUID {
+		maxUID = origUID
+	}
+	return maxUID + 1, nil
+}
 
 var (
 	// ErrCASMismatch indicates the stored raw message bytes changed before
@@ -198,15 +230,9 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		date = time.Now().UTC()
 	}
 
-	existingUIDs, err := incomingSearch(d, "ALL")
+	minNewUID, err := folderMinAppendedUID(d, folder, uid)
 	if err != nil {
-		return 0, err
-	}
-	maxUID := uid
-	for _, u := range existingUIDs {
-		if u > maxUID {
-			maxUID = u
-		}
+		return 0, fmt.Errorf("read folder UIDNEXT before append: %w", err)
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -216,15 +242,16 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		return 0, fmt.Errorf("append replacement message: %w", err)
 	}
 
-	// Re-select/sync and locate the newly appended message strictly by byte equality.
-	candUIDs, err := incomingSearch(d, fmt.Sprintf("UID %d:*", maxUID+1))
+	// Locate the newly appended message strictly by byte equality starting from
+	// the pre-append UIDNEXT bound (O(1) instead of scanning the entire folder).
+	candUIDs, err := incomingSearch(d, fmt.Sprintf("UID %d:*", minNewUID))
 	if err != nil {
 		return 0, fmt.Errorf("locate appended replacement message: %w", err)
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(candUIDs)))
 	copyUID := 0
 	for _, cand := range candUIDs {
-		if cand <= maxUID || cand == uid {
+		if cand < minNewUID || cand == uid {
 			continue
 		}
 		candRaw, err := incomingRaw(d, cand)

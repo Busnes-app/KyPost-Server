@@ -196,16 +196,18 @@ func (s *Server) handlePGPReencryptCandidates(w http.ResponseWriter, r *http.Req
 				break
 			}
 			for _, uid := range uids {
-				cursorUID = uid
 				inspected++
 				raw, err := reClient.GetRawMessage(r.Context(), folder, uid)
 				if err != nil {
 					if errors.Is(err, imapadapter.ErrMessageNotFound) {
+						cursorUID = uid
 						continue
 					}
 					s.logger.Error("pgp archive candidate raw fetch failed", "user_id", u.ID, "folder", folder, "uid", strconv.Itoa(uid), "error", err.Error())
-					continue
+					writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to inspect message"})
+					return
 				}
+				cursorUID = uid
 				if pgpmail.IsV4ArchiveCandidate(raw, keys) {
 					candidates = append(candidates, pgpReencryptCandidate{
 						Folder:    folder,
@@ -378,7 +380,9 @@ func (s *Server) handlePGPReencryptReplace(w http.ResponseWriter, r *http.Reques
 
 	if newUID != req.MessageID {
 		if cache, cacheErr := s.mailCacheFor(r); cacheErr == nil && cache != nil {
-			cache.Remove(req.Folder, req.MessageID)
+			if err := cache.Remove(req.Folder, req.MessageID); err != nil {
+				s.logger.Warn("pgp archive cache remove failed", "user_id", u.ID, "folder", req.Folder, "uid", strconv.Itoa(req.MessageID), "error", err.Error())
+			}
 		}
 	}
 
