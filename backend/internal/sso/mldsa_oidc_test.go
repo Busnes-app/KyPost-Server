@@ -52,9 +52,17 @@ func TestProviderVerifiesMLDSA65IDAndLogoutTokens(t *testing.T) {
 
 	srv := httptest.NewTLSServer(mux)
 	defer srv.Close()
-	issuer = srv.URL
-
-	prev := SetTransport(srv.Client().Transport)
+	// Use a reserved .test issuer so the test passes under both default and
+	// -tags kye2e builds (which enforce config.CheckTestIssuer).
+	issuer = "https://idp.mldsa.test"
+	srvAddr := srv.Listener.Addr().String()
+	baseTransport := srv.Client().Transport
+	prev := SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		cloned := r.Clone(r.Context())
+		cloned.URL.Scheme = "https"
+		cloned.URL.Host = srvAddr
+		return baseTransport.RoundTrip(cloned)
+	}))
 	defer SetTransport(prev)
 
 	cfg := testSettings(issuer)
@@ -181,3 +189,10 @@ func TestStrongJWKSTransportRejectsMalformedMLDSA65(t *testing.T) {
 		})
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
