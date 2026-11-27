@@ -49,6 +49,12 @@ type reencryptFixture struct {
 	// before failing the conditional UID STORE (simulating a connection drop
 	// after the server applied \Deleted but before the client received OK).
 	storeMarksDeletedBeforeFail bool
+	// uidValidity is the folder's current RFC 3501 UIDVALIDITY returned by STATUS.
+	uidValidity uint64
+	// bumpUIDValidityOnNextSelect increments uidValidity on the second and
+	// subsequent SELECT commands (simulating a mailbox rebuild across reconnect).
+	bumpUIDValidityOnReconnect bool
+	selectCount                int
 }
 
 func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *reencryptFixture) {
@@ -56,13 +62,14 @@ func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *re
 	server := newFakeIMAPServer(t, "/", true, []fakeFolder{{name: "INBOX"}})
 	orig := []byte("From: alice@example.com\r\nSubject: v4\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv4\r\n-----END PGP MESSAGE-----\r\n")
 	f := &reencryptFixture{
-		uidplus:   uidplus,
-		condstore: condstore,
-		messages:  map[int][]byte{7: orig},
-		flags:     map[int][]string{7: {`\Seen`}},
-		modseq:    map[int]uint64{7: 5},
-		deleted:   map[int]bool{},
-		nextUID:   8,
+		uidplus:     uidplus,
+		condstore:   condstore,
+		messages:    map[int][]byte{7: orig},
+		flags:       map[int][]string{7: {`\Seen`}},
+		modseq:      map[int]uint64{7: 5},
+		deleted:     map[int]bool{},
+		nextUID:     8,
+		uidValidity: 42,
 	}
 	server.mu.Lock()
 	server.commandHook = f.respond
@@ -131,9 +138,13 @@ func (f *reencryptFixture) respond(tag, command string) (string, bool) {
 		}
 		return "* CAPABILITY " + caps + "\r\n" + ok, true
 	case "SELECT":
+		f.selectCount++
+		if f.bumpUIDValidityOnReconnect && f.selectCount > 1 {
+			f.uidValidity++
+		}
 		return ok, true
 	case "STATUS":
-		return fmt.Sprintf("* STATUS INBOX (UIDNEXT %d)\r\n", f.nextUID) + ok, true
+		return fmt.Sprintf("* STATUS INBOX (UIDVALIDITY %d UIDNEXT %d)\r\n", f.uidValidity, f.nextUID) + ok, true
 	}
 	if len(fields) < 3 || strings.ToUpper(fields[0]) != "UID" {
 		return "", false
@@ -482,8 +493,12 @@ func TestReplaceRawMessageCASRejectsMissingAppendUIDWithoutTouchingConcurrentCop
 	f.flags[99] = []string{`\Seen`}
 	f.modseq[99] = 10
 
-	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+	_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err == nil {
 		t.Fatal("expected error when server omits APPENDUID")
+	}
+	if !strings.Contains(err.Error(), "APPENDUID") {
+		t.Fatalf("expected missing-APPENDUID refusal error, got: %v", err)
 	}
 
 	f.mu.Lock()
@@ -494,6 +509,69 @@ func TestReplaceRawMessageCASRejectsMissingAppendUIDWithoutTouchingConcurrentCop
 	if _, ok := f.messages[99]; !ok {
 		t.Fatal("unrelated concurrent copy UID 99 was mistakenly deleted")
 	}
+}
+
+func TestReplaceRawMessageCASPreservesMessagesWhenUIDValidityChangesOnReconnect(t *testing.T) {
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	t.Run("conditional_delete_reconcile", func(t *testing.T) {
+		client, f := newReencryptFixture(t, true, true)
+		orig := bytes.Clone(f.messages[7])
+		f.storeFailuresRemaining = 1
+		f.bumpUIDValidityOnReconnect = true
+
+		_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+		if err == nil || !strings.Contains(err.Error(), "UIDVALIDITY") {
+			t.Fatalf("expected UIDVALIDITY ambiguity error, got %v", err)
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.messages[7]; !ok {
+			t.Fatal("original UID 7 must be preserved when UIDVALIDITY changes")
+		}
+		if _, ok := f.messages[8]; !ok {
+			t.Fatal("replacement UID 8 must be preserved when UIDVALIDITY changes")
+		}
+	})
+
+	t.Run("expunge_retry", func(t *testing.T) {
+		client, f := newReencryptFixture(t, true, true)
+		orig := bytes.Clone(f.messages[7])
+		f.expungeFailuresRemaining = 1
+		f.bumpUIDValidityOnReconnect = true
+
+		_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+		if err == nil || !strings.Contains(err.Error(), "UIDVALIDITY") {
+			t.Fatalf("expected UIDVALIDITY error on expunge retry, got %v", err)
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.messages[7]; !ok {
+			t.Fatal("UID 7 must not be expunged after UIDVALIDITY changed")
+		}
+		if _, ok := f.messages[8]; !ok {
+			t.Fatal("replacement UID 8 must remain preserved")
+		}
+	})
+
+	t.Run("verify_cleanup", func(t *testing.T) {
+		client, f := newReencryptFixture(t, true, true)
+		orig := bytes.Clone(f.messages[7])
+		f.failVerifyRawForUID = 8
+		f.bumpUIDValidityOnReconnect = true
+
+		if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+			t.Fatal("expected verification failure error")
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.messages[7]; !ok {
+			t.Fatal("original UID 7 must be preserved")
+		}
+		if _, ok := f.messages[8]; !ok {
+			t.Fatal("cleanup must not delete UID 8 after UIDVALIDITY changed on reconnect")
+		}
+	})
 }
 
 func TestReplaceRawMessageCASReconcilesInterruptedExpunge(t *testing.T) {

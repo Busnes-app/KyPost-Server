@@ -217,9 +217,12 @@ func (s *fakeIMAPServer) readAppendLiteral(conn net.Conn, r *bufio.Reader, tag, 
 	s.mu.Unlock()
 	appendedUID := 1
 	if uidHook != nil {
-		if u := uidHook(); u > 0 {
-			appendedUID = u
+		u := uidHook()
+		if u <= 0 {
+			_, err = fmt.Fprintf(conn, "%s OK APPEND completed\r\n", tag)
+			return err
 		}
+		appendedUID = u
 	}
 	_, err = fmt.Fprintf(conn, "%s OK [APPENDUID 1 %d] APPEND completed\r\n", tag, appendedUID)
 	return err

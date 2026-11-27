@@ -218,18 +218,43 @@ func fetchOriginalDeleteState(d *goimap.Dialer, uid int) (present bool, hasDelet
 	return true, false, errors.New("cannot determine deletion state for target UID")
 }
 
+// folderUIDValidity reads the current RFC 3501 UIDVALIDITY for folder via STATUS.
+// Callers use it to ensure saved UIDs are never reused across a mailbox rebuild
+// after reconnecting.
+func folderUIDValidity(d *goimap.Dialer, folder string) (uint64, error) {
+	if err := ValidateMailboxName(folder); err != nil {
+		return 0, err
+	}
+	response, err := d.Exec(fmt.Sprintf(`STATUS "%s" (UIDVALIDITY)`, folder), true, 0, nil)
+	if err != nil {
+		return 0, fmt.Errorf("read folder UIDVALIDITY: %w", err)
+	}
+	match := uidValidityResponse.FindStringSubmatch(response)
+	if len(match) != 2 {
+		return 0, errors.New("IMAP server omitted UIDVALIDITY")
+	}
+	validity, err := strconv.ParseUint(match[1], 10, 32)
+	if err != nil || validity == 0 {
+		return 0, errors.New("invalid IMAP UIDVALIDITY")
+	}
+	return validity, nil
+}
+
 // reconcileConditionalDeleteErrorLocked handles a command/transport failure on
 // conditional UID STORE +FLAGS (\Deleted). Because the server may have applied
 // \Deleted right before the connection dropped, rolling back copyUID blindly
 // would delete the verified replacement while leaving the original marked
-// \Deleted. Instead, reconnect once and inspect the original UID:
+// \Deleted. Instead, reconnect once, verify folder UIDVALIDITY still matches
+// before inspecting or mutating either UID, and inspect the original UID:
+//   - If UIDVALIDITY changed or cannot be read: preserve both messages and
+//     report an ambiguous outcome.
 //   - If original is already gone: replacement is live -> return copyUID, nil.
 //   - If original is marked \Deleted: finish expunging original -> return copyUID, nil.
 //   - If original is confirmed present and NOT marked \Deleted: safely roll
 //     back copyUID and return the store error.
 //   - If reconciliation fails (ambiguous outcome): preserve copyUID and return
 //     the error so no message is lost.
-func (c *APIClient) reconcileConditionalDeleteErrorLocked(folder string, uid, copyUID int, storeErr error) (int, error) {
+func (c *APIClient) reconcileConditionalDeleteErrorLocked(folder string, expectedUIDValidity uint64, uid, copyUID int, storeErr error) (int, error) {
 	if c.dialer != nil {
 		_ = c.dialer.Close()
 		c.dialer = nil
@@ -241,6 +266,10 @@ func (c *APIClient) reconcileConditionalDeleteErrorLocked(folder string, uid, co
 	if err := fresh.SelectFolder(folder); err != nil {
 		return 0, fmt.Errorf("mark original message deleted (replacement %d preserved; select failed: %v): %w", copyUID, err, storeErr)
 	}
+	gotValidity, err := folderUIDValidity(fresh, folder)
+	if err != nil || gotValidity != expectedUIDValidity {
+		return 0, fmt.Errorf("mark original message deleted (replacement %d preserved; folder UIDVALIDITY changed or unreadable: got %d want %d, err=%v): %w", copyUID, gotValidity, expectedUIDValidity, err, storeErr)
+	}
 	present, hasDeleted, err := fetchOriginalDeleteState(fresh, uid)
 	if err != nil {
 		return 0, fmt.Errorf("mark original message deleted (replacement %d preserved; state check failed: %v): %w", copyUID, err, storeErr)
@@ -249,20 +278,21 @@ func (c *APIClient) reconcileConditionalDeleteErrorLocked(folder string, uid, co
 		return copyUID, nil
 	}
 	if hasDeleted {
-		if expErr := c.finishExpungeLocked(fresh, folder, uid); expErr != nil {
+		if expErr := c.finishExpungeLocked(fresh, folder, expectedUIDValidity, uid); expErr != nil {
 			return 0, fmt.Errorf("expunge original message after replacement %d committed: %w", copyUID, expErr)
 		}
 		return copyUID, nil
 	}
-	c.cleanupCopyUIDLocked(fresh, folder, copyUID)
+	c.cleanupCopyUIDLocked(fresh, folder, expectedUIDValidity, copyUID)
 	return 0, fmt.Errorf("mark original message deleted: %w", storeErr)
 }
 
 // finishExpungeLocked executes UID EXPUNGE for uid and, on failure (such as a
 // dropped connection after the server already processed the expunge or a
-// transient error), reconnects once to verify whether uid is already gone and
-// retries UID EXPUNGE if it is still present.
-func (c *APIClient) finishExpungeLocked(d *goimap.Dialer, folder string, uid int) error {
+// transient error), reconnects once, verifies folder UIDVALIDITY still matches
+// expectedUIDValidity, checks whether uid is already gone, and retries UID
+// EXPUNGE only if it is still present in the same UID namespace.
+func (c *APIClient) finishExpungeLocked(d *goimap.Dialer, folder string, expectedUIDValidity uint64, uid int) error {
 	expungeCmd := fmt.Sprintf("UID EXPUNGE %d", uid)
 	if _, err := d.Exec(expungeCmd, false, 0, nil); err == nil {
 		return nil
@@ -278,6 +308,13 @@ func (c *APIClient) finishExpungeLocked(d *goimap.Dialer, folder string, uid int
 	if err := fresh.SelectFolder(folder); err != nil {
 		return err
 	}
+	gotValidity, err := folderUIDValidity(fresh, folder)
+	if err != nil {
+		return fmt.Errorf("verify folder UIDVALIDITY before expunge retry: %w", err)
+	}
+	if gotValidity != expectedUIDValidity {
+		return fmt.Errorf("folder UIDVALIDITY changed across reconnect (got %d, want %d); preserving messages", gotValidity, expectedUIDValidity)
+	}
 	found, searchErr := incomingSearch(fresh, "UID "+strconv.Itoa(uid))
 	if searchErr == nil && len(found) == 0 {
 		return nil
@@ -288,7 +325,7 @@ func (c *APIClient) finishExpungeLocked(d *goimap.Dialer, folder string, uid int
 	return nil
 }
 
-func (c *APIClient) cleanupCopyUIDLocked(d *goimap.Dialer, folder string, copyUID int) {
+func (c *APIClient) cleanupCopyUIDLocked(d *goimap.Dialer, folder string, expectedUIDValidity uint64, copyUID int) {
 	if copyUID <= 0 {
 		return
 	}
@@ -299,8 +336,8 @@ func (c *APIClient) cleanupCopyUIDLocked(d *goimap.Dialer, folder string, copyUI
 		return
 	}
 	// go-imap closes the underlying connection after command errors (e.g. NO
-	// from a failed verification FETCH). Reconnect once so cleanup still
-	// expunges the appended replacement instead of leaking a duplicate.
+	// from a failed verification FETCH). Reconnect once and confirm UIDVALIDITY
+	// still matches before expunging the appended replacement.
 	if c.dialer != nil {
 		_ = c.dialer.Close()
 		c.dialer = nil
@@ -310,6 +347,10 @@ func (c *APIClient) cleanupCopyUIDLocked(d *goimap.Dialer, folder string, copyUI
 		return
 	}
 	if err := fresh.SelectFolder(folder); err != nil {
+		return
+	}
+	gotValidity, err := folderUIDValidity(fresh, folder)
+	if err != nil || gotValidity != expectedUIDValidity {
 		return
 	}
 	if _, err := fresh.Exec(storeCmd, false, 0, nil); err == nil {
@@ -455,6 +496,10 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 	if err := d.SelectFolder(folder); err != nil {
 		return 0, err
 	}
+	uidValidity, err := folderUIDValidity(d, folder)
+	if err != nil {
+		return 0, fmt.Errorf("read folder UIDVALIDITY before replacement: %w", err)
+	}
 	supported, err := supportsUIDExpunge(d)
 	if err != nil {
 		return 0, fmt.Errorf("check UIDPLUS capability: %w", err)
@@ -514,7 +559,7 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 	}
 	candRaw, err := incomingRaw(d, appendedUID)
 	if err != nil || !bytes.Equal(candRaw, newRaw) {
-		c.cleanupCopyUIDLocked(d, folder, appendedUID)
+		c.cleanupCopyUIDLocked(d, folder, uidValidity, appendedUID)
 		if err != nil {
 			return 0, fmt.Errorf("verify appended replacement message: %w", err)
 		}
@@ -524,7 +569,7 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 
 	if len(flags) > 0 {
 		if _, err := d.Exec(fmt.Sprintf("UID STORE %d FLAGS.SILENT (%s)", copyUID, strings.Join(flags, " ")), false, 0, nil); err != nil {
-			c.cleanupCopyUIDLocked(d, folder, copyUID)
+			c.cleanupCopyUIDLocked(d, folder, uidValidity, copyUID)
 			return 0, fmt.Errorf("preserve flags on replacement copy: %w", err)
 		}
 	}
@@ -536,13 +581,13 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 	// \Deleted only when UNCHANGEDSINCE succeeded.
 	storeResp, err := d.Exec(fmt.Sprintf(`UID STORE %d (UNCHANGEDSINCE %d) +FLAGS (\Deleted)`, uid, origModSeq), true, 0, nil)
 	if err != nil {
-		return c.reconcileConditionalDeleteErrorLocked(folder, uid, copyUID, err)
+		return c.reconcileConditionalDeleteErrorLocked(folder, uidValidity, uid, copyUID, err)
 	}
 	if !fetchResponseHasDeletedUID(storeResp, uid) {
-		c.cleanupCopyUIDLocked(d, folder, copyUID)
+		c.cleanupCopyUIDLocked(d, folder, uidValidity, copyUID)
 		return 0, ErrCASMismatch
 	}
-	if err := c.finishExpungeLocked(d, folder, uid); err != nil {
+	if err := c.finishExpungeLocked(d, folder, uidValidity, uid); err != nil {
 		return 0, fmt.Errorf("expunge original message after replacement %d committed: %w", copyUID, err)
 	}
 	return copyUID, nil
