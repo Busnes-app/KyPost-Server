@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,11 +22,11 @@ func parseAppendUID(line []byte) int {
 	if len(m) != 2 {
 		return 0
 	}
-	v, err := strconv.ParseUint(string(m[1]), 10, 32)
-	if err != nil || v == 0 || v > uint64(math.MaxInt) {
+	v, err := strconv.Atoi(string(m[1]))
+	if err != nil || v <= 0 {
 		return 0
 	}
-	return int(v)
+	return v
 }
 
 // waitForTaggedOKLine reads lines from r until it finds the tagged response matching tag.
