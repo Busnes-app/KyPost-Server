@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
@@ -688,5 +690,99 @@ func TestWKDServingSkipsCodeConfirmedAlias(t *testing.T) {
 	}
 	if r := doRaw(t, srv, http.MethodGet, path, "", nil); r.Code != http.StatusOK {
 		t.Fatalf("after DKIM proof: status %d, want 200", r.Code)
+	}
+}
+
+// TestWKDServingPublishWKDV6OptInDualCert verifies Spec A P5:
+//   - Default (PublishWKDV6=false): serves only the v4 certificate even when the user
+//     has a v6 PQC certificate, so legacy GnuPG clients are unaffected.
+//   - Opt-in (PublishWKDV6=true): serves concatenated v4 || v6 Transferable Public Keys
+//     per draft-koch-openpgp-webkey-service-22 §3.1, and our own WKD fetcher parses both
+//     and prioritizes the v6 PQC certificate.
+//   - PublishWKD=false remains the master gate: returns 404 even when PublishWKDV6=true.
+func TestWKDServingPublishWKDV6OptInDualCert(t *testing.T) {
+	srv := newTestServer(t)
+	u := must1(srv.users.Create(context.Background(), "alice", "alice-testpassword", users.RoleUser))
+	writeUnreachableSMTPIMAPConfig(t, srv, u.ID, "alice@example.com")
+	seedVerifiedSendAs(t, srv, u.ID, "alice@example.com")
+
+	v4ID, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
+	if err != nil {
+		t.Fatalf("GenerateIdentity: %v", err)
+	}
+	v4Info, err := pgpmail.InspectPublicKey(v4ID.ArmoredPublicKey)
+	if err != nil {
+		t.Fatalf("InspectPublicKey: %v", err)
+	}
+	u = must1(srv.users.SetPGPIdentityClientProtected(u.ID, v4Info.Fingerprint, v4Info.KeyID, v4Info.ArmoredPublicKey, `{"v":2}`, "generated", "now", nil))
+	u = must1(srv.users.SetDerivedAuth(context.Background(), u.ID, strings.Repeat("a", 64), "MDEyMzQ1Njc4OWFiY2RlZg==", 600000, false))
+
+	v6Pub := testV6Key(t, "alice@example.com", true)
+	v6Info, err := pgpmail.InspectPQCKey(v6Pub)
+	if err != nil {
+		t.Fatalf("InspectPQCKey: %v", err)
+	}
+	if _, err := srv.users.CommitPGPKeyring(context.Background(), u.ID, users.PGPKeyringUpdate{
+		ExpectedRevision:    u.PGPRevision,
+		MaterialGeneration:  1,
+		PrimaryFingerprints: []string{v4Info.Fingerprint, v6Info.Fingerprint},
+		KeyFingerprints:     append(v4Info.KeyFingerprints, v6Info.KeyFingerprints...),
+		PublicKey:           v4Info.ArmoredPublicKey,
+		PublicKeyV6:         v6Pub,
+		PasswordEnvelope:    `{"v":2}`,
+		RecoveryEnvelope:    `{"v":2}`,
+		Source:              "generated",
+	}); err != nil {
+		t.Fatalf("CommitPGPKeyring: %v", err)
+	}
+	claimExampleCom(t, srv)
+
+	path := "/.well-known/openpgpkey/example.com/hu/" + wkdHashLocalPart("alice")
+	wantV4 := binaryKey(t, v4ID.ArmoredPublicKey)
+	wantDual := append(append([]byte(nil), wantV4...), binaryKey(t, v6Pub)...)
+
+	// 1. Default: PublishWKDV6 is false, so only the v4 certificate is served.
+	r1 := doRaw(t, srv, http.MethodGet, path, "", nil)
+	if r1.Code != http.StatusOK {
+		t.Fatalf("default status %d, want 200", r1.Code)
+	}
+	if !bytes.Equal(r1.Body.Bytes(), wantV4) {
+		t.Fatalf("default WKD body len=%d, want v4-only len=%d", r1.Body.Len(), len(wantV4))
+	}
+
+	// 2. Opt in to PublishWKDV6: WKD now serves concatenated v4 || v6.
+	if _, err := pgpdiscovery.Update(srv.userStateDir(u.ID), func(s pgpdiscovery.Settings) pgpdiscovery.Settings {
+		s.PublishWKDV6 = true
+		return s
+	}); err != nil {
+		t.Fatalf("Update PublishWKDV6=true: %v", err)
+	}
+	r2 := doRaw(t, srv, http.MethodGet, path, "", nil)
+	if r2.Code != http.StatusOK {
+		t.Fatalf("opt-in status %d, want 200", r2.Code)
+	}
+	if !bytes.Equal(r2.Body.Bytes(), wantDual) {
+		t.Fatalf("opt-in WKD body len=%d, want concatenated v4+v6 len=%d", r2.Body.Len(), len(wantDual))
+	}
+
+	// Round-trip through fetchWKDKeys: both certificates parse cleanly and v6 PQC sorts first.
+	serveWKD(t, r2.Body.Bytes())
+	certs, err := fetchWKDKeys(context.Background(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("fetchWKDKeys on served dual-cert body: %v", err)
+	}
+	if len(certs) != 2 || !certs[0].Class.V6 || !certs[0].Class.PQ || certs[0].Fingerprint != v6Info.Fingerprint || certs[1].Fingerprint != v4Info.Fingerprint {
+		t.Fatalf("fetched certs = %+v, want [v6(%s), v4(%s)]", certs, v6Info.Fingerprint, v4Info.Fingerprint)
+	}
+
+	// 3. PublishWKD=false still gates everything, even with PublishWKDV6=true.
+	if _, err := pgpdiscovery.Update(srv.userStateDir(u.ID), func(s pgpdiscovery.Settings) pgpdiscovery.Settings {
+		s.PublishWKD = false
+		return s
+	}); err != nil {
+		t.Fatalf("Update PublishWKD=false: %v", err)
+	}
+	if r3 := doRaw(t, srv, http.MethodGet, path, "", nil); r3.Code != http.StatusNotFound {
+		t.Fatalf("PublishWKD=false with PublishWKDV6=true: status %d, want 404", r3.Code)
 	}
 }

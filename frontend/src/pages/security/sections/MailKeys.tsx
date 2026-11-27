@@ -1292,6 +1292,19 @@ export function MailKeys({
               Lets people look up your key at your mail domain. Requires an administrator to have set up
               WKD for that domain. On by default.
             </p>
+            <label className="sec-check">
+              <input
+                type="checkbox"
+                checked={Boolean(discoverySettings.publishWKDV6)}
+                disabled={discoveryBusy || !discoverySettings.publishWKD}
+                onChange={(e) => void updateDiscoverySetting({ publishWKDV6: e.target.checked })}
+              />
+              Also publish my post-quantum (OpenPGP v6) key via WKD
+            </label>
+            <p className="sec-check-note">
+              Appends your OpenPGP v6 certificate beside your v4 certificate in WKD responses when you
+              have one. Off by default because older GnuPG clients reject multi-certificate WKD replies.
+            </p>
             {discoveryStatus ? <p className="sec-muted">{discoveryStatus}</p> : null}
             {suppressions.length > 0 ? (
               <div className="sec-subsection">

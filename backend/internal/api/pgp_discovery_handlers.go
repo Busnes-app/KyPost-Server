@@ -39,6 +39,7 @@ func (s *Server) handlePGPDiscoverySettings(w http.ResponseWriter, r *http.Reque
 			StoreDiscoveredKeys     *bool `json:"storeDiscoveredKeys"`
 			AdvertiseAutocrypt      *bool `json:"advertiseAutocrypt"`
 			PublishWKD              *bool `json:"publishWKD"`
+			PublishWKDV6            *bool `json:"publishWKDV6"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
@@ -59,6 +60,9 @@ func (s *Server) handlePGPDiscoverySettings(w http.ResponseWriter, r *http.Reque
 			}
 			if req.PublishWKD != nil {
 				next.PublishWKD = *req.PublishWKD
+			}
+			if req.PublishWKDV6 != nil {
+				next.PublishWKDV6 = *req.PublishWKDV6
 			}
 			return next
 		})

@@ -18,12 +18,17 @@ type Settings struct {
 	// publishable addresses). Publishing confirms an address exists and is
 	// reachable, so it stays an explicit per-user opt-out, on by default.
 	PublishWKD bool `json:"publishWKD"`
+	// PublishWKDV6 controls whether the user's OpenPGP v6 post-quantum public
+	// certificate is appended after the v4 certificate in WKD responses
+	// (concatenated Transferable Public Keys per draft-koch-openpgp-webkey-service-22 §3.1).
+	// Off by default because older GnuPG versions reject multi-cert / v6 WKD answers.
+	PublishWKDV6 bool `json:"publishWKDV6"`
 }
 
 func path(dir string) string { return filepath.Join(dir, "pgp-discovery.json") }
 
 // Load reads settings, returning defaults (auto-encrypt off, store keys on, advertise autocrypt on,
-// publish WKD on) when the file does not exist.
+// publish WKD on, publish WKD v6 off) when the file does not exist.
 func Load(dir string) (Settings, error) {
 	return loadSettingsDocument(vol.OpenDocument(path(dir)))
 }
@@ -31,7 +36,7 @@ func Load(dir string) (Settings, error) {
 func loadSettingsDocument(doc *vol.Document) (Settings, error) {
 	b, err := doc.Read()
 	if os.IsNotExist(err) {
-		return Settings{AutoEncryptWhenKeyKnown: false, StoreDiscoveredKeys: true, AdvertiseAutocrypt: true, PublishWKD: true}, nil
+		return Settings{AutoEncryptWhenKeyKnown: false, StoreDiscoveredKeys: true, AdvertiseAutocrypt: true, PublishWKD: true, PublishWKDV6: false}, nil
 	}
 	if err != nil {
 		return Settings{}, err
@@ -43,6 +48,7 @@ func loadSettingsDocument(doc *vol.Document) (Settings, error) {
 		StoreDiscoveredKeys     *bool `json:"storeDiscoveredKeys"`
 		AdvertiseAutocrypt      *bool `json:"advertiseAutocrypt"`
 		PublishWKD              *bool `json:"publishWKD"`
+		PublishWKDV6            *bool `json:"publishWKDV6"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return Settings{}, err
@@ -52,6 +58,7 @@ func loadSettingsDocument(doc *vol.Document) (Settings, error) {
 		StoreDiscoveredKeys:     raw.StoreDiscoveredKeys == nil || *raw.StoreDiscoveredKeys,
 		AdvertiseAutocrypt:      raw.AdvertiseAutocrypt == nil || *raw.AdvertiseAutocrypt,
 		PublishWKD:              raw.PublishWKD == nil || *raw.PublishWKD,
+		PublishWKDV6:            raw.PublishWKDV6 != nil && *raw.PublishWKDV6,
 	}
 	return s, nil
 }

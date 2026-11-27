@@ -309,6 +309,16 @@ func (s *Server) lookupPublishedKey(domain, hu string) ([]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
+	if settings.PublishWKDV6 && owner.PGPPublicKeyV6 != "" {
+		v6Key, err := crypto.NewKeyFromArmored(owner.PGPPublicKeyV6)
+		if err == nil {
+			if v6Binary, err := v6Key.GetPublicKey(); err == nil {
+				binary = append(binary, v6Binary...)
+			}
+		} else if s.logger != nil {
+			s.logger.Warn("wkd: skipping unreadable v6 public key; serving v4 only", "user_id", owner.ID)
+		}
+	}
 	return binary, true
 }
 
