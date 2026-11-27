@@ -157,6 +157,7 @@ const maxOIDCResponseBytes = 1 << 20
 // question the token itself answers — the classic confusion attack. `none` is
 // refused by go-oidc unconditionally.
 var allowedSigningAlgs = []string{
+	"ML-DSA-65",
 	oidc.RS256, oidc.RS384, oidc.RS512,
 	oidc.ES256, oidc.ES384, oidc.ES512,
 	oidc.PS256, oidc.PS384, oidc.PS512,
@@ -631,7 +632,12 @@ func discoverProvider(ctx context.Context, cfg SSOSettings, redirectURI string) 
 	}
 
 	jwksClient := *client
-	jwksClient.Transport = strongJWKSTransport{base: client.Transport}
+	baseTransport := client.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	jwksClient.Transport = strongJWKSTransport{base: baseTransport}
+	keySet := newRemoteJWKSKeySet(extra.JWKSURI, &jwksClient, allowedSigningAlgs)
 
 	return &Provider{
 		kySignOn: slices.Contains(extra.ACRValues, KySignOnPasswordACR) && slices.Contains(extra.Claims, "roles"),
@@ -643,7 +649,7 @@ func discoverProvider(ctx context.Context, cfg SSOSettings, redirectURI string) 
 			RedirectURL:  redirectURI,
 			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
 		},
-		verifier: provider.VerifierContext(oidc.ClientContext(ctx, &jwksClient), &oidc.Config{
+		verifier: oidc.NewVerifier(issuer, keySet, &oidc.Config{
 			ClientID:             cfg.ClientID,
 			SupportedSigningAlgs: allowedSigningAlgs,
 		}),
