@@ -16,6 +16,7 @@ import (
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpprofile"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -538,5 +539,121 @@ func TestPGPArchiveReencryptEndToEndAndSecurityProperties(t *testing.T) {
 	}
 	if len(afterResp.Candidates) != 4 {
 		t.Fatalf("expected 4 remaining candidates after replacing 1, got %d", len(afterResp.Candidates))
+	}
+}
+
+type oversizedFirstUIDClient struct {
+	*mailbox.Client
+	oversizedUID int
+}
+
+func (c *oversizedFirstUIDClient) GetRawMessage(ctx context.Context, folder string, uid int) ([]byte, error) {
+	if folder == "INBOX" && uid == c.oversizedUID {
+		return nil, mailmsg.ErrMessageTooLarge
+	}
+	return c.Client.GetRawMessage(ctx, folder, uid)
+}
+
+func TestPGPArchiveReencryptSkipsOversizedMessages(t *testing.T) {
+	ctx := context.Background()
+	s := newTestServer(t)
+	u := clientProtectedUser(t, s)
+	const addr = "oversized@example.invalid"
+
+	store, err := mailbox.Open(
+		filepath.Join(t.TempDir(), "mailbox"),
+		mailbox.Owner{Issuer: "https://identity.example.test", Subject: u.ID, Mailbox: u.ID},
+		mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 8 << 20, Records: 200},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	baseClient, err := mailbox.NewClient(store, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nativeState, err := state.NewNative(filepath.Join(t.TempDir(), "native-state"), baseClient.MailSourceIdentity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nativeState.Close() })
+	s.imapConfigKeyPath = filepath.Join(t.TempDir(), "imap-config.key")
+	if err := writeIMAPConfigPayload(s.userIMAPConfigPath(u.ID), s.imapConfigKeyPath, imapConfigPayload{
+		Host: "imap.example.invalid", Port: 993, Username: addr, Password: "pw",
+		Mailbox: "INBOX", UpdatedAt: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	v4Pub, _ := makeIdentityForTest(t, false, "Oversized", addr)
+	v4Info, err := pgpmail.InspectPublicKey(v4Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v6Pub, _ := makeIdentityForTest(t, true, "Oversized", addr)
+	v6Info, err := pgpmail.InspectPQCKey(v6Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err = s.users.SetPGPIdentityClientProtected(u.ID, v4Info.Fingerprint, v4Info.KeyID, v4Info.ArmoredPublicKey, `{"v":1}`, "generated", "now", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/mail/pgp-reencrypt/candidates?limit=25", nil)
+	authRequestAs(s, req, u.ID)
+
+	u, err = s.users.CommitPGPKeyring(ctx, u.ID, users.PGPKeyringUpdate{
+		ExpectedRevision:    u.PGPRevision,
+		MaterialGeneration:  1,
+		PrimaryFingerprints: []string{v4Info.Fingerprint, v6Info.Fingerprint},
+		KeyFingerprints:     append(v4Info.KeyFingerprints, v6Info.KeyFingerprints...),
+		PublicKey:           u.PGPPublicKey,
+		PublicKeyV6:         v6Pub,
+		PasswordEnvelope:    `{"v":2,"ring":"pw"}`,
+		RecoveryEnvelope:    `{"v":2,"ring":"rec"}`,
+		Source:              "generated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Deliver an eligible v4 message at UID 2 (after UID 1 dummy), then have wrapper
+	// report UID 1 as mailmsg.ErrMessageTooLarge.
+	if _, err := store.Append(ctx, "INBOX", bytes.NewReader(buildPGPMIMEMsgForTest(
+		[]string{"From: a@example.invalid", "To: " + addr, "Subject: dummy"},
+		"not-pgp",
+	)), false); err != nil {
+		t.Fatal(err)
+	}
+	v4Raw := buildPGPMIMEMsgForTest(
+		[]string{"From: b@example.invalid", "To: " + addr, "Subject: v4-after-oversized"},
+		encryptArmoredForTest(t, false, []string{v4Pub}, []byte("Content-Type: text/plain\r\n\r\nhello")),
+	)
+	v4UID, err := store.Append(ctx, "INBOX", bytes.NewReader(v4Raw), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wrapped := &oversizedFirstUIDClient{Client: baseClient, oversizedUID: 1}
+	s.userMu.Lock()
+	s.userStores[u.ID] = nativeState
+	s.userMail[u.ID] = &serverMailEntry{client: wrapped, updatedAt: "test"}
+	s.userMu.Unlock()
+
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 skipping oversized UID, got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp pgpReencryptCandidatesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.SkippedOversized != 1 {
+		t.Fatalf("expected skippedOversized=1, got %d", resp.SkippedOversized)
+	}
+	if len(resp.Candidates) != 1 || resp.Candidates[0].MessageID != int(v4UID) {
+		t.Fatalf("expected later v4 candidate UID %d to be included, got %+v", v4UID, resp.Candidates)
 	}
 }

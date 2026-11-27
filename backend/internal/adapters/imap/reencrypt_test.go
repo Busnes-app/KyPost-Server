@@ -26,6 +26,9 @@ type reencryptFixture struct {
 	// mutateOnAppend simulates another IMAP session changing flags on uid 7
 	// concurrently while ReplaceRawMessageCAS is appending the replacement.
 	mutateOnAppend bool
+	// unsolicitedOtherDeleted emits an unsolicited FETCH carrying \Deleted for
+	// another UID (99) when UNCHANGEDSINCE rejects uid 7.
+	unsolicitedOtherDeleted bool
 }
 
 func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *reencryptFixture) {
@@ -138,7 +141,11 @@ func (f *reencryptFixture) respond(tag, command string) (string, bool) {
 			end := strings.Index(rest, ")")
 			since, _ := strconv.ParseUint(strings.TrimSpace(rest[:end]), 10, 64)
 			if f.modseq[uid] > since {
-				return fmt.Sprintf("%s OK [MODIFIED %d] Conditional STORE failed\r\n", tag, uid), true
+				prefix := ""
+				if f.unsolicitedOtherDeleted {
+					prefix = "* 99 FETCH (UID 99 FLAGS (\\Deleted) MODSEQ (99))\r\n"
+				}
+				return fmt.Sprintf("%s%s OK [MODIFIED %d] Conditional STORE failed\r\n", prefix, tag, uid), true
 			}
 			f.deleted[uid] = true
 			f.modseq[uid]++
@@ -246,5 +253,26 @@ func TestListAllFoldersExcludesNoselect(t *testing.T) {
 	want := []string{"Archive", "INBOX"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("ListAllFolders = %v, want %v", got, want)
+	}
+}
+
+func TestReplaceRawMessageCASIgnoresUnsolicitedDeletedForOtherUID(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	f.mutateOnAppend = true
+	f.unsolicitedOtherDeleted = true
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if !errors.Is(err, ErrCASMismatch) {
+		t.Fatalf("expected ErrCASMismatch despite unsolicited FETCH \\Deleted for UID 99, got %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !bytes.Equal(f.messages[7], orig) {
+		t.Fatalf("original UID 7 must be preserved")
+	}
+	if _, leaked := f.messages[8]; leaked {
+		t.Fatalf("appended copy UID 8 was not cleaned up")
 	}
 }

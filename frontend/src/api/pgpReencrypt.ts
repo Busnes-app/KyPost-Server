@@ -15,6 +15,7 @@ export type PGPReencryptCandidatesResponse = {
   candidates: PGPReencryptCandidate[];
   nextCursor?: PGPReencryptCursor;
   done: boolean;
+  skippedOversized?: number;
   v6Fingerprint: string;
 };
 

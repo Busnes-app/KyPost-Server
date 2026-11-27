@@ -107,11 +107,39 @@ func (c *APIClient) ListAllFolders(ctx context.Context) ([]string, error) {
 // race-safe conditional deletion (CONDSTORE / usable MODSEQ).
 var ErrCondstoreUnsupported = errors.New("IMAP server lacks CONDSTORE/IMAP4rev2 conditional deletion; refusing archive replacement")
 
-// Matches FLAGS (...) and MODSEQ (n) in a single UID FETCH response.
+// Matches FLAGS (...), MODSEQ (n), and UID n in untagged FETCH responses.
 var (
-	flagsResponse  = regexp.MustCompile(`(?i)\bFLAGS\s+\(([^)]*)\)`)
-	modSeqResponse = regexp.MustCompile(`(?i)\bMODSEQ\s+\((\d+)\)`)
+	flagsResponse    = regexp.MustCompile(`(?i)\bFLAGS\s+\(([^)]*)\)`)
+	modSeqResponse   = regexp.MustCompile(`(?i)\bMODSEQ\s+\((\d+)\)`)
+	uidTokenResponse = regexp.MustCompile(`(?i)\bUID\s+(\d+)\b`)
 )
+
+// fetchResponseHasDeletedUID returns true only when storeResp contains an
+// untagged FETCH response for the exact target uid whose FLAGS list includes
+// \Deleted. Unsolicited FETCH updates for other UIDs cannot satisfy this check.
+func fetchResponseHasDeletedUID(storeResp string, uid int) bool {
+	wantUID := strconv.Itoa(uid)
+	for _, rawLine := range strings.Split(storeResp, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "*") || !strings.Contains(strings.ToUpper(line), "FETCH") {
+			continue
+		}
+		uidMatch := uidTokenResponse.FindStringSubmatch(line)
+		if len(uidMatch) != 2 || uidMatch[1] != wantUID {
+			continue
+		}
+		flagMatch := flagsResponse.FindStringSubmatch(line)
+		if len(flagMatch) != 2 {
+			continue
+		}
+		for _, tok := range strings.Fields(flagMatch[1]) {
+			if strings.EqualFold(tok, `\Deleted`) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func supportsCondstore(d *goimap.Dialer) bool {
 	resp, err := d.Exec("CAPABILITY", true, 0, nil)
@@ -395,7 +423,7 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		cleanupCopyUID(d, copyUID)
 		return 0, fmt.Errorf("mark original message deleted: %w", err)
 	}
-	if !strings.Contains(strings.ToLower(storeResp), `\deleted`) {
+	if !fetchResponseHasDeletedUID(storeResp, uid) {
 		cleanupCopyUID(d, copyUID)
 		return 0, ErrCASMismatch
 	}

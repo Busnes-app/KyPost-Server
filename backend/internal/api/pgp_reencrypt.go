@@ -37,11 +37,12 @@ type pgpReencryptCursor struct {
 }
 
 type pgpReencryptCandidatesResponse struct {
-	Candidates    []pgpReencryptCandidate `json:"candidates"`
-	NextCursor    *pgpReencryptCursor     `json:"nextCursor,omitempty"`
-	Done          bool                    `json:"done"`
-	V6PublicKey   string                  `json:"v6PublicKey"`
-	V6Fingerprint string                  `json:"v6Fingerprint"`
+	Candidates       []pgpReencryptCandidate `json:"candidates"`
+	NextCursor       *pgpReencryptCursor     `json:"nextCursor,omitempty"`
+	Done             bool                    `json:"done"`
+	SkippedOversized int                     `json:"skippedOversized,omitempty"`
+	V6PublicKey      string                  `json:"v6PublicKey"`
+	V6Fingerprint    string                  `json:"v6Fingerprint"`
 }
 
 type pgpReencryptRawResponse struct {
@@ -161,6 +162,7 @@ func (s *Server) handlePGPReencryptCandidates(w http.ResponseWriter, r *http.Req
 
 	candidates := make([]pgpReencryptCandidate, 0, limit)
 	inspected := 0
+	skippedOversized := 0
 	var nextCursor *pgpReencryptCursor
 	done := true
 
@@ -201,6 +203,21 @@ func (s *Server) handlePGPReencryptCandidates(w http.ResponseWriter, r *http.Req
 				if err != nil {
 					if errors.Is(err, imapadapter.ErrMessageNotFound) {
 						cursorUID = uid
+						if inspected >= maxReencryptInspectBudget {
+							done = false
+							nextCursor = &pgpReencryptCursor{Folder: folder, AfterUID: cursorUID}
+							goto respond
+						}
+						continue
+					}
+					if errors.Is(err, mailmsg.ErrMessageTooLarge) {
+						skippedOversized++
+						cursorUID = uid
+						if inspected >= maxReencryptInspectBudget {
+							done = false
+							nextCursor = &pgpReencryptCursor{Folder: folder, AfterUID: cursorUID}
+							goto respond
+						}
 						continue
 					}
 					s.logger.Error("pgp archive candidate raw fetch failed", "user_id", u.ID, "folder", folder, "uid", strconv.Itoa(uid), "error", err.Error())
@@ -238,11 +255,12 @@ func (s *Server) handlePGPReencryptCandidates(w http.ResponseWriter, r *http.Req
 
 respond:
 	writeJSON(w, http.StatusOK, pgpReencryptCandidatesResponse{
-		Candidates:    candidates,
-		NextCursor:    nextCursor,
-		Done:          done,
-		V6PublicKey:   u.PGPPublicKeyV6,
-		V6Fingerprint: keys.V6PrimaryFingerprint,
+		Candidates:       candidates,
+		NextCursor:       nextCursor,
+		Done:             done,
+		SkippedOversized: skippedOversized,
+		V6PublicKey:      u.PGPPublicKeyV6,
+		V6Fingerprint:    keys.V6PrimaryFingerprint,
 	})
 }
 

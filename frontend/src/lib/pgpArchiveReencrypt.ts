@@ -377,6 +377,11 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
         return finish({ kind: "paused", reason: "not_ready", reencrypted, skipped, failed });
       }
 
+      if (listing.skippedOversized && listing.skippedOversized > 0) {
+        skipped += listing.skippedOversized;
+        emitRunning();
+      }
+
       for (const candidate of listing.candidates) {
         if (!isStillCurrent()) {
           return finish({
