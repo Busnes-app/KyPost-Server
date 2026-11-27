@@ -118,9 +118,9 @@ RUN apt-get update \
 # OLLAMA_BASE_URL. scripts/entrypoint.sh notices the missing binary and does
 # not start the ollama programs. Anything but true or false is refused.
 ARG INSTALL_OLLAMA=true
-ARG OLLAMA_VERSION=0.40.17
-ARG OLLAMA_SHA256_AMD64=1df9d6228bac5a22e420b242708c0d10e5b886db97bab99d446a41760f4e79af
-ARG OLLAMA_SHA256_ARM64=0ec632480057cef6300459d1fa7dbbb3fc188b9a7d56cd0b0a72d05927d90ecc
+ARG OLLAMA_VERSION=0.40.18
+ARG OLLAMA_SHA256_AMD64=b82649006cb5b54ed1237fa2d1a26a7f939a4fd03150033759acbff7ff315adf
+ARG OLLAMA_SHA256_ARM64=63f01dae3b65641866991e75e2aecb7aed8a4041f4c2c3c7d92862c5a47ebed6
 ARG TARGETARCH
 RUN set -eu; \
 	case "${INSTALL_OLLAMA}" in \
