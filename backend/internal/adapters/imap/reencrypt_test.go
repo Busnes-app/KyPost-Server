@@ -228,3 +228,23 @@ func TestReplaceRawMessageCASSucceedsWithCondstore(t *testing.T) {
 		t.Fatalf("replacement UID 8 bytes mismatch")
 	}
 }
+
+func TestListAllFoldersExcludesNoselect(t *testing.T) {
+	server := newFakeIMAPServer(t, "/", true, []fakeFolder{
+		{name: "INBOX", attrs: `\HasNoChildren`},
+		{name: "[Gmail]", attrs: `\Noselect \HasChildren`},
+		{name: "Archive", attrs: `\Archive \HasNoChildren`},
+		{name: "Ghost", attrs: `\NonExistent`},
+	})
+	client := server.client("INBOX")
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, err := client.ListAllFolders(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllFolders failed: %v", err)
+	}
+	want := []string{"Archive", "INBOX"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("ListAllFolders = %v, want %v", got, want)
+	}
+}

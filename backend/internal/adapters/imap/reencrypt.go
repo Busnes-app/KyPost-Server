@@ -63,7 +63,8 @@ type ArchiveReencryptClient interface {
 
 var _ ArchiveReencryptClient = (*APIClient)(nil)
 
-// ListAllFolders returns all selectable mailbox folder names in deterministic order.
+// ListAllFolders returns all selectable mailbox folder names in deterministic order,
+// filtering out IMAP \Noselect and \NonExistent hierarchy containers.
 func (c *APIClient) ListAllFolders(ctx context.Context) ([]string, error) {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
@@ -74,22 +75,29 @@ func (c *APIClient) ListAllFolders(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	folders, err := d.GetFolders()
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]bool, len(folders))
-	out := make([]string, 0, len(folders))
-	for _, f := range folders {
-		name := strings.TrimSpace(f)
-		if name == "" || seen[name] {
-			continue
+	seen := make(map[string]bool)
+	var out []string
+	_, err = d.Exec(`LIST "" "*"`, false, 0, func(line []byte) error {
+		attrs, _, name, ok := parseListLine(string(line))
+		if !ok {
+			return nil
 		}
-		if ValidateMailboxName(name) != nil {
-			continue
+		for _, attr := range attrs {
+			lower := strings.ToLower(attr)
+			if lower == `\noselect` || lower == `\nonexistent` {
+				return nil
+			}
+		}
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] || ValidateMailboxName(name) != nil {
+			return nil
 		}
 		seen[name] = true
 		out = append(out, name)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	sort.Strings(out)
 	return out, nil
