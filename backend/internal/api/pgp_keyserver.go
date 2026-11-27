@@ -155,6 +155,9 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 		// Capability is the best key class held for the address ("pq",
 		// "v6", "v4"), omitted without a usable key. Additive.
 		Capability string `json:"capability,omitempty"`
+		// SelectedCapability is the class of the certificate selected for
+		// this send ("pq", "v6", "v4"), accounting for signer compatibility.
+		SelectedCapability string `json:"selectedCapability,omitempty"`
 	}
 	sender, err := s.users.Get(ac.UserID)
 	if err != nil {
@@ -178,6 +181,7 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 				if status.HasKey {
 					status.Tier = string(tierContactVerified)
 					status.Capability = contactCapability(c)
+					status.SelectedCapability = armoredCapability(c.PGPKey)
 				}
 			}
 		}
@@ -187,7 +191,7 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 				http.Error(w, "recipient keys unavailable", http.StatusInternalServerError)
 				return
 			}
-			status.HasKey, status.Tier, status.Capability = rk.Usable, string(rk.Tier), rk.Capability
+			status.HasKey, status.Tier, status.Capability, status.SelectedCapability = rk.Usable, string(rk.Tier), rk.Capability, rk.SelectedCapability
 		}
 		statuses = append(statuses, status)
 	}

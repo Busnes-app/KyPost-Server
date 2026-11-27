@@ -102,6 +102,9 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 		// Capability is the recipient's best key class: "pq", "v6" or "v4".
 		// Additive; publicKey stays the v4 key whenever there is one.
 		Capability string `json:"capability,omitempty"`
+		// SelectedCapability is the class of publicKey, the certificate
+		// selected for this send ("pq", "v6" or "v4").
+		SelectedCapability string `json:"selectedCapability,omitempty"`
 	}
 	seen := map[string]bool{}
 	results := make([]result, 0, len(addresses))
@@ -117,12 +120,13 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		results = append(results, result{
-			Address:     clean,
-			PublicKey:   rk.Armored,
-			Fingerprint: rk.Fingerprint,
-			Tier:        string(rk.Tier),
-			Usable:      rk.Usable,
-			Capability:  rk.Capability,
+			Address:            clean,
+			PublicKey:          rk.Armored,
+			Fingerprint:        rk.Fingerprint,
+			Tier:               string(rk.Tier),
+			Usable:             rk.Usable,
+			Capability:         rk.Capability,
+			SelectedCapability: rk.SelectedCapability,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})

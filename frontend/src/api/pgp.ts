@@ -34,6 +34,7 @@ export type PGPRecipientTier = "verified" | "wkd" | "keyserver_confirm" | "key_c
 
 export type PGPRecipientStatus = {
   capability?: "pq" | "v6" | "v4";
+  selectedCapability?: "pq" | "v6" | "v4";
   address: string;
   hasKey: boolean;
   tier?: PGPRecipientTier;
@@ -394,6 +395,7 @@ export function getPGPMessagePayload(mailbox: string, messageId: string | number
 
 export type ResolvedRecipientKey = {
   capability?: "pq" | "v6" | "v4";
+  selectedCapability?: "pq" | "v6" | "v4";
   address: string;
   publicKey?: string;
   fingerprint?: string;

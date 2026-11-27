@@ -635,7 +635,9 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
           if (cancelled) return;
           const missing = results.filter((r) => !r.hasKey).map((r) => r.address);
           setComposeMissingKeyRecipients(missing);
-          setComposeClassicalRecipients(results.filter(r => r.hasKey && r.capability !== "pq").map(r => r.address));
+          setComposeClassicalRecipients(
+            results.filter(r => r.hasKey && (r.selectedCapability ?? r.capability) !== "pq").map(r => r.address)
+          );
           setComposeRecipientTiers(
             Object.fromEntries(results.map((r) => [r.address.toLowerCase(), r.tier ?? "none"]))
           );

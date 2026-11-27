@@ -204,5 +204,9 @@ func (s *Server) localPQRecipient(sender users.User, address string, resolver *k
 		(c.PGPKeyV6Fingerprint != "" && !strings.EqualFold(c.PGPKeyV6Fingerprint, u.PGPFingerprintV6))) {
 		return resolvedKey{Tier: tierKeyChanged}, true, nil
 	}
-	return resolvedKey{Armored: u.PGPPublicKeyV6, Fingerprint: u.PGPFingerprintV6, Tier: tierContactVerified, Usable: true, Capability: "pq"}, true, nil
+	cap := armoredCapability(u.PGPPublicKeyV6)
+	if cap == "" {
+		cap = "pq"
+	}
+	return resolvedKey{Armored: u.PGPPublicKeyV6, Fingerprint: u.PGPFingerprintV6, Tier: tierContactVerified, Usable: true, Capability: cap, SelectedCapability: cap}, true, nil
 }

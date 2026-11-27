@@ -54,6 +54,10 @@ type resolvedKey struct {
 	// still the v4 key whenever there is one, because no KyPost sender can
 	// encrypt to a v6 PQC key yet (openpgp.js 6.3.3). P4 switches.
 	Capability string
+	// SelectedCapability is the class of Armored, the key actually selected
+	// for this send (e.g. "v4" when a v4-only or expired-v6 signer must fall
+	// back from a recipient's v6 PQ key).
+	SelectedCapability string
 }
 
 // keyResolver runs the PGP key discovery ladder — pinned contact key → WKD
@@ -233,7 +237,7 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 			return resolvedKey{Tier: tierKeyChanged}
 		}
 		if pgpmail.EncryptsNow(c.PGPKeyV6) {
-			return resolvedKey{Armored: c.PGPKeyV6, Fingerprint: c.PGPKeyV6Fingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c)}
+			return resolvedKey{Armored: c.PGPKeyV6, Fingerprint: c.PGPKeyV6Fingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c), SelectedCapability: armoredCapability(c.PGPKeyV6)}
 		}
 	}
 	if hasContact && c.PGPKey != "" {
@@ -243,7 +247,7 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 			return resolvedKey{Tier: tierKeyChanged}
 		}
 		if st, err := pgpmail.CheckKeyStatus(c.PGPKey); err == nil && st.Usable() {
-			return resolvedKey{Armored: c.PGPKey, Fingerprint: c.PGPKeyFingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c)}
+			return resolvedKey{Armored: c.PGPKey, Fingerprint: c.PGPKeyFingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c), SelectedCapability: armoredCapability(c.PGPKey)}
 		}
 		pinnedFP = c.PGPKeyFingerprint
 	}
@@ -273,7 +277,7 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 		if kr.preferV6 {
 			use = best
 		}
-		return resolvedKey{Armored: use.Armored, Fingerprint: use.Fingerprint, Tier: tierWKD, Usable: true, Capability: best.Class.capability()}
+		return resolvedKey{Armored: use.Armored, Fingerprint: use.Fingerprint, Tier: tierWKD, Usable: true, Capability: best.Class.capability(), SelectedCapability: use.Class.capability()}
 	}
 
 	if _, fp, st, err := keyserverLookup(ctx, email); err == nil && st.Usable() {

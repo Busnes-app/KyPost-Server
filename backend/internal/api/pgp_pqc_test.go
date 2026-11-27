@@ -154,8 +154,8 @@ func proveAlias(t *testing.T, s *Server, userID, address string) {
 }
 
 type recipientAnswer struct {
-	Address, PublicKey, Capability string
-	HasKey, Usable                 bool
+	Address, PublicKey, Capability, SelectedCapability string
+	HasKey, Usable                                     bool
 }
 
 // askRecipient posts one address to a recipients endpoint ("check" or "resolve").
@@ -223,10 +223,17 @@ func TestRecipientVersionFollowsSenderSigningCertificates(t *testing.T) {
 		want   string
 		pq     bool
 	}{{v4Only, true, k4, false}, {v4Only, false, k6, true}, {dual, true, k6, true}, {dual, false, k6, true}} {
-		if got := askRecipient(t, s, tc.sender.ID, "resolve", bob, tc.sign); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(tc.want) {
+		wantSel := "v4"
+		if tc.pq {
+			wantSel = "pq"
+		}
+		if got := askRecipient(t, s, tc.sender.ID, "resolve", bob, tc.sign); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(tc.want) || got.SelectedCapability != wantSel {
 			t.Fatalf("%s sign=%v: got %+v", tc.sender.Username, tc.sign, got)
 		}
-		if got := askRecipient(t, s, tc.sender.ID, "check", "internal@example.invalid", tc.sign); (got.Capability == "pq") != tc.pq {
+		if got := askRecipient(t, s, tc.sender.ID, "check", bob, tc.sign); !got.HasKey || got.SelectedCapability != wantSel {
+			t.Fatalf("%s sign=%v check bob: got %+v", tc.sender.Username, tc.sign, got)
+		}
+		if got := askRecipient(t, s, tc.sender.ID, "check", "internal@example.invalid", tc.sign); (got.Capability == "pq") != tc.pq || (got.SelectedCapability == "pq") != tc.pq {
 			t.Fatalf("%s sign=%v internal: %+v", tc.sender.Username, tc.sign, got)
 		}
 	}
@@ -238,13 +245,15 @@ func TestExpiredV6FallsBackToV4(t *testing.T) {
 	s := newTestServer(t)
 	const address = "expiring@example.invalid"
 	pq := must1(pgpmailtest.GenerateExpiringV6PublicKey("Expiring", address, 3*time.Second))
+	sender := pqAccount(t, s, "sender", testV6Key(t, "sender@example.invalid", true))
 	recipient := pqAccount(t, s, "expiring", pq)
 	proveAlias(t, s, recipient.ID, address)
-	sender := pqAccount(t, s, "sender", testV6Key(t, "sender@example.invalid", true))
-	must1(must1(s.userContactsStore(sender.ID)).Upsert(contacts.Contact{FormattedName: "Expiring", Emails: []contacts.ContactValue{{Value: address}},
-		PGPKey: recipient.PGPPublicKey, PGPKeyFingerprint: recipient.PGPFingerprint}))
+	must1(must1(s.userContactsStore(sender.ID)).Upsert(contacts.Contact{
+		FormattedName: "Expiring", Emails: []contacts.ContactValue{{Value: address}},
+		PGPKey: recipient.PGPPublicKey, PGPKeyFingerprint: recipient.PGPFingerprint,
+	}))
 	if !s.pgpV6Ready(recipient) || askRecipient(t, s, sender.ID, "resolve", address, true).Capability != "pq" {
-		t.Fatal("fresh v6 certificate not used")
+		t.Fatal("fresh v6 key was not ready")
 	}
 	for deadline := time.Now().Add(10 * time.Second); pgpmail.EncryptsNow(pq); time.Sleep(100 * time.Millisecond) {
 		if time.Now().After(deadline) {
@@ -252,9 +261,9 @@ func TestExpiredV6FallsBackToV4(t *testing.T) {
 		}
 	}
 	if s.pgpV6Ready(recipient) {
-		t.Fatal("expired v6 certificate still ready")
+		t.Fatal("expired v6 key stayed ready")
 	}
-	if got := askRecipient(t, s, sender.ID, "resolve", address, true); !got.Usable || got.PublicKey != recipient.PGPPublicKey {
+	if got := askRecipient(t, s, sender.ID, "resolve", address, true); !got.Usable || got.PublicKey != recipient.PGPPublicKey || got.SelectedCapability != "v4" {
 		t.Fatalf("expired v6 did not fall back to v4: %+v", got)
 	}
 }
@@ -279,10 +288,10 @@ func TestExpiredSenderV6FallsBackToV4ForSignedSend(t *testing.T) {
 		PGPKeyV6:            recipient.PGPPublicKeyV6,
 		PGPKeyV6Fingerprint: recipient.PGPFingerprintV6,
 	}))
-	if got := askRecipient(t, s, sender.ID, "resolve", address, true); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKeyV6) {
+	if got := askRecipient(t, s, sender.ID, "resolve", address, true); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKeyV6) || got.SelectedCapability != "pq" {
 		t.Fatalf("fresh sender v6 should prefer recipient v6 for signed send: %+v", got)
 	}
-	if got := askRecipient(t, s, sender.ID, "check", internalAddr, true); got.Capability != "pq" {
+	if got := askRecipient(t, s, sender.ID, "check", internalAddr, true); got.Capability != "pq" || got.SelectedCapability != "pq" {
 		t.Fatalf("fresh sender v6 should discover internal PQ for signed send: %+v", got)
 	}
 	for deadline := time.Now().Add(10 * time.Second); pgpmail.SignsNow(senderV6); time.Sleep(100 * time.Millisecond) {
@@ -290,16 +299,19 @@ func TestExpiredSenderV6FallsBackToV4ForSignedSend(t *testing.T) {
 			t.Fatal("sender v6 certificate never expired")
 		}
 	}
-	if got := askRecipient(t, s, sender.ID, "resolve", address, true); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKey) {
+	if got := askRecipient(t, s, sender.ID, "resolve", address, true); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKey) || got.SelectedCapability != "v4" {
 		t.Fatalf("expired sender v6 signed resolve did not fall back to v4: %+v", got)
 	}
-	if got := askRecipient(t, s, sender.ID, "check", internalAddr, true); got.Capability == "pq" {
+	if got := askRecipient(t, s, sender.ID, "check", address, true); !got.HasKey || got.SelectedCapability != "v4" {
+		t.Fatalf("expired sender v6 signed check did not report v4 selectedCapability: %+v", got)
+	}
+	if got := askRecipient(t, s, sender.ID, "check", internalAddr, true); got.Capability == "pq" || got.SelectedCapability == "pq" {
 		t.Fatalf("expired sender v6 signed check should not select internal PQ: %+v", got)
 	}
-	if got := askRecipient(t, s, sender.ID, "resolve", address, false); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKeyV6) {
+	if got := askRecipient(t, s, sender.ID, "resolve", address, false); !got.Usable || strings.TrimSpace(got.PublicKey) != strings.TrimSpace(recipient.PGPPublicKeyV6) || got.SelectedCapability != "pq" {
 		t.Fatalf("expired sender v6 unsigned resolve should still prefer v6: %+v", got)
 	}
-	if got := askRecipient(t, s, sender.ID, "check", internalAddr, false); got.Capability != "pq" {
+	if got := askRecipient(t, s, sender.ID, "check", internalAddr, false); got.Capability != "pq" || got.SelectedCapability != "pq" {
 		t.Fatalf("expired sender v6 unsigned check should still discover internal PQ: %+v", got)
 	}
 }
