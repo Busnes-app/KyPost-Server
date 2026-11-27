@@ -1,12 +1,10 @@
 module github.com/Busnes-app/kypost-server/backend
 
-go 1.26.9
-
-toolchain go1.27.4
+go 1.27.4
 
 require (
 	github.com/BrianLeishman/go-imap v0.1.28
-	github.com/Busnes-app/ky-primitives v0.11.0
+	github.com/Busnes-app/ky-primitives v0.12.0
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/ProtonMail/gopenpgp/v3 v3.5.2
 	github.com/SherClockHolmes/webpush-go v1.4.0
@@ -19,7 +17,11 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/jhillyerd/enmime/v2 v2.5.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	golang.org/x/crypto v0.59.0
+	golang.org/x/net v0.63.0
 	golang.org/x/oauth2 v0.38.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/text v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.63.0
 )
@@ -51,6 +53,7 @@ require (
 	github.com/olekukonko/errors v1.3.0 // indirect
 	github.com/olekukonko/ll v0.1.9 // indirect
 	github.com/olekukonko/tablewriter v1.1.5 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect
@@ -65,14 +68,6 @@ require (
 	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-)
-
-require (
-	github.com/pkg/errors v0.9.1 // indirect
-	golang.org/x/crypto v0.59.0
-	golang.org/x/net v0.63.0
-	golang.org/x/sys v0.50.0
-	golang.org/x/text v0.44.0
 )
 
 replace github.com/BrianLeishman/go-imap => ./third_party/go-imap
