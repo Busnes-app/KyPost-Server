@@ -474,7 +474,7 @@ export async function buildSignedDelivery(
   const signedPart = buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments, true);
   const { armoredSignature, hashAlgorithm } = await (await pgpEngine()).signDetached(
     new TextEncoder().encode(signedPart),
-    (await activeKeyForVersion(4))
+    await signOnlyKey()
   );
   const hash = MICALG_BY_HASH[hashAlgorithm] ?? "pgp-sha256";
   return { recipients, ciphertext: wrapAsSignedMime(envelope, signedPart, armoredSignature, hash) };
@@ -836,6 +836,16 @@ async function activeKeyForVersion(version: number): Promise<string> {
   const key = ring.activeKeys.find(key => key.info.version === version);
   if (!key) throw new Error(`No active v${version} certificate. Restore the complete current keyring.`);
   return key.armored;
+}
+
+/** Prefer v4 for sign-only outside interoperability, but preserve v6-only identities. */
+async function signOnlyKey(): Promise<string> {
+  const ring = await parseKeyring(requireUnlockedKeyMaterial());
+  const v4 = ring.activeKeys.find(key => key.info.version === 4);
+  if (v4) return v4.armored;
+  const fallback = ring.activeKeys[0];
+  if (fallback) return fallback.armored;
+  throw new Error("No active signing certificate. Restore the complete current keyring.");
 }
 
 async function selfEncryptionKey(): Promise<string> {

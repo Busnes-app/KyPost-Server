@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
@@ -122,6 +121,9 @@ func (s *Server) resolveRecipient(ctx context.Context, sender users.User, addres
 	if rk.Err != nil || rk.Tier == tierKeyChanged || !resolver.preferV6 {
 		return rk, rk.Err
 	}
+	if rk.Usable && rk.Tier == tierContactVerified && rk.SelectedCapability == "pq" {
+		return rk, nil
+	}
 	local, found, err := s.localPQRecipient(sender, address, resolver)
 	if err != nil {
 		return resolvedKey{}, err
@@ -130,6 +132,69 @@ func (s *Server) resolveRecipient(ctx context.Context, sender users.User, addres
 		return local, nil
 	}
 	return rk, nil
+}
+
+// internalPQIndex caches proven org-internal address ownership for one
+// request's keyResolver so multi-recipient checks and sends scan org accounts
+// and address stores once instead of once per recipient.
+type internalPQIndex struct {
+	failed    bool
+	owners    map[string]users.User
+	ambiguous map[string]bool
+	scans     int
+}
+
+func (s *Server) internalPQIndexFor(sender users.User, resolver *keyResolver) (*internalPQIndex, error) {
+	if resolver != nil && resolver.internalPQ != nil {
+		return resolver.internalPQ, nil
+	}
+	accounts, err := s.users.List()
+	if err != nil {
+		return nil, err
+	}
+	idx := &internalPQIndex{
+		owners:    make(map[string]users.User),
+		ambiguous: make(map[string]bool),
+		scans:     1,
+	}
+	claims := make(map[string]int)
+	for _, u := range accounts {
+		if !u.Active || u.OrgID != sender.OrgID || !s.orgAdmit(AuthContext{OrgID: sender.OrgID}, u) {
+			continue
+		}
+		addresses, err := s.provenAddresses(u.ID)
+		if err != nil {
+			// Unknown ownership closes internal discovery, not the whole resolve.
+			s.logger.Error("internal PQ discovery could not read proven addresses", "user_id", u.ID, "error", err.Error())
+			idx.failed = true
+			if resolver != nil {
+				resolver.internalPQ = idx
+			}
+			return idx, nil
+		}
+		seenForUser := make(map[string]bool, len(addresses))
+		pqReady := u.PGPProtection() == users.PGPProtectionClient && s.pgpV6Ready(u)
+		for _, a := range addresses {
+			norm := strings.ToLower(strings.TrimSpace(a))
+			if norm == "" || seenForUser[norm] {
+				continue
+			}
+			seenForUser[norm] = true
+			claims[norm]++
+			if claims[norm] > 1 {
+				idx.ambiguous[norm] = true
+				delete(idx.owners, norm)
+				continue
+			}
+			if pqReady {
+				idx.owners[norm] = u
+			}
+		}
+	}
+	if resolver != nil {
+		resolver.internalPQ = idx
+	}
+	return idx, nil
 }
 
 // provenAddresses are the addresses that stand for this account to other
@@ -162,36 +227,22 @@ func (s *Server) provenAddresses(userID string) ([]string, error) {
 // internal key. Existing contact pins still veto a changed certificate;
 // adding v6 never replaces the v4 pin.
 func (s *Server) localPQRecipient(sender users.User, address string, resolver *keyResolver) (resolvedKey, bool, error) {
-	accounts, err := s.users.List()
+	idx, err := s.internalPQIndexFor(sender, resolver)
 	if err != nil {
 		return resolvedKey{}, false, err
 	}
-	var owner *users.User
-	claims := 0
-	for i, u := range accounts {
-		if !u.Active || u.OrgID != sender.OrgID || !s.orgAdmit(AuthContext{OrgID: sender.OrgID}, u) {
-			continue
-		}
-		addresses, err := s.provenAddresses(u.ID)
-		if err != nil {
-			// Unknown ownership closes internal discovery, not the whole resolve.
-			s.logger.Error("internal PQ discovery could not read proven addresses", "user_id", u.ID, "error", err.Error())
-			return resolvedKey{}, false, nil
-		}
-		if !slices.ContainsFunc(addresses, func(a string) bool { return strings.EqualFold(a, address) }) {
-			continue
-		}
-		if claims++; u.PGPProtection() == users.PGPProtectionClient && s.pgpV6Ready(u) {
-			owner = &accounts[i]
-		}
-	}
-	if claims > 1 {
-		s.logger.Warn("internal PQ discovery refused an address proven by two accounts", "user_id", sender.ID)
-	}
-	if claims != 1 || owner == nil {
+	if idx.failed {
 		return resolvedKey{}, false, nil
 	}
-	u := *owner
+	norm := strings.ToLower(strings.TrimSpace(address))
+	if idx.ambiguous[norm] {
+		s.logger.Warn("internal PQ discovery refused an address proven by two accounts", "user_id", sender.ID)
+		return resolvedKey{}, false, nil
+	}
+	u, ok := idx.owners[norm]
+	if !ok {
+		return resolvedKey{}, false, nil
+	}
 	c, found, err := findContact(resolver.store, address)
 	if err != nil {
 		return resolvedKey{}, false, err

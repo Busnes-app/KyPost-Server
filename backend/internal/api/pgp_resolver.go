@@ -76,6 +76,9 @@ type keyResolver struct {
 	// auto-create — it falls through to the pickup path. A key the user
 	// already holds (resolve step 1) is unaffected.
 	suppressed map[string]bool
+	// internalPQ lazily caches the request-scoped proven-address index for
+	// internal PQ discovery so multi-recipient requests scan org accounts once.
+	internalPQ *internalPQIndex
 }
 
 // findContact returns the first contact whose email matches, case-

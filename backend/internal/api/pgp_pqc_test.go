@@ -193,9 +193,31 @@ func TestInternalPQDiscoveryRequiresProvenOwnership(t *testing.T) {
 	if rk, found, err := s.localPQRecipient(sender, shared, resolver); err != nil || !found || rk.Armored != claimant.PGPPublicKeyV6 {
 		t.Fatal("proven owner's certificate not returned", found, err)
 	}
+	// A second lookup on the same request-scoped resolver must reuse the cached index.
+	if rk, found, err := s.localPQRecipient(sender, "nobody@example.invalid", resolver); err != nil || found || rk.Armored != "" {
+		t.Fatal("unexpected owner for unproven address", found, err)
+	}
+	if resolver.internalPQ == nil || resolver.internalPQ.scans != 1 {
+		t.Fatalf("expected single request-scoped scan, got %+v", resolver.internalPQ)
+	}
+	// A contact with an already-pinned usable PQ key must skip internal org scanning altogether.
+	pinnedAddr := "pinned@example.invalid"
+	pinnedV6 := testV6Key(t, pinnedAddr, true)
+	must1(must1(s.userContactsStore(sender.ID)).Upsert(contacts.Contact{
+		FormattedName: "Pinned", Emails: []contacts.ContactValue{{Value: pinnedAddr}},
+		PGPKeyV6: pinnedV6, PGPKeyV6Fingerprint: fingerprintOf(t, pinnedV6),
+	}))
+	pinnedResolver := &keyResolver{store: must1(s.userContactsStore(sender.ID)), preferV6: true}
+	if rk, err := s.resolveRecipient(context.Background(), sender, pinnedAddr, pinnedResolver); err != nil || rk.Armored != pinnedV6 || rk.SelectedCapability != "pq" {
+		t.Fatalf("pinned PQ contact not resolved: %+v err=%v", rk, err)
+	}
+	if pinnedResolver.internalPQ != nil {
+		t.Fatal("pinned usable PQ contact triggered unnecessary internal account scan")
+	}
 	rival := pqAccount(t, s, "rival", testV6Key(t, "rival@example.invalid", true))
 	proveAlias(t, s, rival.ID, shared)
-	if _, found, err := s.localPQRecipient(sender, shared, resolver); err != nil || found {
+	freshResolver := &keyResolver{store: must1(s.userContactsStore(sender.ID)), preferV6: true}
+	if _, found, err := s.localPQRecipient(sender, shared, freshResolver); err != nil || found {
 		t.Fatal("ambiguous ownership selected an account", found, err)
 	}
 	if got := askRecipient(t, s, sender.ID, "check", shared, false); got.HasKey || got.Capability == "pq" {

@@ -118,3 +118,27 @@ it("never borrows a converted generation for a still-unlocked legacy key", async
   vi.mocked(getPGPBootstrap).mockResolvedValue({ keyring: { version: 2, materialGeneration: 1 } } as Awaited<ReturnType<typeof getPGPBootstrap>>);
   expect(await unlockedMaterialGeneration()).toBeUndefined();
 });
+
+it("signs sign-only mail with v4 on dual keyrings and preserves v6-only identities", async () => {
+  const sigVersion = async (ciphertext: string) => {
+    const sig = ciphertext.match(/-----BEGIN PGP SIGNATURE-----[\s\S]+?-----END PGP SIGNATURE-----/)?.[0];
+    expect(sig).toBeTruthy();
+    const bytes = await (await pgpEngine()).dearmor(sig!);
+    const header = bytes[0];
+    expect(header & 64).toBeTruthy();
+    expect(header & 63).toBe(2);
+    const lenOctet = bytes[1];
+    const bodyOffset = lenOctet < 192 ? 2 : lenOctet < 224 ? 3 : 6;
+    return bytes[bodyOffset];
+  };
+
+  unlockWithArmoredKey(raw);
+  const dualSigned = await buildSignedDelivery(envelope, "text/plain", "dual", envelope.to);
+  expect(dualSigned.ciphertext).toContain("multipart/signed");
+  expect(await sigVersion(dualSigned.ciphertext)).toBe(4);
+
+  unlockWithArmoredKey(v6.armoredPrivateKey);
+  const v6Signed = await buildSignedDelivery(envelope, "text/plain", "v6-only", envelope.to);
+  expect(v6Signed.ciphertext).toContain("multipart/signed");
+  expect(await sigVersion(v6Signed.ciphertext)).toBe(6);
+});
