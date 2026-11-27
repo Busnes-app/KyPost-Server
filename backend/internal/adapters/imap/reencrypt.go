@@ -24,8 +24,8 @@ var uidNextResponse = regexp.MustCompile(`(?im)\([^()]*\bUIDNEXT\s+(\d+)[^()]*\)
 func folderMinAppendedUID(d *goimap.Dialer, folder string, origUID int) (int, error) {
 	if resp, err := d.Exec(`STATUS "`+goimap.AddSlashes.Replace(folder)+`" (UIDNEXT)`, true, 0, nil); err == nil {
 		if match := uidNextResponse.FindStringSubmatch(resp); len(match) == 2 {
-			if uidNext, parseErr := strconv.ParseUint(match[1], 10, 32); parseErr == nil && uidNext > 0 {
-				bound := int(uidNext)
+			if uidNext, parseErr := strconv.Atoi(match[1]); parseErr == nil && uidNext > 0 {
+				bound := uidNext
 				if bound <= origUID {
 					bound = origUID + 1
 				}
