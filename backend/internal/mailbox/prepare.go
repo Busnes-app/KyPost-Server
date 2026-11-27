@@ -45,18 +45,27 @@ func PrepareAccount(stateRoot string, owner Owner, address string, limits Limits
 // PrepareAccountContext cancels lock contention and checks cancellation before
 // publication. Blocking disk calls remain a separate deployment qualification.
 func PrepareAccountContext(ctx context.Context, stateRoot string, owner Owner, address string, limits Limits) (string, error) {
-	return prepareAccountContext(ctx, filepath.Join(stateRoot, "users"), owner, address, limits, publishPreparedAccount)
+	return prepareAccountContext(ctx, filepath.Join(stateRoot, "users"), owner, address, limits, true, publishPreparedAccount)
+}
+
+// PrepareAccountStorageContext prepares the account's Postgres mailbox and state
+// schemas in table mode without writing native-mailbox.json yet. AllocateNativeAccount
+// calls this before publishing the accounts row (since vol.Table locks the committed
+// accounts row FOR KEY SHARE), then calls PrepareAccountContext to write the manifest.
+// In file mode it behaves identically to PrepareAccountContext.
+func PrepareAccountStorageContext(ctx context.Context, stateRoot string, owner Owner, address string, limits Limits) (string, error) {
+	return prepareAccountContext(ctx, filepath.Join(stateRoot, "users"), owner, address, limits, false, publishPreparedAccount)
 }
 
 // PrepareMailboxContext prepares a mailbox under parent ($STATE_DIR/mailboxes
 // for extra mailboxes). Its state.db is created like an account's but holds
 // mail state only; callers never write device or notification rows to it.
 func PrepareMailboxContext(ctx context.Context, parent string, owner Owner, address string, limits Limits) (string, error) {
-	return prepareAccountContext(ctx, parent, owner, address, limits, publishPreparedAccount)
+	return prepareAccountContext(ctx, parent, owner, address, limits, true, publishPreparedAccount)
 }
 
 // root is the parent directory the mailbox is published into.
-func prepareAccountContext(ctx context.Context, root string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
+func prepareAccountContext(ctx context.Context, root string, owner Owner, address string, limits Limits, writeManifest bool, publish func(string, string) error) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -64,10 +73,13 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 	if !fsutil.SafePathComponent(owner.Mailbox) || err != nil || a.Address != address {
 		return "", ErrPreparation
 	}
+	target := filepath.Join(root, owner.Mailbox)
+	if doc := vol.OpenDocument(filepath.Join(target, preparationFile)); dbbackend.Postgres() && doc.IsTable() {
+		return prepareAccountTable(ctx, root, target, doc, owner, address, limits, writeManifest)
+	}
 	if err = os.MkdirAll(root, 0700); err != nil {
 		return "", err
 	}
-	target := filepath.Join(root, owner.Mailbox)
 	ctx, release, err := vol.Lock(ctx, target, vol.FenceMailbox+owner.Mailbox, vol.Exclusive)
 	if err != nil {
 		return "", err
@@ -171,6 +183,132 @@ func prepareAccountContext(ctx context.Context, root string, owner Owner, addres
 	}
 	if err = fsutil.SyncDir(root); err != nil {
 		return "", err
+	}
+	return source, nil
+}
+
+// prepareAccountTable publishes a mailbox in table mode: schemas are created under a
+// logical stage prefix, staged under the target names, published by writing
+// native-mailbox.json to the documents table, and settled. Nothing is created on disk.
+// When writeManifest is false (table-mode AllocateNativeAccount before the accounts row
+// commits), schemas are staged and settled without writing native-mailbox.json; the
+// subsequent writeManifest=true call validates those settled schemas and writes the manifest.
+func prepareAccountTable(ctx context.Context, root, target string, doc *vol.Document, owner Owner, address string, limits Limits, writeManifest bool) (string, error) {
+	ctx, release, err := vol.Lock(ctx, target, vol.FenceMailbox+owner.Mailbox, vol.Exclusive)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	targets := []string{filepath.Join(target, "state.db"), filepath.Join(target, "mailbox", "mailbox.db")}
+	if _, err = doc.Read(); err == nil {
+		if err = dbbackend.Settle(ctx, targets...); err != nil {
+			return "", err
+		}
+		return preparedSource(target, owner, address, limits)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if source, valErr := validatePreparedDatabases(target, owner, limits); valErr == nil {
+		if writeManifest {
+			if err = vol.PersistJSON(doc, preparedAccount{owner, address, limits, source}); err != nil {
+				return "", fmt.Errorf("%w: %v", ErrPreparation, err)
+			}
+		}
+		return source, nil
+	}
+	id, err := fsutil.NewUUIDv4()
+	if err != nil {
+		return "", err
+	}
+	stage := filepath.Join(root, ".native-prepare-"+id)
+	defer func() { _ = dbbackend.Remove(stage) }()
+	store, err := Open(filepath.Join(stage, "mailbox"), owner, limits)
+	if err != nil {
+		return "", err
+	}
+	client, err := NewClient(store, address)
+	if err != nil {
+		_ = store.Close()
+		return "", err
+	}
+	source := client.MailSourceIdentity()
+	if err = store.Close(); err != nil {
+		return "", err
+	}
+	account := filepath.Join(stage, "account")
+	st, err := state.NewNative(account, source)
+	if err != nil {
+		return "", err
+	}
+	if err = st.Close(); err != nil {
+		return "", err
+	}
+	if err = ctx.Err(); err != nil {
+		return "", err
+	}
+	err = dbbackend.Stage(ctx, map[string]string{
+		filepath.Join(stage, "account", "state.db"):   targets[0],
+		filepath.Join(stage, "mailbox", "mailbox.db"): targets[1],
+	}, publishSchemasStep)
+	if err == nil {
+		if writeManifest {
+			if err = vol.PersistJSON(doc, preparedAccount{owner, address, limits, source}); err != nil {
+				err = errors.Join(err, dbbackend.Unstage(context.WithoutCancel(ctx), targets...))
+			} else {
+				err = dbbackend.Settle(context.WithoutCancel(ctx), targets...)
+			}
+		} else {
+			err = dbbackend.Settle(context.WithoutCancel(ctx), targets...)
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrPreparation, err)
+	}
+	return source, nil
+}
+
+// validatePreparedDatabases opens existing settled state.db and mailbox.db read-only
+// and verifies their schema, owner, limits, namespace, reference generation and source
+// binding, without reading native-mailbox.json.
+func validatePreparedDatabases(dir string, owner Owner, limits Limits) (string, error) {
+	stateDB, _, err := openHeld(filepath.Join(dir, "state.db"))
+	if err != nil {
+		return "", err
+	}
+	defer stateDB.Close()
+	mailDB, _, err := openHeld(filepath.Join(dir, "mailbox", "mailbox.db"))
+	if err != nil {
+		return "", err
+	}
+	defer mailDB.Close()
+	var tables int
+	if e := stateDB.QueryRow(pick(stateDB.pg, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')",
+		"SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')")).Scan(&tables); e != nil || tables != 10 {
+		return "", ErrPreparation
+	}
+	var source string
+	if err = stateDB.QueryRow("SELECT value FROM meta WHERE key='mail_source'").Scan(&source); err != nil || source == "" {
+		return "", ErrPreparation
+	}
+	if err = mailDB.QueryRow(pick(mailDB.pg, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')",
+		"SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')")).Scan(&tables); err != nil || tables != 9 {
+		return "", ErrPreparation
+	}
+	var storedOwner Owner
+	var storedLimits Limits
+	var namespace string
+	if err = mailDB.QueryRow("SELECT issuer,subject,mailbox,message_bytes,payload_bytes,records FROM identity WHERE id=1").Scan(&storedOwner.Issuer, &storedOwner.Subject, &storedOwner.Mailbox, &storedLimits.MessageBytes, &storedLimits.PayloadBytes, &storedLimits.Records); err != nil || storedOwner != owner || storedLimits != limits {
+		return "", ErrPreparation
+	}
+	if err = mailDB.QueryRow("SELECT token FROM namespace WHERE id=1").Scan(&namespace); err != nil || namespace == "" {
+		return "", ErrPreparation
+	}
+	if _, err = referenceGenerationOn(mailDB, mailDB.pg); err != nil {
+		return "", ErrPreparation
+	}
+	client := &Client{store: &Store{owner: storedOwner, namespace: namespace}}
+	if client.MailSourceIdentity() != source {
+		return "", ErrPreparation
 	}
 	return source, nil
 }
@@ -327,7 +465,7 @@ func HoldAdmissionHandles(max int) {
 func checkHeld(dir string, owner Owner, address string, limits Limits) (string, error) {
 	p, opened := useHeld(dir)
 	source, err := p.check(owner, address, limits)
-	if err == nil && opened {
+	if err == nil && opened && !vol.OpenDocument(filepath.Join(dir, preparationFile)).IsTable() {
 		err = fsutil.SyncDir(filepath.Dir(dir))
 	}
 	if err != nil {
@@ -641,25 +779,36 @@ func ConvergeLimits(ctx context.Context, dir string, owner Owner, limits Limits)
 	if !limits.valid() || !fsutil.SafePathComponent(owner.Mailbox) || filepath.Base(dir) != owner.Mailbox {
 		return false, ErrPreparation
 	}
-	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
-		return false, nil
+	path := filepath.Join(dir, preparationFile)
+	doc := vol.OpenDocument(path)
+	if !doc.IsTable() {
+		if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
 	}
 	ctx, release, err := vol.Lock(ctx, dir, vol.FenceMailbox+owner.Mailbox, vol.Exclusive)
 	if err != nil {
 		return false, err
 	}
 	defer release()
-	path := filepath.Join(dir, preparationFile)
-	info, err := os.Lstat(path)
+	if !doc.IsTable() {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 8192 {
+			return false, ErrPreparation
+		}
+	}
+	raw, err := doc.Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 8192 {
-		return false, ErrPreparation
-	}
-	raw, err := os.ReadFile(path)
 	if err != nil {
 		return false, err
+	}
+	if len(raw) > 8192 {
+		return false, ErrPreparation
 	}
 	var p preparedAccount
 	if err = json.Unmarshal(raw, &p); err != nil || p.Owner != owner {
@@ -684,5 +833,5 @@ func ConvergeLimits(ctx context.Context, dir string, owner Owner, limits Limits)
 		return false, err
 	}
 	p.Limits = limits
-	return true, fsutil.PersistJSONFile(path, p)
+	return true, vol.PersistJSON(doc, p)
 }

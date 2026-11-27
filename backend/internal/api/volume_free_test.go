@@ -58,8 +58,7 @@ func rootSnapshot(t *testing.T, roots map[string]string) map[string]string {
 // The volume-free test (MH7): with table documents mounted, every org-bound route's flows
 // (the cross-org matrix: contacts, groups, rules, settings, masked addresses, send-as, PGP,
 // devices, agent tokens and the mailbox routes) change nothing on the host's disk but the
-// per-host files tenancy.HostFiles names and the stores the start assertion still refuses
-// (tenancy.TargetFile). Directories are not compared.
+// per-host files tenancy.HostFiles names. Directories are not compared.
 func TestTableModeWritesNothingOnTheHostsDisk(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	fx, logs := newOrgFixture(t)
@@ -71,8 +70,7 @@ func TestTableModeWritesNothingOnTheHostsDisk(t *testing.T) {
 	for _, p := range slices.Sorted(maps.Keys(after)) {
 		// Keys: this fixture provisions none, so a lazy key is created here; in table mode
 		// creating one is refused (MH5, TestTableModeRequiresProvisionedKeysAndCreatesNone).
-		switch tenancy.Targets[path.Base(p)] {
-		case tenancy.TargetKey, tenancy.TargetFile:
+		if tenancy.Targets[path.Base(p)] == tenancy.TargetKey {
 			continue
 		}
 		if before[p] == after[p] || hostFile(p) {

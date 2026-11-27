@@ -30,7 +30,7 @@ var (
 	oooSendSMTP    = mailmsg.SMTPDeliver
 	oooQueueNative = func(ctx context.Context, p *Poller, mailboxID, id string, job mailbox.OutboundJob) error {
 		return sso.NativeOutbound{ConfigDir: p.configDir, StateRoot: p.stateDir, SecretDir: config.SecretDir(), Accounts: p.users,
-			Domains: sso.NewNativeDomainStore(p.configDir), Settings: sso.NewStore(p.configDir), Logger: p.log}.Queue(ctx, mailboxID, id, job)
+			Domains: sso.NewNativeDomainStore(p.configDir), Settings: sso.NewStore(p.configDir), Orgs: p.orgGate, Logger: p.log}.Queue(ctx, mailboxID, id, job)
 	}
 	oooSuiteMember = func(ctx context.Context, p *Poller, u users.User, addr string) bool {
 		dir, ok := sso.NewStore(p.configDir).Load().SuiteDirectory()

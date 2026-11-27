@@ -84,7 +84,13 @@ func startDocuments(ctx context.Context, configDir, stateDir, secretDir, mode st
 			return nil, fmt.Errorf("table mode requires a provisioned %s in SECRET_DIR on every host", name)
 		}
 	}
-	unprovision := cryptutil.ProvisionKeys(append(slices.Collect(maps.Values(keys)), secretDir)...)
+	provisioned := append(slices.Collect(maps.Values(keys)), secretDir)
+	for _, env := range []string{"PUSH_RELAY_KEY_FILE", "APNS_RELAY_KEY_FILE"} {
+		if p := strings.TrimSpace(os.Getenv(env)); p != "" {
+			provisioned = append(provisioned, p)
+		}
+	}
+	unprovision := cryptutil.ProvisionKeys(provisioned...)
 	started := false
 	defer func() {
 		if !started {

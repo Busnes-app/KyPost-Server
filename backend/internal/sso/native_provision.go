@@ -648,12 +648,12 @@ func (s *LifecycleStore) reconcileNativeMailboxContext(ctx context.Context, stat
 		return result, err
 	}
 	defer release()
-	return s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, localID, domain, limits, disableOnly, false, prepare)
+	return s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, localID, domain, limits, disableOnly, false, false, prepare)
 }
 
 // domain is the freshly proven domain; "" means the requested primary is not on
 // a configured domain, which is recorded as a failure for an active subject.
-func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root, issuer, subject, localID, domain string, limits mailbox.Limits, disableOnly, hosted bool, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
+func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root, issuer, subject, localID, domain string, limits mailbox.Limits, disableOnly, hosted, deferManifest bool, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
 	var result NativeAssignment
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -785,6 +785,11 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 		if e != nil {
 			a.Status = "failed"
 			a.Failure = "storage_conflict_or_unavailable"
+		} else if deferManifest && a.Source == "" {
+			src := result.Source
+			result = a
+			result.Source = src
+			return nil
 		} else {
 			a.Status = "applied"
 			if result.Source != "" {

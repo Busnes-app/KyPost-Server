@@ -300,6 +300,11 @@ func runReceivingServeTLS(address string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	releaseDocuments, err := startDocuments(ctx, config.ConfigDir(), config.StateDir(), config.SecretDir(), config.TenancyMulti)
+	if err != nil {
+		return err
+	}
+	defer releaseDocuments()
 	open, cancel := context.WithTimeout(ctx, 30*time.Second)
 	r, err := openReceivingRuntime(open, false)
 	cancel()

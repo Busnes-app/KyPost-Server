@@ -20,6 +20,7 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
@@ -186,6 +187,9 @@ func (s *RelaySender) ensureKey(_ context.Context) (string, error) {
 			return key, nil
 		}
 	}
+	if err := cryptutil.RefuseCreate(path); err != nil {
+		return "", err
+	}
 	if !s.lastRegAttempt.IsZero() && time.Since(s.lastRegAttempt) < registerRetryInterval {
 		return "", fmt.Errorf("%s relay key unavailable (self-registration backing off)", s.prefix)
 	}
@@ -234,6 +238,9 @@ func resolveRelayKeyWithPrefix(log *logging.Logger, prefix, relayURL string, cli
 		}
 	}
 
+	if err := cryptutil.RefuseCreate(path); err != nil {
+		return "", err
+	}
 	key, err := registerWithRelay(relayURL, client)
 	if err != nil {
 		return "", err
@@ -668,6 +675,9 @@ func (s *RelaySender) renewKey(stale string) (string, error) {
 			s.apiKey = key
 			return key, nil
 		}
+	}
+	if err := cryptutil.RefuseCreate(path); err != nil {
+		return "", err
 	}
 	if !s.lastRegAttempt.IsZero() && time.Since(s.lastRegAttempt) < registerRetryInterval {
 		return "", fmt.Errorf("%s relay re-registration backing off", s.prefix)

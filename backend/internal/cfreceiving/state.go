@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	_ "modernc.org/sqlite"
@@ -46,7 +47,11 @@ type hostRecord struct {
 // hold it; they read the credentials once per cycle and recheck under it only
 // when refused.
 func (k Keys) Lock(ctx context.Context) (func(), error) {
-	return fsutil.LockFileContext(ctx, filepath.Join(k.Dir, CredentialsFile))
+	path := filepath.Join(k.Dir, CredentialsFile)
+	if err := cryptutil.RefuseCreate(path); err != nil {
+		return nil, err
+	}
+	return fsutil.LockFileContext(ctx, path)
 }
 
 func (k Keys) host() (hostRecord, error) {
@@ -62,11 +67,15 @@ func (k Keys) host() (hostRecord, error) {
 }
 
 func (k Keys) save(name string, v any) error {
+	path := filepath.Join(k.Dir, name)
+	if err := cryptutil.RefuseCreate(path); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	return fsutil.AtomicWriteFile(filepath.Join(k.Dir, name), raw, 0o600)
+	return fsutil.AtomicWriteFile(path, raw, 0o600)
 }
 
 // Load returns the current material, any in-flight rotation and whether this

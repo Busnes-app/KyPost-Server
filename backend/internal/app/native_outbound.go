@@ -9,6 +9,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -21,6 +22,9 @@ func startNativeOutbound(ctx context.Context, d runDeps) <-chan struct{} {
 		return done
 	}
 	sender := sso.NativeOutbound{ConfigDir: d.configDir, StateRoot: d.stateDir, SecretDir: config.SecretDir(), Accounts: d.users, Domains: sso.NewNativeDomainStore(d.configDir), Settings: sso.NewStore(d.configDir), Logger: d.logger}
+	if d.tenancy != nil {
+		sender.Orgs = &tenancy.Gate{DB: d.tenancy, StaffOrg: d.staffOrg}
+	}
 	return startNativeOutboundRuntime(ctx, d, sender)
 }
 

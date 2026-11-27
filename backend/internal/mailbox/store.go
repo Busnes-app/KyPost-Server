@@ -167,17 +167,20 @@ func open(dir string, owner Owner, limits Limits, source string, pg bool) (*Stor
 	if !validText(owner.Issuer, 2048) || !validText(owner.Subject, 512) || !fsutil.SafePathComponent(owner.Mailbox) || !limits.valid() {
 		return nil, errors.New("invalid mailbox identity or limits")
 	}
-	if source == "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+	table := pg && vol.OpenDocument(filepath.Join(dir, preparationFile)).IsTable()
+	if !table {
+		if source == "" {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return nil, err
+			}
+		}
+		info, err := os.Lstat(dir)
+		if err != nil {
 			return nil, err
 		}
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("mailbox directory must be owner-only")
+		if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+			return nil, errors.New("mailbox directory must be owner-only")
+		}
 	}
 	path, err := filepath.Abs(filepath.Join(dir, "mailbox.db"))
 	if err != nil {
@@ -204,7 +207,7 @@ func open(dir string, owner Owner, limits Limits, source string, pg bool) (*Stor
 		}
 		db.SetMaxOpenConns(1)
 	}
-	s := &Store{db: db, owner: owner, limits: limits, dir: dir, postgres: pg, table: pg && vol.OpenDocument(filepath.Join(dir, preparationFile)).IsTable()}
+	s := &Store{db: db, owner: owner, limits: limits, dir: dir, postgres: pg, table: table}
 	if source != "" {
 		var storedOwner Owner
 		var storedLimits Limits

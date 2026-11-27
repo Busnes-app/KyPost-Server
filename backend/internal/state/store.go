@@ -16,6 +16,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // Store is one account's state, backed by SQLite.
@@ -178,8 +179,10 @@ func newWithMailSource(baseDir, source string, existing bool) (*Store, error) {
 	expected := ""
 	if existing {
 		expected = source
-	} else if err := os.MkdirAll(baseDir, 0o700); err != nil {
-		return nil, err
+	} else if !dbbackend.Postgres() || !vol.OpenDocument(filepath.Join(baseDir, "state.db")).IsTable() {
+		if err := os.MkdirAll(baseDir, 0o700); err != nil {
+			return nil, err
+		}
 	}
 	db, err := openDB(filepath.Join(baseDir, "state.db"), expected)
 	if err != nil {

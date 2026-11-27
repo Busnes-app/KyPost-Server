@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -27,6 +29,26 @@ var errNoSuiteDirectory = errors.New("the suite directory is not configured")
 
 // errOrgMailboxQuota refuses an extra mailbox past the org's mailboxes quota.
 var errOrgMailboxQuota = errors.New("this organisation has reached its mailbox quota")
+
+// UseTenancy enables multi-tenant enforcement on s with the open tenancy.db store,
+// the staff org ID, and the cells this replica serves (KY_CELLS). It also connects
+// the SSO lifecycle's address-tombstone and purge checks (K10, K PR 7).
+func (s *Server) UseTenancy(db *sql.DB, staffOrg string, cells []string) {
+	s.tenancy = db
+	s.staffOrg = staffOrg
+	s.users.StaffOrg = staffOrg
+	s.cells = slices.Clone(cells)
+	if s.ssoLifecycle != nil {
+		s.ssoLifecycle.Tombstoned = func(address string) (bool, error) {
+			key, err := tenancy.TombstoneKey(context.Background(), db, config.SecretDir())
+			if err != nil {
+				return false, err
+			}
+			return tenancy.Tombstoned(context.Background(), db, tenancy.Tombstone(key, address))
+		}
+		s.ssoLifecycle.Purged = s.mailboxPurged
+	}
+}
 
 func (s *Server) orgGate() *tenancy.Gate {
 	return &tenancy.Gate{DB: s.tenancy, StaffOrg: s.staffOrg}

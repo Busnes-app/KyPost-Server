@@ -31,6 +31,7 @@ func TestTableOutboundIgnoresHostLocalIdleFiles(t *testing.T) {
 	// A different replica cannot clear a stale mark on this host. A directory
 	// at the old lock path also proves enqueue/claim never opens that file.
 	mark := []byte("retained host-local idle hint")
+	must(t, os.MkdirAll(dir, 0700))
 	must(t, os.WriteFile(filepath.Join(dir, OutboundIdleFile), mark, 0600))
 	must(t, os.Mkdir(filepath.Join(dir, OutboundIdleFile+".lock"), 0700))
 	if probe(t, dir) {

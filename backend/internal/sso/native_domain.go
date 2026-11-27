@@ -272,7 +272,7 @@ func (s *NativeDomainStore) readSetDocument(doc *vol.Document) (NativeDomainSet,
 	set := NativeDomainSet{Domains: map[string]NativeDomain{}, Retired: []string{}}
 	var raw nativeDomainSet
 	present := false
-	if err := vol.LoadJSON(doc, func(v nativeDomainSet) { raw = v; present = true }, nil); err != nil || !present {
+	if err := vol.LoadJSON(doc, func(v nativeDomainSet) { raw = v; present = true }, func() error { return nil }); err != nil || !present {
 		return set, err
 	}
 	invalid := NativeDomainSet{Domains: map[string]NativeDomain{}, Retired: []string{}}
