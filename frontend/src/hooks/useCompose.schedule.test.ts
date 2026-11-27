@@ -51,7 +51,9 @@ const buildEncryptedDeliveries = vi.fn(async (_envelope: { date?: Date }) => [{ 
 const buildEncryptedDraft = vi.fn(async (_envelope: { date?: Date }) => "draft-ciphertext");
 const sealToSelf = vi.fn(async (_text: string): Promise<string> => "sealed-test");
 vi.mock("../lib/pgpClient", () => ({
+  splitEncryptionGroups: async (groups: unknown[]) => groups,
   buildEncryptedDeliveries: (envelope: { date?: Date }) => buildEncryptedDeliveries(envelope),
+  unlockedMaterialGeneration: async () => 1,
   buildEncryptedDraft: (envelope: { date?: Date }) => buildEncryptedDraft(envelope),
   buildEncryptedSentCopy: async () => "sent-ciphertext",
   buildSignedDelivery: vi.fn(),

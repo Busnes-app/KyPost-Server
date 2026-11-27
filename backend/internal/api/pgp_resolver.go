@@ -60,6 +60,7 @@ type resolvedKey struct {
 // → keyserver — for one user's outgoing mail, honoring that user's
 // pgpdiscovery.Settings and TOFU pinning against their contacts store.
 type keyResolver struct {
+	preferV6 bool // browser P4; legacy server senders keep their v4 signature path
 	store    *contacts.Store
 	settings pgpdiscovery.Settings
 	// discover gates whether WKD/keyserver lookups run at all; false means
@@ -227,6 +228,14 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 		return resolvedKey{Tier: tierNone, Err: err}
 	}
 	pinnedFP := ""
+	if kr.preferV6 && hasContact && c.PGPKeyV6 != "" {
+		if !slotMatchesPin(c.PGPKeyV6, c.PGPKeyV6Fingerprint) || (c.PGPKey != "" && !keyMatchesPin(c)) {
+			return resolvedKey{Tier: tierKeyChanged}
+		}
+		if st, err := pgpmail.CheckKeyStatus(c.PGPKeyV6); err == nil && st.Usable() {
+			return resolvedKey{Armored: c.PGPKeyV6, Fingerprint: c.PGPKeyV6Fingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c)}
+		}
+	}
 	if hasContact && c.PGPKey != "" {
 		// A stored key its own pin disputes (e.g. an Autocrypt rotation) is a
 		// key change, never a silent encryption target.
@@ -260,6 +269,9 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 		best := v4
 		if v6 != nil && (v4 == nil || v6.Class.rank() > v4.Class.rank()) {
 			best = v6
+		}
+		if kr.preferV6 {
+			use = best
 		}
 		return resolvedKey{Armored: use.Armored, Fingerprint: use.Fingerprint, Tier: tierWKD, Usable: true, Capability: best.Class.capability()}
 	}

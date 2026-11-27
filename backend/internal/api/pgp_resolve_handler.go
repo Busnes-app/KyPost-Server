@@ -90,7 +90,7 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "failed to load pgp discovery suppressions", http.StatusInternalServerError)
 		return
 	}
-	resolver := &keyResolver{store: contactsStore, settings: settings, discover: true, suppressed: suppressed}
+	resolver := &keyResolver{preferV6: true, store: contactsStore, settings: settings, discover: true, suppressed: suppressed}
 
 	type result struct {
 		Address     string `json:"address"`
@@ -111,6 +111,18 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 		}
 		seen[strings.ToLower(clean)] = true
 		rk := resolver.resolve(r.Context(), clean)
+		if rk.Err != nil {
+			http.Error(w, "recipient keys unavailable", http.StatusInternalServerError)
+			return
+		}
+		if rk.Tier != tierKeyChanged {
+			if local, found, err := s.localPQRecipient(u, clean, resolver); err != nil {
+				http.Error(w, "recipient keys unavailable", http.StatusInternalServerError)
+				return
+			} else if found {
+				rk = local
+			}
+		}
 		results = append(results, result{
 			Address:     clean,
 			PublicKey:   rk.Armored,

@@ -1,7 +1,10 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as pgp from "openpgp";
 import fixture from "../../../testdata/pgp-keyring-v1.json";
+import { pgpEngine } from "./pgpEngine";
+import { getPGPBootstrap } from "../api/pgp";
+vi.mock("../api/pgp", () => ({ getPGPBootstrap: vi.fn() }));
 import { parseKeyring } from "./pgpKeyring";
 import { lock, requireUnlockedKey, unlockWithArmoredKey, VaultLockedError } from "./keyVault";
 import { buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, decryptMessage, openSealedToSelf, sealToSelf } from "./pgpClient";
@@ -61,13 +64,16 @@ describe("keyring readers", () => {
     expect(opened.verified).toBe(false);
   });
 
-  it("refuses all current single-key writers for a ring until lifecycle writes ship", async () => {
+  it("uses the validated active member for new writes and keeps legacy writers closed", async () => {
     unlockWithArmoredKey(raw);
+    const ring = await parseKeyring(raw);
+    if (ring.kind !== "keyring") throw new Error("ring required");
+    vi.mocked(getPGPBootstrap).mockResolvedValue({ fingerprint: active.fingerprint, publicKey: await (await pgpEngine()).armor((await (await pgpEngine()).inspect(active.privateKey)).publicKey, "PGP PUBLIC KEY BLOCK"), keyring: ring.metadata } as Awaited<ReturnType<typeof getPGPBootstrap>>);
     expect(() => requireUnlockedKey()).toThrow(/lifecycle upgrade/);
-    await expect(sealToSelf("new")).rejects.toThrow(/lifecycle upgrade/);
-    await expect(buildEncryptedDraft(envelope, "text/plain", "new")).rejects.toThrow(/lifecycle upgrade/);
-    await expect(buildEncryptedSentCopy(envelope, "text/plain", "new", false)).rejects.toThrow(/lifecycle upgrade/);
-    await expect(buildSignedDelivery(envelope, "text/plain", "new", envelope.to)).rejects.toThrow(/lifecycle upgrade/);
+    expect(await openSealedToSelf(await sealToSelf("new"))).toBe("new");
+    expect((await decryptMessage(await buildEncryptedDraft(envelope, "text/plain", "new"), [], "")).body.trim()).toBe("new");
+    expect((await decryptMessage(await buildEncryptedSentCopy(envelope, "text/plain", "new", false), [], "")).body.trim()).toBe("new");
+    expect(await buildSignedDelivery(envelope, "text/plain", "new", envelope.to)).toHaveProperty("ciphertext");
   });
 
   it.each([

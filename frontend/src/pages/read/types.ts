@@ -48,6 +48,8 @@ export type InboxEmail = {
 // what the signature check found. Held in component state only, so it is
 // gone on reload along with the key that produced it.
 export type DecryptedView = {
+  quantumSafe?: boolean;
+  classicalRecipients?: string;
   body: string;
   /**
    * Which MIME part `body` came from, read by pgpClient off the decrypted

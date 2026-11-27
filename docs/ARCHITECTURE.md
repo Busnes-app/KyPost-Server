@@ -89,3 +89,12 @@ Classification flow:
 - `docker-compose.yml`: local orchestration
 - `supervisord.conf`: in-container process supervision
 - `AGENTS.md`: the contribution contract for automated agents. Every subtree with its own rules carries one
+
+### Browser PQ key rollout
+
+`lib/pgpUpgrade.ts` prepares complete v2 password/recovery rings; the session-only
+`api/pgp_pqc.go` route commits them through `users.CommitPGPKeyring`. Public v4
+identity and internal v6 certificate are separate. `state.PGPV6Ready` computes the
+current-device gate for incoming encryption, bootstrap and internal discovery.
+`pgpClient.ts` uses the WASM engine to split version/PQ delivery groups and select
+the matching signer. [P4 contract](E2E_PGP.md#browser-pq-upgrade-spec-a-p4).

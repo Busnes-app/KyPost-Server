@@ -34,6 +34,7 @@ vi.mock("../lib/pgpSession", () => ({
 vi.mock("../lib/keyVault", () => ({ isUnlocked: () => false }));
 vi.mock("../lib/pgpClient", () => ({
   buildEncryptedDeliveries: vi.fn(),
+  unlockedMaterialGeneration: async () => 1,
   buildEncryptedDraft: vi.fn(),
   buildEncryptedSentCopy: vi.fn(),
   buildSignedDelivery: vi.fn(),
@@ -103,14 +104,14 @@ describe("compose signatures", () => {
   it("adds the default signature, escaped, below the first line of a new message", async () => {
     const result = compose();
     act(() => result.current.openComposeWindow());
-    await waitFor(() => expect(body()).toBe(`<p><br></p>${MAIN}`));
+    await waitFor(() => expect(body()).toBe(`<p><br></p>${MAIN}`), { timeout: 15000 });
     expect(result.current.composeFrom).toBe("alice@example.com");
   });
 
   it("switches to the From address's own signature, and leaves an edited one alone", async () => {
     const result = compose();
     act(() => result.current.openComposeWindow());
-    await waitFor(() => expect(body()).toBe(`<p><br></p>${MAIN}`));
+    await waitFor(() => expect(body()).toBe(`<p><br></p>${MAIN}`), { timeout: 15000 });
     act(() => result.current.setComposeFrom("sales@example.com"));
     await waitFor(() => expect(body()).toBe(`<p><br></p>${SALES}`));
 

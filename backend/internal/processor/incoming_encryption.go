@@ -124,7 +124,17 @@ func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg ima
 	if err != nil {
 		return err
 	}
-	encrypted, err := pgpmail.EncryptStoredMIME(source.Raw, u.PGPPublicKey)
+	publicKey := u.PGPPublicKey
+	if u.PGPPublicKeyV6 != "" && u.PGPKeyring != nil && u.PGPKeyring.Version == 2 {
+		ready, err := uc.store.PGPV6Ready(u.PGPKeyring.MaterialGeneration, u.PGPFingerprint)
+		if err != nil {
+			return err
+		}
+		if ready {
+			publicKey = u.PGPPublicKeyV6
+		}
+	}
+	encrypted, err := pgpmail.EncryptStoredMIME(source.Raw, publicKey)
 	if errors.Is(err, pgpmail.ErrWeakRSAKey) {
 		return fmt.Errorf("original mail preserved; replace your PGP key: %w", err)
 	}

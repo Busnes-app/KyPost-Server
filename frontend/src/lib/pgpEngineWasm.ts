@@ -84,7 +84,7 @@ export const wasmEngine: PgpEngine = {
       verificationKeys: verificationKeys.map(bytes),
       maxBytes
     });
-    return { data: dec.decode(r.data as Uint8Array), signatures: r.signatures as SignatureCheck[] };
+    return { data: dec.decode(r.data as Uint8Array), signatures: r.signatures as SignatureCheck[], quantumSafe: r.quantumSafe === true };
   },
   verifyDetached: async ({ data, armoredSignature, verificationKeys }) =>
     (await call("verifyDetached", { data, signature: bytes(armoredSignature), verificationKeys: verificationKeys.map(bytes) })).signatures as SignatureCheck[],

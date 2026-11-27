@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
@@ -154,6 +155,12 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 		// "v6", "v4"), omitted without a usable key. Additive.
 		Capability string `json:"capability,omitempty"`
 	}
+	sender, err := s.users.Get(ac.UserID)
+	if err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
+	resolver := &keyResolver{store: contactsStore, preferV6: true}
 	statuses := make([]addressStatus, 0, len(req.Addresses))
 	for _, addr := range req.Addresses {
 		status := addressStatus{Address: addr, Tier: string(tierNone)}
@@ -172,6 +179,24 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 					status.Capability = contactCapability(c)
 				}
 			}
+		}
+		if sender.PGPProtection() == users.PGPProtectionClient {
+			rk := resolver.resolve(r.Context(), addr)
+			if rk.Err != nil {
+				http.Error(w, "recipient keys unavailable", http.StatusInternalServerError)
+				return
+			}
+			if rk.Tier != tierKeyChanged {
+				local, found, err := s.localPQRecipient(sender, addr, resolver)
+				if err != nil {
+					http.Error(w, "recipient keys unavailable", http.StatusInternalServerError)
+					return
+				}
+				if found {
+					rk = local
+				}
+			}
+			status.HasKey, status.Tier, status.Capability = rk.Usable, string(rk.Tier), rk.Capability
 		}
 		statuses = append(statuses, status)
 	}

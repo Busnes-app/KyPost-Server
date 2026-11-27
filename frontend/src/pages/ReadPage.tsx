@@ -293,7 +293,9 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
             signerUnconfirmed: result.signerUnconfirmed,
             attachments: result.attachments,
             attachmentsOmitted: result.attachmentsOmitted,
-            subject: result.protectedHeaders.subject
+            subject: result.protectedHeaders.subject,
+            quantumSafe: result.quantumSafe,
+            classicalRecipients: result.protectedHeaders.classicalRecipients
           }
         }));
       } catch (e) {
@@ -2176,6 +2178,9 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                             ? "PGP: could not decrypt"
                             : "PGP: encrypted"}
                       </span>
+                    ) : null}
+                    {((local && !local.error && (local.quantumSafe === false || local.classicalRecipients)) || (!selected.pgpEncrypted && selected.pgpSigned)) ? (
+                      <span className="ky-status" data-ky-status="warning">Not quantum-safe{local?.classicalRecipients ? `: delivery to ${local.classicalRecipients}` : selected.pgpEncrypted ? ": classical encryption" : ": unencrypted message"}</span>
                     ) : null}
                     {/*
                       Suppressed while an encrypted message is still closed:

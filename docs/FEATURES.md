@@ -95,4 +95,14 @@ ML-DSA-87+Ed448 signatures. Complete keyring v2 backups retain separate v4/v6 ac
 members plus all historical keys; v1 remains readable. Sealed envelopes allow 512 KiB;
 recovery files allow 2 MiB. Devices report their OpenPGP codecs on both enrollment
 endpoints and the device inventory exposes them. This does not switch existing
-accounts or new-key generation to v6. See [wire contract](E2E_PGP.md#keyring-v2-reader-contract-spec-a-p3).
+accounts by reading alone; the additive P4 upgrade below enables v6 after device qualification. See [wire contract](E2E_PGP.md#keyring-v2-reader-contract-spec-a-p3).
+
+## Browser PQ keys (Spec A P4)
+
+Security → Encryption adds a v6 30/35 certificate through gopenpgp WASM after a
+checked complete recovery backup. V4 stays active and publicly interoperable.
+Every paired device must report v6/RFC 9980 and confirm the current X-Wing ring
+before incoming encryption, Sent and drafts use v6. Browser delivery groups split
+PQ and classical copies, with matching signatures and each Bcc alone. Compose and
+opened classical messages are marked **Not quantum-safe**; Sent retains classical
+delivery addresses inside its ciphertext. [Wire and rollout contract](E2E_PGP.md#browser-pq-upgrade-spec-a-p4).

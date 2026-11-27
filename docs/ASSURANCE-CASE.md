@@ -186,3 +186,16 @@ Only that validation error can remove its submitted key; unrelated failures stil
 refuse/roll back. Default edits stay strict. This does not authorize plaintext
 mail fallback or change contact-pin/encryption trust. See `docs/API.md` and
 `TestContactsSyncReplay*` in `backend/internal/api/contact_key_replay_test.go`.
+
+### Additive OpenPGP PQ rollout
+
+P4 retains the interoperable v4 certificate and all historical private material
+while adding a category-3 RFC 9980 certificate. Browser packet tests
+(`frontend/src/lib/pgpClient.pqc.test.ts`) require homogeneous PKESK versions,
+matching signatures and Bcc isolation; the WASM engine independently rejects mixed
+versions. `TestIncomingPQCWaitsForEveryDevice` proves actual incoming ciphertext
+stays v4 with a classical device and becomes v6 only with current-ring acknowledgements.
+The new recovery ring is verified locally and both envelopes commit under one
+revision; lost responses require read confirmation (`pgpUpgrade.test.ts`). These
+checks do not qualify archive re-encryption, P5 outside-client interoperability or
+physical-device persistence. Release tenancy/ownership refusal gates are unchanged.

@@ -26,6 +26,7 @@ export type KeyInfo = {
   keyIDs: string[];
   fingerprints: string[];
   algorithms: number[];
+  encryptionAlgorithm: number;
 };
 
 /** One signature found in a message. keyID or fingerprint may be "" when the packet omits it. */
@@ -42,7 +43,7 @@ export interface PgpEngine {
   signDetached(data: Uint8Array, signingKey: string): Promise<{ armoredSignature: string; hashAlgorithm: number }>;
   /** decryptionKeys is the whole ring; the engine picks the member that opens it. */
   decrypt(opts: { armoredMessage: string; decryptionKeys: string[]; verificationKeys: string[]; maxBytes: number }):
-    Promise<{ data: string; signatures: SignatureCheck[] }>;
+    Promise<{ data: string; signatures: SignatureCheck[]; quantumSafe?: boolean }>;
   verifyDetached(opts: { data: Uint8Array; armoredSignature: string; verificationKeys: string[] }): Promise<SignatureCheck[]>;
   armor(data: Uint8Array, type: "PGP MESSAGE" | "PGP SIGNATURE" | "PGP PUBLIC KEY BLOCK"): Promise<string>;
   dearmor(armored: string): Promise<Uint8Array>;

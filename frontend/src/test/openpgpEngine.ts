@@ -61,6 +61,7 @@ export const openpgpEngine: PgpEngine = {
       }),
       keyIDs: members.map((m) => m.getKeyID().toHex().toUpperCase()),
       fingerprints: members.map((m) => m.getFingerprint().toUpperCase()),
+      encryptionAlgorithm: await key.getEncryptionKey().then(k => k.keyPacket.algorithm, () => 0),
       algorithms: members.map((m) => m.keyPacket.algorithm)
     };
   },

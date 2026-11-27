@@ -20,6 +20,7 @@ import {
   type DiscoverySettings,
   type DiscoverySuppression
 } from "../../../api/pgp";
+import { preparePQUpgrade, commitPQUpgrade, type PreparedPQUpgrade } from "../../../lib/pgpUpgrade";
 import { validateKeyringSnapshot } from "../../../lib/pgpKeyring";
 import { generateIdentity, importIdentity } from "../../../lib/pgpClient";
 import {
@@ -137,6 +138,11 @@ export function MailKeys({
     return () => { mounted.current = false; };
   }, []);
   const [pgpBusy, setPgpBusy] = useState(false);
+  const [pqUpgrade, setPQUpgrade] = useState<PreparedPQUpgrade | null>(null);
+  const [pqRecoverySaved, setPQRecoverySaved] = useState(false);
+  useEffect(() => {
+    if (!pgpSession?.unlocked) { setPQUpgrade(null); setPQRecoverySaved(false); }
+  }, [pgpSession?.unlocked]);
   const [pgpStatus, setPgpStatus] = useState("");
   const [pgpImportOpen, setPgpImportOpen] = useState(false);
   const [pgpImportKey, setPgpImportKey] = useState("");
@@ -388,6 +394,39 @@ export function MailKeys({
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
+  async function preparePQC() {
+    const password = await askPassword(`Enter your ${secretName} to add a post-quantum certificate. Your v4 key stays active for compatible mail.`);
+    if (!password) return;
+    setPgpBusy(true);
+    setPgpStatus("");
+    try {
+      const prepared = await preparePQUpgrade(password);
+      if (!mounted.current) return;
+      setPQUpgrade(prepared);
+      setPQRecoverySaved(false);
+      saveRecoveryBackup(prepared.backup, prepared.backup.fingerprint, prepared.secret, prepared.request.expectedRevision);
+      setPgpStatus("Save the new recovery file and its secret before completing the upgrade. Older backups cannot recover the new certificate.");
+    } catch (error) { setPgpStatus(toErrorMessage(error, "Could not prepare the upgrade.")); }
+    finally { setPgpBusy(false); }
+  }
+
+  async function finishPQC() {
+    if (!pqUpgrade || !pqRecoverySaved) return;
+    const password = passphraseMode ? "" : await askPassword("Enter your account password to confirm adding the post-quantum certificate.");
+    if (password === null || (!passphraseMode && !password)) return;
+    setPgpBusy(true);
+    try {
+      const ready = await commitPQUpgrade(pqUpgrade, password, () => mounted.current);
+      setRecoveryBackup(null);
+      setRecoverySecret("");
+      setPQUpgrade(null);
+      setPgpStatus(ready
+        ? "Post-quantum certificate added; v4 remains active. New incoming encryption, Sent and drafts use v6. Existing stored mail is unchanged."
+        : "Post-quantum certificate added; v4 remains active. Enroll every paired device with the new ring. New stored mail stays on v4 until they confirm it.");
+    } catch (error) { setPgpStatus(toErrorMessage(error, "Upgrade was not confirmed. Keep the recovery file and reload.")); }
+    finally { setPgpBusy(false); }
   }
 
   async function handleDownloadRecoveryBackup() {
@@ -746,6 +785,24 @@ export function MailKeys({
                   {passphraseMode ? "a forgotten passphrase" : "an admin password reset"} can leave it unreadable unless
                   you have a recovery copy and its secret.
                 </p>
+                {pgpSession.bootstrap.publicKeyV6 ? (
+                  <p className="sec-muted" role="status">Post-quantum certificate installed. {pgpSession.bootstrap.v6Ready
+                    ? "New incoming encryption, Sent and drafts use v6. Classical recipients still receive compatible v4 mail."
+                    : "Waiting for paired devices to report v6 support and confirm the current ring. Incoming encryption, Sent and drafts remain v4 — not quantum-safe."}
+                    {" "}Existing stored mail is unchanged.</p>
+                ) : pgpSession.unlocked ? (
+                  <div className="sec-section">
+                    <h4>Add post-quantum protection</h4>
+                    <p className="sec-muted">Keep your v4 identity for other mail clients and add a v6 certificate. A new complete recovery copy is required. Paired devices need an updated app and a new enrollment before stored mail switches to v6.</p>
+                    {pqUpgrade ? <>
+                      <label className="checkbox-row"><input type="checkbox" checked={pqRecoverySaved} onChange={event => setPQRecoverySaved(event.target.checked)} /> I saved the new recovery file and its secret separately.</label>
+                      <div className="sec-actions">
+                        <button type="button" disabled={pgpBusy || !pqRecoverySaved} onClick={() => void finishPQC()}>Complete post-quantum upgrade</button>
+                        <button type="button" disabled={pgpBusy} onClick={() => { setPQUpgrade(null); setPQRecoverySaved(false); }}>Cancel upgrade</button>
+                      </div>
+                    </> : <button type="button" disabled={pgpBusy} onClick={() => void preparePQC()}>Prepare post-quantum upgrade</button>}
+                  </div>
+                ) : null}
                 <div className="sec-actions">
                   {pgpSession.unlocked ? (
                     <button type="button" className="sec-action-quiet" onClick={() => lockPGPSession()}>

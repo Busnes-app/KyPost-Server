@@ -36,6 +36,8 @@ SHOTS_DIR=/path/to/shots flock /tmp/ky-heavy-test.lock npm run test:browser
 
 `pgp-wasm.spec.mjs` also opens the shared Go X-Wing v6 enrollment vector, seals/opens through the production WASM bridge and refuses changed binding under the app-shell CSP.
 
+- `pqc-upgrade.spec.mjs` creates a disposable ordinary user through the real admin API, saves loopback mail configuration, generates v4 and completes the recovery-first P4 UI upgrade. It requires v4 retention, both v2 active certificates and browser-only readiness, and captures matching before/after light 1280px views with recovery secrets masked. It also checks the compose warning for a classical-only contact. It never tests production credentials or contacts a production relay.
+
 ## Child DOX Index
 
 None.

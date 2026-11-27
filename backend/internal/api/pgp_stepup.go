@@ -145,7 +145,7 @@ func (s *Server) requirePGPStepUp(w http.ResponseWriter, r *http.Request, userID
 // KySignOn arm, at the largest body any of those routes accepts (a keyring
 // rewrap or recovery slot: envelope plus JSON quoting and step-up fields).
 func withPGPActionDigest(next http.HandlerFunc) http.HandlerFunc {
-	return withActionDigestLimit(3*maxWrappedKeyBytes, next)
+	return withActionDigestLimit(2<<20, next)
 }
 
 // clearDeviceEnrollmentsFor resets every paired device's enrollment state after

@@ -53,15 +53,18 @@ func (s *Server) handlePGPBootstrap(w http.ResponseWriter, r *http.Request) {
 		// with no key at all and an account whose mode the client does not
 		// recognize are different situations, and conflating them is how a
 		// client ends up offering "unlock" for a key that does not exist.
-		"hasIdentity": u.PGPFingerprint != "",
-		"pgpRevision": u.PGPRevision,
-		"keyring":     u.PGPKeyring,
-		"protection":  protection,
-		"fingerprint": u.PGPFingerprint,
-		"keyId":       u.PGPKeyID,
-		"publicKey":   u.PGPPublicKey,
-		"keySource":   u.PGPKeySource,
-		"createdAt":   u.PGPKeyCreatedAt,
+		"hasIdentity":   u.PGPFingerprint != "",
+		"pgpRevision":   u.PGPRevision,
+		"publicKeyV6":   u.PGPPublicKeyV6,
+		"fingerprintV6": u.PGPFingerprintV6,
+		"v6Ready":       s.pgpV6Ready(u),
+		"keyring":       u.PGPKeyring,
+		"protection":    protection,
+		"fingerprint":   u.PGPFingerprint,
+		"keyId":         u.PGPKeyID,
+		"publicKey":     u.PGPPublicKey,
+		"keySource":     u.PGPKeySource,
+		"createdAt":     u.PGPKeyCreatedAt,
 	}
 
 	switch protection {

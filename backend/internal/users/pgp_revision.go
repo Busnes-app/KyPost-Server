@@ -17,6 +17,7 @@ var ErrInvalidPGPRevision = errors.New("invalid expected PGP revision")
 type pgpRevisionState struct {
 	keyringVersion                                                                    int
 	materialGeneration                                                                uint64
+	publicKeyV6, fingerprintV6, createdAtV6                                           string
 	keyInventory, primaryInventory                                                    string
 	fingerprint, keyID, publicKey, privateKey, wrapped, protection, source, createdAt string
 	passwordHash, authDerivation, loginSalt                                           string
@@ -26,6 +27,7 @@ type pgpRevisionState struct {
 
 func pgpState(u User) pgpRevisionState {
 	state := pgpRevisionState{
+		publicKeyV6: u.PGPPublicKeyV6, fingerprintV6: u.PGPFingerprintV6, createdAtV6: u.PGPKeyCreatedAtV6,
 		fingerprint: u.PGPFingerprint, keyID: u.PGPKeyID, publicKey: u.PGPPublicKey,
 		privateKey: u.PGPPrivateKeyEnc, wrapped: u.PGPPrivateKeyWrapped,
 		protection: u.PGPKeyProtection, source: u.PGPKeySource, createdAt: u.PGPKeyCreatedAt,

@@ -168,6 +168,7 @@ PGP:
 
 - `POST /api/pgp/identity/generate` and `POST /api/pgp/identity/import` are retired compatibility routes: both return 400 and direct clients to `/api/pgp/identity/client`; neither creates or imports a server-readable key.
 - `GET|DELETE /api/pgp/identity`
+- `POST /api/pgp/identity/pqc` adds the internal v6 certificate and commits complete v2 password/recovery rings while retaining v4; requires step-up and the original revision/fingerprint ([P4 wire contract](E2E_PGP.md#browser-pq-upgrade-spec-a-p4)).
 - `POST /api/pgp/identity/client` (store a client-protected identity — the server never sees the private key; a public key outside the [allowlist](STRONG-CRYPTO.md) answers 400 `invalid public key: …` naming the version and algorithm, as do contact writes with `invalid PGP key: …`)
 - `GET /api/pgp/identity/wrapped` and `POST /api/pgp/identity/rewrap` (fetch and repair the account-password-wrapped envelope; optional `expectedFingerprint` refuses a changed identity with 409)
 - `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (session-only wrapped recovery/device copies; PUT and DELETE require the current account credential. PUT accepts `expectedFingerprint`; GET includes the identity fingerprint and public key from the same snapshot.)

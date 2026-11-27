@@ -117,7 +117,7 @@ Default section order:
 
 - **Native authority storage changes** (`sso-lifecycle.json`, `native-provisioning.json`, admission reads, their migration or backup) must read [docs/NATIVE_AUTHORITY_PER_ACCOUNT.md](docs/NATIVE_AUTHORITY_PER_ACCOUNT.md). It is the proposed per-account SQLite design and rollout; the shipped formats remain `docs/NATIVE_ADDRESSING_V2.md`.
 
-- **PGP lifecycle changes** (historical keys, retirement, revocation, alias UIDs or device keyring delivery) must read [docs/PGP_KEY_LIFECYCLE.md](docs/PGP_KEY_LIFECYCLE.md). It is the proposed Tier 5 design; the shipped wire contract remains `docs/E2E_PGP.md`.
+- **PGP lifecycle changes** (historical keys, retirement, revocation, alias UIDs or device keyring delivery) must read [docs/PGP_KEY_LIFECYCLE.md](docs/PGP_KEY_LIFECYCLE.md). It tracks additive P4 conversion and the remaining proposed lifecycle operations; the shipped wire contract remains `docs/E2E_PGP.md`.
 
 - **`docs/STRONG-CRYPTO.md` is the key-strength claim.** Each row names the code that enforces it; a change to a key default, minimum or TLS client updates the row in the same change set. `docker-compose.strong-crypto.yml` sets only `GODEBUG=fips140=on`, which `scripts/check-strong-crypto-compose.py` enforces in ci-scripts.
 

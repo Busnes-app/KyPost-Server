@@ -33,6 +33,7 @@ export function requirePGPRevision(snapshot: { pgpRevision?: number } | null | u
 export type PGPRecipientTier = "verified" | "wkd" | "keyserver_confirm" | "key_changed" | "none";
 
 export type PGPRecipientStatus = {
+  capability?: "pq" | "v6" | "v4";
   address: string;
   hasKey: boolean;
   tier?: PGPRecipientTier;
@@ -208,6 +209,9 @@ export type BoundSignerKey = {
 
 /** The cold-start snapshot — see docs/E2E_PGP.md "Cold start". */
 export type PGPBootstrap = {
+  publicKeyV6?: string;
+  fingerprintV6?: string;
+  v6Ready?: boolean;
   keyring?: KeyringMetadata | null;
   pgpRevision?: number;
   hasIdentity: boolean;
@@ -388,6 +392,7 @@ export function getPGPMessagePayload(mailbox: string, messageId: string | number
 }
 
 export type ResolvedRecipientKey = {
+  capability?: "pq" | "v6" | "v4";
   address: string;
   publicKey?: string;
   fingerprint?: string;
@@ -510,4 +515,17 @@ export async function setIncomingEncryption(enabled: boolean, password: string, 
     ...(await stepUp(password))
   };
   await withSSOStepUp((headers) => putJSON("/api/pgp/incoming", body, headers));
+}
+
+/** One prepared, revision-bound additive conversion; no plaintext crosses this API. */
+export async function upgradePGPToPQC(input: { expectedRevision: number; expectedFingerprint: string; publicKeyV6: string;
+  wrapped: string; recoveryEnvelope: string; keyring: KeyringMetadata; credentialSecret: string; isCurrent: () => boolean }) {
+  const credential = await stepUp(input.credentialSecret);
+  if (!input.isCurrent()) throw new Error("The encryption session changed. Prepare the upgrade again.");
+  const { credentialSecret: _credentialSecret, isCurrent, ...prepared } = input;
+  const body = { ...prepared, ...credential };
+  return withSSOStepUp((h) => {
+    if (!isCurrent()) throw new Error("The encryption session changed. Prepare the upgrade again.");
+    return postJSON<{ ok: boolean; pgpRevision: number }>("/api/pgp/identity/pqc", body, h);
+  });
 }

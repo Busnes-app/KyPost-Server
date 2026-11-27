@@ -23,7 +23,6 @@ import {
   lock,
   onVaultChange,
   parseEnvelope,
-  requireUnlockedKey,
   requireUnlockedKeyMaterial,
   requireSinglePrivateKey,
   unlock,
@@ -238,8 +237,17 @@ export async function rewrappedEnvelopeFor(
  * cannot itself inspect.
  */
 export async function rewrapUnlockedKeyUnder(password: string, credential = password): Promise<void> {
-  const armored = requireUnlockedKey();
+  const armored = requireUnlockedKeyMaterial();
   const snapshot = unlockedPGPIdentity();
+  if (armored.trimStart().startsWith("{")) {
+    const current = await getPGPBootstrap();
+    if (requirePGPRevision(current) !== snapshot.pgpRevision) throw new Error("Your PGP state changed. Reload before changing its sealing.");
+    await restorePGPKeyring(armored, password, current, () => isUnlocked(), credential);
+    lockPGPSession();
+    await loadPGPSession();
+    return;
+  }
+  requireSinglePrivateKey(armored);
   await rewrapPGPPrivateKey(JSON.stringify(await wrapPrivateKey(armored, password)), credential, snapshot.fingerprint, snapshot.pgpRevision);
   lockPGPSession();
   await loadPGPSession();

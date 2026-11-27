@@ -1,6 +1,7 @@
-// Design probe, not a product implementation. Run after npm ci in frontend:
+// Lifecycle probe plus production P4 regressions. Build WASM and npm ci in frontend first:
 // node docs/pgp-key-lifecycle-check.cjs
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const { createRequire } = require('node:module');
 const { resolve } = require('node:path');
 const pgp = createRequire(resolve(__dirname, '../frontend/package.json'))('openpgp');
@@ -31,4 +32,6 @@ const pgp = createRequire(resolve(__dirname, '../frontend/package.json'))('openp
   assert.deepEqual(changed.privateKey.getKeyIDs().map(id => id.toHex()), current.privateKey.getKeyIDs().map(id => id.toHex()));
   assert(changed.publicKey.getUserIDs().some(id => id.includes('alias@example.invalid')));
   console.log('PASS: historical and wildcard decryption, revoked-key decryption, transition certification, UID addition without key replacement');
+  const production = spawnSync(process.execPath, [resolve(__dirname, '../frontend/node_modules/vitest/vitest.mjs'), 'run', '--maxWorkers=2', 'src/lib/pgpClient.pqc.test.ts', 'src/lib/pgpUpgrade.test.ts'], { cwd: resolve(__dirname, '../frontend'), stdio: 'inherit' });
+  assert.equal(production.status, 0, 'P4 generation, recovery, device-gated self-encryption and delivery-packet regressions');
 })().catch(error => { console.error(error); process.exitCode = 1; });
