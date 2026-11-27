@@ -29,6 +29,9 @@ type reencryptFixture struct {
 	// unsolicitedOtherDeleted emits an unsolicited FETCH carrying \Deleted for
 	// another UID (99) when UNCHANGEDSINCE rejects uid 7.
 	unsolicitedOtherDeleted bool
+	// unsolicitedOtherSnapshot prepends an unsolicited FETCH carrying different
+	// FLAGS and a higher MODSEQ for UID 99 ahead of UID 7's snapshot response.
+	unsolicitedOtherSnapshot bool
 }
 
 func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *reencryptFixture) {
@@ -126,7 +129,11 @@ func (f *reencryptFixture) respond(tag, command string) (string, bool) {
 			return fmt.Sprintf("* 1 FETCH (UID %d BODY[] {%d}\r\n%s)\r\n", uid, len(raw), string(raw)) + ok, true
 		case strings.Contains(upper, "MODSEQ"):
 			flagList := strings.Join(f.flags[uid], " ")
-			return fmt.Sprintf("* 1 FETCH (UID %d FLAGS (%s) MODSEQ (%d))\r\n", uid, flagList, f.modseq[uid]) + ok, true
+			prefix := ""
+			if f.unsolicitedOtherSnapshot {
+				prefix = "* 99 FETCH (UID 99 FLAGS (\\Flagged) MODSEQ (999))\r\n"
+			}
+			return fmt.Sprintf("%s* 1 FETCH (UID %d FLAGS (%s) MODSEQ (%d))\r\n", prefix, uid, flagList, f.modseq[uid]) + ok, true
 		default:
 			flagList := strings.Join(f.flags[uid], " ")
 			return fmt.Sprintf("* 1 FETCH (UID %d FLAGS (%s) INTERNALDATE \"27-Nov-2026 04:00:00 +0000\" RFC822.SIZE %d ENVELOPE (\"Thu, 27 Nov 2026 04:00:00 +0000\" \"v4\" NIL NIL NIL NIL NIL NIL NIL \"<m1@e>\"))\r\n", uid, flagList, len(raw)) + ok, true
@@ -274,5 +281,36 @@ func TestReplaceRawMessageCASIgnoresUnsolicitedDeletedForOtherUID(t *testing.T) 
 	}
 	if _, leaked := f.messages[8]; leaked {
 		t.Fatalf("appended copy UID 8 was not cleaned up")
+	}
+}
+
+func TestReplaceRawMessageCASIgnoresUnsolicitedSnapshotForOtherUID(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	f.unsolicitedOtherSnapshot = true
+	f.mutateOnAppend = true
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	// Because UID 7's real MODSEQ (5) is captured rather than UID 99's unsolicited 999,
+	// concurrent flag mutation on UID 7 during APPEND MUST still abort with ErrCASMismatch.
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); !errors.Is(err, ErrCASMismatch) {
+		t.Fatalf("expected ErrCASMismatch using UID 7 MODSEQ instead of unsolicited UID 99 MODSEQ, got %v", err)
+	}
+
+	// Without concurrent mutation, replacement MUST preserve UID 7's own flags (\Seen)
+	// rather than copying UID 99's unsolicited \Flagged flag.
+	f.mutateOnAppend = false
+	newUID, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err != nil {
+		t.Fatalf("ReplaceRawMessageCAS with unsolicited snapshot failed: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	gotFlags := strings.Join(f.flags[newUID], " ")
+	if strings.Contains(gotFlags, `\Flagged`) {
+		t.Fatalf("replacement inherited unsolicited UID 99 flags: %q", gotFlags)
+	}
+	if !strings.Contains(gotFlags, `\Seen`) {
+		t.Fatalf("replacement lost UID 7 \\Seen flag: %q", gotFlags)
 	}
 }

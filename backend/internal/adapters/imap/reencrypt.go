@@ -155,30 +155,52 @@ func supportsCondstore(d *goimap.Dialer) bool {
 }
 
 // fetchFlagsAndModSeq captures FLAGS and MODSEQ atomically in a single
-// UID FETCH (FLAGS MODSEQ) snapshot so no flag mutation can slip between
-// reading flags and obtaining the MODSEQ precondition.
+// UID FETCH (UID FLAGS MODSEQ) snapshot so no flag mutation can slip between
+// reading flags and obtaining the MODSEQ precondition, ignoring any
+// unsolicited FETCH updates for unrelated UIDs.
 func fetchFlagsAndModSeq(d *goimap.Dialer, uid int) ([]string, uint64, error) {
-	resp, err := d.Exec(fmt.Sprintf("UID FETCH %d (FLAGS MODSEQ)", uid), true, 0, nil)
+	resp, err := d.Exec(fmt.Sprintf("UID FETCH %d (UID FLAGS MODSEQ)", uid), true, 0, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("fetch original flags and MODSEQ: %w", err)
 	}
-	modMatch := modSeqResponse.FindStringSubmatch(resp)
-	if len(modMatch) != 2 {
+	return parseFetchFlagsAndModSeqForUID(resp, uid)
+}
+
+func parseFetchFlagsAndModSeqForUID(resp string, uid int) ([]string, uint64, error) {
+	wantUID := strconv.Itoa(uid)
+	sawTargetUID := false
+	for _, rawLine := range strings.Split(resp, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "*") || !strings.Contains(strings.ToUpper(line), "FETCH") {
+			continue
+		}
+		uidMatch := uidTokenResponse.FindStringSubmatch(line)
+		if len(uidMatch) != 2 || uidMatch[1] != wantUID {
+			continue
+		}
+		sawTargetUID = true
+		modMatch := modSeqResponse.FindStringSubmatch(line)
+		if len(modMatch) != 2 {
+			continue
+		}
+		modSeq, err := strconv.ParseUint(modMatch[1], 10, 64)
+		if err != nil || modSeq == 0 {
+			return nil, 0, ErrCondstoreUnsupported
+		}
+		flagMatch := flagsResponse.FindStringSubmatch(line)
+		if len(flagMatch) != 2 {
+			continue
+		}
+		flags, err := incomingFlags(strings.Fields(flagMatch[1]))
+		if err != nil {
+			return nil, 0, err
+		}
+		return flags, modSeq, nil
+	}
+	if sawTargetUID {
 		return nil, 0, ErrCondstoreUnsupported
 	}
-	modSeq, err := strconv.ParseUint(modMatch[1], 10, 64)
-	if err != nil || modSeq == 0 {
-		return nil, 0, ErrCondstoreUnsupported
-	}
-	flagMatch := flagsResponse.FindStringSubmatch(resp)
-	if len(flagMatch) != 2 {
-		return nil, 0, errors.New("cannot parse original message flags")
-	}
-	flags, err := incomingFlags(strings.Fields(flagMatch[1]))
-	if err != nil {
-		return nil, 0, err
-	}
-	return flags, modSeq, nil
+	return nil, 0, errors.New("cannot parse original message flags and MODSEQ for target UID")
 }
 
 func cleanupCopyUID(d *goimap.Dialer, copyUID int) {
