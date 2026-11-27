@@ -107,6 +107,10 @@ export const openpgpEngine: PgpEngine = {
     return { data, signatures: await checks(result.signatures ?? []) };
   },
 
+  async reencrypt() {
+    throw new Error("openpgp.js 6.3 cannot re-encrypt to RFC 9980 v6");
+  },
+
   async verifyDetached({ data, armoredSignature, verificationKeys }) {
     const o = await pgp();
     const result = await o.verify({

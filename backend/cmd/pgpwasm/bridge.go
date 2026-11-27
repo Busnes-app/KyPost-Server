@@ -4,11 +4,14 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
+	openpgparmor "github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/ProtonMail/gopenpgp/v3/armor"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
@@ -286,14 +289,37 @@ func hashID(s *packet.Signature) byte {
 	return id
 }
 
-func signatures(res *crypto.VerifyResult) []signatureCheck {
+func intendedRecipientMatchesRing(recipients []*packet.Recipient, ring *crypto.KeyRing) bool {
+	if ring == nil || len(recipients) == 0 {
+		return true
+	}
+	for _, key := range ring.GetKeys() {
+		entity := key.GetEntity()
+		if entity == nil || entity.PrimaryKey == nil {
+			continue
+		}
+		for _, rec := range recipients {
+			if bytes.Equal(rec.Fingerprint, entity.PrimaryKey.Fingerprint) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func signatures(res *crypto.VerifyResult, decryptionKeys *crypto.KeyRing) []signatureCheck {
 	if res == nil {
 		return nil
 	}
 	out := make([]signatureCheck, 0, len(res.Signatures))
 	for _, vs := range res.Signatures {
 		// The RSA-2048 floor also governs signature trust, as in openpgp.js.
-		c := signatureCheck{Valid: vs.SignatureError == nil && vs.SignedBy != nil && pgpprofile.RequireStrongRSA(vs.SignedBy, true) == nil}
+		// For encrypted+signed messages re-encrypted from v4 to v6 (Spec A P6),
+		// IntendedRecipients names the original v4 certificate that is still in
+		// the account's own decryption ring; matching any key in decryptionKeys
+		// preserves anti-surreptitious-forwarding while keeping v4 signatures valid.
+		intendedOK := vs.Signature == nil || intendedRecipientMatchesRing(vs.Signature.IntendedRecipients, decryptionKeys)
+		c := signatureCheck{Valid: vs.SignatureError == nil && vs.SignedBy != nil && intendedOK && pgpprofile.RequireStrongRSA(vs.SignedBy, true) == nil}
 		if vs.Signature != nil {
 			if vs.Signature.IssuerKeyId != nil {
 				c.KeyID = fmt.Sprintf("%016X", *vs.Signature.IssuerKeyId)
@@ -320,8 +346,11 @@ func decrypt(message []byte, decryptionKeys, verificationKeys [][]byte, maxBytes
 	}
 	// An empty verification ring still reports each signature (unverified),
 	// so the reader can say "signed, cannot check" as openpgp.js does.
+	// DisableIntendedRecipients delegates recipient checking to signatures()
+	// across the account's full decryption ring so P6-reencrypted v4 mail keeps
+	// valid inner signatures without weakening anti-forwarding protection.
 	h, err := crypto.PGP().Decryption().DecryptionKeys(keys).VerificationKeys(verifiers).
-		MaxDecompressedMessageSize(maxBytes).New()
+		DisableIntendedRecipients().MaxDecompressedMessageSize(maxBytes).New()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -341,7 +370,199 @@ func decrypt(message []byte, decryptionKeys, verificationKeys [][]byte, maxBytes
 		// openpgp.js turns a text literal's canonical CRLF back into LF.
 		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	}
-	return data, signatures(&res.VerifyResult), nil
+	return data, signatures(&res.VerifyResult, keys), nil
+}
+
+// reencrypt decrypts the outer OpenPGP session layer of an armored PGP MESSAGE
+// using decryptionKeys and wraps the exact inner OpenPGP packet stream (literal
+// data, inline signatures, compression, or MIME) inside a fresh v6 ML-KEM-768+
+// X25519 PKESK + SEIPDv2 AEAD envelope with a newly generated 256-bit AES-OCB
+// session key. Preserving the inner packet stream byte-for-byte ensures every
+// inner OpenPGP signature (both inline and RFC 3156 multipart/signed) survives.
+func reencrypt(message []byte, decryptionKeys [][]byte, encryptionKey []byte, maxBytes int64) (string, error) {
+	if maxBytes < 1 {
+		return "", errors.New("reencrypt: invalid plaintext size limit")
+	}
+	if len(decryptionKeys) == 0 {
+		return "", errors.New("reencrypt: no decryption keys")
+	}
+	if len(encryptionKey) == 0 {
+		return "", errors.New("reencrypt: no target encryption key")
+	}
+	decRing, _, err := loadKeys(decryptionKeys, true, false)
+	if err != nil {
+		return "", err
+	}
+	defer decRing.ClearPrivateParams()
+
+	targetRing, targetVersion, err := loadKeys([][]byte{encryptionKey}, false, true)
+	if err != nil {
+		return "", err
+	}
+	if targetVersion != 6 || targetRing.CountEntities() != 1 {
+		return "", errors.New("reencrypt: target key must be a single v6 certificate")
+	}
+	encSub, ok := targetRing.GetKeys()[0].GetEntity().EncryptionKey(time.Now(), nil)
+	if !ok || encSub.PublicKey == nil || encSub.PublicKey.Version != 6 ||
+		encSub.PublicKey.PubKeyAlgo != packet.PubKeyAlgoMlkem768X25519 || len(encSub.PublicKey.Fingerprint) != 32 {
+		return "", errors.New("reencrypt: target v6 certificate lacks an active ML-KEM-768+X25519 encryption subkey")
+	}
+
+	trimmed := strings.TrimSpace(string(message))
+	if !strings.HasPrefix(trimmed, "-----BEGIN PGP MESSAGE-----") ||
+		!strings.HasSuffix(trimmed, "-----END PGP MESSAGE-----") ||
+		strings.Count(trimmed, "-----BEGIN PGP ") != 1 ||
+		strings.Count(trimmed, "-----END PGP ") != 1 {
+		return "", errors.New("reencrypt: expected a single ASCII-armored PGP MESSAGE")
+	}
+	block, err := openpgparmor.Decode(strings.NewReader(trimmed))
+	if err != nil {
+		return "", fmt.Errorf("reencrypt: decode armor: %w", err)
+	}
+	if block.Type != "PGP MESSAGE" {
+		return "", fmt.Errorf("reencrypt: unexpected armor type %q", block.Type)
+	}
+
+	pr := packet.NewReader(block.Body)
+	var pkesks []*packet.EncryptedKey
+	var se *packet.SymmetricallyEncrypted
+	for {
+		p, err := pr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("reencrypt: read packet: %w", err)
+		}
+		if se != nil {
+			return "", errors.New("reencrypt: unexpected packet after encrypted data")
+		}
+		switch pkt := p.(type) {
+		case *packet.EncryptedKey:
+			if len(pkesks) >= 64 {
+				return "", errors.New("reencrypt: too many PKESK packets")
+			}
+			pkesks = append(pkesks, pkt)
+		case *packet.SymmetricallyEncrypted:
+			if len(pkesks) == 0 {
+				return "", errors.New("reencrypt: encrypted message has no PKESK packet")
+			}
+			if !pkt.IntegrityProtected {
+				return "", errors.New("reencrypt: refusing unauthenticated legacy encrypted data")
+			}
+			se = pkt
+			goto decryptSEIPD
+		default:
+			return "", fmt.Errorf("reencrypt: unexpected outer packet %T", p)
+		}
+	}
+	return "", errors.New("reencrypt: incomplete encrypted message")
+
+decryptSEIPD:
+	sessionKey, cipherFunc, err := decryptAnyPKESK(pkesks, se, decRing)
+	if err != nil {
+		return "", err
+	}
+	defer clear(sessionKey)
+
+	plainReader, err := se.Decrypt(cipherFunc, sessionKey)
+	if err != nil {
+		return "", fmt.Errorf("reencrypt: decrypt SEIPD: %w", err)
+	}
+	innerBytes, readErr := io.ReadAll(io.LimitReader(plainReader, maxBytes+1))
+	defer clear(innerBytes)
+	closeErr := plainReader.Close()
+	if readErr != nil {
+		return "", fmt.Errorf("reencrypt: read inner packets: %w", readErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("reencrypt: authenticate inner stream: %w", closeErr)
+	}
+	if int64(len(innerBytes)) > maxBytes {
+		return "", errors.New("reencrypt: plaintext exceeds size limit")
+	}
+	if _, err := pr.Next(); !errors.Is(err, io.EOF) {
+		return "", errors.New("reencrypt: unexpected trailing outer packet")
+	}
+	if _, err := packet.NewReader(bytes.NewReader(innerBytes)).Next(); err != nil {
+		return "", fmt.Errorf("reencrypt: decrypted inner stream is not valid OpenPGP: %w", err)
+	}
+
+	newSessionKey := make([]byte, 32)
+	defer clear(newSessionKey)
+	if _, err := rand.Read(newSessionKey); err != nil {
+		return "", fmt.Errorf("reencrypt: generate session key: %w", err)
+	}
+
+	var out bytes.Buffer
+	cfg := &packet.Config{
+		DefaultCipher: packet.CipherAES256,
+		AEADConfig:    &packet.AEADConfig{DefaultMode: packet.AEADModeOCB},
+	}
+	if err := packet.SerializeEncryptedKeyAEAD(&out, encSub.PublicKey, packet.CipherAES256, true, newSessionKey, cfg); err != nil {
+		return "", fmt.Errorf("reencrypt: serialize v6 PKESK: %w", err)
+	}
+	seWriter, err := packet.SerializeSymmetricallyEncrypted(
+		&out,
+		packet.CipherAES256,
+		true,
+		packet.CipherSuite{Cipher: packet.CipherAES256, Mode: packet.AEADModeOCB},
+		newSessionKey,
+		cfg,
+	)
+	if err != nil {
+		return "", fmt.Errorf("reencrypt: serialize SEIPDv2: %w", err)
+	}
+	if _, err := seWriter.Write(innerBytes); err != nil {
+		_ = seWriter.Close()
+		return "", fmt.Errorf("reencrypt: write SEIPDv2 body: %w", err)
+	}
+	if err := seWriter.Close(); err != nil {
+		return "", fmt.Errorf("reencrypt: finalize SEIPDv2: %w", err)
+	}
+	return armor.ArmorWithType(out.Bytes(), "PGP MESSAGE")
+}
+
+func decryptAnyPKESK(pkesks []*packet.EncryptedKey, se *packet.SymmetricallyEncrypted, decRing *crypto.KeyRing) ([]byte, packet.CipherFunction, error) {
+	var privKeys []*packet.PrivateKey
+	for _, key := range decRing.GetKeys() {
+		entity := key.GetEntity()
+		if entity == nil {
+			continue
+		}
+		if entity.PrivateKey != nil && !entity.PrivateKey.Encrypted {
+			privKeys = append(privKeys, entity.PrivateKey)
+		}
+		for _, sk := range entity.Subkeys {
+			if sk.PrivateKey != nil && !sk.PrivateKey.Encrypted {
+				privKeys = append(privKeys, sk.PrivateKey)
+			}
+		}
+	}
+	for _, ek := range pkesks {
+		for _, priv := range privKeys {
+			if !pkeskMatchesPrivateKey(ek, priv) {
+				continue
+			}
+			if err := ek.Decrypt(priv, nil); err == nil && len(ek.Key) > 0 {
+				cipher := ek.CipherFunc
+				if ek.Version == 6 {
+					cipher = se.Cipher
+				}
+				sk := append([]byte(nil), ek.Key...)
+				clear(ek.Key)
+				return sk, cipher, nil
+			}
+		}
+	}
+	return nil, 0, errors.New("reencrypt: no decryption key matched the message")
+}
+
+func pkeskMatchesPrivateKey(ek *packet.EncryptedKey, priv *packet.PrivateKey) bool {
+	if ek.Version == 6 {
+		return len(ek.KeyFingerprint) == 0 || bytes.Equal(ek.KeyFingerprint, priv.PublicKey.Fingerprint)
+	}
+	return ek.KeyId == 0 || ek.KeyId == priv.PublicKey.KeyId
 }
 
 func verifyDetached(data, signature []byte, verificationKeys [][]byte) ([]signatureCheck, error) {
@@ -357,7 +578,7 @@ func verifyDetached(data, signature []byte, verificationKeys [][]byte) ([]signat
 	if err != nil {
 		return nil, err
 	}
-	return signatures(res), nil
+	return signatures(res, nil), nil
 }
 
 // splitPackets cuts go-crypto's own serialization into whole packets. It

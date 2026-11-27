@@ -861,6 +861,10 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	// the inbox DTO cannot carry it. See pgp_client_read.go.
 	mux.HandleFunc("GET /api/mail/body", s.withMailAuth(s.withMailbox(s.handleMailBody)))
 	mux.HandleFunc("GET /api/mail/pgp-payload", s.withMailAuth(s.withMailbox(s.handlePGPPayload)))
+	// Archive re-encryption (Spec A P6): client-driven v4 -> v6 ciphertext replacement.
+	mux.HandleFunc("GET /api/mail/pgp-reencrypt/candidates", s.withMailAuth(s.withMailbox(s.handlePGPReencryptCandidates)))
+	mux.HandleFunc("GET /api/mail/pgp-reencrypt/raw", s.withMailAuth(s.withMailbox(s.handlePGPReencryptRaw)))
+	mux.HandleFunc("POST /api/mail/pgp-reencrypt/replace", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handlePGPReencryptReplace))))
 	mux.HandleFunc("GET /api/mail/send-as", s.withAuth(s.handleSendAs))
 	mux.HandleFunc("POST /api/mail/send-as", s.withAuth(s.handleSendAs))
 	mux.HandleFunc("DELETE /api/mail/send-as/{id}", s.withAuth(s.handleSendAsByID))

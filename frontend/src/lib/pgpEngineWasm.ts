@@ -86,6 +86,18 @@ export const wasmEngine: PgpEngine = {
     });
     return { data: dec.decode(r.data as Uint8Array), signatures: r.signatures as SignatureCheck[], quantumSafe: r.quantumSafe === true };
   },
+  reencrypt: async ({ armoredMessage, decryptionKeys, encryptionKey, maxBytes }) => {
+    const r = await call("reencrypt", {
+      message: bytes(armoredMessage),
+      decryptionKeys: decryptionKeys.map(bytes),
+      encryptionKey: bytes(encryptionKey),
+      maxBytes
+    });
+    if (typeof r.message !== "string" || r.message.length === 0) {
+      throw new Error("reencrypt returned empty ciphertext");
+    }
+    return r.message;
+  },
   verifyDetached: async ({ data, armoredSignature, verificationKeys }) =>
     (await call("verifyDetached", { data, signature: bytes(armoredSignature), verificationKeys: verificationKeys.map(bytes) })).signatures as SignatureCheck[],
   armor: async (data, type) => (await call("armor", { data, type })).armored as string,
