@@ -22,7 +22,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc, addTokenToField,
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,
     composeEncrypt, setComposeEncrypt, setComposeEncryptOverridden, composeSign, setComposeSign, composeSignOverridden,
-    composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
+    composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning, composeQuantumWarning,
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot, settleSendAfterUnlock,
     quillEditorRef, attachmentInputRef,
     closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, drive,
@@ -71,6 +71,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
               </button>
             </div>
             <p className="compose-connection-hint">Send and Save Draft use this mailbox's mail connection. Check your mail account settings if the connection is unavailable.</p>
+            {composeQuantumWarning ? <p className="compose-pgp-warning" role="status">{composeQuantumWarning}</p> : null}
             {composeRecipientKeyWarning ? (
               <p className="compose-pgp-warning">{composeRecipientKeyWarning}</p>
             ) : null}

@@ -83,6 +83,20 @@ func contactCapability(c contacts.Contact) string {
 	return best.capability()
 }
 
+// armoredCapability is the class of one usable armored certificate ("pq",
+// "v6", "v4"), or "" if it cannot be encrypted to now.
+func armoredCapability(armored string) string {
+	key, err := crypto.NewKeyFromArmored(armored)
+	if err != nil || key.GetEntity() == nil {
+		return ""
+	}
+	k, usable := usableClassOfEntity(key.GetEntity())
+	if !usable {
+		return ""
+	}
+	return k.capability()
+}
+
 // keyVersionOf is an armored key's OpenPGP version, 0 when it does not parse.
 func keyVersionOf(armored string) int {
 	key, err := crypto.NewKeyFromArmored(strings.TrimSpace(armored))

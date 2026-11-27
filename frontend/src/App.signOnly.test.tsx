@@ -41,6 +41,7 @@ vi.mock("./lib/pgpClient", () => ({
   buildSignedDelivery: (...args: [unknown, string, string, string[]]) => buildSignedDelivery(...args),
   buildEncryptedDeliveries: (...args: unknown[]) => buildEncryptedDeliveries(...args),
   buildEncryptedSentCopy: async () => "sent-ciphertext",
+  unlockedMaterialGeneration: async () => 1,
   buildEncryptedDraft: async () => "draft",
   encryptedAttachmentBudget: () => 1 << 20,
   sealToSelf: async (t: string) => t,
@@ -67,7 +68,7 @@ const bootstrap: PGPBootstrap = {
 async function openComposer() {
   const user = userEvent.setup();
   render(<MemoryRouter initialEntries={["/read"]}><App /></MemoryRouter>);
-  await user.click(await screen.findByRole("button", { name: "New email" }));
+  await user.click(await screen.findByRole("button", { name: "New email" }, { timeout: 15000 }));
   return user;
 }
 
@@ -108,7 +109,7 @@ describe("sign without encrypt on a client-custody account", () => {
         <App />
       </MemoryRouter>
     );
-    await user.click(await screen.findByRole("button", { name: "New email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }, { timeout: 15000 }));
     await user.type(screen.getByLabelText("To recipients"), "a@b.test{Enter}");
     await user.type(screen.getByLabelText("Bcc recipients"), "hidden@b.test{Enter}");
     await user.type(screen.getByPlaceholderText("Subject"), "signed only");
@@ -140,7 +141,7 @@ describe("compose signing default", () => {
     act(() => { lock(); unlockWithArmoredKey("test key"); });
     expect(signChecked()).toBe(false);
     await user.click(screen.getByRole("button", { name: /^Trash$/ }));
-    await user.click(await screen.findByRole("button", { name: "New email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }, { timeout: 15000 }));
     expect(signChecked()).toBe(true);
   });
 

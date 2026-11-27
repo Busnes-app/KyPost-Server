@@ -168,6 +168,7 @@ PGP:
 
 - `POST /api/pgp/identity/generate` and `POST /api/pgp/identity/import` are retired compatibility routes: both return 400 and direct clients to `/api/pgp/identity/client`; neither creates or imports a server-readable key.
 - `GET|DELETE /api/pgp/identity`
+- `POST /api/pgp/identity/pqc` adds the internal v6 certificate and commits complete v2 password/recovery rings while retaining v4; requires step-up and the original revision/fingerprint ([P4 wire contract](E2E_PGP.md#browser-pq-upgrade-spec-a-p4)).
 - `POST /api/pgp/identity/client` (store a client-protected identity — the server never sees the private key; a public key outside the [allowlist](STRONG-CRYPTO.md) answers 400 `invalid public key: …` naming the version and algorithm, as do contact writes with `invalid PGP key: …`)
 - `GET /api/pgp/identity/wrapped` and `POST /api/pgp/identity/rewrap` (fetch and repair the account-password-wrapped envelope; optional `expectedFingerprint` refuses a changed identity with 409)
 - `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (session-only wrapped recovery/device copies; PUT and DELETE require the current account credential. PUT accepts `expectedFingerprint`; GET includes the identity fingerprint and public key from the same snapshot.)
@@ -175,8 +176,8 @@ PGP:
 - `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (per-slot key envelopes)
 - `GET /api/pgp/bootstrap` (everything the browser needs to unlock a client-protected identity in one call; `accountAddresses` lists the addresses this account sends as, for leaving them out of Reply All)
 - `GET /api/pgp/keyserver/lookup` (queries keys.openpgp.org; a key outside the [allowlist](STRONG-CRYPTO.md) answers 422 with the reason)
-- `POST /api/pgp/recipients/check` (key status for a set of recipients before you send; each usable result adds `capability`: `pq`, `v6` or `v4`)
-- `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient; each result adds `capability`, the best key class the recipient offers: `pq` (an ML-KEM-768+X25519 encryption key), `v6` or `v4`. `publicKey` stays the v4 key whenever the recipient has one. See [E2E_PGP.md](E2E_PGP.md#contact-keys-one-v4-and-one-v6))
+- `POST /api/pgp/recipients/check` (key status for a set of recipients before you send; optional `sign` as for resolve; each usable result adds `capability`: `pq`, `v6` or `v4`)
+- `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient; each result adds `capability`, the best key class the recipient offers: `pq` (an ML-KEM-768+X25519 encryption key), `v6` or `v4`. Client-protected senders get a usable v6 `publicKey` when one exists, except that `sign: true` from a sender without a v6 certificate keeps the v4 key; server-custody senders always keep v4. See [E2E_PGP.md](E2E_PGP.md#contact-keys-one-v4-and-one-v6))
 - `GET /api/pgp/qr/token` and `GET /api/pgp/qr/key` (public key exchange through a QR code)
 - `POST /api/pgp/pickup` (creates a sealed pickup for a recipient with no usable key, so a client-protected sender can still use the secure-link fallback)
 - `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message. On a converted account the send carries `materialGeneration` and is refused with 409 when it is stale, and a paired device must be enrolled at that generation. Optional `replyToMessageId` (and `replyToMailbox`) threads a reply as on `/api/mail/send`, with the same refusals: the server adds the outer `In-Reply-To`/`References` to every delivery and the Sent copy; a delivery or Sent copy already carrying either, or whose headers do not parse, is refused with 400 before anything is delivered)

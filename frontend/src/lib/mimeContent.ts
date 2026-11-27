@@ -38,6 +38,7 @@ export type MimeAttachment = {
  * another client may protect Subject alone, or nothing.
  */
 export type ProtectedHeaders = {
+  classicalRecipients?: string;
   subject?: string;
   to?: string;
   cc?: string;
@@ -433,6 +434,8 @@ export function parseMimeContent(raw: string, limits: MimeLimits = DEFAULT_MIME_
  */
 function readProtectedHeaders(headers: Map<string, string>): ProtectedHeaders {
   const out: ProtectedHeaders = {};
+  const classical = headers.get("x-kypost-classical-recipients");
+  if (classical) out.classicalRecipients = classical;
   for (const name of ["subject", "to", "cc", "bcc"] as const) {
     const value = headers.get(name);
     if (value !== undefined) out[name] = decodeRFC2047(value);

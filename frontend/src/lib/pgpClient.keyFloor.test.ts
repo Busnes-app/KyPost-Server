@@ -54,7 +54,7 @@ describe("browser OpenPGP RSA floor", () => {
 
   it("does not omit a weak recipient when another recipient is strong", async () => {
     await expect(buildEncryptedDeliveries(envelope, "text/plain", "Private body",
-      [{ recipients: envelope.to, publicKeys: [strong.publicKey, weak.publicKey] }], false))
+      [{ recipients: [...envelope.to, "weak@example.test"], publicKeys: [strong.publicKey, weak.publicKey] }], false))
       .rejects.toThrow(/2048/);
   });
 

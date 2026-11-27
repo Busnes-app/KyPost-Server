@@ -20,11 +20,12 @@ vi.mock("../api/client", () => ({
 }));
 
 const sendClientEncryptedMail = vi.fn(async (_req: Record<string, unknown>) => ({ scheduled: true }));
+const resolveRecipientKeys = vi.fn(async (addresses: string[], _sign?: boolean) => ({ results: addresses.map((address) => ({ address, usable: true, publicKey: "key", tier: "verified" })) }));
 vi.mock("../api/pgp", () => ({
   checkPGPRecipients: async () => ({ results: [] }),
   createSealedPickup: vi.fn(),
   getPGPDiscoverySettings: async () => null,
-  resolveRecipientKeys: async (addresses: string[]) => ({ results: addresses.map((address) => ({ address, usable: true, publicKey: "key", tier: "verified" })) }),
+  resolveRecipientKeys: (addresses: string[], sign?: boolean) => resolveRecipientKeys(addresses, sign),
   sendClientEncryptedMail: (req: Record<string, unknown>) => sendClientEncryptedMail(req)
 }));
 vi.mock("../api/sendas", () => ({ listSendAsAliases: async () => [] }));
@@ -51,7 +52,9 @@ const buildEncryptedDeliveries = vi.fn(async (_envelope: { date?: Date }) => [{ 
 const buildEncryptedDraft = vi.fn(async (_envelope: { date?: Date }) => "draft-ciphertext");
 const sealToSelf = vi.fn(async (_text: string): Promise<string> => "sealed-test");
 vi.mock("../lib/pgpClient", () => ({
+  splitEncryptionGroups: async (groups: unknown[]) => groups,
   buildEncryptedDeliveries: (envelope: { date?: Date }) => buildEncryptedDeliveries(envelope),
+  unlockedMaterialGeneration: async () => 1,
   buildEncryptedDraft: (envelope: { date?: Date }) => buildEncryptedDraft(envelope),
   buildEncryptedSentCopy: async () => "sent-ciphertext",
   buildSignedDelivery: vi.fn(),
@@ -124,6 +127,17 @@ describe("scheduled send", () => {
     const request = sendClientEncryptedMail.mock.calls[0][0];
     expect(request.sendAt).toBe(sendAt.toISOString());
     expect(request.draftCopy).toBe("draft-ciphertext");
+  });
+
+  // The server keeps a v4-only signer on keys it can sign for.
+  it("tells recipient resolution whether the delivery is signed", async () => {
+    session.clientProtected = true;
+    for (const sign of [true, false]) {
+      const result = composeTo(true);
+      act(() => result.current.setComposeSign(sign));
+      await act(() => result.current.sendComposeEmail());
+      expect(resolveRecipientKeys).toHaveBeenLastCalledWith(["bob@example.com"], sign);
+    }
   });
 
   it("an immediate send carries no schedule", async () => {

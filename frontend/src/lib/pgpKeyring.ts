@@ -1,5 +1,5 @@
-// Complete sealed vault plaintext validation. Conversion stays gated; recovery
-// inspection must never install a ring as a committed account update.
+// Complete sealed vault plaintext validation. Recovery inspection must never
+// install a ring as a committed account update.
 import { pgpEngine, type KeyInfo } from "./pgpEngine";
 
 const MAX_KEYRING_BYTES = 512 << 10;
@@ -14,7 +14,7 @@ export type KeyringMetadata = {
 };
 
 /** One ring member: its armor exactly as stored, and what the engine read from it. */
-export type RingKey = { armored: string; info: KeyInfo };
+export type RingKey = { armored: string; info: KeyInfo; revocationCertificate?: string };
 
 export type ParsedKeyring = {
   activeKey: RingKey;
@@ -71,7 +71,7 @@ export async function parseKeyring(raw: string): Promise<ParsedKeyring> {
       const fingerprint = key.info.fingerprint;
       if (entry.fingerprint.toUpperCase() !== fingerprint || primaryFingerprints.has(fingerprint)) invalid();
       primaryFingerprints.add(fingerprint);
-      keys.push(key);
+      keys.push({ ...key, ...(typeof entry.revocationCertificate === "string" ? { revocationCertificate: entry.revocationCertificate } : {}) });
     }
     const inventory = keys.flatMap(key => key.info.fingerprints);
     const declared = value.keyFingerprints.map((fingerprint: string) => fingerprint.toUpperCase());
@@ -96,8 +96,8 @@ export async function parseKeyring(raw: string): Promise<ParsedKeyring> {
         activeKeys.push(key);
       }
     }
-    // P3 reads both active certificates; v4 stays preferred until P4 selects
-    // the delivery certificate. Legacy single-key writers still refuse rings.
+    // The public identity stays v4; P4 selects a certificate per delivery.
+    // Legacy single-key writers still refuse rings.
     const activeKey = activeKeys[0];
     if (!activeKey) invalid();
     const metadata: KeyringMetadata = { version: value.format === "kypost-pgp-keyring-v1" ? 1 : 2, materialGeneration: value.materialGeneration,
@@ -134,7 +134,7 @@ function packetSet(info: KeyInfo): string {
 
 /** Matches every member and current public packet; matching an active key alone is insufficient. */
 export async function validateKeyringSnapshot(raw: string, snapshot: {
-  fingerprint: string; publicKey: string; keyring: unknown;
+  fingerprint: string; publicKey: string; publicKeyV6?: string; keyring: unknown;
 }) {
   const ring = await parseKeyring(raw);
   if (ring.kind !== "keyring") invalid();
@@ -150,8 +150,34 @@ export async function validateKeyringSnapshot(raw: string, snapshot: {
     // signature and revocation packet must be present in both.
     const key = await (await pgpEngine()).inspect(snapshot.publicKey);
     if (key.count !== 1 || key.isPrivate || packetSet(key) !== packetSet(activeKey.info)) invalid();
+    if (snapshot.publicKeyV6) {
+      const v6 = ring.activeKeys.find(key => key.info.version === 6);
+      const info = await (await pgpEngine()).inspect(snapshot.publicKeyV6);
+      if (!v6 || info.isPrivate || info.count !== 1 || packetSet(info) !== packetSet(v6.info)) invalid();
+    }
   } catch {
     throw new Error("The backup's public key does not match the current keyring. Public identities or revocations may have changed; no key was restored.");
   }
   return { ...ring, activeKey };
+}
+
+/** Add the PQ member without editing, retiring or dropping any existing packet. */
+export async function addPQCertificate(raw: string, snapshot: { fingerprint: string; publicKey: string; keyring?: KeyringMetadata | null }, generated: { armoredPrivateKey: string }) {
+  const ring = snapshot.keyring ? await validateKeyringSnapshot(raw, { ...snapshot, keyring: snapshot.keyring }) : await parseKeyring(raw);
+  const v4 = ring.activeKeys.find(key => key.info.version === 4);
+  if (!v4 || v4.info.fingerprint !== snapshot.fingerprint.toUpperCase() || ring.activeKeys.some(key => key.info.version === 6)) invalid();
+  const engine = await pgpEngine();
+  if (packetSet(await engine.inspect(snapshot.publicKey)) !== packetSet(v4.info)) invalid();
+  const pq = await readSingleKey(generated.armoredPrivateKey);
+  if (pq.info.version !== 6 || JSON.stringify(pq.info.algorithms) !== "[30,35]") invalid();
+  const keys = [...ring.keys, pq];
+  const plaintext = JSON.stringify({ format: "kypost-pgp-keyring-v2",
+    materialGeneration: ring.kind === "keyring" ? ring.metadata.materialGeneration + 1 : 1,
+    active: { v4: v4.info.fingerprint, v6: pq.info.fingerprint },
+    keyFingerprints: keys.flatMap(key => key.info.fingerprints),
+    keys: keys.map(key => ({ fingerprint: key.info.fingerprint, privateKey: key.armored,
+      ...(key.revocationCertificate !== undefined ? { revocationCertificate: key.revocationCertificate } : {}) })) });
+  const parsed = await parseKeyring(plaintext);
+  if (parsed.kind !== "keyring") invalid();
+  return { plaintext, metadata: parsed.metadata };
 }

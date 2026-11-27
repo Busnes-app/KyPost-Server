@@ -56,6 +56,15 @@ func (s *Server) putDeviceEnvelope(w http.ResponseWriter, r *http.Request, userI
 		})
 		return
 	}
+	current, err := s.users.Get(userID)
+	if err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
+	if current.PGPPublicKeyV6 != "" && (version != 6 || !slices.Contains(device.OpenPGP, "v6") || !slices.Contains(device.OpenPGP, "rfc9980")) {
+		http.Error(w, "update this device for the v6 PQ keyring and X-Wing enrollment before delivering it", http.StatusConflict)
+		return
+	}
 	var expectedGeneration uint64
 	if generation != nil {
 		expectedGeneration = *generation

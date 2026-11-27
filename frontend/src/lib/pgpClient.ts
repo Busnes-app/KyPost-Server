@@ -2,12 +2,11 @@
 // private key is client-protected, because the server has no copy it can
 // open.
 //
-// The library runs behind lib/pgpEngine.ts (openpgp.js, or gopenpgp wasm in
-// dev builds) and is loaded lazily: it is large and no page needs it until
+// The gopenpgp WebAssembly library runs behind lib/pgpEngine.ts and is loaded lazily: it is large and no page needs it until
 // the user actually touches PGP.
 
 import { type BoundSignerKey } from "../api/pgp";
-import { requireUnlockedKey, requireUnlockedKeyMaterial } from "./keyVault";
+import { requireUnlockedKeyMaterial } from "./keyVault";
 import { pgpEngine, type KeyInfo, type PgpEngine, type SignatureCheck } from "./pgpEngine";
 import { parseKeyring } from "./pgpKeyring";
 import { parseMimeContent, type BodyMode, type MimeAttachment, type ProtectedHeaders } from "./mimeContent";
@@ -37,7 +36,8 @@ export type GeneratedIdentity = {
 export async function generateIdentity(
   name: string,
   email: string,
-  additionalEmails: string[] = []
+  additionalEmails: string[] = [],
+  profile: "v4" | "v6" = "v4"
 ): Promise<GeneratedIdentity> {
   // Every address the account has proven it owns becomes a User ID. Both WKD
   // serving and Autocrypt advertising refuse a key that does not carry the
@@ -53,7 +53,7 @@ export async function generateIdentity(
     seen.add(addr.toLowerCase());
     userIDs.push({ name, email: addr });
   }
-  return (await pgpEngine()).generate(userIDs, "v4");
+  return (await pgpEngine()).generate(userIDs, profile);
 }
 
 /**
@@ -72,6 +72,7 @@ export async function importIdentity(
 }
 
 export type DecryptedMessage = {
+  quantumSafe?: boolean;
   body: string;
   /**
    * Which MIME part `body` came from, read off the decrypted entity's own
@@ -248,6 +249,7 @@ export async function decryptMessage(
 
   return {
     body: parsed ? parsed.body : raw,
+    quantumSafe: result.quantumSafe === true,
     bodyMode: parsed?.mode,
     // MIME detached signatures are present but unchecked; only the packet
     // verification above can establish a sender-bound verification result.
@@ -428,15 +430,20 @@ export async function buildEncryptedDeliveries(
   attachments: EncryptedAttachment[] = []
 ): Promise<EncryptedDelivery[]> {
   const engine = await pgpEngine();
-  const signingKey = sign ? requireUnlockedKey() : undefined;
+  const ring = sign ? await parseKeyring(requireUnlockedKeyMaterial()) : undefined;
   const protectedContent = buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments);
 
   const deliveries: EncryptedDelivery[] = [];
-  for (const group of groups) {
+  for (const group of await splitEncryptionGroups(groups)) {
     if (group.recipients.length === 0 || group.publicKeys.length === 0) {
       continue;
     }
     const encryptionKeys = await readPublicKeys(engine, group.publicKeys);
+    const versions = await Promise.all(encryptionKeys.map(async key => (await engine.inspect(key)).version));
+    const version = versions[0];
+    if (!version || versions.some(v => v !== version)) throw new Error("Cannot mix v4 and v6 keys in one delivery group.");
+    const signingKey = sign ? ring?.activeKeys.find(key => key.info.version === version)?.armored : undefined;
+    if (sign && !signingKey) throw new Error(`Add your v${version} certificate in Security before signing this delivery.`);
     const armored = await engine.encrypt({ text: protectedContent, encryptionKeys, signingKey });
     deliveries.push({
       recipients: group.recipients,
@@ -467,7 +474,7 @@ export async function buildSignedDelivery(
   const signedPart = buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments, true);
   const { armoredSignature, hashAlgorithm } = await (await pgpEngine()).signDetached(
     new TextEncoder().encode(signedPart),
-    requireUnlockedKey()
+    await signOnlyKey()
   );
   const hash = MICALG_BY_HASH[hashAlgorithm] ?? "pgp-sha256";
   return { recipients, ciphertext: wrapAsSignedMime(envelope, signedPart, armoredSignature, hash) };
@@ -507,11 +514,12 @@ export async function buildEncryptedSentCopy(
   contentType: string,
   body: string,
   sign: boolean,
-  attachments: EncryptedAttachment[] = []
+  attachments: EncryptedAttachment[] = [],
+  classicalRecipients: string[] = []
 ): Promise<string> {
-  const ownKey = requireUnlockedKey();
+  const ownKey = await selfEncryptionKey();
   const armored = await (await pgpEngine()).encrypt({
-    text: buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments),
+    text: buildProtectedContent(contentType, body, { subject: envelope.subject, classicalRecipients: classicalRecipients.join(", ") || undefined }, attachments),
     // The private key itself: its public half is derived here, never fetched.
     encryptionKeys: [ownKey],
     signingKey: sign ? ownKey : undefined
@@ -540,7 +548,7 @@ export async function buildEncryptedDraft(
     { subject: envelope.subject, to: envelope.to.join(", "), cc: (envelope.cc ?? []).join(", "), bcc: (envelope.bcc ?? []).join(", ") },
     attachments
   );
-  const armored = await (await pgpEngine()).encrypt({ text: content, encryptionKeys: [requireUnlockedKey()] });
+  const armored = await (await pgpEngine()).encrypt({ text: content, encryptionKeys: [await selfEncryptionKey()] });
   return wrapAsPGPMime(envelope, armored);
 }
 
@@ -550,7 +558,7 @@ export async function buildEncryptedDraft(
  * once the vault is unlocked again.
  */
 export async function sealToSelf(text: string): Promise<string> {
-  return (await pgpEngine()).encrypt({ text, encryptionKeys: [requireUnlockedKey()] });
+  return (await pgpEngine()).encrypt({ text, encryptionKeys: [await selfEncryptionKey()] });
 }
 
 export async function openSealedToSelf(armored: string): Promise<string> {
@@ -584,6 +592,7 @@ function buildProtectedContent(
   const clean = encodeBody ? encodeHeaderWord(sanitizeHeaderValue(protectedHeaders.subject ?? "")) : sanitizeHeaderValue(protectedHeaders.subject ?? "");
   const boundary = `kypost-protected-${randomToken()}`;
   const lines = [`Content-Type: multipart/mixed; boundary="${boundary}"; protected-headers="v1"`, ""];
+  if (protectedHeaders.classicalRecipients) lines.unshift(`X-KyPost-Classical-Recipients: ${sanitizeHeaderValue(protectedHeaders.classicalRecipients)}`);
   // Address headers are protected only when a caller asks (drafts). They sit
   // in the entity's own header block, where readProtectedHeaders finds them;
   // the legacy-display part below stays Subject-only for other clients.
@@ -679,8 +688,7 @@ async function readPublicKeys(engine: PgpEngine, armoredKeys: string[]) {
       await engine.inspect(trimmed);
       keys.push(trimmed);
     } catch {
-      // One unparseable contact key must not cost every other recipient
-      // their encryption, or every other signer their verification.
+      throw new Error("A recipient key could not be read. Refresh the recipients before sending.");
     }
   }
   return keys;
@@ -821,4 +829,67 @@ export function extractArmoredMessage(payload: string): string {
     return payload.trim();
   }
   return payload.slice(begin, end + endMarker.length);
+}
+
+async function activeKeyForVersion(version: number): Promise<string> {
+  const ring = await parseKeyring(requireUnlockedKeyMaterial());
+  const key = ring.activeKeys.find(key => key.info.version === version);
+  if (!key) throw new Error(`No active v${version} certificate. Restore the complete current keyring.`);
+  return key.armored;
+}
+
+/** Prefer v4 for sign-only outside interoperability, but preserve v6-only identities. */
+async function signOnlyKey(): Promise<string> {
+  const ring = await parseKeyring(requireUnlockedKeyMaterial());
+  const v4 = ring.activeKeys.find(key => key.info.version === 4);
+  if (v4) return v4.armored;
+  const fallback = ring.activeKeys[0];
+  if (fallback) return fallback.armored;
+  throw new Error("No active signing certificate. Restore the complete current keyring.");
+}
+
+async function selfEncryptionKey(): Promise<string> {
+  const raw = requireUnlockedKeyMaterial();
+  const ring = await parseKeyring(raw);
+  if (ring.kind === "legacy") return ring.activeKey.armored;
+  const { getPGPBootstrap } = await import("../api/pgp");
+  const snapshot = await getPGPBootstrap();
+  const { validateKeyringSnapshot } = await import("./pgpKeyring");
+  await validateKeyringSnapshot(raw, { ...snapshot, keyring: snapshot.keyring });
+  if (snapshot.v6Ready === true) return activeKeyForVersion(6);
+  const v4 = ring.activeKeys.find(key => key.info.version === 4);
+  if (v4) return v4.armored;
+  const v6 = ring.activeKeys.find(key => key.info.version === 6);
+  if (v6) return v6.armored;
+  return activeKeyForVersion(4);
+}
+
+export type EncryptionGroup = { recipients: string[]; publicKeys: string[]; quantumSafe?: boolean };
+
+/** Partition by actual certificate version and PQ encryption material, never a server hint. */
+export async function splitEncryptionGroups(groups: EncryptionGroup[]): Promise<EncryptionGroup[]> {
+  const engine = await pgpEngine();
+  const out: EncryptionGroup[] = [];
+  for (const group of groups) {
+    if (group.recipients.length !== group.publicKeys.length) throw new Error("Every recipient needs exactly one key.");
+    const buckets = new Map<string, EncryptionGroup>();
+    for (const [index, recipient] of group.recipients.entries()) {
+      const key = group.publicKeys[index];
+      const info = await engine.inspect(key);
+      if (info.count !== 1 || info.isPrivate || (info.version !== 4 && info.version !== 6)) throw new Error("Invalid recipient certificate.");
+      const bucket = `${info.version}:${info.encryptionAlgorithm === 35 ? "pq" : "classical"}`;
+      let target = buckets.get(bucket);
+      if (!target) { target = { recipients: [], publicKeys: [], quantumSafe: info.encryptionAlgorithm === 35 }; buckets.set(bucket, target); }
+      target.recipients.push(recipient);
+      target.publicKeys.push(key);
+    }
+    out.push(...buckets.values());
+  }
+  return out;
+}
+
+/** Send admission must describe the actual unlocked material, never a newer bootstrap. */
+export async function unlockedMaterialGeneration(): Promise<number | undefined> {
+  const ring = await parseKeyring(requireUnlockedKeyMaterial());
+  return ring.kind === "keyring" ? ring.metadata.materialGeneration : undefined;
 }

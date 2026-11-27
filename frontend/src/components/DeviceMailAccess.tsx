@@ -212,6 +212,7 @@ function EnrollPanel({
   // it closes, so reopening re-snapshots.
   const [publicKey] = useState(() => device.enrollmentPublicKey ?? "");
   const [versions] = useState(() => device.enrollmentEnvelopeVersions ?? []);
+  const [openpgp] = useState(() => device.openpgp ?? ["v4"]);
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   // An SSO-only account has no password; KySignOn confirms the delivery.
@@ -280,6 +281,9 @@ function EnrollPanel({
       // the server will bind the delivery to; sealKeyringForDevice re-checks
       // the code against the same key immediately before sealing.
       const version = deviceEnvelopeVersion(keyring != null, versions);
+      if (bootstrap?.publicKeyV6 && (version !== 6 || !openpgp.includes("v6") || !openpgp.includes("rfc9980"))) {
+        throw new Error("Update KyPost on this device for post-quantum keys and X-Wing enrollment, then try again.");
+      }
       if (version === null) throw new Error("KyPost on this device is too old for encrypted-mail setup. Update KyPost on that device, then try again.");
       const envelope = keyring && bootstrap
         ? await sealKeyringForDevice({

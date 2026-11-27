@@ -146,6 +146,10 @@ type User struct {
 	PGPFingerprint string `json:"pgpFingerprint,omitempty"`
 	PGPKeyID       string `json:"pgpKeyId,omitempty"`
 	PGPPublicKey   string `json:"pgpPublicKey,omitempty"`
+	// Internal PQ certificate; the interoperable public identity stays v4.
+	PGPPublicKeyV6    string `json:"pgpPublicKeyV6,omitempty"`
+	PGPFingerprintV6  string `json:"pgpFingerprintV6,omitempty"`
+	PGPKeyCreatedAtV6 string `json:"pgpKeyCreatedAtV6,omitempty"`
 	// PGPPrivateKeyEnc is the legacy server-sealed private key. Empty for
 	// any identity created or migrated since client-side protection landed.
 	PGPPrivateKeyEnc string `json:"pgpPrivateKeyEnc,omitempty"`
@@ -2042,7 +2046,7 @@ func (s *Store) rewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, exp
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		if keyring {
-			if u.PGPKeyring == nil || (u.PGPKeyring.Version != 1 && u.PGPKeyring.Version != 2) || u.MustChangePassword || !u.UsesDerivedAuth() || expectedFingerprint == "" {
+			if u.PGPKeyring == nil || (u.PGPKeyring.Version != 1 && u.PGPKeyring.Version != 2) || u.MustChangePassword || (!u.UsesDerivedAuth() && u.HasLocalCredential()) || expectedFingerprint == "" {
 				return ErrPGPKeyringUpgradeRequired
 			}
 		} else if u.PGPKeyring != nil {
@@ -2105,7 +2109,7 @@ func (s *Store) setPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFinge
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		if keyring {
-			if u.PGPKeyring == nil || (u.PGPKeyring.Version != 1 && u.PGPKeyring.Version != 2) || u.MustChangePassword || !u.UsesDerivedAuth() || expectedFingerprint == "" || slot != EnvelopeSlotRecovery {
+			if u.PGPKeyring == nil || (u.PGPKeyring.Version != 1 && u.PGPKeyring.Version != 2) || u.MustChangePassword || (!u.UsesDerivedAuth() && u.HasLocalCredential()) || expectedFingerprint == "" || slot != EnvelopeSlotRecovery {
 				return ErrPGPKeyringUpgradeRequired
 			}
 		} else if u.PGPKeyring != nil {
@@ -2187,6 +2191,7 @@ func (s *Store) ClearPGPIdentity(id string, expectedRevision *uint64) (User, err
 		u.PGPFingerprint = ""
 		u.PGPKeyID = ""
 		u.PGPPublicKey = ""
+		u.PGPPublicKeyV6, u.PGPFingerprintV6, u.PGPKeyCreatedAtV6 = "", "", ""
 		u.PGPPrivateKeyEnc = ""
 		u.PGPPrivateKeyWrapped = ""
 		u.PGPKeyProtection = ""

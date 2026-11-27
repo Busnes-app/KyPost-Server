@@ -27,17 +27,18 @@ var errPassphraseRequired = errors.New("passphrase required")
 type userID struct{ Name, Email string }
 
 type keyInfo struct {
-	Fingerprint  string   // primary, upper-case hex
-	Version      int      // 4 or 6
-	IsPrivate    bool     // carries secret material
-	Locked       bool     // some secret packet is encrypted or a GNU dummy
-	Count        int      // keys in the input; only the first is described
-	Expires      int64    // Unix seconds, 0 for none
-	PublicKey    []byte   // binary transferable public key
-	Packets      [][]byte // PublicKey split into packets, for an order-free comparison
-	KeyIDs       []string // primary then subkeys, upper-case hex
-	Fingerprints []string // same order
-	Algorithms   []int    // same order, RFC 9580 / RFC 9980 IDs
+	EncryptionAlgorithm int      // currently selected encryption subkey, 0 when unusable
+	Fingerprint         string   // primary, upper-case hex
+	Version             int      // 4 or 6
+	IsPrivate           bool     // carries secret material
+	Locked              bool     // some secret packet is encrypted or a GNU dummy
+	Count               int      // keys in the input; only the first is described
+	Expires             int64    // Unix seconds, 0 for none
+	PublicKey           []byte   // binary transferable public key
+	Packets             [][]byte // PublicKey split into packets, for an order-free comparison
+	KeyIDs              []string // primary then subkeys, upper-case hex
+	Fingerprints        []string // same order
+	Algorithms          []int    // same order, RFC 9580 / RFC 9980 IDs
 }
 
 type signatureCheck struct {
@@ -143,6 +144,9 @@ func inspect(data []byte) (keyInfo, error) {
 	e := key.GetEntity()
 	info := keyInfo{Packets: packets, Fingerprint: strings.ToUpper(key.GetFingerprint()), Version: key.GetVersion(), IsPrivate: key.IsPrivate(),
 		Count: ring.CountEntities(), PublicKey: pub}
+	if encryption, ok := e.EncryptionKey(time.Now(), nil); ok {
+		info.EncryptionAlgorithm = int(encryption.PublicKey.PubKeyAlgo)
+	}
 	if key.IsPrivate() {
 		locked, err := key.IsLocked()
 		if err != nil {
@@ -398,4 +402,29 @@ func armorBytes(data []byte, armorType string) (string, error) {
 
 func dearmor(data []byte) ([]byte, error) {
 	return armor.UnarmorBytes(data)
+}
+
+// Read only the unencrypted envelope. Every session-key recipient must use the
+// hybrid KEM; one classical PKESK makes the copy classical for everyone.
+func quantumSafeMessage(message []byte) bool {
+	reader := bytes.NewReader(bytesOrUnarmored(message))
+	count, version := 0, 0
+	for {
+		p, err := packet.Read(reader)
+		if err != nil {
+			return false
+		}
+		switch p := p.(type) {
+		case *packet.EncryptedKey:
+			if p.Algo != packet.PubKeyAlgoMlkem768X25519 || (version != 0 && version != p.Version) {
+				return false
+			}
+			count++
+			version = p.Version
+		case *packet.SymmetricallyEncrypted:
+			return count > 0 && ((version == 6 && p.Version == 2) || (version == 3 && p.Version == 1))
+		default:
+			return false
+		}
+	}
 }

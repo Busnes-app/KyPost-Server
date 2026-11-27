@@ -19,9 +19,9 @@ import { getSignatures, type SignatureSettings } from "../api/signatures";
 import { insertSignature, signatureBlock, signatureTextFor, swapSignature, type ComposeKind } from "../app/signatures";
 import { isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "../lib/recipients";
 import type { RecipientFieldState, RecipientToken } from "../lib/recipients";
-import { accountAddress, isClientProtected, needsUnlock, pgpCustody, pgpSessionState, subscribePGPSession } from "../lib/pgpSession";
+import { accountAddress, isClientProtected, needsUnlock, pgpCustody, subscribePGPSession } from "../lib/pgpSession";
 import { isUnlocked } from "../lib/keyVault";
-import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "../lib/pgpClient";
+import { unlockedMaterialGeneration, splitEncryptionGroups, buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "../lib/pgpClient";
 import { sealPickup } from "../lib/pickupCrypto";
 import { mailboxName, type UserMailbox } from "../app/mailboxes";
 import { plusBase } from "../lib/addressText";
@@ -151,6 +151,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const [composeSign, setComposeSign] = useState(false);
   const composeSignOverridden = useRef(false);
   const [composeMissingKeyRecipients, setComposeMissingKeyRecipients] = useState<string[]>([]);
+  const [composeClassicalRecipients, setComposeClassicalRecipients] = useState<string[]>([]);
   const [composeRecipientTiers, setComposeRecipientTiers] = useState<Record<string, PGPRecipientTier>>({});
   const [pgpDiscoverySettings, setPgpDiscoverySettings] = useState<DiscoverySettings | null>(null);
   const [composeEncryptOverridden, setComposeEncryptOverridden] = useState(false);
@@ -258,6 +259,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeSignOverridden.current = false;
     setComposeSign(isClientProtected() && isUnlocked());
     setComposeSendLinkForKeyless(false);
+    setComposeClassicalRecipients([]);
     setComposeMissingKeyRecipients([]);
     setComposeRecipientTiers({});
     if (attachmentInputRef.current) {
@@ -611,6 +613,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
 
   useEffect(() => {
     if (!composeEncrypt) {
+      setComposeClassicalRecipients([]);
       setComposeMissingKeyRecipients([]);
       setComposeRecipientTiers({});
       return;
@@ -620,23 +623,28 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       .map((a) => a.trim())
       .filter(Boolean);
     if (addresses.length === 0) {
+      setComposeClassicalRecipients([]);
       setComposeMissingKeyRecipients([]);
       setComposeRecipientTiers({});
       return;
     }
     let cancelled = false;
     const timeoutId = setTimeout(() => {
-      checkPGPRecipients(addresses)
+      checkPGPRecipients(addresses, composeSign)
         .then(({ results }) => {
           if (cancelled) return;
           const missing = results.filter((r) => !r.hasKey).map((r) => r.address);
           setComposeMissingKeyRecipients(missing);
+          setComposeClassicalRecipients(
+            results.filter(r => r.hasKey && (r.selectedCapability ?? r.capability) !== "pq").map(r => r.address)
+          );
           setComposeRecipientTiers(
             Object.fromEntries(results.map((r) => [r.address.toLowerCase(), r.tier ?? "none"]))
           );
         })
         .catch(() => {
           if (!cancelled) {
+            setComposeClassicalRecipients([]);
             setComposeMissingKeyRecipients([]);
             setComposeRecipientTiers({});
           }
@@ -646,11 +654,12 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [composeEncrypt, composeTo, composeCc, composeBcc]);
+  }, [composeEncrypt, composeSign, composeTo, composeCc, composeBcc]);
 
   // Derived, not stored: the wording depends on composeSendLinkForKeyless, which
   // the user can flip without triggering a fresh recipient-key check, so this
   // has to recompute on every render rather than lag behind the checkbox.
+  const composeQuantumWarning = composeClassicalRecipients.length > 0 ? `Not quantum-safe: ${composeClassicalRecipients.join(", ")} will receive classical encryption.` : "";
   const composeRecipientKeyWarning =
     composeMissingKeyRecipients.length === 0
       ? ""
@@ -754,7 +763,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     }
     const envelope = { from: clientSenderAddress(), to: toList, cc: ccList, subject: composeSubject, date: sendAt };
     const delivery = await buildSignedDelivery(envelope, "text/html; charset=UTF-8", body, recipients, composeAttachments);
-    const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, true, composeAttachments);
+    const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, true, composeAttachments, recipients);
     const result = await sendClientEncryptedMail({
       from: clientSenderAddress(),
       subject: OUTER_PLACEHOLDER_SUBJECT,
@@ -765,7 +774,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       sentCopy,
       sentCopyEncrypted: true,
       mode: "html",
-      materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration,
+      materialGeneration: await unlockedMaterialGeneration(),
       ...(await scheduleFields(to, body, sendAt, true, hold))
     }, sendHeaders());
     return result;
@@ -785,7 +794,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     const bccList = splitAddressList(serializeRecipientField(composeBcc));
     const toList = splitAddressList(to);
 
-    const { results } = await resolveRecipientKeys([...toList, ...ccList, ...bccList]);
+    const { results } = await resolveRecipientKeys([...toList, ...ccList, ...bccList], composeSign);
     const keyFor = new Map(results.filter((r) => r.usable && r.publicKey).map((r) => [r.address.toLowerCase(), r.publicKey!]));
     const missing = [...toList, ...ccList, ...bccList].filter((addr) => !keyFor.has(addr.toLowerCase()));
 
@@ -836,13 +845,13 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     };
     // To/Cc share one ciphertext; each Bcc gets its own so they never appear
     // in one another's encryption headers.
-    const groups = [
+    const groups = await splitEncryptionGroups([
       {
         recipients: [...keyedTo, ...keyedCc],
         publicKeys: [...keyedTo, ...keyedCc].map((a) => keyFor.get(a.toLowerCase())!)
       },
       ...keyedBcc.map((addr) => ({ recipients: [addr], publicKeys: [keyFor.get(addr.toLowerCase())!] }))
-    ].filter((g) => g.recipients.length > 0);
+    ].filter((g) => g.recipients.length > 0));
 
     // A secure link seals the body only. Dropping the files without a word is
     // what this path used to do for every encrypted send; it must not survive
@@ -873,7 +882,9 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // cleartext of a message it had just been given only as ciphertext — and
       // the real subject with it. The server refuses an unencrypted copy now,
       // so this is not optional.
-      const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, composeSign, composeAttachments);
+      const classicalRecipients = groups.filter(group => group.quantumSafe !== true).flatMap(group => group.recipients);
+      setComposeClassicalRecipients(classicalRecipients);
+      const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, composeSign, composeAttachments, classicalRecipients);
       sent = await sendClientEncryptedMail({
         from: clientSenderAddress(),
         // The real subject travels inside the ciphertext as a protected
@@ -886,7 +897,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         sentCopy,
         sentCopyEncrypted: true,
         mode: "html",
-        materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration,
+        materialGeneration: await unlockedMaterialGeneration(),
         ...(await scheduleFields(to, body, sendAt, true, held))
       }, sendHeaders());
     }
@@ -1203,7 +1214,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc, addTokenToField,
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,
     composeEncrypt, setComposeEncrypt, setComposeEncryptOverridden, composeSign, setComposeSign, composeSignOverridden,
-    composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
+    composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning, composeQuantumWarning,
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot, settleSendAfterUnlock,
     quillEditorRef, attachmentInputRef,
     openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft,

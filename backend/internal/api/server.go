@@ -949,6 +949,7 @@ func (s *Server) routesPGP(mux *http.ServeMux) {
 	// to, or wipe the private half irrecoverably.
 	// withPGPActionDigest: an account with no password confirms these writes
 	// with KySignOn, whose grant is bound to the exact request. pgp_stepup.go.
+	mux.HandleFunc("POST /api/pgp/identity/pqc", s.withAuth(withPGPActionDigest(s.handlePGPUpgradePQC)))
 	mux.HandleFunc("POST /api/pgp/identity/client", s.withAuth(withPGPActionDigest(s.handlePGPIdentityClient)))
 	mux.HandleFunc("POST /api/pgp/identity/rewrap", s.withAuth(withPGPActionDigest(s.handlePGPRewrapKey)))
 	// Envelope slots (recovery code today, enrolled devices later): write, read

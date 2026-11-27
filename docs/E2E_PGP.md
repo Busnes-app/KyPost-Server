@@ -32,13 +32,13 @@ A server-stored recovery envelope does not restore server custody: its secret
 stays with the user. Older design sections below describe superseded behavior
 where explicitly labeled; they do not re-enable this retired mode.
 
-### Device keyring preparation (gated)
+### Device keyring preparation
 
 The browser has a validated complete-ring preparation helper, sealing complete rings with
 v5 P-256 or v6 X-Wing HPKE; the retired [v3 contract](PGP_KEY_LIFECYCLE.md#v3-framing-and-interoperability-vectors)
 stays as the reference for its shared vectors. New enrollment delivers v4/v5/v6
-HPKE only; native complete-ring persistence,
-server delivery and account conversion are not enabled by this helper. Devices
+HPKE only. P4 conversion and delivery use the complete v2 ring; a PQ ring requires
+a v6/RFC 9980 device and X-Wing v6 transport. Devices
 can publish envelope-version support as described below; a claim does not prove
 that a client durably imported a ring.
 
@@ -693,7 +693,7 @@ completion must use derived authentication and may likewise preserve it. A
 concurrent material change makes an admin reset return 409 without resetting the
 credential or revoking sessions; it is not retried automatically. Administrators
 should deactivate an actively compromised account to stop concurrent use. Unknown persisted keyring versions fail closed.
-Account conversion is not exposed by an HTTP route.
+Additive v6 conversion uses the revision-guarded P4 route below. Retirement has no HTTP writer.
 
 Snapshots include optional `keyring` (null/absent for legacy accounts):
 `{version: 1|2, materialGeneration, primaryFingerprints, keyFingerprints}`. Inventories
@@ -707,7 +707,7 @@ each envelope is limited to 512 KiB. Conversion or inventory growth clears devic
 slots; a new active key must be previously absent and usable for encryption.
 Same-active public packet edits are refused pending preservation rules. This
 metadata cannot prove opaque ciphertext contains the claimed keys: complete client
-validation and native compatibility remain prerequisites for enabling conversion.
+validation is performed before P4 conversion; each device must confirm the complete ring before v6 storage is selected.
 
 `GET /api/auth/password` is an authenticated, `Cache-Control: no-store` preparation
 snapshot: `{pgpRevision, protection, wrappedPrivateKey, mustChangePassword, keyring}`.
@@ -752,7 +752,7 @@ remain unchanged. Device codec reporting is specified in
 
 Complete-ring records support offline export and read-only drills using
 `kypost-pgp-recovery-v2`. Matching-ring restore and verified recovery-slot upload are supported; account
-conversion and older-backup merging remain unavailable. The file is `{format, fingerprint, publicKey, keyring, envelope}`:
+general retirement and older-backup merging remain unavailable. P4 conversion is additive and uses its separate writer. The file is `{format, fingerprint, publicKey, keyring, envelope}`:
 `keyring` has the same version/generation/inventory shape as the authenticated
 snapshot; `envelope` uses the unchanged v2 PBKDF2/AES-GCM wrapper and seals the
 original complete `kypost-pgp-keyring-v1` or `kypost-pgp-keyring-v2` plaintext, including unpublished revocation
@@ -1300,11 +1300,57 @@ the crypto work, so an old app fails legibly.
 
 [PGP_KEY_LIFECYCLE.md](PGP_KEY_LIFECYCLE.md) defines the proposed Tier 5 design,
 not the current wire format. The preparatory browser reader validates complete
-versioned rings for historical decryption; conversion is unavailable, and legacy
-single-key writes refuse ring plaintext. Android and Mac currently replace a single enrolled
-key; Linux retains GnuPG keys but accepts only one primary key per enrollment
-import. All three need explicit versioned bundle support before retirement can
-safely distribute historical keys. Mac is now Swift; the earlier Qt/mobile
+versioned rings for historical decryption; P4 adds v6 beside v4, and legacy
+single-key writes still refuse ring plaintext. Native clients report codecs separately from envelope support. Unknown or old clients block v6 storage until they upgrade and acknowledge the current complete ring. Retirement remains separate. Mac is now Swift; the earlier Qt/mobile
 implementation guidance above is historical, not evidence of current storage.
 
 Direct MX transport preserves each client-prepared wire body and independently encrypted Sent copy. Each recipient has its own durable claim; splitting a delivery group does not grant keys, replace MIME, change enrollment or turn uncertain acceptance into permission to resend. Existing aggregate wire/Sent quota bounds apply per copied wire delivery. See [direct mode](DIRECT_DELIVERY.md) for the additive response counts and unchanged primary-acceptance contract.
+
+## Browser PQ upgrade (Spec A P4)
+
+After unlocking, Security → Encryption offers **Prepare post-quantum upgrade**.
+The browser generates an unprotected v6 ML-DSA-65+Ed25519 primary (30) and
+ML-KEM-768+X25519 subkey (35), one User ID per suggested account address. Private
+packets stay unprotected inside the password/recovery/device sealing, matching
+native clients. It retains the public v4 certificate and all historical members.
+Save the new recovery file and secret, then confirm Complete upgrade.
+
+`POST /api/pgp/identity/pqc` is session-only, step-up protected (derived `authSecret`
+or exact-request KySignOn), body ≤2 MiB. Fields: `expectedRevision`,
+`expectedFingerprint` (the retained v4 primary), `publicKeyV6`, `wrapped`,
+`recoveryEnvelope`, `keyring` (`version:2`, full inventories, generation). The
+server derives the v6 fingerprint, validates the 30/35 profile and current account
+UID set, and commits both sealed envelopes atomically. Individual envelopes remain
+≤512 KiB, 16 primaries/256 fingerprints. Initial generation is 1; adding to an
+existing ring increments it. Response: `{ok:true, pgpRevision}`. Stale revision
+returns 409 `pgpStateChanged`. Existing identity/recovery/password legacy-writer
+refusals still apply. The route cannot retire v4 or overwrite an installed v6 key.
+
+Bootstrap adds `publicKeyV6`, `fingerprintV6`, and boolean `v6Ready`. Readiness is
+computed from all paired devices on each use, requiring `openpgp` v6+rfc9980 and
+confirmed X-Wing delivery of the current complete ring. No-device accounts are
+ready; failed state reads are never readiness. A v6 certificate that is expired,
+revoked or cannot encrypt now is never ready. Until ready, incoming encryption,
+Sent, drafts and autosaves use v4. The browser validates its unlocked ring against
+a fresh snapshot before self-encryption; missing or changed inventories refuse.
+Device delivery refuses the PQ ring to a device without the required codecs or
+v6 transport. Device-local old keys and pairing remain intact during conversion.
+
+Browser recipient resolution prefers usable pinned v6 certificates and eligible
+same-organization KyPost accounts, preserving both TOFU pins. An account owns an
+address for internal discovery only through its native mailbox or a DKIM
+domain-proven send-as alias, never its self-declared IMAP login; an address two
+accounts prove yields no internal key. `check` and `resolve` take `sign`: a signed
+send by a sender without a v6 certificate keeps v4 keys, since a v6 delivery needs
+a v6 signing certificate. Server-custody senders keep their existing v4 resolver. To/Cc are partitioned by actual key version and
+selected encryption algorithm; every Bcc remains alone. Each copy retains identical
+visible To/Cc headers and uses the matching active signing certificate, never dual
+signatures. Sign-only mail uses v4. The WASM engine independently refuses mixed
+v4/v6 keys. No delivery contains both v6 and v3 PKESKs.
+
+Compose marks classical recipients **Not quantum-safe**. The encrypted Sent entity
+carries `X-KyPost-Classical-Recipients` inside its protected content, so a PQ Sent
+copy still names classical deliveries without exposing Bcc on the wire. After local
+decryption, the reader also marks ciphertext with a classical PKESK as not
+quantum-safe. The packet classification makes no claim of sender trust. Existing
+archives remain as received until P6; outside v6 publication remains P5.

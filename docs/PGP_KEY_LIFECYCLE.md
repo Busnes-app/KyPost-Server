@@ -1,26 +1,20 @@
 # PGP key lifecycle — proposed Tier 5 design
 
-Status: lifecycle conversion, retirement and older-backup merging are **not shipped**.
-Ordinary whole-ring password changes and matching recovery restore are implemented for already-converted records. Internal atomic
-whole-ring storage and legacy-writer guards are implemented. The first reader
-implementation accepts legacy armor and bounded versioned rings for historical
-mail, draft and autosave decryption. Single-key writers refuse ring plaintext
-until server/native lifecycle gates are ready. Baseline: server PR #189,
-merged at `abb5e9fdeb773f86b66b996023a5b8034a72bd99`. The current wire contract
-remains [E2E_PGP.md](E2E_PGP.md). Retirement requires re-enrolling every device
-(user decision, 2026-09-13). Address reassignment remains deferred until an
-admin user-delete route exists.
+Status: Spec A P4 ships additive v6 conversion with v4 retained active. Retirement,
+older-backup merging, UID editing and revocation distribution remain proposed.
+Whole-ring password/passphrase changes, matching recovery restore and verified
+recovery-slot uploads preserve every member. The shipped wire contract is
+[E2E_PGP.md](E2E_PGP.md#browser-pq-upgrade-spec-a-p4).
 
 ## Evidence and compatibility boundary
 
 The browser vault holds opaque plaintext in memory (`keyVault.ts`).
 `pgpKeyring.ts` validates legacy armor or the complete ring for mail, saved drafts
-and local sealed autosave decryption. Existing signing/enrollment/legacy upload writers
-still require single-key armor; no account conversion is exposed. Complete-ring
+and local sealed autosave decryption. New signing selects the active certificate matching the delivery; self-encryption
+uses v4 until current device readiness permits v6. Legacy upload writers still refuse rings. Complete-ring
 offline export, read-only drills and matching-ring restoration are implemented.
 Verified recovery-slot uploads are implemented; older-backup merging remains gated.
-The users store holds one current public identity and opaque password/recovery/
-device envelopes. Replacing its fingerprint clears device slots; a same-key
+The users store retains the public v4 identity, an internal v6 certificate and opaque password/recovery/device envelopes. Replacing its fingerprint clears device slots; a same-key
 update does not. Fingerprint guards cannot detect concurrent same-key edits.
 
 Native source inspection on 2026-09-14 contradicts the original punch list:
@@ -36,17 +30,17 @@ v2 with a single-key plaintext. These checkouts do not prove released binaries.
 Previously enrolled Linux devices retaining history does not help a newly paired
 device. Never silently put JSON or concatenated keys inside a v2 envelope.
 
-## P3 read compatibility
+## Ring compatibility
 
-The browser reads `kypost-pgp-keyring-v2` and v1 rings; conversion remains unavailable.
+The browser reads v1/v2 rings and writes `kypost-pgp-keyring-v2` when adding its PQ certificate.
 V2 replaces `activeFingerprint` with `active: {"v4":"<40-hex>","v6":"<64-hex>"}`.
 Either slot may be omitted, but at least one is required, and each must name a primary
 of that version in `keys`. The complete fingerprint inventory and all original private
 armor/certificates survive recovery, password rewrap and device delivery. Snapshot
 `keyring.version` matches the plaintext format (1 or 2). Recovery continues to use
-`kypost-pgp-recovery-v2` for either complete ring. V4 stays preferred and single-key
-writers still refuse rings; generation, account conversion and outbound switching
-are P4/P5 work. Limits below are the current P3 bounds.
+`kypost-pgp-recovery-v2` for either complete ring. V4 stays the public identity and
+legacy single-key writers refuse rings. P4 selects the active member per delivery;
+P5 outside publication remains gated. Limits below are current.
 
 ## One sealed keyring
 
@@ -133,7 +127,7 @@ prepared recovery revisions across refreshes and failed uploads. Older clients
 may still omit the guard on unconverted accounts. The internal whole-ring transaction
 now stores versioned metadata, complete sealed password/recovery envelopes and an
 optional derived credential atomically. Converted accounts require revision guards
-and refuse legacy single-key writers. There is no HTTP conversion route. Every keyring/public-identity/recovery/credential writer
+and refuse legacy single-key writers. The narrow P4 conversion route adds v6 without replacing v4; general retirement has no HTTP route. Every keyring/public-identity/recovery/credential writer
 on a converted account must supply the expected revision, checked inside the
 users-store mutation. Bump it for password changes, admin resets, recovery changes,
 UID changes, retirement and revocation. Reject stale requests with 409 and preserve
@@ -344,7 +338,8 @@ The small [crypto probe](pgp-key-lifecycle-check.cjs) runs after `npm ci` in
 `frontend`: `node docs/pgp-key-lifecycle-check.cjs`. It uses OpenPGP.js (now a dev
 dependency: the browser itself runs gopenpgp WebAssembly) and proves historical/hidden-recipient decryption, revoked-key historical
 decryption with refusal of new encryption, an old-key certification of the new
-identity, and UID addition without changing primary/subkey IDs. It does **not**
+identity, and UID addition without changing primary/subkey IDs. It also runs the
+production P4 generation, recovery and delivery-packet regressions. It does **not**
 prove wire compatibility, persistence, revocation distribution, UID revocation or
 preservation of arbitrary certifications. Those remain implementation gates.
 
@@ -352,9 +347,7 @@ Shared synthetic reader vectors: [testdata/pgp-keyring-v1.json](../testdata/pgp-
 `frontend/src/lib/pgpKeyring.test.ts` exercises them through the real mail and
 autosave readers, plus draft/Sent attachments, revoked history, malformed rings
 and refusal of legacy writes. The fixture private keys are public test data.
-Recovery drills now compare server generation/inventories and current public packets;
-this does not authorize conversion. Retirement/merge transaction HTTP writers and
-native compatibility remain implementation gates.
+Recovery drills compare server generation/inventories and current public packets. P4 conversion prepares and checks a new complete recovery file before committing both envelopes. Retirement/merge transaction HTTP writers remain implementation gates. Device capability and current-ring acknowledgement gate v6 storage on every use.
 
 ## Implemented password writer
 
@@ -366,3 +359,30 @@ recovery presence/bytes/timestamps, public identity and inventories are preserve
 The revision increments, material generation does not. Forced changes retain the
 existing opaque-preservation flow. All existing credential revocation applies.
 No conversion or retirement is exposed by the password opt-in. Matching recovery restore uses the separate versioned rewrap opt-in described in E2E_PGP.md.
+
+## Additive PQ conversion (Spec A P4)
+
+`preparePQUpgrade` makes a category-3 v6 certificate through the production WASM
+engine and `addPQCertificate` writes a v2 ring with both active slots, retaining
+all existing private armor and optional revocation certificates unchanged. The
+user saves a checked new recovery file and its secret before Complete upgrade.
+`POST /api/pgp/identity/pqc` commits the two opaque envelopes, complete inventories
+and internal public certificate under the original revision. It refuses a second
+v6 certificate, non-profile material and UIDs outside the current account address
+set. The server cannot prove what opaque ciphertext contains; the browser checks
+it before upload and confirms exact committed password/recovery material afterward.
+A lost answer triggers a read, never automatic replay. Old recovery files cannot
+recover the added v6 key.
+
+Conversion clears old device transport slots. Existing device records and local
+v4 keys remain: they can still read old mail and receive v4 mail. Only devices
+reporting v6/RFC 9980 and X-Wing support can receive the new complete ring. All
+paired devices must acknowledge its current material generation and fingerprint
+before incoming encryption, browser Sent/drafts/autosaves and internal discovery
+use v6. A missing report, old generation or failed state read closes the gate.
+The browser has no device row. No-device accounts can use v6 immediately.
+
+`pgpClient.pqc.test.ts`, `pgpUpgrade.test.ts`, `TestPQCConversion*`,
+`TestPGPV6Ready*` and `TestIncomingPQCWaitsForEveryDevice` exercise generation,
+retention, recovery confirmation, packet separation and the device gate. P4 does
+not re-encrypt archives (P6) or publish v6 through WKD/Autocrypt (P5).

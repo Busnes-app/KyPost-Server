@@ -54,12 +54,17 @@ type resolvedKey struct {
 	// still the v4 key whenever there is one, because no KyPost sender can
 	// encrypt to a v6 PQC key yet (openpgp.js 6.3.3). P4 switches.
 	Capability string
+	// SelectedCapability is the class of Armored, the key actually selected
+	// for this send (e.g. "v4" when a v4-only or expired-v6 signer must fall
+	// back from a recipient's v6 PQ key).
+	SelectedCapability string
 }
 
 // keyResolver runs the PGP key discovery ladder — pinned contact key → WKD
 // → keyserver — for one user's outgoing mail, honoring that user's
 // pgpdiscovery.Settings and TOFU pinning against their contacts store.
 type keyResolver struct {
+	preferV6 bool // browser P4; legacy server senders keep their v4 signature path
 	store    *contacts.Store
 	settings pgpdiscovery.Settings
 	// discover gates whether WKD/keyserver lookups run at all; false means
@@ -71,6 +76,9 @@ type keyResolver struct {
 	// auto-create — it falls through to the pickup path. A key the user
 	// already holds (resolve step 1) is unaffected.
 	suppressed map[string]bool
+	// internalPQ lazily caches the request-scoped proven-address index for
+	// internal PQ discovery so multi-recipient requests scan org accounts once.
+	internalPQ *internalPQIndex
 }
 
 // findContact returns the first contact whose email matches, case-
@@ -227,6 +235,14 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 		return resolvedKey{Tier: tierNone, Err: err}
 	}
 	pinnedFP := ""
+	if kr.preferV6 && hasContact && c.PGPKeyV6 != "" {
+		if !slotMatchesPin(c.PGPKeyV6, c.PGPKeyV6Fingerprint) || (c.PGPKey != "" && !keyMatchesPin(c)) {
+			return resolvedKey{Tier: tierKeyChanged}
+		}
+		if pgpmail.EncryptsNow(c.PGPKeyV6) {
+			return resolvedKey{Armored: c.PGPKeyV6, Fingerprint: c.PGPKeyV6Fingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c), SelectedCapability: armoredCapability(c.PGPKeyV6)}
+		}
+	}
 	if hasContact && c.PGPKey != "" {
 		// A stored key its own pin disputes (e.g. an Autocrypt rotation) is a
 		// key change, never a silent encryption target.
@@ -234,7 +250,7 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 			return resolvedKey{Tier: tierKeyChanged}
 		}
 		if st, err := pgpmail.CheckKeyStatus(c.PGPKey); err == nil && st.Usable() {
-			return resolvedKey{Armored: c.PGPKey, Fingerprint: c.PGPKeyFingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c)}
+			return resolvedKey{Armored: c.PGPKey, Fingerprint: c.PGPKeyFingerprint, Tier: tierContactVerified, Usable: true, Capability: contactCapability(c), SelectedCapability: armoredCapability(c.PGPKey)}
 		}
 		pinnedFP = c.PGPKeyFingerprint
 	}
@@ -261,7 +277,10 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 		if v6 != nil && (v4 == nil || v6.Class.rank() > v4.Class.rank()) {
 			best = v6
 		}
-		return resolvedKey{Armored: use.Armored, Fingerprint: use.Fingerprint, Tier: tierWKD, Usable: true, Capability: best.Class.capability()}
+		if kr.preferV6 {
+			use = best
+		}
+		return resolvedKey{Armored: use.Armored, Fingerprint: use.Fingerprint, Tier: tierWKD, Usable: true, Capability: best.Class.capability(), SelectedCapability: use.Class.capability()}
 	}
 
 	if _, fp, st, err := keyserverLookup(ctx, email); err == nil && st.Usable() {

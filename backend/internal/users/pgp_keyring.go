@@ -39,6 +39,7 @@ type PGPKeyringUpdate struct {
 	MaterialGeneration  uint64
 	PrimaryFingerprints []string
 	KeyFingerprints     []string
+	PublicKeyV6         string
 	PublicKey           string
 	PasswordEnvelope    string
 	RecoveryEnvelope    string
@@ -80,10 +81,10 @@ func containsFingerprints(inventory, required []string) bool {
 
 // CommitPGPKeyring commits complete password/recovery material, active public key,
 // inventory and an optional derived credential under one revision/file lock.
-// No HTTP route calls this yet: conversion requires recovery and native gates.
+// P4 exposes only adding a PQ certificate, preserving the v4 public identity.
 func (s *Store) CommitPGPKeyring(ctx context.Context, id string, update PGPKeyringUpdate) (User, error) {
 	if update.MaterialGeneration == 0 || update.MaterialGeneration > MaxPGPRevision ||
-		len(update.PublicKey) > MaxWrappedEnvelopeBytes ||
+		len(update.PublicKey) > MaxWrappedEnvelopeBytes || len(update.PublicKeyV6) > MaxWrappedEnvelopeBytes ||
 		(update.Source != "generated" && update.Source != "imported") {
 		return User{}, ErrInvalidPGPKeyring
 	}
@@ -122,6 +123,14 @@ func (s *Store) CommitPGPKeyring(ctx context.Context, id string, update PGPKeyri
 	if err != nil {
 		return User{}, ErrInvalidPGPKeyring
 	}
+	var pqInfo pgpmail.PublicKeyInfo
+	if update.PublicKeyV6 != "" {
+		pqInfo, err = pgpmail.InspectPQCKey(update.PublicKeyV6)
+		if err != nil || !slices.Contains(primaries, strings.ToUpper(pqInfo.Fingerprint)) ||
+			!containsFingerprints(inventory, pqInfo.KeyFingerprints) {
+			return User{}, ErrInvalidPGPKeyring
+		}
+	}
 	var credential PGPKeyringCredential
 	var hash string
 	if update.Credential != nil {
@@ -141,7 +150,7 @@ func (s *Store) CommitPGPKeyring(ctx context.Context, id string, update PGPKeyri
 		}
 	}
 	return s.mutatePGP(id, &update.ExpectedRevision, func(u *User) error {
-		if u.PGPProtection() != PGPProtectionClient || !u.UsesDerivedAuth() {
+		if u.PGPProtection() != PGPProtectionClient || (!u.UsesDerivedAuth() && u.PasswordHash != "") || u.MustChangePassword {
 			return ErrPGPKeyringUpgradeRequired
 		}
 		previous, err := pgpmail.ReadPublicKey(u.PGPPublicKey)
@@ -162,6 +171,12 @@ func (s *Store) CommitPGPKeyring(ctx context.Context, id string, update PGPKeyri
 		}
 		if !containsFingerprints(inventory, oldInventory) || !containsFingerprints(primaries, oldPrimaries) {
 			return ErrInvalidPGPKeyring
+		}
+		if update.PublicKeyV6 != "" && (u.PGPPublicKeyV6 != "" || len(active) != 40) {
+			return ErrInvalidPGPKeyring
+		}
+		if u.PGPPublicKeyV6 != "" && !strings.EqualFold(active, u.PGPFingerprint) {
+			return ErrPGPKeyringUpgradeRequired
 		}
 		changedActive := !strings.EqualFold(active, u.PGPFingerprint)
 		// Conversion wraps the existing identity first; retirement is a later commit.
@@ -206,6 +221,11 @@ func (s *Store) CommitPGPKeyring(ctx context.Context, id string, update PGPKeyri
 		version := 1
 		if !conversion {
 			version = u.PGPKeyring.Version
+		}
+		if update.PublicKeyV6 != "" {
+			version = 2
+			u.PGPPublicKeyV6, u.PGPFingerprintV6 = pqInfo.ArmoredPublicKey, pqInfo.Fingerprint
+			u.PGPKeyCreatedAtV6 = time.Now().UTC().Format(time.RFC3339)
 		}
 		u.PGPKeyring = &PGPKeyringState{Version: version, MaterialGeneration: generation, PrimaryFingerprints: primaries, KeyFingerprints: inventory}
 		u.PGPFingerprint, u.PGPKeyID, u.PGPPublicKey = info.Fingerprint, info.KeyID, publicKey

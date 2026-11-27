@@ -186,7 +186,7 @@ func main() {
 			}
 			return map[string]any{"fingerprint": info.Fingerprint, "version": info.Version, "isPrivate": info.IsPrivate,
 				"locked": info.Locked, "count": info.Count, "expires": info.Expires, "publicKey": toJS(info.PublicKey), "packets": packetList(info.Packets),
-				"keyIDs": anyList(info.KeyIDs), "fingerprints": anyList(info.Fingerprints), "algorithms": algos}, nil
+				"keyIDs": anyList(info.KeyIDs), "fingerprints": anyList(info.Fingerprints), "algorithms": algos, "encryptionAlgorithm": info.EncryptionAlgorithm}, nil
 		}),
 		"encrypt": op(func(req js.Value) (map[string]any, error) {
 			data, signer := bytesOf(req.Get("data")), bytesOf(req.Get("signingKey"))
@@ -214,7 +214,7 @@ func main() {
 				return nil, err
 			}
 			defer zero(data)
-			return map[string]any{"data": toJS(data), "signatures": checks(sigs)}, nil
+			return map[string]any{"data": toJS(data), "signatures": checks(sigs), "quantumSafe": quantumSafeMessage(bytesOf(req.Get("message")))}, nil
 		}),
 		"verifyDetached": op(func(req js.Value) (map[string]any, error) {
 			sigs, err := verifyDetached(bytesOf(req.Get("data")), bytesOf(req.Get("signature")), bytesList(req.Get("verificationKeys")))

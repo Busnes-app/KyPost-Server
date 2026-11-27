@@ -18,6 +18,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add Spec A P4 browser upgrades: generate an unprotected category-3 v6 certificate alongside the active v4 identity, save a complete v2 password/recovery keyring, and require every paired device to confirm v6 capability and the current X-Wing ring before new stored mail uses v6. Split encrypted deliveries by certificate version and PQ capability, keep each Bcc isolated, and mark classical recipients/messages **Not quantum-safe**. Public v4 publication and existing stored mail remain unchanged.
 - Add Spec A P3 reads: OpenPGP v6 and RFC 9980 reader compatibility in the server/browser (server key admission stays category 3), v1/v2 keyrings with v4/v6 active slots, 512 KiB sealed envelopes and 2 MiB recovery files. Track device `openpgp` codecs on enrollment-key and enrollment-state, including already-enrolled upgrades, with additive SQLite/PostgreSQL migration and inventory exposure. Preserve v4 generation/outbound defaults and release multi-tenant refusal.
 - Bound uncompressed browser-decrypted plaintext as well as decompressed packets; repeat WASM rebuilds now replace the toolchain's read-only runtime copy safely.
 

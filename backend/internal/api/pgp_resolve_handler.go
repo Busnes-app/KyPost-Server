@@ -51,6 +51,7 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 
 	var req struct {
 		Addresses []string `json:"addresses"`
+		Sign      bool     `json:"sign"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -90,7 +91,7 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "failed to load pgp discovery suppressions", http.StatusInternalServerError)
 		return
 	}
-	resolver := &keyResolver{store: contactsStore, settings: settings, discover: true, suppressed: suppressed}
+	resolver := &keyResolver{preferV6: preferV6(u, req.Sign), store: contactsStore, settings: settings, discover: true, suppressed: suppressed}
 
 	type result struct {
 		Address     string `json:"address"`
@@ -101,6 +102,9 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 		// Capability is the recipient's best key class: "pq", "v6" or "v4".
 		// Additive; publicKey stays the v4 key whenever there is one.
 		Capability string `json:"capability,omitempty"`
+		// SelectedCapability is the class of publicKey, the certificate
+		// selected for this send ("pq", "v6" or "v4").
+		SelectedCapability string `json:"selectedCapability,omitempty"`
 	}
 	seen := map[string]bool{}
 	results := make([]result, 0, len(addresses))
@@ -110,14 +114,19 @@ func (s *Server) handlePGPRecipientsResolve(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 		seen[strings.ToLower(clean)] = true
-		rk := resolver.resolve(r.Context(), clean)
+		rk, err := s.resolveRecipient(r.Context(), u, clean, resolver)
+		if err != nil {
+			http.Error(w, "recipient keys unavailable", http.StatusInternalServerError)
+			return
+		}
 		results = append(results, result{
-			Address:     clean,
-			PublicKey:   rk.Armored,
-			Fingerprint: rk.Fingerprint,
-			Tier:        string(rk.Tier),
-			Usable:      rk.Usable,
-			Capability:  rk.Capability,
+			Address:            clean,
+			PublicKey:          rk.Armored,
+			Fingerprint:        rk.Fingerprint,
+			Tier:               string(rk.Tier),
+			Usable:             rk.Usable,
+			Capability:         rk.Capability,
+			SelectedCapability: rk.SelectedCapability,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
