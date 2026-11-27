@@ -3,7 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ed25519"
+	"crypto/mldsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
@@ -105,15 +107,37 @@ func spkiPin(spki []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func keyPin(key ed25519.PrivateKey) string {
+// validateReceivingKey accepts an ML-DSA-65 private key (default for new keys) or a
+// legacy Ed25519 private key (retained for rolling re-pin migrations).
+func validateReceivingKey(parsed any) (crypto.Signer, bool) {
+	switch k := parsed.(type) {
+	case *mldsa.PrivateKey:
+		if k == nil || k.PublicKey().Parameters() != mldsa.MLDSA65() {
+			return nil, false
+		}
+		return k, true
+	case ed25519.PrivateKey:
+		if len(k) != ed25519.PrivateKeySize {
+			return nil, false
+		}
+		return k, true
+	default:
+		return nil, false
+	}
+}
+
+func keyPin(key crypto.Signer) string {
 	der, err := x509.MarshalPKIXPublicKey(key.Public())
 	if err != nil {
-		panic(err) // an Ed25519 public key always marshals
+		panic(err) // validated ML-DSA-65 and Ed25519 public keys always marshal
 	}
 	return spkiPin(der)
 }
 
-func encodeReceivingKey(key ed25519.PrivateKey) ([]byte, error) {
+func encodeReceivingKey(key crypto.Signer) ([]byte, error) {
+	if _, ok := validateReceivingKey(key); !ok {
+		return nil, errors.New("receiving transport key must be ML-DSA-65 or legacy Ed25519")
+	}
 	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
 		return nil, err
@@ -121,9 +145,10 @@ func encodeReceivingKey(key ed25519.PrivateKey) ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
 }
 
-// readReceivingKey reads an owner-only Ed25519 key file written by encodeReceivingKey.
-func readReceivingKey(path string) (ed25519.PrivateKey, error) {
-	bad := errors.New("receiving transport key must be an owner-only Ed25519 PKCS #8 PEM file")
+// readReceivingKey reads an owner-only ML-DSA-65 (or legacy Ed25519) key file written by
+// encodeReceivingKey.
+func readReceivingKey(path string) (crypto.Signer, error) {
+	bad := errors.New("receiving transport key must be an owner-only ML-DSA-65 or Ed25519 PKCS #8 PEM file")
 	if !filepath.IsAbs(path) {
 		return nil, bad
 	}
@@ -136,8 +161,11 @@ func readReceivingKey(path string) (ed25519.PrivateKey, error) {
 		return nil, bad
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	key, ok := parsed.(ed25519.PrivateKey)
-	if err != nil || !ok {
+	if err != nil {
+		return nil, bad
+	}
+	key, ok := validateReceivingKey(parsed)
+	if !ok {
 		return nil, bad
 	}
 	return key, nil
@@ -145,7 +173,10 @@ func readReceivingKey(path string) (ed25519.PrivateKey, error) {
 
 // receivingCertificate wraps key in a self-signed certificate. Peers check only its pin,
 // never its names, dates or issuer, so the certificate is built in memory and never stored.
-func receivingCertificate(key ed25519.PrivateKey) (tls.Certificate, error) {
+func receivingCertificate(key crypto.Signer) (tls.Certificate, error) {
+	if _, ok := validateReceivingKey(key); !ok {
+		return tls.Certificate{}, errors.New("receiving transport key must be ML-DSA-65 or legacy Ed25519")
+	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: "kypost-receiving"},
@@ -162,8 +193,9 @@ func receivingCertificate(key ed25519.PrivateKey) (tls.Certificate, error) {
 }
 
 // receivingServerKey is the replicas' one listener key in the shared SECRET_DIR. The
-// first replica to start creates it exclusively; the others read the winner's.
-func receivingServerKey() (ed25519.PrivateKey, error) {
+// first replica to start creates an ML-DSA-65 key exclusively; existing ML-DSA-65 or
+// legacy Ed25519 keys are loaded as-is so upgrades remain zero-downtime until re-pinned.
+func receivingServerKey() (crypto.Signer, error) {
 	path := filepath.Join(config.SecretDir(), receivingServerKeyFile)
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		return readReceivingKey(path)
@@ -171,7 +203,7 @@ func receivingServerKey() (ed25519.PrivateKey, error) {
 	if err := cryptutil.RefuseCreate(path); err != nil {
 		return nil, err
 	}
-	_, key, err := ed25519.GenerateKey(rand.Reader)
+	key, err := mldsa.GenerateKey(mldsa.MLDSA65())
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +238,7 @@ func runReceivingGateway(args []string, output io.Writer) (result error) {
 		if !filepath.IsAbs(args[1]) {
 			return errors.New("receiving gateway keygen needs an absolute key file path")
 		}
-		_, key, err := ed25519.GenerateKey(rand.Reader)
+		key, err := mldsa.GenerateKey(mldsa.MLDSA65())
 		if err != nil {
 			return err
 		}
