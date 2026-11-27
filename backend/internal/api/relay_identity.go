@@ -14,6 +14,8 @@ package api
 
 import (
 	"crypto/ed25519"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"encoding/base64"
 	"math"
 	"net/http"
@@ -22,15 +24,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/hybridsig"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 )
 
 // tlsPinStatementContext domain-separates the signed bytes. The device builds
 // the same string; change both together.
-const tlsPinStatementContext = "kypost-tls-pin/1"
+const (
+	tlsPinStatementContext   = "kypost-tls-pin/1"
+	tlsPinStatementContextV2 = "kypost-tls-pin/2"
+	relayHybridSeedInfo      = "kypost-relay-identity-mldsa65/1"
+)
 
-// tlsPinStatement is the exact byte string signed and verified.
+// tlsPinStatementBody is the canonical statement body shared by v1 and v2.
+func tlsPinStatementBody(host, pin string, issuedAt int64) []byte {
+	return []byte(host + "\n" + pin + "\n" + strconv.FormatInt(issuedAt, 10))
+}
+
+// tlsPinStatement is the exact byte string signed and verified for v1 (Ed25519).
 func tlsPinStatement(host, pin string, issuedAt int64) []byte {
 	return []byte(tlsPinStatementContext + "\n" + host + "\n" + pin + "\n" + strconv.FormatInt(issuedAt, 10))
 }
@@ -48,6 +60,21 @@ func loadRelayIdentity(path string, logger *logging.Logger) ed25519.PrivateKey {
 	return ed25519.NewKeyFromSeed(seed)
 }
 
+// relayIdentityHybridKey derives the companion ML-DSA-65+Ed25519 key from the
+// persisted 32-byte relay identity seed so the Ed25519 half stays identical
+// and existing backups cover both keys with no new file on disk.
+func relayIdentityHybridKey(edKey ed25519.PrivateKey) (*hybridsig.PrivateKey, error) {
+	if len(edKey) != ed25519.PrivateKeySize {
+		return nil, hybridsig.ErrLength
+	}
+	edSeed := edKey.Seed()
+	mldsaSeed, err := hkdf.Key(sha256.New, edSeed, nil, relayHybridSeedInfo, hybridsig.SeedBytes)
+	if err != nil {
+		return nil, err
+	}
+	return hybridsig.FromSeeds(mldsaSeed, edSeed)
+}
+
 // relayIdentityPublicKey is the standard-base64 raw public key, or "".
 func (s *Server) relayIdentityPublicKey() string {
 	if s.relayIdentity == nil {
@@ -56,10 +83,25 @@ func (s *Server) relayIdentityPublicKey() string {
 	return base64.StdEncoding.EncodeToString(s.relayIdentity.Public().(ed25519.PublicKey))
 }
 
-// withRelayIdentity adds the public key to a device-facing reply when one exists.
+// relayIdentityPublicKeyHybrid is the standard-base64 hybridsig public key, or "".
+func (s *Server) relayIdentityPublicKeyHybrid() string {
+	if s.relayIdentity == nil {
+		return ""
+	}
+	hk, err := relayIdentityHybridKey(s.relayIdentity)
+	if err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(hk.Public().Bytes())
+}
+
+// withRelayIdentity adds the public keys to a device-facing reply when a key exists.
 func (s *Server) withRelayIdentity(resp map[string]any) map[string]any {
 	if key := s.relayIdentityPublicKey(); key != "" {
 		resp["relayIdentityKey"] = key
+	}
+	if key := s.relayIdentityPublicKeyHybrid(); key != "" {
+		resp["relayIdentityKeyHybrid"] = key
 	}
 	return resp
 }
@@ -81,12 +123,23 @@ func (s *Server) handleNativeTLSPin(w http.ResponseWriter, r *http.Request) {
 	host := strings.ToLower(base.Hostname())
 	issuedAt := time.Now().Unix()
 	sig := ed25519.Sign(s.relayIdentity, tlsPinStatement(host, pin, issuedAt))
+	hk, err := relayIdentityHybridKey(s.relayIdentity)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "tls pin rollover is not available"})
+		return
+	}
+	sigV2, err := hk.Sign(tlsPinStatementContextV2, tlsPinStatementBody(host, pin, issuedAt))
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "tls pin rollover is not available"})
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"host":      host,
-		"pin":       pin,
-		"issuedAt":  issuedAt,
-		"signature": base64.StdEncoding.EncodeToString(sig),
+		"host":        host,
+		"pin":         pin,
+		"issuedAt":    issuedAt,
+		"signature":   base64.StdEncoding.EncodeToString(sig),
+		"signatureV2": base64.StdEncoding.EncodeToString(sigV2),
 	})
 }
 
