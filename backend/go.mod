@@ -1,6 +1,6 @@
 module github.com/Busnes-app/kypost-server/backend
 
-go 1.26.9
+go 1.27.0
 
 toolchain go1.27.4
 

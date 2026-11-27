@@ -5,10 +5,17 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/mldsa"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -131,7 +138,7 @@ func (f *tlsFixture) remote(t *testing.T, key string, servers []string, pins ...
 
 // rawCall completes a TLS handshake with key and sends header and body as given. It
 // returns the server's whole answer, or the error of a connection closed without one.
-func rawCall(t *testing.T, addr string, key ed25519.PrivateKey, header string, body []byte) ([]byte, error) {
+func rawCall(t *testing.T, addr string, key crypto.Signer, header string, body []byte) ([]byte, error) {
 	t.Helper()
 	cert, err := receivingCertificate(key)
 	if err != nil {
@@ -154,7 +161,7 @@ func rawCall(t *testing.T, addr string, key ed25519.PrivateKey, header string, b
 	return answer, err
 }
 
-func readKey(t *testing.T, path string) ed25519.PrivateKey {
+func readKey(t *testing.T, path string) crypto.Signer {
 	t.Helper()
 	key, err := readReceivingKey(path)
 	if err != nil {
@@ -724,5 +731,119 @@ func TestReceivingTLSRequiresX25519MLKEM768(t *testing.T) {
 				t.Fatalf("classical-only server (%s) unexpectedly completed handshake", tc.name)
 			}
 		})
+	}
+}
+
+// New replica and MX keys use ML-DSA-65 (RFC 9881) over X25519MLKEM768 TLS 1.3; existing
+// Ed25519 keys continue to load and interoperate during rolling re-pin; other key types
+// are rejected.
+func TestReceivingTLSUsesMLDSA65AndInteroperatesWithLegacyEd25519(t *testing.T) {
+	f := multiReceivingFixture(t)
+
+	// Newly created server key in SECRET_DIR must be ML-DSA-65.
+	srvKey, err := receivingServerKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srvMLDSA, ok := srvKey.(*mldsa.PrivateKey)
+	if !ok || srvMLDSA.PublicKey().Parameters() != mldsa.MLDSA65() {
+		t.Fatalf("receivingServerKey returned %T, want ML-DSA-65 *mldsa.PrivateKey", srvKey)
+	}
+
+	// Newly generated MX gateway key must be ML-DSA-65.
+	mxPath, _ := f.key(t, "mldsa-mx", "mx-pqc")
+	mxKey := readKey(t, mxPath)
+	mxMLDSA, ok := mxKey.(*mldsa.PrivateKey)
+	if !ok || mxMLDSA.PublicKey().Parameters() != mldsa.MLDSA65() {
+		t.Fatalf("keygen wrote %T, want ML-DSA-65 *mldsa.PrivateKey", mxKey)
+	}
+
+	// Mutual TLS negotiates X25519MLKEM768 and authenticates ML-DSA-65 certificates.
+	addr, _ := f.serve(t)
+	mxCert, err := receivingCertificate(mxKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := tls.Dial("tcp", addr, pinVerifiedClientTLS(mxCert, []string{f.pin}))
+	if err != nil {
+		t.Fatalf("ML-DSA-65 mTLS dial: %v", err)
+	}
+	st := conn.ConnectionState()
+	_ = conn.Close()
+	pqtls.RequireHybrid(t, st)
+	if len(st.PeerCertificates) == 0 {
+		t.Fatal("missing peer certificate")
+	}
+	peerPub, ok := st.PeerCertificates[0].PublicKey.(*mldsa.PublicKey)
+	if !ok || peerPub.Parameters() != mldsa.MLDSA65() {
+		t.Fatalf("server peer cert public key is %T, want ML-DSA-65 *mldsa.PublicKey", st.PeerCertificates[0].PublicKey)
+	}
+
+	// Legacy Ed25519 MX key loads via readReceivingKey and authenticates against the ML-DSA-65 replica.
+	_, edMXKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edMXRaw, err := encodeReceivingKey(edMXKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edMXPath := filepath.Join(f.keys, "legacy-ed25519.key")
+	if err := os.WriteFile(edMXPath, edMXRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runReceivingGateway([]string{"add", "mx-legacy", keyPin(edMXKey)}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	f.remote(t, edMXPath, []string{addr})
+	if err := runReceivingCommand([]string{"bind", "legacy-ed-mx", tlsSender, "one@example.test"}, nil); err != nil {
+		t.Fatalf("legacy Ed25519 MX against ML-DSA-65 replica: %v", err)
+	}
+
+	// ML-DSA-65 MX key authenticates against a legacy Ed25519 replica.
+	_, edSrvKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edSrvCert, err := receivingCertificate(edSrvKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edFixture := *f
+	edFixture.cert = edSrvCert
+	edFixture.pin = keyPin(edSrvKey)
+	edAddr, _ := edFixture.serve(t)
+	f.remote(t, mxPath, []string{edAddr}, edFixture.pin)
+	if err := runReceivingCommand([]string{"bind", "pqc-mx-legacy-srv", tlsSender, "one@example.test"}, nil); err != nil {
+		t.Fatalf("ML-DSA-65 MX against legacy Ed25519 replica: %v", err)
+	}
+
+	// Disallowed key types (ML-DSA-44, ECDSA P-256) are rejected by readReceivingKey and encodeReceivingKey.
+	mldsa44, err := mldsa.GenerateKey(mldsa.MLDSA44())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p256, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, badKey := range map[string]crypto.Signer{"mldsa44": mldsa44, "ecdsa_p256": p256} {
+		if _, err := encodeReceivingKey(badKey); err == nil {
+			t.Errorf("encodeReceivingKey accepted disallowed key type %s", name)
+		}
+		if _, err := receivingCertificate(badKey); err == nil {
+			t.Errorf("receivingCertificate accepted disallowed key type %s", name)
+		}
+		der, err := x509.MarshalPKCS8PrivateKey(badKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		badPath := filepath.Join(f.keys, "bad-"+name+".key")
+		if err := os.WriteFile(badPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readReceivingKey(badPath); err == nil {
+			t.Errorf("readReceivingKey accepted disallowed key type %s", name)
+		}
 	}
 }
