@@ -53,7 +53,7 @@ func TestProviderVerifiesMLDSA65IDAndLogoutTokens(t *testing.T) {
 	srv := httptest.NewTLSServer(mux)
 	defer srv.Close()
 	// Use a reserved .test issuer so the test passes under both default and
-	// -tags kye2e builds (which enforce config.CheckTestIssuer).
+	// end-to-end test builds (which enforce config.CheckTestIssuer).
 	issuer = "https://idp.mldsa.test"
 	srvAddr := srv.Listener.Addr().String()
 	baseTransport := srv.Client().Transport
