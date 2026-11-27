@@ -4,21 +4,40 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rs/xid"
 )
 
-// waitForTaggedOK reads lines from r until it finds the tagged response matching tag.
-// It returns nil if the response is OK, or an error otherwise.
-func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
+var appendUIDPattern = regexp.MustCompile(`(?i)\[APPENDUID\s+\d+\s+(\d+)\]`)
+
+// parseAppendUID extracts the assigned message UID from an RFC 4315
+// `[APPENDUID <uidvalidity> <uid>]` response code in a tagged OK line.
+// Returns 0 when the server did not include an APPENDUID code.
+func parseAppendUID(line []byte) int {
+	m := appendUIDPattern.FindSubmatch(line)
+	if len(m) != 2 {
+		return 0
+	}
+	v, err := strconv.Atoi(string(m[1]))
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
+}
+
+// waitForTaggedOKLine reads lines from r until it finds the tagged response matching tag.
+// It returns the matched line if the response is OK, or an error otherwise.
+func (d *Dialer) waitForTaggedOKLine(r *bufio.Reader, tag []byte) ([]byte, error) {
 	taglen := len(tag)
 	for {
 		line, err := readLine(r)
 		if err != nil {
 			_ = d.Close()
-			return fmt.Errorf("imap append read response: %w", err)
+			return nil, fmt.Errorf("imap append read response: %w", err)
 		}
 
 		if Verbose && !SkipResponses {
@@ -27,9 +46,9 @@ func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 
 		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
 			if !bytes.Equal(line[taglen+1:taglen+3], []byte("OK")) {
-				return fmt.Errorf("imap append failed: %s", excerpt(dropNl(line[taglen+1:])))
+				return nil, fmt.Errorf("imap append failed: %s", excerpt(dropNl(line[taglen+1:])))
 			}
-			return nil
+			return line, nil
 		}
 	}
 }
@@ -51,6 +70,13 @@ func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 //	msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Hi\r\n\r\nHello!")
 //	err := conn.Append("INBOX", []string{`\Seen`}, time.Time{}, msg)
 func (d *Dialer) Append(folder string, flags []string, date time.Time, message []byte) error {
+	_, err := d.AppendUID(folder, flags, date, message)
+	return err
+}
+
+// AppendUID uploads a message to folder like Append and returns the server's
+// RFC 4315 APPENDUID when present in the tagged OK response (0 otherwise).
+func (d *Dialer) AppendUID(folder string, flags []string, date time.Time, message []byte) (int, error) {
 	// Build the APPEND command prefix
 	flagStr := ""
 	if len(flags) > 0 {
@@ -78,7 +104,7 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	// Phase 1: Send the APPEND command with literal size
 	_, err := fmt.Fprintf(d.conn, "%s %s\r\n", tag, cmd)
 	if err != nil {
-		return fmt.Errorf("imap append write command: %w", err)
+		return 0, fmt.Errorf("imap append write command: %w", err)
 	}
 
 	// Phase 2: Wait for continuation response (+)
@@ -86,7 +112,7 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	line, err := readLine(r)
 	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append read continuation: %w", err)
+		return 0, fmt.Errorf("imap append read continuation: %w", err)
 	}
 
 	if Verbose && !SkipResponses {
@@ -94,21 +120,25 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	}
 
 	if !bytes.HasPrefix(bytes.TrimSpace(line), []byte("+")) {
-		return fmt.Errorf("imap append: expected continuation (+), got: %s", excerpt(dropNl(line)))
+		return 0, fmt.Errorf("imap append: expected continuation (+), got: %s", excerpt(dropNl(line)))
 	}
 
 	// Phase 3: Send the literal message bytes
 	_, err = d.conn.Write(message)
 	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append write literal: %w", err)
+		return 0, fmt.Errorf("imap append write literal: %w", err)
 	}
 	_, err = d.conn.Write([]byte("\r\n"))
 	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append write crlf: %w", err)
+		return 0, fmt.Errorf("imap append write crlf: %w", err)
 	}
 
-	// Phase 4: Read the tagged response
-	return d.waitForTaggedOK(r, tag)
+	// Phase 4: Read the tagged response and extract APPENDUID if present.
+	okLine, err := d.waitForTaggedOKLine(r, tag)
+	if err != nil {
+		return 0, err
+	}
+	return parseAppendUID(okLine), nil
 }

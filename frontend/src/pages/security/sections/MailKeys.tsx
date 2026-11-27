@@ -21,6 +21,11 @@ import {
   type DiscoverySuppression
 } from "../../../api/pgp";
 import { preparePQUpgrade, commitPQUpgrade, type PreparedPQUpgrade } from "../../../lib/pgpUpgrade";
+import {
+  getArchiveReencryptState,
+  subscribeArchiveReencrypt,
+  type ArchiveReencryptState
+} from "../../../lib/pgpArchiveReencrypt";
 import { validateKeyringSnapshot } from "../../../lib/pgpKeyring";
 import { generateIdentity, importIdentity } from "../../../lib/pgpClient";
 import {
@@ -79,6 +84,43 @@ export type MailKeysProps = {
   onIncomingSaved?: () => void;
 };
 
+function archiveReencryptSummary(state: ArchiveReencryptState, unlocked: boolean): string {
+  switch (state.kind) {
+    case "running":
+      return state.reencrypted > 0
+        ? `Re-encrypting stored v4 mail to v6 in the background (${state.reencrypted} updated)…`
+        : "Checking stored mail for v4 messages to re-encrypt to v6…";
+    case "done":
+      return state.reencrypted > 0
+        ? `Stored v4 mail updated to v6 (${state.reencrypted} re-encrypted).`
+        : "Stored encrypted mail is up to date on v6.";
+    case "incomplete": {
+      const parts: string[] = [];
+      if (state.reencrypted > 0) parts.push(`${state.reencrypted} re-encrypted`);
+      if (state.skipped > 0) parts.push(`${state.skipped} skipped`);
+      if (state.failed > 0) parts.push(`${state.failed} failed`);
+      const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+      return state.pageLimitReached
+        ? `Stored v4 mail scan paused at the page limit${detail} and will continue on the next unlock.`
+        : `Stored v4 mail scan finished with unconverted messages${detail}. Remaining mail will be retried on the next unlock.`;
+    }
+    case "paused":
+      return state.reason === "locked"
+        ? "Unlock your key to continue re-encrypting stored v4 mail to v6."
+        : "Stored v4 mail re-encryption paused.";
+    case "error":
+      return "Stored v4 mail re-encryption encountered an error and will resume on the next unlock.";
+    case "idle":
+      return unlocked
+        ? "Stored v4 mail is re-encrypted to v6 in the background."
+        : "Unlock your key to re-encrypt stored v4 mail to v6 in the background.";
+    default: {
+      const _exhaustive: never = state;
+      return _exhaustive;
+    }
+  }
+}
+
 export function MailKeys({
   pgpIdentity = null,
   setPgpIdentity = noop,
@@ -94,6 +136,8 @@ export function MailKeys({
 }: MailKeysProps = {}) {
   const { userId, hasPassword, ssoSession } = useAuth();
   const [askPassword, passwordPrompt] = usePasswordPrompt();
+  const [archiveReencrypt, setArchiveReencrypt] = useState<ArchiveReencryptState>(getArchiveReencryptState);
+  useEffect(() => subscribeArchiveReencrypt(setArchiveReencrypt), []);
   // An SSO-only account seals its key under an encryption passphrase, and the
   // server confirms key changes with KySignOn rather than asking for a secret.
   const passphraseMode = hasPassword === false;
@@ -423,7 +467,7 @@ export function MailKeys({
       setRecoverySecret("");
       setPQUpgrade(null);
       setPgpStatus(ready
-        ? "Post-quantum certificate added; v4 remains active. New incoming encryption, Sent and drafts use v6. Existing stored mail is unchanged."
+        ? "Post-quantum certificate added; v4 remains active. New incoming encryption, Sent and drafts use v6, and stored v4 mail is re-encrypted to v6 in the background."
         : "Post-quantum certificate added; v4 remains active. Enroll every paired device with the new ring. New stored mail stays on v4 until they confirm it.");
     } catch (error) { setPgpStatus(toErrorMessage(error, "Upgrade was not confirmed. Keep the recovery file and reload.")); }
     finally { setPgpBusy(false); }
@@ -787,9 +831,8 @@ export function MailKeys({
                 </p>
                 {pgpSession.bootstrap.publicKeyV6 ? (
                   <p className="sec-muted" role="status">Post-quantum certificate installed. {pgpSession.bootstrap.v6Ready
-                    ? "New incoming encryption, Sent and drafts use v6. Classical recipients still receive compatible v4 mail."
-                    : "Waiting for paired devices to report v6 support and confirm the current ring. Incoming encryption, Sent and drafts remain v4 — not quantum-safe."}
-                    {" "}Existing stored mail is unchanged.</p>
+                    ? `New incoming encryption, Sent and drafts use v6. Classical recipients still receive compatible v4 mail. ${archiveReencryptSummary(archiveReencrypt, pgpSession.unlocked)}`
+                    : "Waiting for paired devices to report v6 support and confirm the current ring. Incoming encryption, Sent and drafts remain v4 — not quantum-safe. Existing stored mail is unchanged until then."}</p>
                 ) : pgpSession.unlocked ? (
                   <div className="sec-section">
                     <h4>Add post-quantum protection</h4>

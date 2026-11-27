@@ -10,6 +10,7 @@ import { ComposeWindow } from "./components/ComposeWindow";
 import { useCompose } from "./hooks/useCompose";
 import { useDialogOpen } from "./hooks/useDialogOpen";
 import { clearPGPSession, loadPGPSession } from "./lib/pgpSession";
+import { attachArchiveReencryptWatcher } from "./lib/pgpArchiveReencrypt";
 import { LoginPage } from "./pages/LoginPage";
 import { ReauthGate, clearReauth } from "./components/ReauthGate";
 import { SettingsMenu } from "./components/SettingsMenu";
@@ -297,6 +298,13 @@ export function App() {
       void loadPGPSession();
     }
   }, [auth?.authenticated]);
+
+  // Spec A P6: once a client-protected v6-ready account is unlocked,
+  // re-encrypt stored v4 archive mail to v6 in the background.
+  useEffect(() => {
+    if (!auth?.authenticated) return;
+    return attachArchiveReencryptWatcher(() => auth.userId);
+  }, [auth?.authenticated, auth?.userId]);
 
 
   // ponytail: single backend source for the displayed version (serverVersion)

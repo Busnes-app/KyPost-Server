@@ -258,3 +258,90 @@ func TestDetachedSignatureAndArmor(t *testing.T) {
 		}
 	}
 }
+
+func TestReencryptToV6(t *testing.T) {
+	bobV4 := gen(t, "v4", "bob@example.test")
+	bobV6 := gen(t, "v6", "bob@example.test")
+	aliceV4 := gen(t, "v4", "alice@example.test")
+	malloryV4 := gen(t, "v4", "mallory@example.test")
+
+	// 1. Unsigned v4 message re-encrypted to v6.
+	plain := []byte("Content-Type: text/plain; charset=UTF-8\r\n\r\nhello archive\r\n")
+	v4Unsigned, err := encrypt(plain, [][]byte{[]byte(bobV4.pub)}, nil)
+	if err != nil {
+		t.Fatalf("encrypt v4 unsigned: %v", err)
+	}
+	if quantumSafeMessage([]byte(v4Unsigned)) {
+		t.Fatal("v4 message unexpectedly reported quantumSafe")
+	}
+	v6Unsigned, err := reencrypt([]byte(v4Unsigned), [][]byte{[]byte(bobV4.priv), []byte(bobV6.priv)}, []byte(bobV6.pub), 1<<20)
+	if err != nil {
+		t.Fatalf("reencrypt unsigned: %v", err)
+	}
+	if !quantumSafeMessage([]byte(v6Unsigned)) {
+		t.Fatal("re-encrypted v6 message not reported quantumSafe")
+	}
+	gotUnsigned, _, err := decrypt([]byte(v6Unsigned), [][]byte{[]byte(bobV6.priv)}, nil, 1<<20)
+	if err != nil {
+		t.Fatalf("decrypt v6 unsigned: %v", err)
+	}
+	if string(gotUnsigned) != "Content-Type: text/plain; charset=UTF-8\n\nhello archive\n" {
+		t.Fatalf("unsigned plaintext mismatch: %q", gotUnsigned)
+	}
+
+	// 2. Inline-signed v4 message (with IntendedRecipients = Bob_v4) survives re-encryption to Bob_v6.
+	v4Signed, err := encrypt([]byte("signed archive body"), [][]byte{[]byte(bobV4.pub)}, []byte(aliceV4.priv))
+	if err != nil {
+		t.Fatalf("encrypt v4 signed: %v", err)
+	}
+	v6Signed, err := reencrypt([]byte(v4Signed), [][]byte{[]byte(bobV4.priv), []byte(bobV6.priv)}, []byte(bobV6.pub), 1<<20)
+	if err != nil {
+		t.Fatalf("reencrypt signed: %v", err)
+	}
+	if !quantumSafeMessage([]byte(v6Signed)) {
+		t.Fatal("re-encrypted signed message not quantumSafe")
+	}
+	gotSigned, sigs, err := decrypt(
+		[]byte(v6Signed),
+		[][]byte{[]byte(bobV4.priv), []byte(bobV6.priv)},
+		[][]byte{[]byte(aliceV4.pub)},
+		1<<20,
+	)
+	if err != nil {
+		t.Fatalf("decrypt v6 signed: %v", err)
+	}
+	if string(gotSigned) != "signed archive body" {
+		t.Fatalf("signed plaintext mismatch: %q", gotSigned)
+	}
+	if len(sigs) != 1 || !sigs[0].Valid {
+		t.Fatalf("inner v4 signature did not survive re-encryption: %+v", sigs)
+	}
+
+	// 3. Anti-surreptitious-forwarding: a message signed for Mallory_v4 and
+	// re-encrypted by Mallory to Bob_v6 must NOT verify as valid under Bob's ring.
+	forMallory, err := encrypt([]byte("only for mallory"), [][]byte{[]byte(malloryV4.pub)}, []byte(aliceV4.priv))
+	if err != nil {
+		t.Fatalf("encrypt for mallory: %v", err)
+	}
+	forwardedToBob, err := reencrypt([]byte(forMallory), [][]byte{[]byte(malloryV4.priv)}, []byte(bobV6.pub), 1<<20)
+	if err != nil {
+		t.Fatalf("mallory reencrypt to bob: %v", err)
+	}
+	_, fwdSigs, err := decrypt(
+		[]byte(forwardedToBob),
+		[][]byte{[]byte(bobV4.priv), []byte(bobV6.priv)},
+		[][]byte{[]byte(aliceV4.pub)},
+		1<<20,
+	)
+	if err != nil {
+		t.Fatalf("decrypt forwarded: %v", err)
+	}
+	if len(fwdSigs) != 1 || fwdSigs[0].Valid {
+		t.Fatalf("expected surreptitiously forwarded signature to be invalid, got %+v", fwdSigs)
+	}
+
+	// 4. Refuse re-encrypting to a v4 target key.
+	if _, err := reencrypt([]byte(v4Unsigned), [][]byte{[]byte(bobV4.priv)}, []byte(bobV4.pub), 1<<20); err == nil {
+		t.Fatal("expected reencrypt to refuse v4 target key")
+	}
+}

@@ -44,6 +44,8 @@ export interface PgpEngine {
   /** decryptionKeys is the whole ring; the engine picks the member that opens it. */
   decrypt(opts: { armoredMessage: string; decryptionKeys: string[]; verificationKeys: string[]; maxBytes: number }):
     Promise<{ data: string; signatures: SignatureCheck[]; quantumSafe?: boolean }>;
+  /** Re-encrypts a v4 encrypted message to the account's v6 key, preserving inner signatures byte-for-byte. */
+  reencrypt(opts: { armoredMessage: string; decryptionKeys: string[]; encryptionKey: string; maxBytes: number }): Promise<string>;
   verifyDetached(opts: { data: Uint8Array; armoredSignature: string; verificationKeys: string[] }): Promise<SignatureCheck[]>;
   armor(data: Uint8Array, type: "PGP MESSAGE" | "PGP SIGNATURE" | "PGP PUBLIC KEY BLOCK"): Promise<string>;
   dearmor(armored: string): Promise<Uint8Array>;

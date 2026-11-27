@@ -1,0 +1,681 @@
+package imap
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+)
+
+type reencryptFixture struct {
+	mu          sync.Mutex
+	uidplus     bool
+	condstore   bool
+	messages    map[int][]byte
+	flags       map[int][]string
+	modseq      map[int]uint64
+	deleted     map[int]bool
+	nextUID     int
+	appendCount int
+	// mutateOnAppend simulates another IMAP session changing flags on uid 7
+	// concurrently while ReplaceRawMessageCAS is appending the replacement.
+	mutateOnAppend bool
+	// unsolicitedOtherDeleted emits an unsolicited FETCH carrying \Deleted for
+	// another UID (99) when UNCHANGEDSINCE rejects uid 7.
+	unsolicitedOtherDeleted bool
+	// unsolicitedOtherSnapshot prepends an unsolicited FETCH carrying different
+	// FLAGS and a higher MODSEQ for UID 99 ahead of UID 7's snapshot response.
+	unsolicitedOtherSnapshot bool
+	// failVerifyRawForUID causes BODY.PEEK[] fetch for this UID to return an
+	// empty body so post-APPEND verification fails.
+	failVerifyRawForUID int
+	lastAppendedUID     int
+	// omitAppendUID omits the RFC 4315 APPENDUID response code from APPEND.
+	omitAppendUID bool
+	// expungeFailuresRemaining fails the next N UID EXPUNGE commands with NO.
+	expungeFailuresRemaining int
+	// expungeDeletesBeforeFail deletes the message on the server even while
+	// returning an error to the client (simulating an interrupted expunge).
+	expungeDeletesBeforeFail bool
+	// storeFailuresRemaining fails the next N conditional UID STORE commands.
+	storeFailuresRemaining int
+	// storeMarksDeletedBeforeFail marks the original UID \Deleted on the server
+	// before failing the conditional UID STORE (simulating a connection drop
+	// after the server applied \Deleted but before the client received OK).
+	storeMarksDeletedBeforeFail bool
+	// uidValidity is the folder's current RFC 3501 UIDVALIDITY returned by STATUS.
+	uidValidity uint64
+	// bumpUIDValidityOnNextSelect increments uidValidity on the second and
+	// subsequent SELECT commands (simulating a mailbox rebuild across reconnect).
+	bumpUIDValidityOnReconnect bool
+	selectCount                int
+}
+
+func newReencryptFixture(t *testing.T, uidplus, condstore bool) (*APIClient, *reencryptFixture) {
+	t.Helper()
+	server := newFakeIMAPServer(t, "/", true, []fakeFolder{{name: "INBOX"}})
+	orig := []byte("From: alice@example.com\r\nSubject: v4\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv4\r\n-----END PGP MESSAGE-----\r\n")
+	f := &reencryptFixture{
+		uidplus:     uidplus,
+		condstore:   condstore,
+		messages:    map[int][]byte{7: orig},
+		flags:       map[int][]string{7: {`\Seen`}},
+		modseq:      map[int]uint64{7: 5},
+		deleted:     map[int]bool{},
+		nextUID:     8,
+		uidValidity: 42,
+	}
+	server.mu.Lock()
+	server.commandHook = f.respond
+	server.appendHook = f.append
+	server.appendUIDHook = func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.omitAppendUID {
+			return 0
+		}
+		return f.lastAppendedUID
+	}
+	server.mu.Unlock()
+	client := server.client("INBOX")
+	t.Cleanup(func() { _ = client.Close() })
+	return client, f
+}
+
+func (f *reencryptFixture) append(_ string, raw []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.appendCount++
+	uid := f.nextUID
+	f.nextUID++
+	f.lastAppendedUID = uid
+	f.messages[uid] = bytes.Clone(raw)
+	f.flags[uid] = []string{`\Seen`}
+	f.modseq[uid] = 1
+	if f.mutateOnAppend {
+		f.mutateOnAppend = false
+		f.flags[7] = append(f.flags[7], `\Flagged`)
+		f.modseq[7]++
+	}
+	return nil
+}
+
+func (f *reencryptFixture) expungeAllDeleted() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for uid := range f.messages {
+		if f.deleted[uid] {
+			delete(f.messages, uid)
+			delete(f.flags, uid)
+			delete(f.modseq, uid)
+			delete(f.deleted, uid)
+		}
+	}
+}
+
+func (f *reencryptFixture) respond(tag, command string) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ok := tag + " OK done\r\n"
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return "", false
+	}
+	switch strings.ToUpper(fields[0]) {
+	case "CAPABILITY":
+		caps := "IMAP4rev1"
+		if f.uidplus {
+			caps += " UIDPLUS"
+		}
+		if f.condstore {
+			caps += " CONDSTORE"
+		}
+		return "* CAPABILITY " + caps + "\r\n" + ok, true
+	case "SELECT":
+		f.selectCount++
+		if f.bumpUIDValidityOnReconnect && f.selectCount > 1 {
+			f.uidValidity++
+		}
+		return ok, true
+	case "STATUS":
+		return fmt.Sprintf("* STATUS INBOX (UIDVALIDITY %d UIDNEXT %d)\r\n", f.uidValidity, f.nextUID) + ok, true
+	}
+	if len(fields) < 3 || strings.ToUpper(fields[0]) != "UID" {
+		return "", false
+	}
+	switch strings.ToUpper(fields[1]) {
+	case "SEARCH":
+		var matched []string
+		excludeDeleted := strings.Contains(strings.ToUpper(command), "NOT DELETED")
+		spec := fields[len(fields)-1]
+		if strings.HasSuffix(spec, ":*") {
+			minUID, _ := strconv.Atoi(strings.TrimSuffix(spec, ":*"))
+			for uid := range f.messages {
+				if uid >= minUID && (!excludeDeleted || !f.deleted[uid]) {
+					matched = append(matched, strconv.Itoa(uid))
+				}
+			}
+		} else if uid, err := strconv.Atoi(spec); err == nil {
+			if _, exists := f.messages[uid]; exists && (!excludeDeleted || !f.deleted[uid]) {
+				matched = append(matched, strconv.Itoa(uid))
+			}
+		}
+		return "* SEARCH " + strings.Join(matched, " ") + "\r\n" + ok, true
+
+	case "FETCH":
+		uid, _ := strconv.Atoi(fields[2])
+		raw, exists := f.messages[uid]
+		if !exists {
+			return ok, true
+		}
+		upper := strings.ToUpper(command)
+		switch {
+		case strings.Contains(upper, "BODY.PEEK[]"):
+			if f.failVerifyRawForUID == uid {
+				return tag + " NO temporary fetch failure\r\n", true
+			}
+			return fmt.Sprintf("* 1 FETCH (UID %d BODY[] {%d}\r\n%s)\r\n", uid, len(raw), string(raw)) + ok, true
+		case strings.Contains(upper, "MODSEQ"):
+			allFlags := append([]string(nil), f.flags[uid]...)
+			if f.deleted[uid] {
+				allFlags = append(allFlags, `\Deleted`)
+			}
+			flagList := strings.Join(allFlags, " ")
+			prefix := ""
+			if f.unsolicitedOtherSnapshot {
+				prefix = "* 99 FETCH (UID 99 FLAGS (\\Answered) MODSEQ (999))\r\n"
+			}
+			return fmt.Sprintf("%s* 1 FETCH (UID %d FLAGS (%s) MODSEQ (%d))\r\n", prefix, uid, flagList, f.modseq[uid]) + ok, true
+		case strings.Contains(upper, "(UID FLAGS)"):
+			allFlags := append([]string(nil), f.flags[uid]...)
+			if f.deleted[uid] {
+				allFlags = append(allFlags, `\Deleted`)
+			}
+			flagList := strings.Join(allFlags, " ")
+			return fmt.Sprintf("* 1 FETCH (UID %d FLAGS (%s))\r\n", uid, flagList) + ok, true
+		default:
+			flagList := strings.Join(f.flags[uid], " ")
+			return fmt.Sprintf("* 1 FETCH (UID %d FLAGS (%s) INTERNALDATE \"27-Nov-2026 04:00:00 +0000\" RFC822.SIZE %d ENVELOPE (\"Thu, 27 Nov 2026 04:00:00 +0000\" \"v4\" NIL NIL NIL NIL NIL NIL NIL \"<m1@e>\"))\r\n", uid, flagList, len(raw)) + ok, true
+		}
+
+	case "STORE":
+		uid, _ := strconv.Atoi(fields[2])
+		upper := strings.ToUpper(command)
+		if strings.Contains(upper, "UNCHANGEDSINCE") {
+			idx := strings.Index(upper, "UNCHANGEDSINCE ")
+			rest := upper[idx+len("UNCHANGEDSINCE "):]
+			end := strings.Index(rest, ")")
+			since, _ := strconv.ParseUint(strings.TrimSpace(rest[:end]), 10, 64)
+			if f.modseq[uid] > since {
+				prefix := ""
+				if f.unsolicitedOtherDeleted {
+					prefix = "* 99 FETCH (UID 99 FLAGS (\\Deleted) MODSEQ (99))\r\n"
+				}
+				return fmt.Sprintf("%s%s OK [MODIFIED %d] Conditional STORE failed\r\n", prefix, tag, uid), true
+			}
+			if f.storeFailuresRemaining > 0 {
+				f.storeFailuresRemaining--
+				if f.storeMarksDeletedBeforeFail {
+					f.deleted[uid] = true
+					f.modseq[uid]++
+				}
+				return tag + " NO simulated disconnect after conditional STORE\r\n", true
+			}
+			f.deleted[uid] = true
+			f.modseq[uid]++
+			flagList := strings.Join(append(append([]string(nil), f.flags[uid]...), `\Deleted`), " ")
+			return fmt.Sprintf("* 1 FETCH (UID %d FLAGS (%s) MODSEQ (%d))\r\n", uid, flagList, f.modseq[uid]) + ok, true
+		}
+		if strings.Contains(upper, `\DELETED`) {
+			f.deleted[uid] = true
+			return ok, true
+		}
+		if strings.Contains(upper, "FLAGS.SILENT (") {
+			start := strings.Index(command, "(")
+			end := strings.LastIndex(command, ")")
+			if start >= 0 && end > start {
+				f.flags[uid] = strings.Fields(command[start+1 : end])
+			}
+		}
+		return ok, true
+
+	case "EXPUNGE":
+		uid, _ := strconv.Atoi(fields[2])
+		if f.expungeFailuresRemaining > 0 {
+			f.expungeFailuresRemaining--
+			if f.expungeDeletesBeforeFail && f.deleted[uid] {
+				delete(f.messages, uid)
+				delete(f.flags, uid)
+				delete(f.modseq, uid)
+				delete(f.deleted, uid)
+			}
+			return tag + " NO temporary expunge failure\r\n", true
+		}
+		if f.deleted[uid] {
+			delete(f.messages, uid)
+			delete(f.flags, uid)
+			delete(f.modseq, uid)
+			delete(f.deleted, uid)
+		}
+		return ok, true
+	}
+	return "", false
+}
+
+func sha256Hex(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestReplaceRawMessageCASRequiresCondstore(t *testing.T) {
+	client, f := newReencryptFixture(t, true, false)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if !errors.Is(err, ErrCondstoreUnsupported) {
+		t.Fatalf("expected ErrCondstoreUnsupported on UIDPLUS-only server, got %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.appendCount != 0 {
+		t.Fatalf("expected zero appends when CONDSTORE is unavailable, got %d", f.appendCount)
+	}
+	if !bytes.Equal(f.messages[7], orig) {
+		t.Fatalf("original message was modified or removed")
+	}
+}
+
+func TestReplaceRawMessageCASAbortsOnConcurrentFlagChange(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	f.mutateOnAppend = true
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if !errors.Is(err, ErrCASMismatch) {
+		t.Fatalf("expected ErrCASMismatch on concurrent flag update, got %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !bytes.Equal(f.messages[7], orig) {
+		t.Fatalf("original message must be preserved after concurrent flag change")
+	}
+	if _, leaked := f.messages[8]; leaked {
+		t.Fatalf("appended replacement copy UID 8 was not cleaned up")
+	}
+}
+
+func TestReplaceRawMessageCASSucceedsWithCondstore(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	newUID, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err != nil {
+		t.Fatalf("ReplaceRawMessageCAS failed: %v", err)
+	}
+	if newUID != 8 {
+		t.Fatalf("expected newUID=8, got %d", newUID)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, stillThere := f.messages[7]; stillThere {
+		t.Fatalf("original UID 7 should have been expunged")
+	}
+	if !bytes.Equal(f.messages[8], newRaw) {
+		t.Fatalf("replacement UID 8 bytes mismatch")
+	}
+}
+
+func TestListAllFoldersExcludesNoselect(t *testing.T) {
+	server := newFakeIMAPServer(t, "/", true, []fakeFolder{
+		{name: "INBOX", attrs: `\HasNoChildren`},
+		{name: "[Gmail]", attrs: `\Noselect \HasChildren`},
+		{name: "Archive", attrs: `\Archive \HasNoChildren`},
+		{name: "Ghost", attrs: `\NonExistent`},
+	})
+	client := server.client("INBOX")
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, err := client.ListAllFolders(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllFolders failed: %v", err)
+	}
+	want := []string{"Archive", "INBOX"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("ListAllFolders = %v, want %v", got, want)
+	}
+}
+
+func TestReplaceRawMessageCASIgnoresUnsolicitedDeletedForOtherUID(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	f.mutateOnAppend = true
+	f.unsolicitedOtherDeleted = true
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if !errors.Is(err, ErrCASMismatch) {
+		t.Fatalf("expected ErrCASMismatch despite unsolicited FETCH \\Deleted for UID 99, got %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !bytes.Equal(f.messages[7], orig) {
+		t.Fatalf("original UID 7 must be preserved")
+	}
+	if _, leaked := f.messages[8]; leaked {
+		t.Fatalf("appended copy UID 8 was not cleaned up")
+	}
+}
+
+func TestReplaceRawMessageCASIgnoresUnsolicitedSnapshotForOtherUID(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	f.unsolicitedOtherSnapshot = true
+	f.mutateOnAppend = true
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	// Because UID 7's real MODSEQ (5) is captured rather than UID 99's unsolicited 999,
+	// concurrent flag mutation on UID 7 during APPEND MUST still abort with ErrCASMismatch.
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); !errors.Is(err, ErrCASMismatch) {
+		t.Fatalf("expected ErrCASMismatch using UID 7 MODSEQ instead of unsolicited UID 99 MODSEQ, got %v", err)
+	}
+
+	// Without concurrent mutation, replacement MUST preserve UID 7's own flags
+	// (\Seen and the \Flagged added during the earlier concurrent mutation)
+	// rather than copying UID 99's unsolicited \Answered flag.
+	f.mutateOnAppend = false
+	newUID, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err != nil {
+		t.Fatalf("ReplaceRawMessageCAS with unsolicited snapshot failed: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	gotFlags := strings.Join(f.flags[newUID], " ")
+	if strings.Contains(gotFlags, `\Answered`) {
+		t.Fatalf("replacement inherited unsolicited UID 99 flags: %q", gotFlags)
+	}
+	if !strings.Contains(gotFlags, `\Seen`) || !strings.Contains(gotFlags, `\Flagged`) {
+		t.Fatalf("replacement lost UID 7 flags (\\Seen \\Flagged): %q", gotFlags)
+	}
+}
+
+func TestReplaceRawMessageCASReconcilesInterruptedConditionalDelete(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	// Simulate the server applying \Deleted on UID 7 and then dropping the
+	// connection before the client sees the tagged OK.
+	f.storeFailuresRemaining = 1
+	f.storeMarksDeletedBeforeFail = true
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	newUID, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err != nil {
+		t.Fatalf("ReplaceRawMessageCAS must reconcile committed conditional delete, got %v", err)
+	}
+	if newUID != 8 {
+		t.Fatalf("expected replacement UID 8, got %d", newUID)
+	}
+
+	// An ordinary mailbox expunge afterwards must leave the verified replacement intact.
+	f.expungeAllDeleted()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, stillThere := f.messages[7]; stillThere {
+		t.Fatal("original UID 7 should have been expunged after reconciliation")
+	}
+	if !bytes.Equal(f.messages[8], newRaw) {
+		t.Fatal("verified replacement UID 8 must survive recovery and subsequent mailbox expunge")
+	}
+}
+
+func TestReplaceRawMessageCASRollsBackOnlyWhenOriginalConfirmedUndeleted(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	// Simulate the conditional STORE failing BEFORE the server marks UID 7 \Deleted.
+	f.storeFailuresRemaining = 1
+	f.storeMarksDeletedBeforeFail = false
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+		t.Fatal("expected error when conditional STORE fails before deleting original")
+	}
+
+	f.expungeAllDeleted()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !bytes.Equal(f.messages[7], orig) {
+		t.Fatal("original UID 7 must be preserved intact when conditional STORE did not mark it deleted")
+	}
+	if _, leaked := f.messages[8]; leaked {
+		t.Fatal("replacement UID 8 should be cleaned up once original is confirmed undeleted")
+	}
+}
+
+func TestReplaceRawMessageCASCleansUpAppendUIDOnVerifyFailure(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	f.failVerifyRawForUID = 8
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+		t.Fatal("expected error when post-APPEND verification fetch fails")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.messages[7]; !ok {
+		t.Fatal("original UID 7 was deleted despite verification failure")
+	}
+	if _, leaked := f.messages[8]; leaked {
+		t.Fatal("appended UID 8 was leaked instead of cleaned up after verification failure")
+	}
+}
+
+func TestReplaceRawMessageCASRejectsMissingAppendUIDWithoutTouchingConcurrentCopy(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+	// Simulate another session concurrently appending identical bytes at a
+	// higher UID while the server omits APPENDUID.
+	f.omitAppendUID = true
+	f.mutateOnAppend = true
+	f.messages[99] = bytes.Clone(newRaw)
+	f.flags[99] = []string{`\Seen`}
+	f.modseq[99] = 10
+
+	_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err == nil {
+		t.Fatal("expected error when server omits APPENDUID")
+	}
+	if !strings.Contains(err.Error(), "APPENDUID") {
+		t.Fatalf("expected missing-APPENDUID refusal error, got: %v", err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.messages[7]; !ok {
+		t.Fatal("original UID 7 should be preserved when APPENDUID is missing")
+	}
+	if _, ok := f.messages[99]; !ok {
+		t.Fatal("unrelated concurrent copy UID 99 was mistakenly deleted")
+	}
+}
+
+func TestReplaceRawMessageCASPreservesMessagesWhenUIDValidityChangesOnReconnect(t *testing.T) {
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+
+	t.Run("conditional_delete_reconcile", func(t *testing.T) {
+		client, f := newReencryptFixture(t, true, true)
+		orig := bytes.Clone(f.messages[7])
+		f.storeFailuresRemaining = 1
+		f.bumpUIDValidityOnReconnect = true
+
+		_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+		if err == nil || !strings.Contains(err.Error(), "UIDVALIDITY") {
+			t.Fatalf("expected UIDVALIDITY ambiguity error, got %v", err)
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.messages[7]; !ok {
+			t.Fatal("original UID 7 must be preserved when UIDVALIDITY changes")
+		}
+		if _, ok := f.messages[8]; !ok {
+			t.Fatal("replacement UID 8 must be preserved when UIDVALIDITY changes")
+		}
+	})
+
+	t.Run("expunge_retry", func(t *testing.T) {
+		client, f := newReencryptFixture(t, true, true)
+		orig := bytes.Clone(f.messages[7])
+		f.expungeFailuresRemaining = 1
+		f.bumpUIDValidityOnReconnect = true
+
+		_, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+		if err == nil || !strings.Contains(err.Error(), "UIDVALIDITY") {
+			t.Fatalf("expected UIDVALIDITY error on expunge retry, got %v", err)
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.messages[7]; !ok {
+			t.Fatal("UID 7 must not be expunged after UIDVALIDITY changed")
+		}
+		if _, ok := f.messages[8]; !ok {
+			t.Fatal("replacement UID 8 must remain preserved")
+		}
+	})
+
+	t.Run("verify_cleanup", func(t *testing.T) {
+		client, f := newReencryptFixture(t, true, true)
+		orig := bytes.Clone(f.messages[7])
+		f.failVerifyRawForUID = 8
+		f.bumpUIDValidityOnReconnect = true
+
+		if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+			t.Fatal("expected verification failure error")
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.messages[7]; !ok {
+			t.Fatal("original UID 7 must be preserved")
+		}
+		if _, ok := f.messages[8]; !ok {
+			t.Fatal("cleanup must not delete UID 8 after UIDVALIDITY changed on reconnect")
+		}
+	})
+}
+
+func TestReplaceRawMessageCASReconcilesInterruptedExpunge(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+	// First UID EXPUNGE completes on the server but errors on the wire.
+	f.expungeFailuresRemaining = 1
+	f.expungeDeletesBeforeFail = true
+
+	newUID, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err != nil {
+		t.Fatalf("expected interrupted expunge reconciliation to succeed, got %v", err)
+	}
+	if newUID != 8 {
+		t.Fatalf("expected newUID 8, got %d", newUID)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.messages[7]; ok {
+		t.Fatal("original UID 7 should be gone")
+	}
+	if f.appendCount != 1 {
+		t.Fatalf("expected 1 append, got %d", f.appendCount)
+	}
+}
+
+func TestReplaceRawMessageCASRetriesTransientExpungeFailure(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+	// First UID EXPUNGE fails without deleting; reconnect retry completes it.
+	f.expungeFailuresRemaining = 1
+
+	newUID, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw)
+	if err != nil {
+		t.Fatalf("expected transient expunge retry to succeed, got %v", err)
+	}
+	if newUID != 8 {
+		t.Fatalf("expected newUID 8, got %d", newUID)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.messages[7]; ok {
+		t.Fatal("original UID 7 should have been expunged on retry")
+	}
+	if f.appendCount != 1 {
+		t.Fatalf("expected 1 append, got %d", f.appendCount)
+	}
+}
+
+func TestReplaceRawMessageCASRefusesRetryOverAlreadyDeletedOriginal(t *testing.T) {
+	client, f := newReencryptFixture(t, true, true)
+	orig := bytes.Clone(f.messages[7])
+	newRaw := []byte("From: alice@example.com\r\nSubject: v6\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nv6\r\n-----END PGP MESSAGE-----\r\n")
+	// Both initial expunge and reconnect retry fail, leaving UID 7 \Deleted.
+	f.expungeFailuresRemaining = 10
+
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); err == nil {
+		t.Fatal("expected error when both expunge attempts fail")
+	}
+
+	// Scanning candidates must skip the already-\Deleted UID 7, and retrying
+	// ReplaceRawMessageCAS against UID 7 must refuse with ErrCASMismatch
+	// without appending a duplicate replacement.
+	uids, err := client.ListFolderMessageUIDs(context.Background(), "INBOX", 0, 50)
+	if err != nil {
+		t.Fatalf("ListFolderMessageUIDs: %v", err)
+	}
+	for _, u := range uids {
+		if u == 7 {
+			t.Fatalf("ListFolderMessageUIDs returned already-\\Deleted UID 7: %v", uids)
+		}
+	}
+	if _, err := client.ReplaceRawMessageCAS(context.Background(), "INBOX", 7, sha256Hex(orig), newRaw); !errors.Is(err, ErrCASMismatch) {
+		t.Fatalf("expected ErrCASMismatch on retry against \\Deleted original, got %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.appendCount != 1 {
+		t.Fatalf("retry appended duplicate replacement: appendCount=%d, want 1", f.appendCount)
+	}
+}
+
+func TestListAllFoldersPreservesLeadingAndTrailingSpaces(t *testing.T) {
+	server := newFakeIMAPServer(t, "/", true, []fakeFolder{
+		{name: "INBOX"},
+		{name: " Archive"},
+		{name: "Archive "},
+	})
+	client := server.client("INBOX")
+	t.Cleanup(func() { _ = client.Close() })
+
+	folders, err := client.ListAllFolders(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllFolders: %v", err)
+	}
+	want := []string{" Archive", "Archive ", "INBOX"}
+	if len(folders) != len(want) {
+		t.Fatalf("folders = %q, want %q", folders, want)
+	}
+	for i := range want {
+		if folders[i] != want[i] {
+			t.Fatalf("folders[%d] = %q, want %q (all=%q)", i, folders[i], want[i], folders)
+		}
+	}
+}

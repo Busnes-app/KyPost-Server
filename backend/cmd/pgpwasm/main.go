@@ -216,6 +216,15 @@ func main() {
 			defer zero(data)
 			return map[string]any{"data": toJS(data), "signatures": checks(sigs), "quantumSafe": quantumSafeMessage(bytesOf(req.Get("message")))}, nil
 		}),
+		"reencrypt": op(func(req js.Value) (map[string]any, error) {
+			keys := bytesList(req.Get("decryptionKeys"))
+			defer zero(keys...)
+			msg, err := reencrypt(bytesOf(req.Get("message")), keys, bytesOf(req.Get("encryptionKey")), int64(req.Get("maxBytes").Int()))
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"message": msg}, nil
+		}),
 		"verifyDetached": op(func(req js.Value) (map[string]any, error) {
 			sigs, err := verifyDetached(bytesOf(req.Get("data")), bytesOf(req.Get("signature")), bytesList(req.Get("verificationKeys")))
 			if err != nil {
