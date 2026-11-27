@@ -371,3 +371,71 @@ it("prevents overlapping concurrent runs started while initialization is in flig
   expect(second).toEqual({ kind: "idle" });
   expect(listPGPReencryptCandidates).toHaveBeenCalledTimes(1);
 });
+
+it("carries unresolved failures across maxPages continuations instead of falsely reporting done", async () => {
+  const engine = await pgpEngine();
+  unlockWithArmoredKey(ringPlaintext);
+
+  const msg = await engine.encrypt({ text: "Page 2 message", encryptionKeys: [v4.armoredPublicKey] });
+
+  vi.mocked(listPGPReencryptCandidates)
+    .mockResolvedValueOnce({
+      candidates: [{ folder: "INBOX", messageId: 10, sizeBytes: 120 }],
+      nextCursor: { folder: "INBOX", afterUid: 10 },
+      done: false,
+      v6Fingerprint: v6.fingerprint
+    })
+    .mockResolvedValueOnce({
+      candidates: [{ folder: "INBOX", messageId: 11, sizeBytes: msg.length }],
+      done: true,
+      v6Fingerprint: v6.fingerprint
+    })
+    .mockResolvedValueOnce({
+      candidates: [],
+      done: true,
+      v6Fingerprint: v6.fingerprint
+    });
+
+  // Page 1 candidate fails with HTTP 400 from server; page 2 succeeds.
+  const msg1 = await engine.encrypt({ text: "Page 1 message", encryptionKeys: [v4.armoredPublicKey] });
+  vi.mocked(getPGPReencryptRaw)
+    .mockResolvedValueOnce({
+      folder: "INBOX",
+      messageId: 10,
+      sha256: "h10",
+      armoredCiphertext: msg1,
+      sizeBytes: msg1.length
+    })
+    .mockResolvedValueOnce({
+      folder: "INBOX",
+      messageId: 11,
+      sha256: "h11",
+      armoredCiphertext: msg,
+      sizeBytes: msg.length
+    });
+
+  vi.mocked(replacePGPReencryptedMessage)
+    .mockRejectedValueOnce(new HttpError("invalid replacement ciphertext", 400, { error: "bad ciphertext" }))
+    .mockResolvedValueOnce({
+      ok: true,
+      folder: "INBOX",
+      oldMessageId: 11,
+      newMessageId: 11
+    });
+
+  const run1 = await startArchiveReencrypt({ bootstrap, userId: "user-1", delayMs: 0, maxPages: 1 });
+  expect(run1).toEqual({ kind: "incomplete", reencrypted: 0, skipped: 0, failed: 1, pageLimitReached: true });
+
+  // Page 2 finishes cleanly on its own candidates, yet must report incomplete
+  // because page 1 had a failure that still needs retrying from the start.
+  const run2 = await startArchiveReencrypt({ bootstrap, userId: "user-1", delayMs: 0, maxPages: 1 });
+  expect(run2).toEqual({ kind: "incomplete", reencrypted: 1, skipped: 0, failed: 1 });
+
+  // Cursor was cleared at end of pass, so run 3 retries from the beginning.
+  const run3 = await startArchiveReencrypt({ bootstrap, userId: "user-1", delayMs: 0, maxPages: 1 });
+  expect(run3).toEqual({ kind: "done", reencrypted: 0, skipped: 0, failed: 0 });
+  expect(vi.mocked(listPGPReencryptCandidates).mock.calls[2][0]).toMatchObject({
+    folder: undefined,
+    afterUid: undefined
+  });
+});

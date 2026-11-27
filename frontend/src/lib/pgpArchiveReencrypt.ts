@@ -49,6 +49,8 @@ export type ArchiveReencryptOptions = {
 type SavedResumeCursor = {
   key: string;
   cursor: PGPReencryptCursor;
+  priorSkipped: number;
+  priorFailed: number;
 };
 
 let currentState: ArchiveReencryptState = { kind: "idle" };
@@ -326,8 +328,10 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
     const scopeKey = resumeScopeKey(userId, materials.v6Fingerprint);
     emit({ kind: "running", reencrypted, skipped, failed });
 
-    let cursor: PGPReencryptCursor | undefined =
-      savedResumeCursor && savedResumeCursor.key === scopeKey ? savedResumeCursor.cursor : undefined;
+    const resumed = savedResumeCursor && savedResumeCursor.key === scopeKey ? savedResumeCursor : null;
+    let cursor: PGPReencryptCursor | undefined = resumed?.cursor;
+    const priorSkipped = resumed?.priorSkipped ?? 0;
+    const priorFailed = resumed?.priorFailed ?? 0;
     for (let page = 0; page < maxPages; page++) {
       if (!isStillCurrent()) {
         return finish({
@@ -426,16 +430,29 @@ export async function startArchiveReencrypt(options: ArchiveReencryptOptions = {
         if (savedResumeCursor?.key === scopeKey) {
           savedResumeCursor = null;
         }
-        if (skipped > 0 || failed > 0) {
-          return finish({ kind: "incomplete", reencrypted, skipped, failed });
+        const totalSkipped = priorSkipped + skipped;
+        const totalFailed = priorFailed + failed;
+        if (totalSkipped > 0 || totalFailed > 0) {
+          return finish({ kind: "incomplete", reencrypted, skipped: totalSkipped, failed: totalFailed });
         }
         return finish({ kind: "done", reencrypted, skipped: 0, failed: 0 });
       }
       cursor = listing.nextCursor;
-      savedResumeCursor = { key: scopeKey, cursor };
+      savedResumeCursor = {
+        key: scopeKey,
+        cursor,
+        priorSkipped: priorSkipped + skipped,
+        priorFailed: priorFailed + failed
+      };
     }
 
-    return finish({ kind: "incomplete", reencrypted, skipped, failed, pageLimitReached: true });
+    return finish({
+      kind: "incomplete",
+      reencrypted,
+      skipped: priorSkipped + skipped,
+      failed: priorFailed + failed,
+      pageLimitReached: true
+    });
   } catch (err) {
     if (err instanceof SessionExpiredError || signal.aborted) {
       return finish({

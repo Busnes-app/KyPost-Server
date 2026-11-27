@@ -95,8 +95,15 @@ func (c *APIClient) ListAllFolders(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// Matches MODSEQ (n) in a UID FETCH response.
-var modSeqResponse = regexp.MustCompile(`(?i)\bMODSEQ\s+\((\d+)\)`)
+// ErrCondstoreUnsupported is returned when the IMAP server cannot perform
+// race-safe conditional deletion (CONDSTORE / usable MODSEQ).
+var ErrCondstoreUnsupported = errors.New("IMAP server lacks CONDSTORE/IMAP4rev2 conditional deletion; refusing archive replacement")
+
+// Matches FLAGS (...) and MODSEQ (n) in a single UID FETCH response.
+var (
+	flagsResponse  = regexp.MustCompile(`(?i)\bFLAGS\s+\(([^)]*)\)`)
+	modSeqResponse = regexp.MustCompile(`(?i)\bMODSEQ\s+\((\d+)\)`)
+)
 
 func supportsCondstore(d *goimap.Dialer) bool {
 	resp, err := d.Exec("CAPABILITY", true, 0, nil)
@@ -111,41 +118,31 @@ func supportsCondstore(d *goimap.Dialer) bool {
 	return false
 }
 
-func fetchMessageModSeq(d *goimap.Dialer, uid int) (uint64, bool) {
-	resp, err := d.Exec(fmt.Sprintf("UID FETCH %d (MODSEQ)", uid), true, 0, nil)
+// fetchFlagsAndModSeq captures FLAGS and MODSEQ atomically in a single
+// UID FETCH (FLAGS MODSEQ) snapshot so no flag mutation can slip between
+// reading flags and obtaining the MODSEQ precondition.
+func fetchFlagsAndModSeq(d *goimap.Dialer, uid int) ([]string, uint64, error) {
+	resp, err := d.Exec(fmt.Sprintf("UID FETCH %d (FLAGS MODSEQ)", uid), true, 0, nil)
 	if err != nil {
-		return 0, false
+		return nil, 0, fmt.Errorf("fetch original flags and MODSEQ: %w", err)
 	}
-	match := modSeqResponse.FindStringSubmatch(resp)
-	if len(match) != 2 {
-		return 0, false
+	modMatch := modSeqResponse.FindStringSubmatch(resp)
+	if len(modMatch) != 2 {
+		return nil, 0, ErrCondstoreUnsupported
 	}
-	v, err := strconv.ParseUint(match[1], 10, 64)
-	if err != nil || v == 0 {
-		return 0, false
+	modSeq, err := strconv.ParseUint(modMatch[1], 10, 64)
+	if err != nil || modSeq == 0 {
+		return nil, 0, ErrCondstoreUnsupported
 	}
-	return v, true
-}
-
-func equalFlagSets(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+	flagMatch := flagsResponse.FindStringSubmatch(resp)
+	if len(flagMatch) != 2 {
+		return nil, 0, errors.New("cannot parse original message flags")
 	}
-	norm := func(in []string) []string {
-		out := make([]string, len(in))
-		for i, f := range in {
-			out[i] = strings.ToLower(strings.TrimSpace(f))
-		}
-		sort.Strings(out)
-		return out
+	flags, err := incomingFlags(strings.Fields(flagMatch[1]))
+	if err != nil {
+		return nil, 0, err
 	}
-	na, nb := norm(a), norm(b)
-	for i := range na {
-		if na[i] != nb[i] {
-			return false
-		}
-	}
-	return true
+	return flags, modSeq, nil
 }
 
 func cleanupCopyUID(d *goimap.Dialer, copyUID int) {
@@ -301,6 +298,9 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 	if !supported {
 		return 0, errors.New("IMAP server lacks UIDPLUS/IMAP4rev2 UID EXPUNGE; refusing archive replacement")
 	}
+	if !supportsCondstore(d) {
+		return 0, ErrCondstoreUnsupported
+	}
 
 	found, err := incomingSearch(d, "UID "+strconv.Itoa(uid))
 	if err != nil {
@@ -318,23 +318,19 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		return 0, ErrCASMismatch
 	}
 
-	ov, err := incomingMetadata(d, uid)
-	if err != nil || ov == nil {
-		return 0, errors.New("cannot read original message flags and date")
-	}
-	flags, err := incomingFlags(ov.Flags)
+	// Capture FLAGS and MODSEQ atomically in one UID FETCH snapshot so no
+	// concurrent flag change can slip between reading flags and MODSEQ.
+	flags, origModSeq, err := fetchFlagsAndModSeq(d, uid)
 	if err != nil {
 		return 0, err
+	}
+	ov, err := incomingMetadata(d, uid)
+	if err != nil || ov == nil {
+		return 0, errors.New("cannot read original message date")
 	}
 	date := ov.Received
 	if date.IsZero() {
 		date = time.Now().UTC()
-	}
-
-	var origModSeq uint64
-	hasModSeq := false
-	if supportsCondstore(d) {
-		origModSeq, hasModSeq = fetchMessageModSeq(d, uid)
 	}
 
 	minNewUID, err := folderMinAppendedUID(d, folder, uid)
@@ -381,40 +377,19 @@ func (c *APIClient) ReplaceRawMessageCAS(ctx context.Context, folder string, uid
 		}
 	}
 
-	// Re-verify that the original message's flags did not change while the
-	// replacement was being appended and verified. If they changed, remove our
-	// newly appended copy and return ErrCASMismatch so the caller retries cleanly
-	// without losing user flag updates (read/starred/etc.).
-	latestOv, err := incomingMetadata(d, uid)
-	if err != nil || latestOv == nil {
+	// Require RFC 7162 conditional deletion against the atomically captured
+	// MODSEQ so concurrent flag updates on the original are never silently lost.
+	// Use non-silent +FLAGS with buildResponse=true because go-imap omits the
+	// tagged OK [MODIFIED] line; the server emits an untagged FETCH carrying
+	// \Deleted only when UNCHANGEDSINCE succeeded.
+	storeResp, err := d.Exec(fmt.Sprintf(`UID STORE %d (UNCHANGEDSINCE %d) +FLAGS (\Deleted)`, uid, origModSeq), true, 0, nil)
+	if err != nil {
+		cleanupCopyUID(d, copyUID)
+		return 0, fmt.Errorf("mark original message deleted: %w", err)
+	}
+	if !strings.Contains(strings.ToLower(storeResp), `\deleted`) {
 		cleanupCopyUID(d, copyUID)
 		return 0, ErrCASMismatch
-	}
-	latestFlags, err := incomingFlags(latestOv.Flags)
-	if err != nil || !equalFlagSets(flags, latestFlags) {
-		cleanupCopyUID(d, copyUID)
-		return 0, ErrCASMismatch
-	}
-
-	if hasModSeq {
-		// Use non-silent +FLAGS with buildResponse=true because go-imap omits
-		// the tagged OK [MODIFIED] line from Exec's return string. Under
-		// RFC 7162, the server emits an untagged FETCH carrying \Deleted only
-		// when UNCHANGEDSINCE succeeded.
-		storeResp, err := d.Exec(fmt.Sprintf(`UID STORE %d (UNCHANGEDSINCE %d) +FLAGS (\Deleted)`, uid, origModSeq), true, 0, nil)
-		if err != nil {
-			cleanupCopyUID(d, copyUID)
-			return 0, fmt.Errorf("mark original message deleted: %w", err)
-		}
-		if !strings.Contains(strings.ToLower(storeResp), `\deleted`) {
-			cleanupCopyUID(d, copyUID)
-			return 0, ErrCASMismatch
-		}
-	} else {
-		if _, err := d.Exec(fmt.Sprintf(`UID STORE %d +FLAGS.SILENT (\Deleted)`, uid), false, 0, nil); err != nil {
-			cleanupCopyUID(d, copyUID)
-			return 0, fmt.Errorf("mark original message deleted: %w", err)
-		}
 	}
 	if _, err := d.Exec(fmt.Sprintf("UID EXPUNGE %d", uid), false, 0, nil); err != nil {
 		return 0, fmt.Errorf("expunge original message: %w", err)
