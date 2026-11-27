@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/hybridsig"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -190,6 +191,8 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 	return claims, settings, true
 }
 
+const signOnProofLabel = "kypost-signon-pop/1"
+
 // signOnProofMessage is what the app signs: the version tag, this relay's
 // canonical origin and base64url(SHA-256(idToken)), newline-separated.
 func signOnProofMessage(origin, idToken string) []byte {
@@ -197,14 +200,30 @@ func signOnProofMessage(origin, idToken string) []byte {
 	return []byte("kypost-signon-pop/1\n" + origin + "\n" + base64.RawURLEncoding.EncodeToString(idt[:]))
 }
 
-// verifySignOnProof reports whether proofKey (std base64 P-256 SPKI DER) is the
-// key thumb names and proof (std base64 ASN.1 ECDSA) signs the message.
+// verifySignOnProof reports whether proofKey (std base64 ky-primitives/hybridsig
+// public key or P-256 SPKI DER) is the key thumb names and proof signs the
+// message.
 func verifySignOnProof(thumb, origin, idToken, proofKey, proof string) bool {
-	der, err := base64.StdEncoding.DecodeString(proofKey)
+	rawKey, err := base64.StdEncoding.DecodeString(proofKey)
 	if err != nil {
 		return false
 	}
-	pub, err := x509.ParsePKIXPublicKey(der)
+	if len(rawKey) == hybridsig.PublicKeyBytes {
+		pub, err := hybridsig.ParsePublicKey(rawKey)
+		if err != nil {
+			return false
+		}
+		sum := sha256.Sum256(rawKey)
+		if subtle.ConstantTimeCompare([]byte(base64.RawURLEncoding.EncodeToString(sum[:])), []byte(thumb)) != 1 {
+			return false
+		}
+		sig, err := base64.StdEncoding.DecodeString(proof)
+		if err != nil {
+			return false
+		}
+		return pub.Verify(signOnProofLabel, signOnProofMessage(origin, idToken), sig) == nil
+	}
+	pub, err := x509.ParsePKIXPublicKey(rawKey)
 	if err != nil {
 		return false
 	}
@@ -212,7 +231,7 @@ func verifySignOnProof(thumb, origin, idToken, proofKey, proof string) bool {
 	if !ok || key.Curve != elliptic.P256() {
 		return false
 	}
-	sum := sha256.Sum256(der)
+	sum := sha256.Sum256(rawKey)
 	if subtle.ConstantTimeCompare([]byte(base64.RawURLEncoding.EncodeToString(sum[:])), []byte(thumb)) != 1 {
 		return false
 	}
