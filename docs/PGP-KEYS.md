@@ -140,7 +140,18 @@ Other PGP boundaries:
 
 The browser can open RFC 9580 v6 and RFC 9980 composite mail and verify its signatures,
 including both standardized composite security levels. It reads complete v1/v2 keyrings
-and preserves historical keys in recovery copies. New identities still use v4 for
-compatibility; this reader upgrade does not convert accounts or rewrite mail. Device
+and preserves historical keys in recovery copies. New identities begin with v4 for
+compatibility; adding a post-quantum certificate is a separate upgrade below. Device
 OpenPGP support is reported separately from X-Wing enrollment support. See the
 [keyring reader contract](E2E_PGP.md#keyring-v2-reader-contract-spec-a-p3).
+
+## Add post-quantum protection
+
+1. Open **Security → Encryption**, unlock your key, and choose **Prepare post-quantum upgrade**.
+2. Save the new recovery file and its secret separately. Older recovery copies cannot recover the new certificate.
+3. Confirm that you saved both, then choose **Complete post-quantum upgrade** and confirm your account credential or KySignOn sign-in.
+4. Update and re-enroll every paired device with the complete keyring. Incoming encryption, Sent and drafts stay on v4 until every device reports v6/RFC 9980 support and confirms the current X-Wing delivery. An older Linux client can keep this gate closed.
+
+The upgrade adds an unprotected v6 ML-DSA-65+Ed25519 / ML-KEM-768+X25519 certificate inside the sealed v2 keyring. Your v4 identity stays active and publicly advertised; historical keys remain available. Existing stored mail is unchanged.
+
+KyPost encrypts separate deliveries for PQ and classical recipients and keeps each Bcc alone. Compose marks classical recipients **Not quantum-safe**; the encrypted Sent copy retains those delivery addresses, even when its own storage encryption is PQ. Opening classical encrypted mail also shows the warning. See the [browser upgrade contract](E2E_PGP.md#browser-pq-upgrade-spec-a-p4).
