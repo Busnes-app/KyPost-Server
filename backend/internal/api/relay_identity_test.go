@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/ky-primitives/hybridsig"
 )
 
 // The cross-language vector: kypost-android's TlsPinRolloverTest verifies this
@@ -36,6 +38,47 @@ func TestTLSPinStatementVector(t *testing.T) {
 	if got := base64.StdEncoding.EncodeToString(sig); got != vectorSignature {
 		t.Fatalf("signature = %s, want %s", got, vectorSignature)
 	}
+
+	// Verify deterministic v2 hybridsig companion key + signature over the same vector.
+	hk, err := relayIdentityHybridKey(key)
+	if err != nil {
+		t.Fatalf("relayIdentityHybridKey: %v", err)
+	}
+	pub, err := hybridsig.ParsePublicKey(hk.Public().Bytes())
+	if err != nil {
+		t.Fatalf("ParsePublicKey: %v", err)
+	}
+	sigV2, err := hk.Sign(tlsPinStatementContextV2, tlsPinStatementBody(vectorHost, vectorPin, vectorIssuedAt))
+	if err != nil {
+		t.Fatalf("hk.Sign: %v", err)
+	}
+	if err := pub.Verify(tlsPinStatementContextV2, tlsPinStatementBody(vectorHost, vectorPin, vectorIssuedAt), sigV2); err != nil {
+		t.Fatalf("v2 hybridsig signature failed to verify: %v", err)
+	}
+	// Wrong context (v1 label) must not verify a v2 signature.
+	if err := pub.Verify(tlsPinStatementContext, tlsPinStatementBody(vectorHost, vectorPin, vectorIssuedAt), sigV2); err == nil {
+		t.Fatal("v2 signature verified under v1 context")
+	}
+	// Determinism: a second derivation from the same seed yields the exact same public key
+	// and produces a valid signature verifiable by the first public key (ML-DSA-65 signing is hedged).
+	hk2, err := relayIdentityHybridKey(key)
+	if err != nil {
+		t.Fatalf("second relayIdentityHybridKey: %v", err)
+	}
+	if !bytes.Equal(hk.Public().Bytes(), hk2.Public().Bytes()) {
+		t.Fatal("hybrid public key derivation is not deterministic")
+	}
+	sigV2Again, err := hk2.Sign(tlsPinStatementContextV2, tlsPinStatementBody(vectorHost, vectorPin, vectorIssuedAt))
+	if err != nil {
+		t.Fatalf("second hk.Sign: %v", err)
+	}
+	if err := pub.Verify(tlsPinStatementContextV2, tlsPinStatementBody(vectorHost, vectorPin, vectorIssuedAt), sigV2Again); err != nil {
+		t.Fatalf("signature from re-derived hybrid key failed verification: %v", err)
+	}
+	// Tampering with the pin must fail verification.
+	if err := pub.Verify(tlsPinStatementContextV2, tlsPinStatementBody(vectorHost, "sha256/tampered", vectorIssuedAt), sigV2); err == nil {
+		t.Fatal("v2 signature verified with tampered pin")
+	}
 }
 
 func TestNativeTLSPinSignsTheServedLeaf(t *testing.T) {
@@ -55,8 +98,8 @@ func TestNativeTLSPinSignsTheServedLeaf(t *testing.T) {
 		t.Error("a signed pin must not be cached by an intermediary")
 	}
 	var body struct {
-		Host, Pin, Signature string
-		IssuedAt             int64
+		Host, Pin, Signature, SignatureV2 string
+		IssuedAt                          int64
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -68,6 +111,21 @@ func TestNativeTLSPinSignsTheServedLeaf(t *testing.T) {
 	pub := srv.relayIdentity.Public().(ed25519.PublicKey)
 	if !ed25519.Verify(pub, tlsPinStatement(body.Host, body.Pin, body.IssuedAt), sig) {
 		t.Fatal("signature does not verify over the returned statement")
+	}
+	sigV2, err := base64.StdEncoding.DecodeString(body.SignatureV2)
+	if err != nil || len(sigV2) != hybridsig.SignatureBytes {
+		t.Fatalf("signatureV2 len=%d err=%v, want %d", len(sigV2), err, hybridsig.SignatureBytes)
+	}
+	pubHybridRaw, err := base64.StdEncoding.DecodeString(srv.relayIdentityPublicKeyHybrid())
+	if err != nil {
+		t.Fatalf("decode relayIdentityPublicKeyHybrid: %v", err)
+	}
+	pubHybrid, err := hybridsig.ParsePublicKey(pubHybridRaw)
+	if err != nil {
+		t.Fatalf("ParsePublicKey: %v", err)
+	}
+	if err := pubHybrid.Verify(tlsPinStatementContextV2, tlsPinStatementBody(body.Host, body.Pin, body.IssuedAt), sigV2); err != nil {
+		t.Fatalf("signatureV2 does not verify over the returned statement: %v", err)
 	}
 }
 
@@ -112,8 +170,8 @@ func TestNativeTLSPinSignsOnlyTheFile(t *testing.T) {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
 	var body struct {
-		Host, Pin, Signature string
-		IssuedAt             int64
+		Host, Pin, Signature, SignatureV2 string
+		IssuedAt                          int64
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -124,6 +182,17 @@ func TestNativeTLSPinSignsOnlyTheFile(t *testing.T) {
 	sig, _ := base64.StdEncoding.DecodeString(body.Signature)
 	if !ed25519.Verify(srv.relayIdentity.Public().(ed25519.PublicKey), tlsPinStatement(body.Host, body.Pin, body.IssuedAt), sig) {
 		t.Fatal("signature does not verify over the returned statement")
+	}
+	sigV2, err := base64.StdEncoding.DecodeString(body.SignatureV2)
+	if err != nil {
+		t.Fatalf("decode signatureV2: %v", err)
+	}
+	hk, err := relayIdentityHybridKey(srv.relayIdentity)
+	if err != nil {
+		t.Fatalf("relayIdentityHybridKey: %v", err)
+	}
+	if err := hk.Public().Verify(tlsPinStatementContextV2, tlsPinStatementBody(body.Host, body.Pin, body.IssuedAt), sigV2); err != nil {
+		t.Fatalf("signatureV2 does not verify over the file-backed statement: %v", err)
 	}
 }
 
@@ -144,8 +213,19 @@ func TestWithRelayIdentityOmitsAnAbsentKey(t *testing.T) {
 	if _, ok := srv.withRelayIdentity(map[string]any{})["relayIdentityKey"]; ok {
 		t.Fatal("no key configured must mean no field, not an empty one")
 	}
+	if _, ok := srv.withRelayIdentity(map[string]any{})["relayIdentityKeyHybrid"]; ok {
+		t.Fatal("no key configured must mean no relayIdentityKeyHybrid field")
+	}
 	srv.relayIdentity = vectorKey()
-	if got := srv.withRelayIdentity(map[string]any{})["relayIdentityKey"]; got != vectorPublicKey {
+	resp := srv.withRelayIdentity(map[string]any{})
+	if got := resp["relayIdentityKey"]; got != vectorPublicKey {
 		t.Fatalf("relayIdentityKey = %v", got)
+	}
+	rawHybrid, err := base64.StdEncoding.DecodeString(resp["relayIdentityKeyHybrid"].(string))
+	if err != nil {
+		t.Fatalf("decode relayIdentityKeyHybrid: %v", err)
+	}
+	if _, err := hybridsig.ParsePublicKey(rawHybrid); err != nil {
+		t.Fatalf("relayIdentityKeyHybrid is not a valid hybridsig public key: %v", err)
 	}
 }
