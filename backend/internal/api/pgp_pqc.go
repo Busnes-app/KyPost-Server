@@ -108,10 +108,22 @@ func (s *Server) pgpV6Ready(u users.User) bool {
 }
 
 // preferV6 is false only for a signed send when the sender has no currently
-// usable v6 signing certificate: a v6 delivery needs a valid v6 signing
-// certificate, so that sender keeps the recipient's v4 key.
+// usable v6 signing certificate (either the additive PGPPublicKeyV6 or an
+// imported v6-only primary PGPPublicKey): a v6 delivery needs a valid v6
+// signing certificate, so a v4-only sender keeps the recipient's v4 key.
 func preferV6(sender users.User, sign bool) bool {
-	return !sign || (sender.PGPPublicKeyV6 != "" && pgpmail.SignsNow(sender.PGPPublicKeyV6))
+	if !sign {
+		return true
+	}
+	if sender.PGPPublicKeyV6 != "" && pgpmail.SignsNow(sender.PGPPublicKeyV6) {
+		return true
+	}
+	if sender.PGPPublicKey != "" && pgpmail.SignsNow(sender.PGPPublicKey) {
+		if key, err := crypto.NewKeyFromArmored(sender.PGPPublicKey); err == nil && key.GetEntity().PrimaryKey.Version == 6 {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveRecipient is the contact/WKD ladder, then internal PQ discovery when

@@ -142,3 +142,28 @@ it("signs sign-only mail with v4 on dual keyrings and preserves v6-only identiti
   expect(v6Signed.ciphertext).toContain("multipart/signed");
   expect(await sigVersion(v6Signed.ciphertext)).toBe(6);
 });
+
+it("preserves v6-only v2 keyrings for self-encryption when bootstrap v6Ready is false", async () => {
+  const info = await (await pgpEngine()).inspect(v6.armoredPrivateKey);
+  const v6OnlyRaw = JSON.stringify({
+    format: "kypost-pgp-keyring-v2",
+    materialGeneration: 1,
+    active: { v6: info.fingerprint },
+    keyFingerprints: info.fingerprints,
+    keys: [{ fingerprint: info.fingerprint, privateKey: v6.armoredPrivateKey }],
+  });
+  unlockWithArmoredKey(v6OnlyRaw);
+  const ring = await parseKeyring(v6OnlyRaw);
+  if (ring.kind !== "keyring") throw new Error("ring required");
+  vi.mocked(getPGPBootstrap).mockResolvedValue({
+    fingerprint: info.fingerprint,
+    publicKey: v6.armoredPublicKey,
+    v6Ready: false,
+    keyring: ring.metadata,
+  } as Awaited<ReturnType<typeof getPGPBootstrap>>);
+  const sent = await buildEncryptedSentCopy(envelope, "text/plain", "v6-only sent", true);
+  expect((await packets(sent)).keys).toEqual([6]);
+  expect((await decryptMessage(sent, [], "")).quantumSafe).toBe(true);
+  const draft = await buildEncryptedDraft(envelope, "text/plain", "v6-only draft");
+  expect((await packets(draft)).seipd).toBe(2);
+});

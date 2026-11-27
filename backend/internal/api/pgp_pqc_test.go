@@ -231,11 +231,15 @@ func TestRecipientVersionFollowsSenderSigningCertificates(t *testing.T) {
 	s := newTestServer(t)
 	v4Only := pqAccount(t, s, "classic", "")
 	dual := pqAccount(t, s, "dual", testV6Key(t, "dual@example.invalid", true))
+	v6OnlyUser := must1(s.users.Create(context.Background(), "v6only", "v6only-testpassword", users.RoleUser))
+	v6OnlyPub := testV6Key(t, "v6only@example.invalid", true)
+	v6OnlyInfo := must1(pgpmail.InspectPQCKey(v6OnlyPub))
+	v6Only := must1(s.users.SetPGPIdentityClientProtected(v6OnlyUser.ID, v6OnlyInfo.Fingerprint, v6OnlyInfo.KeyID, v6OnlyInfo.ArmoredPublicKey, `{"v":2}`, "imported", "now", nil))
 	internal := pqAccount(t, s, "internal", testV6Key(t, "internal@example.invalid", true))
 	proveAlias(t, s, internal.ID, "internal@example.invalid")
 	const bob = "bob@example.invalid"
 	k4, k6 := testV4Key(t, bob), testV6Key(t, bob, true)
-	for _, u := range []users.User{v4Only, dual} {
+	for _, u := range []users.User{v4Only, dual, v6Only} {
 		must1(must1(s.userContactsStore(u.ID)).Upsert(contacts.Contact{FormattedName: "Bob", Emails: []contacts.ContactValue{{Value: bob}},
 			PGPKey: k4, PGPKeyFingerprint: fingerprintOf(t, k4), PGPKeyV6: k6, PGPKeyV6Fingerprint: fingerprintOf(t, k6)}))
 	}
@@ -244,7 +248,7 @@ func TestRecipientVersionFollowsSenderSigningCertificates(t *testing.T) {
 		sign   bool
 		want   string
 		pq     bool
-	}{{v4Only, true, k4, false}, {v4Only, false, k6, true}, {dual, true, k6, true}, {dual, false, k6, true}} {
+	}{{v4Only, true, k4, false}, {v4Only, false, k6, true}, {dual, true, k6, true}, {dual, false, k6, true}, {v6Only, true, k6, true}, {v6Only, false, k6, true}} {
 		wantSel := "v4"
 		if tc.pq {
 			wantSel = "pq"

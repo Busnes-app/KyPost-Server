@@ -856,7 +856,12 @@ async function selfEncryptionKey(): Promise<string> {
   const snapshot = await getPGPBootstrap();
   const { validateKeyringSnapshot } = await import("./pgpKeyring");
   await validateKeyringSnapshot(raw, { ...snapshot, keyring: snapshot.keyring });
-  return activeKeyForVersion(snapshot.v6Ready === true ? 6 : 4);
+  if (snapshot.v6Ready === true) return activeKeyForVersion(6);
+  const v4 = ring.activeKeys.find(key => key.info.version === 4);
+  if (v4) return v4.armored;
+  const v6 = ring.activeKeys.find(key => key.info.version === 6);
+  if (v6) return v6.armored;
+  return activeKeyForVersion(4);
 }
 
 export type EncryptionGroup = { recipients: string[]; publicKeys: string[]; quantumSafe?: boolean };
