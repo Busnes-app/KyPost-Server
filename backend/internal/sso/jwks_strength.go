@@ -132,7 +132,7 @@ func newRemoteJWKSKeySet(jwksURL string, client *http.Client, algs []string) *re
 }
 
 func (r *remoteJWKSKeySet) VerifySignature(ctx context.Context, rawJWT string) ([]byte, error) {
-	jws, err := jose.ParseSigned(rawJWT, r.algs)
+	jws, err := jose.ParseSignedCompact(rawJWT, r.algs)
 	if err != nil {
 		return nil, err
 	}
