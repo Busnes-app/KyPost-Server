@@ -28,7 +28,7 @@ func (s *Server) StartBodySweeper(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if deleted := s.sweepBodies(ctx); deleted > 0 {
-				s.logger.Info("deleted message bodies past their retention", "deleted", strconv.Itoa(deleted))
+				s.logger.Info("deleted message bodies past their retention", "removed", strconv.Itoa(deleted))
 			}
 		}
 	}

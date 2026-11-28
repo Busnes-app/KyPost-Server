@@ -98,17 +98,14 @@ func randomMaskedAddress(domain string, code byte) (string, error) {
 // relayCode is tenancy.RelayCode; tests give it a cell's code.
 var relayCode = tenancy.RelayCode
 
-// maskedRelayCode is 0 in single mode, else the relay region code of the user's org's cell.
-// A cell with no code refuses creation, so no hosted address lacks its region.
-func (s *Server) maskedRelayCode(ctx context.Context, userID string) (byte, error) {
+// maskedRelayCode is 0 in single mode, else the relay region code of the caller's org's cell
+// (org is AuthContext.OrgID). A cell with no code refuses creation, so no hosted address
+// lacks its region.
+func (s *Server) maskedRelayCode(ctx context.Context, org string) (byte, error) {
 	if s.tenancy == nil {
 		return 0, nil
 	}
-	u, err := s.users.Get(userID)
-	if err != nil {
-		return 0, err
-	}
-	cell, err := tenancy.OrgCell(ctx, s.tenancy, u.OrgID, s.staffOrg, s.cells)
+	cell, err := tenancy.OrgCell(ctx, s.tenancy, org, s.staffOrg, s.cells)
 	if err != nil {
 		return 0, err
 	}
@@ -397,7 +394,8 @@ func (s *Server) handleMaskedCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "choose one of the masked address domains your administrator set", http.StatusBadRequest)
 		return
 	}
-	code, err := s.maskedRelayCode(r.Context(), userID)
+	ac, _ := authFromContext(r)
+	code, err := s.maskedRelayCode(r.Context(), ac.OrgID)
 	if err != nil {
 		s.answerMasked(w, userID, "create_masked", err)
 		return

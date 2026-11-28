@@ -65,23 +65,24 @@ func TestMaskedCreateUsesTheOrgsCellCode(t *testing.T) {
 	if code != 200 || !regexp.MustCompile(`^[a-z]+\.[a-z]+\.q[a-z2-7]{6}@example\.test$`).MatchString(address) {
 		t.Fatalf("multi-mode masked address %d %q, want cell %s's code", code, address, testCell)
 	}
-	for name, cells := range map[string][]string{"cell without a code": {"nocode-1", testCell}, "cell not served": {"other-1"}} {
-		fx.srv.cells = cells
-		for _, org := range []string{orgA, orgB} {
-			if _, err := fx.srv.tenancy.Exec(`UPDATE orgs SET home_region=? WHERE id=?`, cells[0], org); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if name == "cell not served" {
-			if _, err := fx.srv.tenancy.Exec(`UPDATE orgs SET home_region='elsewhere-1'`); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if code, address := create(); code != 503 || address != "" {
-			t.Fatalf("%s: %d %q, want 503 and no address", name, code, address)
+	setRegion := func(region string) {
+		t.Helper()
+		if _, err := fx.srv.tenancy.Exec(`UPDATE orgs SET home_region=?`, region); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if _, err := fx.srv.maskedRelayCode(context.Background(), fx.a.ID); !errors.Is(err, tenancy.ErrOrgCell) {
+	// A served cell with no code.
+	fx.srv.cells = []string{"nocode-1", testCell}
+	setRegion("nocode-1")
+	if code, address := create(); code != 503 || address != "" {
+		t.Fatalf("cell without a code: %d %q, want 503 and no address", code, address)
+	}
+	// An org whose cell this deployment does not serve.
+	setRegion("elsewhere-1")
+	if code, address := create(); code != 503 || address != "" {
+		t.Fatalf("cell not served: %d %q, want 503 and no address", code, address)
+	}
+	if _, err := fx.srv.maskedRelayCode(context.Background(), orgA); !errors.Is(err, tenancy.ErrOrgCell) {
 		t.Fatalf("an org outside the served cells: %v", err)
 	}
 }
