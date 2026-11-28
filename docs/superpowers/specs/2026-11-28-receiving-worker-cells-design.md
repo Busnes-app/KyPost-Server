@@ -197,4 +197,21 @@ as follows. Properties of the signed table and of pickup do not port: the MX hos
 
 ## As built
 
-Filled in by the build PR.
+- `scripts/start-receiving.sh` exports `GODEBUG=tlsmlkem=1` before it starts Maddy. That covers
+  the single container and the MX host: Maddy and the helpers it runs. The helpers are Go 1.27,
+  where this is already the default.
+- `TestNativeReceivingMaddyRuntime` checks the negotiated group:
+  - `X25519MLKEM768` in every launched mode (CI runs `configured-limits`);
+  - X25519 for the bare binary;
+  - P-256 for a classical-only sender.
+  - Mutation: without the export, `configured-limits` and `launcher` fail with "negotiated
+    X25519, want X25519MLKEM768".
+- `docker-compose.mx.yml`: `mem_limit: 768m` and `memswap_limit: 768m`.
+  `scripts/check-replicas-compose.py` requires both. Mutation: without `mem_limit`, the check
+  fails.
+- **This single-tenant change is a decision taken:** the public SMTP hop of a single-container
+  install now offers the hybrid too. It only adds a group. Senders that do not offer the hybrid
+  negotiate as before, and the generated Maddy profile is byte-identical (golden tests
+  unchanged).
+- **Owner rule (28 Nov), checked:** public images must never ship multi-tenant mode on. This
+  changes no startup gate.

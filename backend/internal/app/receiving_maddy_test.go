@@ -324,6 +324,27 @@ with open(sys.argv[2], "w") as out:
 	if err := client.StartTLS(&tls.Config{RootCAs: roots, ServerName: leaf.DNSNames[0], MinVersion: tls.VersionTLS12}); err != nil {
 		t.Fatal(err)
 	}
+	// The public hop is post-quantum for a sender that offers the hybrid, and still open
+	// to a classical one (docs/superpowers/specs/2026-11-28-receiving-worker-cells-design.md).
+	// The bare binary has the hybrid off (DefaultGODEBUG tlsmlkem=0); the launcher turns it on.
+	want := tls.X25519MLKEM768
+	if mode == "direct" || mode == "rspamd" {
+		want = tls.X25519
+	}
+	if state, ok := client.TLSConnectionState(); !ok || state.CurveID != want {
+		t.Fatalf("STARTTLS negotiated %v, want %v", state.CurveID, want)
+	}
+	classical, err := smtp.Dial(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := classical.StartTLS(&tls.Config{RootCAs: roots, ServerName: leaf.DNSNames[0], MinVersion: tls.VersionTLS12, CurvePreferences: []tls.CurveID{tls.CurveP256}}); err != nil {
+		t.Fatal("a classical sender was refused:", err)
+	}
+	if state, _ := classical.TLSConnectionState(); state.CurveID != tls.CurveP256 {
+		t.Fatalf("classical STARTTLS negotiated %v", state.CurveID)
+	}
+	_ = classical.Quit()
 	if err := client.Mail(""); err != nil {
 		t.Fatal(err)
 	}

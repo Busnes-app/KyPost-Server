@@ -580,6 +580,10 @@ multi mode is (the tenancy design's PR 7):
   1000. The host keeps Maddy's state and its profile in memory only. `start-receiving.sh`
   fetches the profile from a replica at start and every 5 minutes, and restarts Maddy only when
   it changed. A failed fetch keeps the running profile. If Maddy exits, the container restarts.
+  The container is capped at 768 MiB with no swap, measured for the default 4 transactions of
+  25 MiB. If you raise `KYPOST_RECEIVING_CONCURRENCY`, raise `mem_limit` and `memswap_limit` by
+  about 140 MiB per extra transaction. Run two MX hosts per cell, at equal MX preference
+  ([per-cell design](superpowers/specs/2026-11-28-receiving-worker-cells-design.md)).
 
 ## Verify and roll back
 

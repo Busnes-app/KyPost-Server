@@ -41,6 +41,9 @@ mv "$receiver_config_tmp" "$CONFIG_DIR/receiving.conf"
 trap - EXIT HUP INT TERM
 # shellcheck disable=SC3045 # the image's /bin/sh is dash, which supports -n
 ulimit -n 256
+# The pinned binary's DefaultGODEBUG has tlsmlkem=0 (its go.mod predates Go 1.24), so Go's
+# X25519MLKEM768 hybrid is off on STARTTLS. Turn it back on; classical senders still connect.
+export GODEBUG=tlsmlkem=1
 [ -n "${KYPOST_RECEIVING_REMOTE:-}" ] || exec /proc/self/fd/9 --config "$CONFIG_DIR/receiving.conf" run
 
 # MX host: re-fetch the replicas' domains every 5 minutes (60 ticks of 5 s) and restart
