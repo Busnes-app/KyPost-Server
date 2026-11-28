@@ -215,7 +215,7 @@ func open(dir string, owner Owner, limits Limits, source string, pg bool) (*Stor
 		}
 	} else {
 		u := url.URL{Scheme: "file", Path: path}
-		query := "?_txlock=immediate&_pragma=synchronous(FULL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
+		query := "?_txlock=immediate&_pragma=synchronous(FULL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)&_pragma=secure_delete(ON)"
 		if source != "" {
 			query += "&mode=rw"
 		} else {
@@ -414,6 +414,13 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 	}
 	hash := sha256.Sum256(raw)
 	digest := hex.EncodeToString(hash[:])
+	// Received and imported mail is sealed before anything is written; digest stays
+	// the received bytes' so exact replays and import duplicates still match.
+	if gateway != "" || imported != nil {
+		if raw, err = s.sealIncoming(ctx, raw); err != nil {
+			return 0, err
+		}
+	}
 	stored, pending, err := s.stash(ctx, raw)
 	if err != nil {
 		return 0, err

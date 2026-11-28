@@ -169,7 +169,11 @@ func (s *Store) Complete(ctx context.Context, gateway, id string, done map[strin
 		if err := archive(ctx, tx, s.postgres, "INSERT", "imported", "gateway=? AND id=? AND state='pending'", gateway, id); err != nil {
 			return "", err
 		}
-		return "archived", tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+		s.scrub(ctx)
+		return "archived", nil
 	}
 	for _, b := range bindings {
 		if done[b.Mailbox] == Imported {

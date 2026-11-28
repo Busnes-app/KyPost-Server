@@ -750,28 +750,15 @@ func TestIMAPImport(t *testing.T) {
 	}
 	resolved = "93.184.216.34"
 
-	// Incoming encryption on refuses the grant, and the start after it.
+	// Incoming encryption on no longer refuses: imported mail is sealed (mailbox.InstallSeal).
 	path := srv.userSettingsPath(one.ID)
-	setEncryption := func(on bool) {
-		t.Helper()
-		if err := config.UpdateUserSettings(path, func(s *config.UserSettings) error { s.EncryptIncoming = on; return nil }); err != nil {
-			t.Fatal(err)
-		}
+	if err := config.UpdateUserSettings(path, func(s *config.UserSettings) error { s.EncryptIncoming = true; return nil }); err != nil {
+		t.Fatal(err)
 	}
-	setEncryption(true)
-	if w = start(me, account); w.Code != 409 || !strings.Contains(w.Body.String(), "incoming encryption") {
-		t.Fatal("grant while encryption is on", w.Code, w.Body)
-	}
-	setEncryption(false)
 	token = grant(account)
 	if w, _ = list(me, token, fake.pass); w.Code != 200 {
-		t.Fatal("list", w.Code)
+		t.Fatal("list while encryption is on", w.Code)
 	}
-	setEncryption(true)
-	if w = run(token, `{"folders":["INBOX"]}`); w.Code != 409 {
-		t.Fatal("start while encryption is on", w.Code, w.Body)
-	}
-	setEncryption(false)
 
 	// Concurrency: one per user, maxImports overall; a busy refusal keeps the grant.
 	for _, busy := range [][]string{{one.ID}, {"someone", "someone-else"}} {

@@ -14,8 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -335,8 +333,8 @@ func TestMailImport(t *testing.T) {
 		t.Fatal("upload after the slot freed", w.Code, w.Body)
 	}
 
-	// Incoming encryption on: refused up front, and turning it on mid-job
-	// stops the job before the next message.
+	// Incoming encryption on no longer refuses an import: imported mail is sealed
+	// like delivered mail (mailbox.InstallSeal), so the setting guards nothing here.
 	path := srv.userSettingsPath(one.ID)
 	setEncryption := func(on bool) {
 		t.Helper()
@@ -345,75 +343,16 @@ func TestMailImport(t *testing.T) {
 		}
 	}
 	setEncryption(true)
-	if w = start(me, ``); w.Code != 409 || !strings.Contains(w.Body.String(), "incoming encryption") {
+	if w = upload(me, grant(me, ``), mbox); w.Code != 202 || wait(me).State != "finished" {
 		t.Fatal("import while encryption is on", w.Code, w.Body)
 	}
-	setEncryption(false)
-	url = grant(me, ``)
-	setEncryption(true)
-	if w = upload(me, url, mbox); w.Code != 409 || status(me).State != "failed" {
-		t.Fatal("upload after encryption turned on", w.Code, w.Body)
-	}
-	noTempFiles("refused upload")
 	setEncryption(false)
 	native, refused := nativeMail[mailImporter](srv, ctx, one.ID, "", "")
 	if refused != nil {
 		t.Fatal(refused)
 	}
 	fresh := []byte("From a b\r\nSubject: fresh 1\r\n\r\nx\r\n\r\nFrom a b\r\nSubject: fresh 2\r\n\r\nx\r\n")
-	job := &importJob{State: "running", Folder: "Imported", user: one.ID}
-	srv.runImport(ctx, job, &onImport{mailImporter: native, after: func() {
-		// Saved without the lock the import holds while storing.
-		s, _ := config.LoadUserSettings(path)
-		s.EncryptIncoming = true
-		if err := config.SaveUserSettings(path, s); err != nil {
-			t.Error(err)
-		}
-	}}, tempUpload(t, fresh), int64(len(fresh)))
-	if job.State != "failed" || job.Imported != 1 || !strings.Contains(job.Error, "incoming encryption was turned on") {
-		t.Fatalf("encryption mid-job %+v", job)
-	}
-	if list, err = store.List(ctx, "Imported", 0, 10); err != nil || len(list) != 4 {
-		t.Fatal("plaintext stored after encryption turned on", len(list), err)
-	}
-	setEncryption(false)
-
-	// Turned on concurrently through the settings lock: no message is stored
-	// while the committed setting is on.
-	if _, err = native.ImportFolder(ctx, "Concurrent", true); err != nil {
-		t.Fatal(err)
-	}
-	var many bytes.Buffer
-	for i := range 300 {
-		fmt.Fprintf(&many, "From a b\r\nSubject: concurrent %d\r\n\r\nx\r\n\r\n", i)
-	}
-	var violated atomic.Bool
-	var once sync.Once
-	committed := make(chan struct{})
-	job = &importJob{State: "running", Folder: "Concurrent", user: one.ID}
-	// Checked before and after each store, both inside the import's lock.
-	check := func() {
-		if s, err := config.LoadUserSettings(path); err != nil || s.EncryptIncoming {
-			violated.Store(true)
-		}
-	}
-	srv.runImport(ctx, job, &onImport{mailImporter: native, before: check, after: func() {
-		check()
-		once.Do(func() {
-			go func() {
-				defer close(committed)
-				if err := config.UpdateUserSettings(path, func(s *config.UserSettings) error { s.EncryptIncoming = true; return nil }); err != nil {
-					t.Error(err)
-				}
-			}()
-		})
-	}}, tempUpload(t, many.Bytes()), int64(many.Len()))
-	<-committed
-	if violated.Load() || job.State != "failed" && job.State != "finished" || job.State == "failed" && !strings.Contains(job.Error, "incoming encryption was turned on") {
-		t.Fatalf("concurrent encryption %+v violated=%v", job, violated.Load())
-	}
-	t.Logf("concurrent encryption: %s after %d messages", job.State, job.Imported)
-	setEncryption(false)
+	var job *importJob
 
 	// Floods of junk or of duplicates stop at the job's message cap.
 	defer func(old int) { importMaxMessages = old }(importMaxMessages)

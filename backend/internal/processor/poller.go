@@ -912,6 +912,13 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 	// server custody, now retired, and nothing replaces it. WKD still serves the
 	// key for such an alias while recipients reject it for missing the address.
 
+	// Mail stored while the owner had no usable key is sealed once they have one.
+	if cache, err := p.mailboxCacheStore(u.ID, a); err != nil {
+		p.log.Error("incoming backlog encryption paused", "user_id", u.ID, "error", err.Error())
+	} else if err := p.sealBacklog(ctx, uc, cache); err != nil {
+		p.log.Error("incoming backlog encryption paused; plaintext mail retained until it resumes", "user_id", u.ID, "error", err.Error())
+	}
+
 	p.recordTick(uc, len(messages), res, checkpointHeld)
 	if res.ledgerErr == nil && res.failed == 0 && len(res.deferredIDs) == 0 && !checkpointHeld {
 		p.setQuiet(key, quiet)

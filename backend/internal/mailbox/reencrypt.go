@@ -149,6 +149,12 @@ func (c *Client) ReplaceRawMessageCAS(ctx context.Context, folder string, uid in
 		}
 	}
 
+	// The subject column follows the new bytes: sealing a plaintext message must not
+	// leave its subject readable beside the ciphertext.
+	headers, _, err := rawMetadata(newRaw)
+	if err != nil {
+		return 0, err
+	}
 	newSum := sha256.Sum256(newRaw)
 	newDigest := hex.EncodeToString(newSum[:])
 	// A moved body gets a new object; the old one is tombstoned, never overwritten.
@@ -162,8 +168,8 @@ func (c *Client) ReplaceRawMessageCAS(ctx context.Context, folder string, uid in
 	}
 	res, err := tx.ExecContext(
 		ctx,
-		"UPDATE messages SET raw=?, digest=? WHERE folder=? AND id=? AND raw IS NOT NULL",
-		stored, newDigest, folder, int64(uid),
+		"UPDATE messages SET raw=?, digest=?, subject=? WHERE folder=? AND id=? AND raw IS NOT NULL",
+		stored, newDigest, headers.Get("Subject"), folder, int64(uid),
 	)
 	if err != nil {
 		return 0, err
@@ -185,4 +191,42 @@ func (c *Client) ReplaceRawMessageCAS(ctx context.Context, folder string, uid in
 		return 0, err
 	}
 	return uid, nil
+}
+
+// Ref names one live message.
+type Ref struct {
+	Folder string
+	ID     int64
+}
+
+// MessagesAfter lists up to limit live messages with an ID above after, in ID order,
+// across every folder: a cursor over it survives moves, which keep the ID.
+func (c *Client) MessagesAfter(ctx context.Context, after int64, limit int) ([]Ref, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := c.store.db.QueryContext(ctx, "SELECT folder,id FROM messages WHERE raw IS NOT NULL AND id>? ORDER BY id LIMIT ?", after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Ref
+	for rows.Next() {
+		var r Ref
+		if err := rows.Scan(&r.Folder, &r.ID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Scrub folds the WAL into mailbox.db and truncates it, so with secure_delete the
+// plaintext a replacement freed is zeroed in the file and gone from the WAL. Best effort:
+// a busy reader leaves it for the next scrub. Postgres has no equivalent.
+func (c *Client) Scrub(ctx context.Context) {
+	if !c.store.postgres {
+		_, _ = c.store.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	}
 }
