@@ -72,6 +72,7 @@ func (s *LifecycleStore) withNativeMailAccess(ctx context.Context, lock func(con
 			byID[u.ID] = u
 		}
 		assignments := make(map[string]NativeAssignment, len(mailboxIDs))
+		owners := make(map[string]users.User, len(mailboxIDs))
 		err := s.authority().View(ctx, func(r authorityReader) error {
 			for _, id := range mailboxIDs {
 				m, _, ok, err := r.Mailbox(id)
@@ -86,14 +87,14 @@ func (s *LifecycleStore) withNativeMailAccess(ctx context.Context, lock func(con
 				if err != nil {
 					return err
 				}
-				assignments[id] = a
+				assignments[id], owners[id] = a, u
 			}
 			return nil
 		})
 		if err != nil {
 			return err
 		}
-		return action(ctx, assignments)
+		return action(users.WithMailboxOwners(ctx, owners), assignments)
 	})
 }
 

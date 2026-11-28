@@ -53,7 +53,6 @@ var (
 	importMessageBytes = min(nativeMailboxLimits.MessageBytes, mailmsg.MaxInboundMessageBytes)
 )
 
-
 type mailImporter interface {
 	ImportFolder(ctx context.Context, folder string, create bool) (string, error)
 	ImportMessage(ctx context.Context, folder string, raw []byte, meta mailbox.ImportMeta) error
@@ -442,7 +441,7 @@ func (s *Server) runImport(ctx context.Context, job *importJob, im mailImporter,
 	}
 }
 
-// importOne stores raw, sealed like delivered mail (mailbox.SetSeal). An import
+// importOne stores raw, sealed like delivered mail (mailbox.InstallSeal). An import
 // never eats into the drive reserve kept for incoming mail.
 func (s *Server) importOne(ctx context.Context, job *importJob, im mailImporter, folder string, raw []byte, meta mailbox.ImportMeta) error {
 	if err := fsutil.CheckDriveReserve(s.stateDir, int64(len(raw))); err != nil {

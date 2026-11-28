@@ -229,7 +229,7 @@ func Run(args []string) error {
 		return err
 	}
 	// Received, released and imported mail is sealed to its owner's key before storage.
-	mailbox.SetSeal(processor.IncomingSeal(usersStore, paths.StateDir, store))
+	defer mailbox.InstallSeal(processor.IncomingSeal(usersStore, paths.StateDir, store))()
 	// CheckEnv refused multi, so this only refuses a multi install started single (K1).
 	tenancyMode, staffOrg, _ := config.Tenancy()
 	if err := tenancy.Check(context.Background(), store, paths.StateDir, tenancyMode, staffOrg, func() (bool, error) {

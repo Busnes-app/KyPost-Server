@@ -18,15 +18,16 @@ type Seal func(ctx context.Context, owner Owner, raw []byte) ([]byte, error)
 
 var seal atomic.Pointer[Seal]
 
-// SetSeal installs the incoming seal for every store in the process; nil removes it.
-// Every process that writes mailboxes installs it at start (app); only tests run without.
-// ponytail: process-wide, like SetPoolCheck.
-func SetSeal(f Seal) {
-	if f == nil {
-		seal.Store(nil)
-		return
+// InstallSeal installs the incoming seal for every store in the process unless one is
+// already installed (the daemon's own, when it runs the receiving importer in-process).
+// remove uninstalls it if it is still this one. Every mailbox-writing process installs
+// one at start (app); only tests run without. ponytail: process-wide, like SetPoolCheck.
+func InstallSeal(f Seal) (remove func()) {
+	p := &f
+	if !seal.CompareAndSwap(nil, p) {
+		return func() {}
 	}
-	seal.Store(&f)
+	return func() { seal.CompareAndSwap(p, nil) }
 }
 
 // sealIncoming runs the installed seal over a received or imported message.

@@ -73,12 +73,24 @@ func IncomingSeal(accounts *users.Store, stateDir string, global *state.Store) m
 		if global != nil && global.IncomingEncryptionOff() {
 			return raw, nil
 		}
-		// An unreadable owner refuses: the mail stays in the receiving buffer and is retried.
-		u, err := accounts.GetBySSOSubIssuer(owner.Issuer, owner.Subject)
-		if err != nil {
-			return nil, fmt.Errorf("incoming encryption cannot read the mailbox owner: %w", err)
+		// Inside the users fence the owner comes from its snapshot: calling the Store
+		// there deadlocks. An unreadable owner refuses: the mail stays in the buffer.
+		u, ok := users.MailboxOwner(ctx, owner.Mailbox)
+		if !ok || u.SSOSub != owner.Subject {
+			var err error
+			if u, err = accounts.GetBySSOSubIssuer(owner.Issuer, owner.Subject); err != nil {
+				return nil, fmt.Errorf("incoming encryption cannot read the mailbox owner: %w", err)
+			}
 		}
-		sealed, err := sealTo(u, raw, func() (*state.Store, error) { return state.OpenReadOnly(config.UserDir(stateDir, u.ID)) })
+		var devices *state.Store
+		sealed, err := sealTo(u, raw, func() (*state.Store, error) {
+			st, err := state.OpenReadOnly(config.UserDir(stateDir, u.ID))
+			devices = st
+			return st, err
+		})
+		if devices != nil {
+			_ = devices.Close()
+		}
 		if sealed == nil && (err == nil || errors.Is(err, errNoIncomingKey)) {
 			return raw, nil
 		}

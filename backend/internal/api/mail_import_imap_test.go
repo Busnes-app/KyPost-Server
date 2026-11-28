@@ -750,7 +750,7 @@ func TestIMAPImport(t *testing.T) {
 	}
 	resolved = "93.184.216.34"
 
-	// Incoming encryption on no longer refuses: imported mail is sealed (mailbox.SetSeal).
+	// Incoming encryption on no longer refuses: imported mail is sealed (mailbox.InstallSeal).
 	path := srv.userSettingsPath(one.ID)
 	if err := config.UpdateUserSettings(path, func(s *config.UserSettings) error { s.EncryptIncoming = true; return nil }); err != nil {
 		t.Fatal(err)

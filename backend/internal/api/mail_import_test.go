@@ -334,7 +334,7 @@ func TestMailImport(t *testing.T) {
 	}
 
 	// Incoming encryption on no longer refuses an import: imported mail is sealed
-	// like delivered mail (mailbox.SetSeal), so the setting guards nothing here.
+	// like delivered mail (mailbox.InstallSeal), so the setting guards nothing here.
 	path := srv.userSettingsPath(one.ID)
 	setEncryption := func(on bool) {
 		t.Helper()

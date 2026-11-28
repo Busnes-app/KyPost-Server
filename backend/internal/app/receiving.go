@@ -213,6 +213,8 @@ type receivingRuntime struct {
 	// policy is state.db read-only, for the incoming encryption policy; nil (unreadable)
 	// counts as the default, required.
 	policy *state.Store
+	// unseal removes the incoming seal this runtime installed (none when the daemon's is).
+	unseal func()
 }
 
 func (r *receivingRuntime) close() error {
@@ -222,6 +224,9 @@ func (r *receivingRuntime) close() error {
 	}
 	if r.state != nil {
 		err = errors.Join(err, r.state.Close())
+	}
+	if r.unseal != nil {
+		r.unseal()
 	}
 	if r.policy != nil {
 		err = errors.Join(err, r.policy.Close())
@@ -522,7 +527,7 @@ func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRunti
 		r.policy = st
 	}
 	// Every import below seals mail for owners with a usable key before it is stored.
-	mailbox.SetSeal(processor.IncomingSeal(r.accounts, r.stateDir, r.policy))
+	r.unseal = mailbox.InstallSeal(processor.IncomingSeal(r.accounts, r.stateDir, r.policy))
 	return r, nil
 }
 

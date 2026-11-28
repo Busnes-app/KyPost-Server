@@ -355,7 +355,7 @@ with no user opt-out. The administrator's Encrypt incoming mail policy defaults 
 `required`; only `off` stores new mail as received.
 
 - **One choke point.** `mailbox.Store.append` seals every message that arrives
-  with a gateway receipt or as a file import (`mailbox.SetSeal`, installed by
+  with a gateway receipt or as a file import (`mailbox.InstallSeal`, installed by
   every mailbox-writing process: `app.Run` and the receiving runtime). That covers
   native SMTP, relay, the Cloudflare pickup, multi-mode obligations, quarantine
   release and mbox/EML/zip/IMAP imports. Drafts and Sent copies are not incoming

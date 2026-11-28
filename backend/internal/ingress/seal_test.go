@@ -32,10 +32,10 @@ func installSeal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mailbox.SetSeal(func(_ context.Context, _ mailbox.Owner, raw []byte) ([]byte, error) {
+	removeSeal := mailbox.InstallSeal(func(_ context.Context, _ mailbox.Owner, raw []byte) ([]byte, error) {
 		return pgpmail.EncryptStoredMIME(raw, id.ArmoredPublicKey)
 	})
-	t.Cleanup(func() { mailbox.SetSeal(nil) })
+	t.Cleanup(removeSeal)
 }
 
 func acceptSealed(t *testing.T, s *Store, id string) {
@@ -192,14 +192,14 @@ func TestSealCrashBeforeCommitLosesNothing(t *testing.T) {
 	}
 	// The process dies between bob's seal and his commit: the context ends there.
 	crash, die := context.WithCancel(context.Background())
-	mailbox.SetSeal(func(_ context.Context, owner mailbox.Owner, raw []byte) ([]byte, error) {
+	removeSeal := mailbox.InstallSeal(func(_ context.Context, owner mailbox.Owner, raw []byte) ([]byte, error) {
 		sealed, err := pgpmail.EncryptStoredMIME(raw, id.ArmoredPublicKey)
 		if owner.Subject == "bob" {
 			die()
 		}
 		return sealed, err
 	})
-	t.Cleanup(func() { mailbox.SetSeal(nil) })
+	t.Cleanup(removeSeal)
 	if err := s.Import(crash, "maddy", "d", resolve); err == nil {
 		t.Fatal("import survived the crash")
 	}

@@ -25,10 +25,10 @@ func installTestSeal(t *testing.T) {
 	t.Helper()
 	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.test")
 	must(t, err)
-	SetSeal(func(_ context.Context, _ Owner, raw []byte) ([]byte, error) {
+	removeSeal := InstallSeal(func(_ context.Context, _ Owner, raw []byte) ([]byte, error) {
 		return pgpmail.EncryptStoredMIME(raw, id.ArmoredPublicKey)
 	})
-	t.Cleanup(func() { SetSeal(nil) })
+	t.Cleanup(removeSeal)
 }
 
 // assertSealed checks the DB rows (listed subject, stored bytes, read through any object
@@ -108,8 +108,8 @@ func TestSealTooLargeRefuses(t *testing.T) {
 // An owner without a usable key gets the mail as received (the seal returns it), and
 // the backlog sweep's CAS replacement later seals it in place, subject column included.
 func TestSealKeylessThenBacklog(t *testing.T) {
-	SetSeal(func(_ context.Context, _ Owner, raw []byte) ([]byte, error) { return raw, nil })
-	t.Cleanup(func() { SetSeal(nil) })
+	removeSeal := InstallSeal(func(_ context.Context, _ Owner, raw []byte) ([]byte, error) { return raw, nil })
+	t.Cleanup(removeSeal)
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)
