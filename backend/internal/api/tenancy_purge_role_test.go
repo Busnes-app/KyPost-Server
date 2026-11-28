@@ -53,10 +53,15 @@ func TestOrgPurgeInterruptedByRoleSwitchFinishesOnNextOwner(t *testing.T) {
 	interrupted := make(chan error, 1)
 	finished := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Go(func() {
-		worker.Run(ctx, a, role, opts, []worker.Job{{Name: "purge", Run: func(owned context.Context) {
+	// a runs on its own context and is stopped before b starts, so b is sure to win the role.
+	aCtx, stopA := context.WithCancel(ctx)
+	defer stopA()
+	var aDone sync.WaitGroup
+	aDone.Go(func() {
+		worker.Run(aCtx, a, role, opts, []worker.Job{{Name: "purge", Run: func(owned context.Context) {
 			if aOwned != nil {
-				return // a again, after b: nothing left to show
+				<-owned.Done() // a re-elected before it is stopped: no second purge
+				return
 			}
 			aOwned = owned
 			interrupted <- px.srv.runPurges(owned, time.Now())
@@ -71,6 +76,8 @@ func TestOrgPurgeInterruptedByRoleSwitchFinishesOnNextOwner(t *testing.T) {
 	if !errors.Is(err1, state.ErrOwnershipLost) {
 		t.Fatalf("the interrupted purge returned %v, want ownership lost", err1)
 	}
+	stopA()
+	aDone.Wait()
 	wg.Go(func() {
 		worker.Run(ctx, b, role, opts, []worker.Job{{Name: "purge", Run: func(owned context.Context) {
 			for owned.Err() == nil {
