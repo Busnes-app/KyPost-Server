@@ -254,8 +254,10 @@ must create or import one on their own device.
 password envelope) and a `recovery` envelope slot, which the web client stores
 only after the user confirms saving the recovery secret. A legacy server-custody
 key is not complete; setup offers its migration. Under a Required incoming
-policy, incoming encryption must also be on, except for an owner of an active
-additional mailbox, who cannot turn it on (it covers only the primary).
+policy, incoming encryption must also be on. A native account's mail is sealed at
+import, so its key is enough. An external IMAP account turns replacement on,
+except for an owner of an active additional mailbox, who cannot (it covers only
+the primary).
 
 **Policy** (Admin → Server → Security, `GET|PUT /api/admin/encryption-policy`,
 stored in `state.db` setting `encryption_policy`):
@@ -263,11 +265,13 @@ stored in `state.db` setting `encryption_policy`):
 | Setting | Values | Default |
 |---|---|---|
 | Encryption key | `required`, `optional` | `required` |
-| Encrypt incoming mail | `required`, `on`, `off` | `on` |
+| Encrypt incoming mail | `required`, `on`, `off` | `required` |
 
-`required` incoming also sets the key to `required`. `on`/`off` only preselect
-the setup step's choice. Only new mail is encrypted, as described below; a
-Required policy never sweeps existing mail. An unreadable stored policy falls
+`required` incoming also sets the key to `required`. For native mail, `required`
+and `on` both seal at import, and `off` stores new mail as received. For an
+external IMAP account, `on`/`off` only preselect the setup step's choice, and a
+Required policy never sweeps existing mail. Native mail stored before a key
+existed is swept, as described below. An unreadable stored policy falls
 back to the default. `PUT /api/users/{id}/key-setup` (`{"required":bool}`) is
 "Require key setup" for one account, whatever the policy. Both writes take the
 admin step-up and record a `started` row before, and the outcome after, in the
@@ -299,7 +303,8 @@ Native clients must show that the user has to finish setup on the web (or on an
 enrolled device that can run it) and stop syncing until a later request
 succeeds; they must not retry around it or treat it as a sign-out, and they
 keep unsent mail. Key, bootstrap, enrollment and settings routes stay open so
-setup can be done. Incoming mail is still received and stored; only access is
+setup can be done. Incoming mail is still received and stored (as received, until the account has a
+key; see [incoming mail encryption](#incoming-mail-encryption)); only access is
 withheld. `GET /api/auth/me` reports `encryptionSetup`
 (`required, offered, hasKey, hasRecovery, incomingEnabled, keyPolicy,
 incomingPolicy`) for the web client's setup page.
@@ -339,11 +344,86 @@ of the first such request, and its devices are then held like the browser. An op
 generic provider's discovery at KySignOn's ACR misconfigures it on purpose and
 its SSO-only users then meet `kysignon_required` at key creation.
 
-## Incoming mail encryption (opt-in)
+## Incoming mail encryption
 
-Incoming encryption is a per-user preference in Security → Encryption, on by
-default in the first sign-in step and Required where the administrator says so
-(above). Nothing turns it on without the user's confirmed request. Only unread INBOX mail not already
+### Native mail: encrypted at import (required)
+
+Decided by the owner on 2026-11-28. Mail KyPost receives into a native mailbox is
+encrypted to the owner's public key before anything is committed to the mailbox
+database or object storage. It is mandatory for every account with a usable key,
+with no user opt-out. The administrator's Encrypt incoming mail policy defaults to
+`required`; only `off` stores new mail as received.
+
+- **One choke point.** `mailbox.Store.append` seals every message that arrives
+  with a gateway receipt or as a file import (`mailbox.SetSeal`, installed by
+  every mailbox-writing process: `app.Run` and the receiving runtime). That covers
+  native SMTP, relay, the Cloudflare pickup, multi-mode obligations, quarantine
+  release and mbox/EML/zip/IMAP imports. Drafts and Sent copies are not incoming
+  mail and are unchanged. The seal (`processor.IncomingSeal`) resolves the owner's
+  account by its frozen issuer and subject and encrypts with
+  `pgpmail.EncryptStoredMIME`: the complete original message inside, a placeholder
+  outer subject, routing headers outside. It uses the v6 key only once every
+  enrolled device can read v6 (`processor.IncomingPublicKey`), and the v4 key until
+  then. Mail that is already PGP-encrypted is stored as received. If the seal
+  cannot read the owner's account, it refuses the import; the mail stays in the
+  receiving buffer and is retried.
+- **What is stored.** The row's subject column comes from the sealed bytes (the
+  placeholder). The receipt and the row keep a SHA-256 of the received bytes, as
+  the buffer's tombstone already does. An exact replay after a crash therefore
+  returns the first copy, and a re-import is still a duplicate: a retry seals
+  again but never stores twice.
+- **Acknowledgement.** The buffer is acknowledged only after every bound mailbox
+  has committed its sealed copy. A crash after sealing and before the commit
+  stores nothing and acknowledges nothing; the retry seals again.
+- **The receiving buffer.** Plaintext exists only in `ingress.db`, the short-lived
+  buffer. It runs with SQLite `secure_delete`. When a delivery is archived
+  (imported, released, discarded or purged), the WAL is checkpointed and truncated,
+  so the payload is zeroed in the file and gone from the WAL. This is best effort:
+  a busy reader defers it to the next archive, and it does not reach blocks the
+  filesystem or disk has already reused. PostgreSQL has no equivalent: deleted
+  rows stay in dead tuples and WAL segments until VACUUM and WAL recycling reuse
+  them. Quarantined mail stays in the buffer until an administrator assigns an
+  owner and releases it, and is sealed at that import.
+- **Accounts without a key.** Mail for an account with no usable key (none yet,
+  expired, revoked, or an RSA key below the 2048-bit minimum) is received and
+  stored as it arrived. Nothing is refused or lost. Once the account has a usable
+  key, the daemon's backlog sweep (`Poller.sealBacklog`) encrypts that mail in
+  place in every folder, up to 100 messages per mailbox each tick, resuming from a
+  cursor bound to the mailbox's source. It is idempotent: sealed mail is skipped,
+  and each replacement is a compare-and-swap on the stored bytes. `mailbox.db`
+  also runs with `secure_delete`, and the sweep checkpoints and truncates its WAL.
+  Earlier backups keep whatever plaintext they hold.
+- **Extra mailboxes.** An extra native mailbox is sealed to its owner's key. The
+  owner is the mailbox's only member: KyPost has no multi-member shared mailboxes
+  ([NATIVE_ADDRESSING_V2.md](NATIVE_ADDRESSING_V2.md)). When they exist, each
+  message is to be encrypted to every current member's key. A new member gets
+  future mail, an existing member can re-grant the backlog, and members without a
+  key follow the rule above.
+- **Too large to encrypt.** OpenPGP armor grows a message by about a third, so a
+  message near the 25 MiB limit can fit when received but not once sealed. Such a
+  delivery is quarantined in the buffer and never stored in plaintext. An
+  administrator discards it, or releases it once the limit allows. A file import
+  skips it and counts it as skipped. The backlog sweep logs each stored message it
+  cannot seal for this reason, and that message stays as received.
+- **What encrypted users lose for new mail.** Server-side body search, content
+  previews, body caching and KyCalendar invitation forwarding, because the server
+  cannot read the body. Rules that match headers still run, and the poller labels
+  sealed mail with the fallback label, as it does for any encrypted mail. The
+  owner decided that rules, Junk and the local classifier run in memory at import,
+  before sealing; that is not built yet. Today the hosted scanner's Junk verdict
+  and rspamd still choose the folder before the seal, and body-based rules and
+  classification do not run on sealed mail.
+- **API.** `GET /api/pgp/incoming` reports `enabled: true` and `atImport: true`
+  for a native account that is sealed at import. For such an account, `PUT` with
+  `enabled: false` is `409 {"code":"incoming_encryption_required"}`.
+
+### External IMAP accounts: replacement after delivery
+
+An external IMAP provider, not KyPost, stores an IMAP account's mail, so it cannot
+be sealed at import. For those accounts incoming encryption is a per-user
+preference in Security → Encryption. It is on by default in the first sign-in step
+and Required where the administrator says so (above), which is the default.
+Nothing turns it on without the user's confirmed request. Only unread INBOX mail not already
 processed by KyPost is eligible; this does not sweep historical or read mail.
 For opt-in native mailboxes, the polling mailbox is INBOX and leftover IMAP
 configuration is ignored; primary key User IDs come from admitted domain
@@ -435,9 +515,10 @@ the same transaction. Lost move acknowledgments reconcile only against that
 copy in the expected destination; a verified stop remains valid after a move.
 A changed/deleted copy or a mismatched namespace pauses recovery. Restores still
 need explicit reconciliation before activation; this is not a backup or rollback
-procedure. SQLite WAL/pages, receiving buffers and earlier backups may retain
-plaintext after replacement. Existing client payloads and opt-in behavior are
-unchanged. Native HTTP/notification message IDs use a separate generation-bound
+procedure. Earlier backups may retain plaintext after replacement; the receiving buffer and
+`mailbox.db` zero freed pages (see
+[native mail](#native-mail-encrypted-at-import-required)). Existing client
+payloads are unchanged. Native mail sealed at import never reaches this job. Native HTTP/notification message IDs use a separate generation-bound
 opaque reference; internal replacement IDs, journal proofs and encryption
 namespaces remain numeric/immutable. Copy the inbox reference verbatim to
 `/api/mail/pgp-payload`, body and attachment requests. Native payload responses
