@@ -4,14 +4,23 @@ KyPost is a self-hosted IMAP web client with end-to-end encryption support. This
 
 ## Incoming encryption
 
-Incoming encryption is per-user opt-in and requires a saved-key-backup acknowledgment
-and fresh account confirmation. It classifies plaintext before encrypting and
+Native mail (KyPost's own mailboxes) is encrypted to the owner's key before it is
+stored, for every account with a usable key, with no opt-out; the administrator can
+turn it off. Plaintext exists only in the receiving buffer, which zeroes it after
+import (SQLite; not on PostgreSQL). Mail for an account without a key is stored as
+received and swept once a key exists: the sweep replaces the stored bytes and the
+subject column and drops the message's cached subject. Until the sweep reaches a
+message, and in backups taken earlier, that mail stays plaintext. Encrypted users lose server-side body search,
+previews, body caching and KyCalendar invitation forwarding for new mail.
+
+For an external IMAP account, incoming encryption is per-user and requires a
+saved-key-backup acknowledgment and fresh account confirmation. It classifies plaintext before encrypting and
 replacing unread, unprocessed inbox mail; the provider and KyPost see plaintext
 before replacement. Provider backups and other clients may retain copies. Routing
 metadata and classification keywords stay visible. Cache bodies stay disabled
 after opt-in, and pending jobs lock key replacement until verified recovery
 completes. Permanent size/rule failures are reported after bounded retries and
-leave the original plaintext in IMAP; recoverable failures remain pending. See the [full contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
+leave the original plaintext in IMAP; recoverable failures remain pending. See the [full contract](docs/E2E_PGP.md#incoming-mail-encryption).
 
 ## Reporting Security Vulnerabilities
 

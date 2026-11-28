@@ -36,7 +36,12 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "cannot read incoming encryption status", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"enabled": settings.EncryptIncoming, "pending": err == nil})
+		sealed, sealErr := s.sealsAtImport(r, ac.UserID)
+		if sealErr != nil {
+			http.Error(w, "cannot read incoming encryption status", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": settings.EncryptIncoming || sealed, "pending": err == nil, "atImport": sealed})
 	case http.MethodPut:
 		var req struct {
 			Enabled                bool    `json:"enabled"`
@@ -53,6 +58,16 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 		if !req.Enabled && s.encryptionPolicy().Incoming == policyRequired {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "Encrypting incoming mail is required by your administrator.", "code": "incoming_encryption_required"})
 			return
+		}
+		if !req.Enabled {
+			// Native mail is sealed at import with no opt-out (E2E_PGP.md).
+			if sealed, err := s.sealsAtImport(r, ac.UserID); err != nil {
+				http.Error(w, "cannot read incoming encryption status", http.StatusServiceUnavailable)
+				return
+			} else if sealed {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "Incoming mail is always encrypted for accounts with a key.", "code": "incoming_encryption_required"})
+				return
+			}
 		}
 		if req.Enabled {
 			if owns, err := s.ownsActiveExtraMailbox(ac.UserID); err != nil {
@@ -134,4 +149,22 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 		s.logger.Info("incoming encryption preference updated", "user_id", ac.UserID, "detail", "enabled="+strconv.FormatBool(req.Enabled))
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
+}
+
+// sealsAtImport reports whether userID's native mail is encrypted as it is stored: a
+// native account with a usable key under any policy but off (processor.IncomingSeal).
+func (s *Server) sealsAtImport(r *http.Request, userID string) (bool, error) {
+	if s.encryptionPolicy().Incoming == policyOff {
+		return false, nil
+	}
+	u, err := s.users.Get(userID)
+	if err != nil {
+		return false, err
+	}
+	status, err := pgpmail.CheckKeyStatus(u.PGPPublicKey)
+	if !u.Active || u.PGPProtection() != users.PGPProtectionClient || u.PGPPrivateKeyWrapped == "" || err != nil || !status.Usable() {
+		return false, nil
+	}
+	_, native, err := s.nativeMailAssignment(r.Context(), userID)
+	return native, err
 }

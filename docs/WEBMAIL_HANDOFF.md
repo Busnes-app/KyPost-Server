@@ -6,7 +6,7 @@ Per-user incoming encryption can also produce unsigned OpenPGP/MIME replacements
 with a new UID and a protected subject. Use the existing encrypted-mail read or
 webmail handoff path and refresh mailbox rows after replacement; classification
 has already occurred before encryption. The opt-in API and recovery contract are
-in [E2E_PGP.md](E2E_PGP.md#incoming-mail-encryption-opt-in).
+in [E2E_PGP.md](E2E_PGP.md#incoming-mail-encryption).
 
 Treat `messageId` as an opaque string and URL-encode it unchanged in webmail
 links. Native IDs include a restore generation; never strip their prefix or

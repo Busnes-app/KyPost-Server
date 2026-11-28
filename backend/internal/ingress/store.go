@@ -245,7 +245,8 @@ func openStore(dir string, limits Limits, existing, pg bool) (*Store, error) {
 		u := url.URL{Scheme: "file", Path: path}
 		query := u.Query()
 		query.Set("_txlock", "immediate")
-		query["_pragma"] = []string{"synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(5000)"}
+		// secure_delete zeroes freed pages, so archived plaintext does not linger in the file.
+		query["_pragma"] = []string{"synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(5000)", "secure_delete(ON)"}
 		if existing {
 			query.Set("mode", "rw")
 		} else {
@@ -961,7 +962,11 @@ func (s *Store) acknowledge(ctx context.Context, gateway, id, lease, digest stri
 	if err := archive(ctx, tx, s.postgres, "INSERT", disposition, "gateway=? AND id=? AND state=?", gateway, id, want); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.scrub(ctx)
+	return nil
 }
 
 // Discard drops a quarantined delivery's bytes and bindings, leaving a
@@ -1002,7 +1007,11 @@ func (s *Store) Discard(ctx context.Context, gateway, id string) (string, error)
 	if err := archive(ctx, tx, s.postgres, "INSERT", disposition, "gateway=? AND id=? AND state='quarantined'", gateway, id); err != nil {
 		return "", err
 	}
-	return disposition, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	s.scrub(ctx)
+	return disposition, nil
 }
 
 // Unresolved reports a binding Quarantine recorded without an owner.

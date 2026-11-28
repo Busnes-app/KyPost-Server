@@ -56,7 +56,11 @@ func (s *Store) PurgeMailboxes(ctx context.Context, mailboxes []string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.scrub(ctx)
+	return nil
 }
 
 // ScrubArchived removes every recipient gone reports from the tombstones' recipient lists

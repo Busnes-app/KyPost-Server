@@ -53,8 +53,6 @@ var (
 	importMessageBytes = min(nativeMailboxLimits.MessageBytes, mailmsg.MaxInboundMessageBytes)
 )
 
-var errImportIncomingEncryption = errors.New("import is unavailable while incoming encryption is on or a replacement is pending: imported mail would be stored unencrypted")
-
 type mailImporter interface {
 	ImportFolder(ctx context.Context, folder string, create bool) (string, error)
 	ImportMessage(ctx context.Context, folder string, raw []byte, meta mailbox.ImportMeta) error
@@ -129,19 +127,6 @@ func (s *Server) importBusy(userID string) string {
 	return ""
 }
 
-// importEncryptionOff refuses while the user's incoming encryption is on or
-// pending: imported mail is seen and never swept, so it would stay plaintext.
-func (s *Server) importEncryptionOff(userID string) error {
-	u, err := s.users.Get(userID)
-	if err != nil {
-		return err
-	}
-	if err = s.refuseExtraBesideIncomingEncryption(u); errors.Is(err, errExtraMailboxIncomingEncryption) {
-		return errImportIncomingEncryption
-	}
-	return err
-}
-
 func (s *Server) handleImportStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ac, _ := authFromContext(r)
@@ -183,10 +168,6 @@ func (s *Server) handleImportStart(w http.ResponseWriter, r *http.Request) {
 	im, refused := nativeMail[mailImporter](s, r.Context(), ac.UserID, ac.Mailbox, "import is available for native mailboxes")
 	if refused != nil {
 		refused.write(w)
-		return
-	}
-	if err := s.importEncryptionOff(ac.UserID); err != nil {
-		writeImportRefusal(w, err)
 		return
 	}
 	if !s.confirmActor(w, r, ac.UserID, body.AuthSecret) {
@@ -274,14 +255,6 @@ func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 	im, refused := nativeMail[mailImporter](s, r.Context(), g.User, g.Mailbox, "import is available for native mailboxes")
 	if refused != nil {
 		fail(refused.status, errors.New(refused.error))
-		return
-	}
-	if err := s.importEncryptionOff(g.User); err != nil {
-		if !errors.Is(err, errImportIncomingEncryption) {
-			fail(http.StatusServiceUnavailable, errors.New("your settings are unavailable"))
-			return
-		}
-		fail(http.StatusConflict, err)
 		return
 	}
 	path, size, status, err := s.receiveImport(w, r)
@@ -441,9 +414,6 @@ func (i *idleReader) Read(p []byte) (int, error) {
 }
 
 // runImport stores every message of the uploaded file, then removes it.
-// Each message is stored under the owner's settings lock with incoming
-// encryption re-read, so turning encryption on stops the import before the
-// next message.
 func (s *Server) runImport(ctx context.Context, job *importJob, im mailImporter, path string, size int64) {
 	defer func() { _ = os.Remove(path) }()
 	f, err := os.Open(path)
@@ -471,14 +441,13 @@ func (s *Server) runImport(ctx context.Context, job *importJob, im mailImporter,
 	}
 }
 
-// importOne stores raw under the owner's settings lock with incoming
-// encryption re-read, so turning encryption on stops before the next message.
-// An import never eats into the drive reserve kept for incoming mail.
+// importOne stores raw, sealed like delivered mail (mailbox.InstallSeal). An import
+// never eats into the drive reserve kept for incoming mail.
 func (s *Server) importOne(ctx context.Context, job *importJob, im mailImporter, folder string, raw []byte, meta mailbox.ImportMeta) error {
 	if err := fsutil.CheckDriveReserve(s.stateDir, int64(len(raw))); err != nil {
 		return err
 	}
-	return s.withIncomingEncryptionOff(job.user, func() error { return im.ImportMessage(ctx, folder, raw, meta) })
+	return im.ImportMessage(ctx, folder, raw, meta)
 }
 
 // countImport counts one message's outcome; only an error that stops the job
@@ -509,8 +478,6 @@ func importFailure(err error) string {
 		return "your organisation's storage is full; free space in any app and import again (messages already imported are skipped as duplicates)"
 	case errors.Is(err, mailbox.ErrCapacity):
 		return "your mailbox is full; free space and import again (messages already imported are skipped as duplicates)"
-	case errors.Is(err, errExtraMailboxIncomingEncryption):
-		return "incoming encryption was turned on, so the import stopped rather than store mail unencrypted"
 	case errors.Is(err, mailbox.ErrImportArchive):
 		return err.Error()
 	case errors.Is(err, mailbox.ErrImportTooMany):
@@ -567,14 +534,6 @@ func (s *Server) cancelImports() {
 			j.cancel()
 		}
 	}
-}
-
-func writeImportRefusal(w http.ResponseWriter, err error) {
-	if errors.Is(err, errImportIncomingEncryption) {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
-		return
-	}
-	http.Error(w, "your settings are unavailable", http.StatusServiceUnavailable)
 }
 
 // auditImport records the import without correspondence: never subjects or

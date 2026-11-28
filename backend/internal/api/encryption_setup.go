@@ -29,7 +29,7 @@ const (
 	policyOn       = "on"
 	policyOff      = "off"
 
-	encryptionPolicySetting = "encryption_policy"
+	encryptionPolicySetting = state.EncryptionPolicySetting
 )
 
 // EncryptionPolicy is Admin → Server → Security. Key is required|optional;
@@ -43,7 +43,7 @@ type EncryptionPolicy struct {
 // runs. defaultEncryptionPolicy is what the code reads; only TestMain lowers it,
 // so the package's unrelated tests are not all sent through setup.
 var (
-	shippedEncryptionPolicy = EncryptionPolicy{Key: policyRequired, Incoming: policyOn}
+	shippedEncryptionPolicy = EncryptionPolicy{Key: policyRequired, Incoming: policyRequired}
 	defaultEncryptionPolicy = shippedEncryptionPolicy
 )
 
@@ -132,10 +132,18 @@ func (s *Server) encryptionSetupFor(u users.User, canSetUp bool) (encryptionSetu
 	must := p.anyRequired() || u.KeySetupRequired
 	done := st.HasKey && st.HasRecovery
 	if done && p.Incoming == policyRequired && !st.IncomingEnabled {
-		// Incoming encryption covers only the primary mailbox and is refused
+		// Native mail is sealed at import; only an IMAP account's replacement job
+		// needs the setting. That job covers only the primary mailbox and is refused
 		// beside an active extra one, so its owner is not held to it.
-		if done, err = s.ownsActiveExtraMailbox(u.ID); err != nil {
+		_, native, err := s.nativeMailAssignment(context.Background(), u.ID)
+		if err != nil {
 			return st, err
+		}
+		st.IncomingEnabled = native
+		if !native {
+			if done, err = s.ownsActiveExtraMailbox(u.ID); err != nil {
+				return st, err
+			}
 		}
 	}
 	st.Required = must && !done

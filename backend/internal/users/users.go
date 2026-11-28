@@ -836,6 +836,21 @@ func OpenExisting(ctx context.Context, configDir string) (*Store, error) {
 	return s, nil
 }
 
+type mailboxOwnersKey struct{}
+
+// WithMailboxOwners carries owners, by mailbox ID, that a WithCurrentUsers fence already
+// read, so work inside the fence (the incoming seal) never calls the Store again.
+func WithMailboxOwners(ctx context.Context, owners map[string]User) context.Context {
+	return context.WithValue(ctx, mailboxOwnersKey{}, owners)
+}
+
+// MailboxOwner is the owner WithMailboxOwners carried for mailboxID.
+func MailboxOwner(ctx context.Context, mailboxID string) (User, bool) {
+	owners, _ := ctx.Value(mailboxOwnersKey{}).(map[string]User)
+	u, ok := owners[mailboxID]
+	return u, ok
+}
+
 // WithCurrentUsers fences a fresh snapshot against every cooperating user
 // mutation, including local deactivation. The callback must not call this Store
 // or perform network I/O; directory fences precede this users fence.

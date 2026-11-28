@@ -117,12 +117,12 @@ func auditOutcomes(t *testing.T, srv *Server, action string) []string {
 	return out
 }
 
-// The owner's default: an encryption key is Required and incoming encryption
-// starts on. An install that never saved a policy holds a keyless account's
-// mail at sign-in.
+// The owner's default: an encryption key and incoming encryption are both
+// Required (owner, 28 Nov). An install that never saved a policy holds a
+// keyless account's mail at sign-in.
 func TestShippedEncryptionPolicyRequiresAKey(t *testing.T) {
-	if shippedEncryptionPolicy != (EncryptionPolicy{Key: policyRequired, Incoming: policyOn}) {
-		t.Fatalf("shipped policy = %+v, want required key, incoming on by default", shippedEncryptionPolicy)
+	if shippedEncryptionPolicy != (EncryptionPolicy{Key: policyRequired, Incoming: policyRequired}) {
+		t.Fatalf("shipped policy = %+v, want required key and incoming", shippedEncryptionPolicy)
 	}
 	lowered := defaultEncryptionPolicy
 	defaultEncryptionPolicy = shippedEncryptionPolicy
@@ -133,7 +133,7 @@ func TestShippedEncryptionPolicyRequiresAKey(t *testing.T) {
 	if rec := gatedCall(t, srv, c, http.MethodGet, "/api/inbox", "", ""); !heldForSetup(rec) {
 		t.Fatalf("keyless account read mail under the shipped policy: %d %s", rec.Code, rec.Body)
 	}
-	if st := meSetup(t, srv, c); !st.Required || st.KeyPolicy != policyRequired || st.IncomingPolicy != policyOn {
+	if st := meSetup(t, srv, c); !st.Required || st.KeyPolicy != policyRequired || st.IncomingPolicy != policyRequired {
 		t.Fatalf("/api/auth/me setup = %+v", st)
 	}
 }

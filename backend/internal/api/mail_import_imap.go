@@ -222,10 +222,6 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 		refused.write(w)
 		return
 	}
-	if err := s.importEncryptionOff(ac.UserID); err != nil {
-		writeImportRefusal(w, err)
-		return
-	}
 	host, ok := imapHost(body.Host)
 	if !ok {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "enter the mail server's name, such as imap.example.com"})
@@ -480,10 +476,6 @@ func (s *Server) handleIMAPImportRun(w http.ResponseWriter, r *http.Request) {
 	im, refused := nativeMail[mailImporter](s, r.Context(), g.User, g.Mailbox, "import is available for native mailboxes")
 	if refused != nil {
 		refused.write(w)
-		return
-	}
-	if err := s.importEncryptionOff(g.User); err != nil {
-		writeImportRefusal(w, err)
 		return
 	}
 	target := strings.TrimSpace(body.Target)
