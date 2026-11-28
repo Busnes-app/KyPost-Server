@@ -18,6 +18,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- CI: the cell promotion rehearsal waits for PostgreSQL over TCP. The image's first start runs a temporary server on the Unix socket only, then restarts it, so the socket readiness check could pass just before the socket disappeared.
 - Offer X25519MLKEM768 on inbound SMTP STARTTLS: the pinned Maddy 0.9.5 build turns Go's hybrid off (`tlsmlkem=0`), so `start-receiving.sh` turns it back on, keeping any operator `GODEBUG` such as `fips140=on`. Classical senders still connect. Cap the hosted MX container at its measured 768 MiB with no swap.
 - Add Spec A P4 browser upgrades: generate an unprotected category-3 v6 certificate alongside the active v4 identity, save a complete v2 password/recovery keyring, and require every paired device to confirm v6 capability and the current X-Wing ring before new stored mail uses v6. Split encrypted deliveries by certificate version and PQ capability, keep each Bcc isolated, and mark classical recipients/messages **Not quantum-safe**. Public v4 publication and existing stored mail remain unchanged.
 - Add Spec A P3 reads: OpenPGP v6 and RFC 9980 reader compatibility in the server/browser (server key admission stays category 3), v1/v2 keyrings with v4/v6 active slots, 512 KiB sealed envelopes and 2 MiB recovery files. Track device `openpgp` codecs on enrollment-key and enrollment-state, including already-enrolled upgrades, with additive SQLite/PostgreSQL migration and inventory exposure. Preserve v4 generation/outbound defaults and release multi-tenant refusal.
