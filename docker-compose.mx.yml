@@ -58,6 +58,11 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 128
+    # Measured with the pinned Maddy and helper at the default 4 transactions, 25 MiB each:
+    # Maddy peaks at 236 MiB and each accept helper at 78 MiB, about 550 MiB with the tmpfs.
+    # Out of memory before 250 is a dropped session, and the sender retries.
+    mem_limit: 768m
+    memswap_limit: 768m
     restart: unless-stopped
     # Maddy's read and write timeouts are 30s each.
     stop_grace_period: 45s
