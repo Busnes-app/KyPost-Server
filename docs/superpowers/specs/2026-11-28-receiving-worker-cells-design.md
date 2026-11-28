@@ -197,15 +197,19 @@ as follows. Properties of the signed table and of pickup do not port: the MX hos
 
 ## As built
 
-- `scripts/start-receiving.sh` exports `GODEBUG=tlsmlkem=1` before it starts Maddy. That covers
+- `scripts/start-receiving.sh` appends `tlsmlkem=1` to `GODEBUG` before it starts Maddy. An operator's
+  setting (the strong-key overlay's `fips140=on`) still reaches Maddy and the helpers. That covers
   the single container and the MX host: Maddy and the helpers it runs. The helpers are Go 1.27,
   where this is already the default.
 - `TestNativeReceivingMaddyRuntime` checks the negotiated group:
   - `X25519MLKEM768` in every launched mode (CI runs `configured-limits`);
   - X25519 for the bare binary;
   - P-256 for a classical-only sender.
-  - Mutation: without the export, `configured-limits` and `launcher` fail with "negotiated
-    X25519, want X25519MLKEM768".
+  - every helper Maddy runs sees the operator's `GODEBUG` with `tlsmlkem=1` appended.
+  - Mutations: without the export, `configured-limits` and `launcher` fail with "negotiated
+    X25519, want X25519MLKEM768"; an export that replaces `GODEBUG` fails the helper check.
+- `scripts/check-pqc-tls.sh` still refuses every `tlsmlkem` setting except `tlsmlkem=1` on a
+  line marked `pqc-tls:allow`, and a marked line that also holds another value is refused.
 - `docker-compose.mx.yml`: `mem_limit: 768m` and `memswap_limit: 768m`.
   `scripts/check-replicas-compose.py` requires both. Mutation: without `mem_limit`, the check
   fails.

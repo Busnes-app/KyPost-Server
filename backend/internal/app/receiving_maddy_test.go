@@ -197,15 +197,33 @@ func testNativeReceivingMaddyRuntime(t *testing.T, mode string) {
 		// The wrapper only adds the test binary dispatch prefix; all generated
 		// authority/storage/TLS checks and subsequent helpers remain production.
 		wrapper := filepath.Join(root, "kypost-server")
+		// An operator GODEBUG (the strong-crypto overlay's fips140=on) must reach every helper
+		// beside the launcher's hybrid setting; netdns=go stands in for it here.
+		godebugLog := filepath.Join(root, "godebug.log")
+		t.Setenv("GODEBUG", "netdns=go")
+		t.Cleanup(func() {
+			seen, err := os.ReadFile(godebugLog)
+			lines := strings.Fields(string(seen))
+			if err != nil || len(lines) == 0 {
+				t.Error("no helper recorded its GODEBUG", err)
+			}
+			for _, line := range lines {
+				if line != "netdns=go,tlsmlkem=1" {
+					t.Errorf("a helper ran with GODEBUG %q", line)
+				}
+			}
+		})
 		program := fmt.Sprintf(`#!/usr/bin/python3
 import os, subprocess, sys
 prefix = [%s, "-test.run=^TestNativeReceivingCommandHelper$", "--"]
+if sys.argv[1:2] == ["receiving"] and sys.argv[2:3] != ["config"]:
+    open(%s, "a").write(os.environ.get("GODEBUG", "") + "\n")
 if sys.argv[1:3] == ["receiving", "config"]:
     result = subprocess.run(prefix + sys.argv[1:], stdout=subprocess.PIPE)
     sys.stdout.buffer.write(result.stdout.replace(%s.encode(), %s.encode()))
     sys.exit(result.returncode)
 os.execv(prefix[0], prefix + sys.argv[1:])
-`, strconv.Quote(os.Args[0]), strconv.Quote(strconv.Quote(os.Args[0])+" receiving"), strconv.Quote(strconv.Quote(wrapper)+" receiving"))
+`, strconv.Quote(os.Args[0]), strconv.Quote(godebugLog), strconv.Quote(strconv.Quote(os.Args[0])+" receiving"), strconv.Quote(strconv.Quote(wrapper)+" receiving"))
 		if err := os.WriteFile(wrapper, []byte(program), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -326,7 +344,7 @@ with open(sys.argv[2], "w") as out:
 	}
 	// The public hop is post-quantum for a sender that offers the hybrid, and still open
 	// to a classical one (docs/superpowers/specs/2026-11-28-receiving-worker-cells-design.md).
-	// The bare binary has the hybrid off (DefaultGODEBUG tlsmlkem=0); the launcher turns it on.
+	// The bare binary's DefaultGODEBUG has the hybrid off; the launcher turns it on.
 	want := tls.X25519MLKEM768
 	if mode == "direct" || mode == "rspamd" {
 		want = tls.X25519
