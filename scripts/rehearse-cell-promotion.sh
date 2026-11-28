@@ -18,7 +18,9 @@ trap cleanup EXIT
 trap 'exit 1' INT TERM
 fail() { echo "FAIL: $*" >&2; exit 1; }
 sql() { docker exec "$1" psql -U postgres -Atc "$2"; }
-ready() { for _ in $(seq 60); do docker exec "$1" pg_isready -U postgres -q && return; sleep 1; done; fail "$1 did not start"; }
+# TCP, not the socket: on first start the image's entrypoint runs a socket-only server for
+# initdb, then stops it, so a socket check can pass before the real server is up.
+ready() { for _ in $(seq 60); do docker exec "$1" pg_isready -h 127.0.0.1 -U postgres -q && return; sleep 1; done; fail "$1 did not start"; }
 
 docker network create "$net" >/dev/null
 docker run -d --name "$id-primary" --network "$net" --memory 1g -e POSTGRES_HOST_AUTH_METHOD=trust \

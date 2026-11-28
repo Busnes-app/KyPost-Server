@@ -302,8 +302,9 @@ jobs:
           POSTGRES_INITDB_ARGS: --locale=C --encoding=UTF8
         ports:
           - 5432:5432
+        # TCP: the socket answers during initdb's temporary server (see rehearse-cell-promotion.sh).
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
@@ -328,7 +329,7 @@ jobs:
         run: |
           docker exec "$PG" psql -U postgres -c 'ALTER SYSTEM SET max_connections = 400'
           docker restart "$PG"
-          timeout 60 sh -c "until docker exec $PG pg_isready -U postgres; do sleep 1; done"
+          timeout 60 sh -c "until docker exec $PG pg_isready -h 127.0.0.1 -U postgres; do sleep 1; done"
           test "$(docker exec "$PG" psql -U postgres -Atc 'SHOW max_connections')" = 400
       - name: start the S3-compatible fixture
         run: ../scripts/ci-start-s3.sh
@@ -523,6 +524,14 @@ jobs:
         run: shellcheck scripts/*.sh
 
       - run: scripts/check-no-binaries.sh
+
+      # On first start the postgres image answers on its socket during initdb's temporary
+      # server, then stops it: a socket readiness check races the real server.
+      - name: pg_isready probes TCP
+        run: |
+          if git grep -nE 'pg_isready"?,? "?-U' -- scripts .github 'docker-compose*.yml'; then
+            echo "pg_isready without -h races the image's initdb server" >&2; exit 1
+          fi
 
       - name: update-host self-check
         run: scripts/update-host.test.sh
