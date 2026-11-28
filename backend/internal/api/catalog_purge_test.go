@@ -52,8 +52,17 @@ func TestTablePurgeStorageRefusesStaleSchemaWriter(t *testing.T) {
 	if _, err = stale.Exec(`CREATE TABLE must_not_reappear(id BIGINT PRIMARY KEY)`); !errors.Is(err, pgdialect.ErrSchemaGone) {
 		t.Fatal("stale pool did not refuse missing schema", err)
 	}
+	// A stale reader is refused too: every borrow checks its schema, never public.
+	if err = stale.QueryRow(`SELECT 1`).Scan(new(int)); !errors.Is(err, pgdialect.ErrSchemaGone) {
+		t.Fatal("stale pool read past the missing schema", err)
+	}
+	tx, err := dbbackend.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	var exists bool
-	if err = stale.QueryRow(`SELECT to_regclass('public.must_not_reappear') IS NOT NULL`).Scan(&exists); err != nil || exists {
+	if err = tx.QueryRow(`SELECT to_regclass('public.must_not_reappear') IS NOT NULL`).Scan(&exists); err != nil || exists {
 		t.Fatal("stale writer escaped to public", exists, err)
 	}
 }

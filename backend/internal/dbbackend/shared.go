@@ -46,13 +46,13 @@ func PoolSize() (int, error) {
 	return n, nil
 }
 
-// Test hooks (SharedPoolForTest): a size below the configurable floor, and a warm pool.
+// Test hooks (SharedPoolForTest): a size below the configurable floor, and a cold pool.
 var (
 	poolSizeForTest atomic.Int32
-	warmForTest     atomic.Bool
+	coldForTest     atomic.Bool
 )
 
-// sharedLocked is the pool for rawURL, opened on first use. Outside tests it is warm.
+// sharedLocked is the pool for rawURL, opened on first use and warm.
 func sharedLocked(rawURL string) (*pgxpool.Pool, error) {
 	if p := pools[rawURL]; p != nil {
 		return p, nil
@@ -61,7 +61,7 @@ func sharedLocked(rawURL string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := pgdialect.NewPool(rawURL, n, !testHook() || warmForTest.Load())
+	p, err := pgdialect.NewPool(rawURL, n, !coldForTest.Load())
 	if err != nil {
 		return nil, err
 	}

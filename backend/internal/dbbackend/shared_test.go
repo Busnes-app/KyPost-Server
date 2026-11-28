@@ -34,6 +34,16 @@ func serverConns(t *testing.T, appName string) int {
 	return n
 }
 
+// orgStore is a store path in its own existing directory: another test binary's sweep
+// (dropStaleTestSchemas) drops a test schema whose directory is gone.
+func orgStore(t *testing.T, dir, org string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, org), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, org, "state.db")
+}
+
 func testBaseURL(*testing.T) string { return os.Getenv(EnvTestURL) }
 
 // Two orgs interleaving on one pooled connection never see or write each other's rows: every
@@ -44,7 +54,7 @@ func TestSharedConnectionIsolatesOrgs(t *testing.T) {
 	dir := t.TempDir()
 	orgs := map[string]*sql.DB{}
 	for _, org := range []string{"org-a", "org-b"} {
-		db, err := Open(filepath.Join(dir, org, "state.db"), Options{Kind: "test", DDL: orgRowsDDL, Create: true})
+		db, err := Open(orgStore(t, dir, org), Options{Kind: "test", DDL: orgRowsDDL, Create: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -171,7 +181,7 @@ func TestSharedPoolBoundAndWarm(t *testing.T) {
 	ctx := context.Background()
 	paths := make([]string, orgs)
 	for i := range paths {
-		paths[i] = filepath.Join(dir, fmt.Sprintf("org-%d", i), "state.db")
+		paths[i] = orgStore(t, dir, fmt.Sprintf("org-%d", i))
 		db, err := Open(paths[i], Options{Kind: "test", DDL: orgRowsDDL, Create: true})
 		if err != nil {
 			t.Fatal(err)
@@ -245,18 +255,11 @@ func SharedPoolForTest(t testing.TB, size int, warm bool) (appName string) {
 	q.Set("application_name", appName)
 	u.RawQuery = q.Encode()
 	poolSizeForTest.Store(int32(size))
-	warmForTest.Store(warm)
-	SetURLForTest(t, u.String())
+	coldForTest.Store(!warm)
 	t.Cleanup(func() {
 		poolSizeForTest.Store(0)
-		warmForTest.Store(false)
-		mu.Lock()
-		p := pools[u.String()]
-		delete(pools, u.String())
-		mu.Unlock()
-		if p != nil {
-			p.Close()
-		}
+		coldForTest.Store(false)
 	})
+	SetURLForTest(t, u.String())
 	return appName
 }

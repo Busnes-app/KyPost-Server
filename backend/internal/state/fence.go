@@ -33,14 +33,30 @@ type Fence struct {
 var fenceOrder = []string{"org", "settings", "native-domains", "sso", "sso-lifecycle", "mailbox", "quota", "backup-operation"}
 
 // fencePools holds one handle for fence sessions per schema, shared by every Store in the
-// process. A held fence keeps its connection, borrowed from the process's shared pool, for
-// the whole section, so fence sessions may take at most half of that pool: fenced requests
-// cannot starve every other query, their own included. A set that cannot get a session
-// within fenceWait is ErrFenceWait. Only a successful open is kept, and a handle is never
-// closed: it keeps no idle connection.
+// process. Only a successful open is kept, and a handle is never closed: it keeps no idle
+// connection. A held fence keeps its connection, borrowed from the process's shared pool, for
+// the whole section, and a fenced request borrows more under it (a read transaction, then a
+// statement), so fence sessions across every schema may take at most a quarter of that pool
+// (fenceSlots): fenced requests cannot take every connection and wait on each other for one
+// more. A set that cannot get a session within fenceWait is ErrFenceWait.
 var fencePools struct {
 	sync.Mutex
 	bySchema map[string]*sql.DB
+	slots    chan struct{}
+}
+
+// fenceSlots is the process's semaphore of fence sessions: a quarter of the pool, at least 1.
+func fenceSlots() (chan struct{}, error) {
+	fencePools.Lock()
+	defer fencePools.Unlock()
+	if fencePools.slots == nil {
+		size, err := dbbackend.PoolSize()
+		if err != nil {
+			return nil, err
+		}
+		fencePools.slots = make(chan struct{}, max(1, size/4))
+	}
+	return fencePools.slots, nil
 }
 
 func fencePool(baseDir string) (*sql.DB, error) {
@@ -55,15 +71,10 @@ func fencePool(baseDir string) (*sql.DB, error) {
 	if db := fencePools.bySchema[key]; db != nil {
 		return db, nil
 	}
-	size, err := dbbackend.PoolSize()
-	if err != nil {
-		return nil, err
-	}
 	db, err := dbbackend.Pool(schema, false)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(size / 2)
 	db.SetMaxIdleConns(0) // every session is discarded on release
 	if fencePools.bySchema == nil {
 		fencePools.bySchema = map[string]*sql.DB{}
@@ -176,7 +187,20 @@ func (s *Store) HoldFences(ctx context.Context, fences []Fence) (context.Context
 	if err != nil {
 		return nil, nil, err
 	}
-	conn, err := pool.Conn(wait)
+	slots, err := fenceSlots()
+	if err != nil {
+		return nil, nil, err
+	}
+	var conn *sql.Conn
+	select {
+	case slots <- struct{}{}:
+		conn, err = pool.Conn(wait)
+		if err != nil {
+			<-slots
+		}
+	case <-wait.Done():
+		err = wait.Err()
+	}
 	if wait.Err() != nil && ctx.Err() == nil {
 		err = fmt.Errorf("%w: no fence session", ErrFenceWait)
 	}
@@ -191,6 +215,7 @@ func (s *Store) HoldFences(ctx context.Context, fences []Fence) (context.Context
 	if err != nil {
 		if conn != nil {
 			discard(conn)
+			<-slots
 		}
 		return nil, nil, err
 	}
@@ -207,6 +232,7 @@ func (s *Store) HoldFences(ctx context.Context, fences []Fence) (context.Context
 			cancel(nil)
 			<-probeDone
 			discard(conn)
+			<-slots
 		})
 	}, nil
 }

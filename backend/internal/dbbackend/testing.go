@@ -110,7 +110,23 @@ func SetURLForTest(t testing.TB, rawURL string) {
 		old = &s
 	}
 	swap(&selection{url: rawURL})
-	t.Cleanup(func() { swap(old) })
+	t.Cleanup(func() {
+		swap(old)
+		if rawURL != old.url {
+			closePool(rawURL)
+		}
+	})
+}
+
+// closePool closes the shared pool for rawURL, if one is open.
+func closePool(rawURL string) {
+	mu.Lock()
+	p := pools[rawURL]
+	delete(pools, rawURL)
+	mu.Unlock()
+	if p != nil {
+		p.Close()
+	}
 }
 
 // ReloadForTest rereads the environment, for tests of the configuration itself.

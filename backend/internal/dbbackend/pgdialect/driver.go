@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"io"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -120,7 +121,8 @@ func NewPool(rawURL string, size int, warm bool) (*pgxpool.Pool, error) {
 	pc.ConnConfig = cfg
 	pc.MaxConns = int32(size)
 	if warm {
-		pc.MinConns = int32(size)
+		// Kept open: no lifetime or idle expiry, so a connection is replaced only when broken.
+		pc.MinConns, pc.MaxConnLifetime, pc.MaxConnIdleTime = int32(size), 0, 0
 	}
 	pc.AfterConnect = func(_ context.Context, c *pgx.Conn) error {
 		c.TypeMap().RegisterType(&pgtype.Type{Name: "timestamptz", OID: pgtype.TimestamptzOID, Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC}})
@@ -132,7 +134,34 @@ func NewPool(rawURL string, size int, warm bool) (*pgxpool.Pool, error) {
 		_, err := c.Exec(ctx, resetSQL)
 		return err == nil
 	}
-	return pgxpool.NewWithConfig(context.Background(), pc)
+	p, err := pgxpool.NewWithConfig(context.Background(), pc)
+	if err != nil || !warm {
+		return p, err
+	}
+	fill(p, size)
+	return p, nil
+}
+
+// fill opens a warm pool's connections before its first borrow, so a borrow never waits
+// on a connect (nor, in a test, creates one inside a synctest bubble). A connect that fails
+// is left to the pool's health check.
+func fill(p *pgxpool.Pool, size int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	held := make(chan *pgxpool.Conn, size)
+	var wg sync.WaitGroup
+	for range size {
+		wg.Go(func() {
+			if c, err := p.Acquire(ctx); err == nil {
+				held <- c
+			}
+		})
+	}
+	wg.Wait()
+	close(held)
+	for c := range held {
+		c.Release()
+	}
 }
 
 // NewConnector borrows from pool for one store. A readOnly store runs its transactions
