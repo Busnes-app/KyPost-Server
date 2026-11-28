@@ -983,8 +983,8 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
      fences are first used. `docs/RUNNING.md` is
      unchanged until then.
      **Superseded (owner direction, 2026-11-28):** per-schema fence pools and per-store pools
-     are gone. Fence sessions borrow from the process's one shared pool, capped at half of it,
-     so the starvation above still cannot happen. See the tenancy spec, "Database
+     are gone. Fence sessions borrow from the process's one shared pool, capped at a quarter of it across
+     every schema, so the starvation above still cannot happen. See the tenancy spec, "Database
      connections".
    - **The bounded wait** covers the whole set: 10 s (`fenceWait`), enforced by the context and by
      a session `lock_timeout`. A lock timeout (`55P03`) and a deadlock that PostgreSQL detects

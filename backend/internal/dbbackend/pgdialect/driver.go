@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -121,8 +122,12 @@ func NewPool(rawURL string, size int, warm bool) (*pgxpool.Pool, error) {
 	pc.ConnConfig = cfg
 	pc.MaxConns = int32(size)
 	if warm {
-		// Kept open: no lifetime or idle expiry, so a connection is replaced only when broken.
-		pc.MinConns, pc.MaxConnLifetime, pc.MaxConnIdleTime = int32(size), 0, 0
+		pc.MinConns = int32(size)
+	}
+	if testing.Testing() {
+		// A synctest bubble's clock runs years ahead: no lifetime expiry, so a borrow in a
+		// bubble never closes a connection the process opened (puddle's WaitGroup).
+		pc.MaxConnLifetime = 0
 	}
 	pc.AfterConnect = func(_ context.Context, c *pgx.Conn) error {
 		c.TypeMap().RegisterType(&pgtype.Type{Name: "timestamptz", OID: pgtype.TimestamptzOID, Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC}})

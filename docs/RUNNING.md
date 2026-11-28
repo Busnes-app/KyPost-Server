@@ -536,7 +536,7 @@ processes when enabled) holds exactly `KYPOST_DATABASE_POOL_SIZE` server connect
 (default 16, from 4 to 1000; anything else refuses startup). It opens them at start and keeps
 them open, however many accounts, orgs or connected devices it serves. Every store borrows
 one per statement or transaction. Role, backup and pairing locks and fence sessions borrow
-from the same pool, with fence sessions capped at half of it. A statement that finds no free
+from the same pool, with fence sessions capped at a quarter of it. A statement that finds no free
 connection within 10 s fails (`database: no connection free in the pool`), as a full
 PgBouncer pool would.
 
