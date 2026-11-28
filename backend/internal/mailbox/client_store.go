@@ -300,5 +300,5 @@ func (s *Store) rawWithin(ctx context.Context, folder string, id, limit int64) (
 	if size > limit {
 		return nil, mailmsg.ErrMessageTooLarge
 	}
-	return raw, nil
+	return s.body(ctx, s.db, id, raw, limit)
 }

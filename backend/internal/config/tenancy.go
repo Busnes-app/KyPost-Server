@@ -63,6 +63,9 @@ func Tenancy() (mode, staffOrg string, err error) {
 		if cells != "" {
 			return "", "", errors.New("KY_CELLS is set, but KYPOST_TENANCY is not multi: unset it for a self-hosted install")
 		}
+		if s3Set() {
+			return "", "", errors.New("KYPOST_S3_* is set, but KYPOST_TENANCY is not multi: a self-hosted install keeps message bodies in its database")
+		}
 		return TenancySingle, "", nil
 	case TenancyMulti:
 		if !ValidOrgID(staffOrg) {

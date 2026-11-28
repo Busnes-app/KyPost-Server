@@ -503,7 +503,15 @@ func (s *Store) FileOutboundSent(ctx context.Context, master []byte, id string) 
 	if err != nil {
 		return 0, ErrOutbound
 	}
-	if err = tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,draft) VALUES('Sent',?,?,?,?,?,?,?,?,1,0) RETURNING id`, job.Sent, hashIncoming(job.Sent), headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339)).Scan(&sent); err != nil {
+	stored, pending, err := s.stash(ctx, job.Sent)
+	if err != nil {
+		return 0, err
+	}
+	defer s.release(ctx, pending)
+	if err = tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,draft) VALUES('Sent',?,?,?,?,?,?,?,?,1,0) RETURNING id`, stored, hashIncoming(job.Sent), headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339)).Scan(&sent); err != nil {
+		return 0, err
+	}
+	if err = pending.name(ctx, tx, sent); err != nil {
 		return 0, err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE outbox SET sent_id=?,sent_bytes=0,sent_reserved=0 WHERE id=?", sent, id); err != nil {
@@ -513,7 +521,7 @@ func (s *Store) FileOutboundSent(ctx context.Context, master []byte, id string) 
 		return 0, err
 	}
 	s.compactOutbound(ctx, tx, master, id)
-	return sent, tx.Commit()
+	return sent, commitBody(tx, pending)
 }
 
 // ValidateOutboundSnapshot reads a frozen backup database without migrating it.
@@ -577,7 +585,7 @@ func ValidateOutboundSnapshot(ctx context.Context, path string, master []byte, r
 	if err = db.QueryRowContext(ctx, `SELECT
  (SELECT records FROM usage WHERE id=1),(SELECT payload_bytes FROM usage WHERE id=1),
  (SELECT count(*) FROM messages)+(SELECT count(*)+coalesce(sum(sent_reserved),0) FROM outbox)+(SELECT count(*) FROM outbox_deliveries),
- (SELECT coalesce(sum(length(raw)),0) FROM messages)+(SELECT coalesce(sum(length(ciphertext)+sent_bytes),0) FROM outbox)`).Scan(&records, &used, &wantRecords, &wantUsed); err != nil || records != wantRecords || used != wantUsed || records > int64(s.limits.Records) {
+ (SELECT coalesce(sum(length(raw)),0) FROM messages)+(SELECT coalesce(sum(size),0) FROM bodies)+(SELECT coalesce(sum(length(ciphertext)+sent_bytes),0) FROM outbox)`).Scan(&records, &used, &wantRecords, &wantUsed); err != nil || records != wantRecords || used != wantUsed || records > int64(s.limits.Records) {
 		return true, ErrOutbound
 	}
 	rows, err := db.QueryContext(ctx, "SELECT id FROM outbox ORDER BY id")

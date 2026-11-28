@@ -120,6 +120,9 @@ func Run(args []string) error {
 		if err == nil {
 			err = tenancy.CheckRelayCodes(cells)
 		}
+		if err == nil {
+			err = probeObjectStorage(cells)
+		}
 		if err != nil {
 			return err
 		}

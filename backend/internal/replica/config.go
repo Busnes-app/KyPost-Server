@@ -56,7 +56,10 @@ var Shared = map[string]func(string) string{
 
 // MultiShared are shared settings only multi mode sets (KY_CELLS, the cells this deployment
 // serves). Each joins the fingerprint only when set, so a single-tenant record never changes.
-var MultiShared = map[string]func(string) string{"KY_CELLS": list}
+var MultiShared = map[string]func(string) string{"KY_CELLS": list,
+	// MH11 object storage: every replica of a cell writes one bucket with one identity.
+	"KYPOST_S3_ENDPOINT": trim, "KYPOST_S3_BUCKET": trim, "KYPOST_S3_REGION": trim, "KYPOST_S3_ACCESS_KEY": trim,
+	"KYPOST_S3_SECRET_KEY": trim, "KYPOST_S3_SECRET_KEY_FILE": trim}
 
 // PerHost settings may differ between replicas: listeners, logging, resources, the local
 // model service, receiving concurrency, scratch and tools, the database URL itself, test and
@@ -91,6 +94,7 @@ var PerHost = []string{
 	"KYPOST_PREPARE_CRASH_ROOT", "KYPOST_RELAY_CHECK_CHILD", "KYPOST_RELAY_TLS_PROOF_ADDR",
 	"KYPOST_RELAY_TLS_PROOF_CASE", "KYPOST_TEST_DNS", "KYPOST_TEST_OLD_DATABASE_URL",
 	"KYPOST_TEST_RESTORE_ENTROPY_DIR", "KYPOST_TEST_DATABASE_URL", "KYPOST_NATIVE_ANDROID_TEST_SERIAL",
+	"KY_TEST_S3_ENDPOINT", "KY_TEST_S3_BUCKET", "KY_TEST_S3_ACCESS_KEY", "KY_TEST_S3_SECRET_KEY",
 	"MADDY_PROOF_BINARY", "OLLAMA_LIVE_TEST", "RECEIVING_PROOF_IMAGE", "RSPAMD_PROOF", "UPDATE_AUTHORITY_GOLDEN",
 }
 

@@ -1,0 +1,1 @@
+{"identities":[{"name":"kypost-ci","credentials":[{"accessKey":"kypost-ci","secretKey":"kypost-ci-secret-not-a-real-credential"}],"actions":["Admin","Read","Write","List","Tagging"]}]}

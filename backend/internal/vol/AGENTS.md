@@ -22,6 +22,8 @@ File and PostgreSQL document I/O for the multi-host design. Store packages retai
 - Directory admission and the new row share one writer transaction. `kypg.BeginTx` takes the schema advisory writer lock before any usage query; do not bypass that driver or add a second quota lock. Marker moves compare the checked source revision in that transaction; only platform bodies may move without resealing. File callers sync the directory after a rename.
 - Runtime tables require PostgreSQL. `NewSnapshotTable` is exclusively for private, stopped SQLite capsule staging. Live derived writes lock their retained account `FOR KEY SHARE` in the document transaction before creating a body or key, and compare its org with the trusted resolver. A missing/mismatched account refuses the write. Purge deletes accounts first; startup remains gated on later MH phases.
 
+- `Object` (MH11, multi only) is the third `Vol`: message bodies in S3 through ky-primitives `s3`, keys `cells/<cell>/bodies/<org>/<mailbox>/<object>`. It refuses a key outside its cells (`ErrCell`) or of another shape (`ErrPath`) before any request. Write is revision 0 only (`PutIfAbsent`; a lost race is `ErrStale`, any other revision `ErrWriteOnce`). Bodies are sealed under the org's data key with the full key as associated data; probes under `cells/<cell>/probe/` are not. Remove and `RemoveAll` delete every version. Never log keys or credentials; errors carry neither.
+
 ## Work Guidance
 
 Use the existing seam for a document adapter. Keep wire parsing and product policy in its owning store.
@@ -32,7 +34,7 @@ Use the existing seam for a document adapter. Keep wire parsing and product poli
 
 - `TestDocumentReferencesAndGuardedRemoval` covers shared references, missing/foreign-owner dependencies, stale reference snapshots, deletion/recreation and unchanged body on refusal. `TestMissingReferenceCreatesNoBodyOrOrgKey` proves failed dependency validation creates neither ciphertext nor a wrapped data key. Contacts/API tests exercise the actual photo sweep and publication paths; sealed table restore retains the reference and its bytes.
 
-`go test -race -p 2 -count=1 ./internal/vol` exercises files and, with `KYPOST_TEST_DATABASE_URL`, CAS/ABA, copied-ciphertext refusal, concurrent key creation, photo accounting/admission, marker moves and the table cap. API `TestCrossOrgMatrixTableDocuments` and `TestDocumentContentionAnswers503WithoutCreatingContact` exercise the boundary through handlers.
+`Object` tests need `KY_TEST_S3_*` (the SeaweedFS fixture, `scripts/ci-start-s3.sh`) and skip without it; `TestObjectProbeRefusesUnconditionalProvider` runs anywhere. `go test -race -p 2 -count=1 ./internal/vol` exercises files and, with `KYPOST_TEST_DATABASE_URL`, CAS/ABA, copied-ciphertext refusal, concurrent key creation, photo accounting/admission, marker moves and the table cap. API `TestCrossOrgMatrixTableDocuments` and `TestDocumentContentionAnswers503WithoutCreatingContact` exercise the boundary through handlers.
 
 ## Child DOX Index
 

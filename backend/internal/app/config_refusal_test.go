@@ -46,6 +46,7 @@ func TestRunRefusesMultiTenancy(t *testing.T) {
 	t.Setenv("KYPOST_TENANCY", "multi")
 	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d")
+	setObjectStorageEnv(t)
 	for _, mode := range []string{"server", "daemon", "all", "bootstrap-admin"} {
 		err := Run([]string{"--mode", mode})
 		refused := err != nil && strings.Contains(err.Error(), "KYPOST_TENANCY=multi is not available")
@@ -60,5 +61,36 @@ func TestRunRefusesMultiTenancy(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(configDir, f)); !os.IsNotExist(err) {
 			t.Errorf("%s was written: %v", f, err)
 		}
+	}
+}
+
+// setObjectStorageEnv sets well-formed KYPOST_S3_* that no test ever reaches.
+func setObjectStorageEnv(t *testing.T) {
+	t.Setenv("KYPOST_S3_ENDPOINT", "https://s3.example.test")
+	t.Setenv("KYPOST_S3_BUCKET", "kypost-test")
+	t.Setenv("KYPOST_S3_ACCESS_KEY", "test-access")
+	t.Setenv("KYPOST_S3_SECRET_KEY", "test-secret-value")
+}
+
+// A multi start without object storage is refused before anything is written (MH11), and
+// the refusal never repeats a credential.
+func TestRunRefusesMultiWithoutObjectStorage(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+	t.Setenv("STATE_DIR", t.TempDir())
+	t.Setenv("SECRET_DIR", t.TempDir())
+	t.Setenv("KYPOST_TENANCY", "multi")
+	t.Setenv("KY_CELLS", "test-1")
+	t.Setenv("KYPOST_STAFF_ORG_ID", "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d")
+	t.Setenv("KYPOST_S3_ACCESS_KEY", "test-access")
+	t.Setenv("KYPOST_S3_SECRET_KEY", "test-secret-value")
+	for _, mode := range []string{"server", "daemon", "all"} {
+		err := Run([]string{"--mode", mode})
+		if err == nil || taggedBuild && !strings.Contains(err.Error(), "requires object storage") || strings.Contains(err.Error(), "test-secret-value") {
+			t.Fatalf("%s, test build %v: %v", mode, taggedBuild, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "users.json")); !os.IsNotExist(err) {
+		t.Errorf("users.json was written: %v", err)
 	}
 }
