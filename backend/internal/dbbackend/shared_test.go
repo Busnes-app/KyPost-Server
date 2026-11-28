@@ -263,3 +263,48 @@ func SharedPoolForTest(t testing.TB, size int, warm bool) (appName string) {
 	SetURLForTest(t, u.String())
 	return appName
 }
+
+// Transactions cannot take every connection and then wait on each other: with a pool of 4,
+// eight concurrent transactions each read a second store while holding their own, as a
+// read under a fence or an admission does (its catalog lookup, the user's mailbox).
+func TestTransactionsLeaveRoomForStatements(t *testing.T) {
+	SharedPoolForTest(t, 4, true)
+	wait := pgdialect.PoolWait
+	pgdialect.PoolWait = 3 * time.Second
+	t.Cleanup(func() { pgdialect.PoolWait = wait })
+	dir := t.TempDir()
+	var stores [2]*sql.DB
+	for i := range stores {
+		db, err := Open(orgStore(t, dir, fmt.Sprintf("org-%d", i)), Options{Kind: "test", DDL: orgRowsDDL, Create: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		stores[i] = db
+	}
+	ctx := context.Background()
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Go(func() {
+			tx, err := stores[0].BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer func() { _ = tx.Rollback() }()
+			<-start // every transaction holds its connection before any asks for a second
+			time.Sleep(100 * time.Millisecond)
+			errs <- stores[1].QueryRowContext(ctx, `SELECT count(*) FROM org_rows`).Scan(new(int))
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal("a transaction's second borrow:", err)
+		}
+	}
+}

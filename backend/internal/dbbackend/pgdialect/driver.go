@@ -186,7 +186,19 @@ func NewRowWriterConnector(pool *pgxpool.Pool, schema string) driver.Connector {
 
 func newConnector(pool *pgxpool.Pool, readOnly, rowWrites bool, schema string) driver.Connector {
 	writer, _ := LockKeys(SearchPath(schema))
-	return &connector{base: stdlib.GetPoolConnector(pool), readOnly: readOnly, lockKey: writer, rowWrites: rowWrites, schema: schema}
+	return &connector{base: stdlib.GetPoolConnector(pool), txSlots: txSlotsFor(pool), readOnly: readOnly, lockKey: writer, rowWrites: rowWrites, schema: schema}
+}
+
+// Transactions may hold at most half of a pool, and fence sessions (state) a quarter, so a
+// quarter is always left for single statements. A statement never waits on another borrow
+// while it holds one, so a transaction that needs one more connection (a catalog lookup, a
+// second store's read) always gets it: holders cannot take every connection and wait on each
+// other. A transaction takes its slot before it borrows.
+var txSlots sync.Map // *pgxpool.Pool -> chan struct{}
+
+func txSlotsFor(pool *pgxpool.Pool) chan struct{} {
+	ch, _ := txSlots.LoadOrStore(pool, make(chan struct{}, max(1, pool.Config().MaxConns/2)))
+	return ch.(chan struct{})
 }
 
 // SearchPath is a store schema's search_path: the schema, then public (citext). The
@@ -212,29 +224,63 @@ func LockKeys(schema string) (writer, migration int64) {
 
 type connector struct {
 	base      driver.Connector
+	txSlots   chan struct{}
 	readOnly  bool
 	lockKey   int64
 	rowWrites bool
 	schema    string
 }
 
-func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
+// Connect borrows nothing: the conn borrows a server connection at its first use (borrow) and
+// returns it at Close, which database/sql calls after every statement or transaction (the
+// handles keep no idle connections); a *sql.Conn session keeps it until it is closed.
+func (c *connector) Connect(context.Context) (driver.Conn, error) {
+	return &conn{c: c, readOnly: c.readOnly, lockKey: c.lockKey, rowWrites: c.rowWrites, requiredSchema: c.schema}, nil
+}
+
+// borrow takes a server connection from the pool and scopes it to the store, waiting at most
+// PoolWait. A transaction takes its slot first (tx), and gives it back at its end.
+func (c *conn) borrow(ctx context.Context, tx bool) error {
+	if c.inner != nil {
+		return nil
+	}
 	wait, cancel := context.WithTimeout(ctx, PoolWait)
 	defer cancel()
-	inner, err := c.base.Connect(wait)
-	if err != nil {
+	timedOut := func(err error) error {
 		if wait.Err() != nil && ctx.Err() == nil {
-			return nil, ErrPoolWait
+			return ErrPoolWait
 		}
-		return nil, err
+		return err
+	}
+	if tx {
+		select {
+		case c.c.txSlots <- struct{}{}:
+			c.txSlot = true
+		case <-wait.Done():
+			return timedOut(wait.Err())
+		}
+	}
+	inner, err := c.c.base.Connect(wait)
+	if err != nil {
+		c.freeSlot()
+		return timedOut(err)
 	}
 	sc := inner.(*stdlib.Conn)
-	if err := scope(ctx, sc.Conn(), c.schema, c.readOnly); err != nil {
+	if err := scope(ctx, sc.Conn(), c.c.schema, c.c.readOnly); err != nil {
 		_ = sc.Conn().Close(ctx) // never reused: the pool destroys a closed connection
 		_ = sc.Close()
-		return nil, err
+		c.freeSlot()
+		return err
 	}
-	return &conn{inner: sc, readOnly: c.readOnly, lockKey: c.lockKey, rowWrites: c.rowWrites, requiredSchema: c.schema}, nil
+	c.inner = sc
+	return nil
+}
+
+func (c *conn) freeSlot() {
+	if c.txSlot {
+		c.txSlot = false
+		<-c.c.txSlots
+	}
 }
 
 // ErrScope is a borrowed connection whose scope is not the store's after scoping.
@@ -290,7 +336,9 @@ func (c *connector) Driver() driver.Driver {
 }
 
 type conn struct {
-	inner          *stdlib.Conn
+	c              *connector
+	inner          *stdlib.Conn // nil until borrow
+	txSlot         bool
 	readOnly       bool
 	lockKey        int64
 	inTx           bool
@@ -325,11 +373,26 @@ func (c *conn) PrepareContext(_ context.Context, query string) (driver.Stmt, err
 	return &stmt{c: c, query: query}, nil
 }
 
-func (c *conn) Close() error { return c.inner.Close() }
+func (c *conn) Close() error {
+	c.freeSlot()
+	if c.inner == nil {
+		return nil
+	}
+	return c.inner.Close()
+}
 
 func (c *conn) Begin() (driver.Tx, error) { return c.BeginTx(context.Background(), driver.TxOptions{}) }
 
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return c.beginTx(ctx, opts, true)
+}
+
+// beginTx begins a transaction; slot is false for a statement's own (autoWrap), which holds
+// its connection no longer than a statement does.
+func (c *conn) beginTx(ctx context.Context, opts driver.TxOptions, slot bool) (driver.Tx, error) {
+	if err := c.borrow(ctx, slot); err != nil {
+		return nil, err
+	}
 	if c.readOnly {
 		opts.ReadOnly = true
 		if sql.IsolationLevel(opts.Isolation) == sql.LevelDefault {
@@ -343,11 +406,13 @@ func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 	}
 	tx, err := c.inner.BeginTx(ctx, opts)
 	if err != nil {
+		c.freeSlot()
 		return nil, err
 	}
 	if !opts.ReadOnly && !c.rowWrites {
 		if err := c.lock(ctx); err != nil {
 			_ = tx.Rollback()
+			c.freeSlot()
 			return nil, err
 		}
 	}
@@ -362,11 +427,13 @@ type txn struct {
 
 func (t *txn) Commit() error {
 	t.c.inTx = false
+	defer t.c.freeSlot()
 	return t.tx.Commit()
 }
 
 func (t *txn) Rollback() error {
 	t.c.inTx = false
+	defer t.c.freeSlot()
 	return t.tx.Rollback()
 }
 
@@ -377,6 +444,9 @@ func (c *conn) autoWrap(query string) bool {
 }
 
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if err := c.borrow(ctx, false); err != nil {
+		return nil, err
+	}
 	run := func() (driver.Result, error) { return c.inner.ExecContext(ctx, Translate(query), args) }
 	if stmts, params := Split(query); len(args) > 0 && len(stmts) > 1 {
 		run = func() (driver.Result, error) {
@@ -398,7 +468,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if !c.autoWrap(query) {
 		return run()
 	}
-	tx, err := c.BeginTx(ctx, driver.TxOptions{})
+	tx, err := c.beginTx(ctx, driver.TxOptions{}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -411,11 +481,14 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 }
 
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if err := c.borrow(ctx, false); err != nil {
+		return nil, err
+	}
 	query = Translate(query)
 	if !c.autoWrap(query) {
 		return c.inner.QueryContext(ctx, query, args)
 	}
-	tx, err := c.BeginTx(ctx, driver.TxOptions{})
+	tx, err := c.beginTx(ctx, driver.TxOptions{}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -469,6 +542,9 @@ func (r *wrappedRows) Close() error {
 // Ping fails on a server that cannot take writes, so readiness fails while the database
 // is a read-only standby and the pool reconnects to the new primary afterwards.
 func (c *conn) Ping(ctx context.Context) error {
+	if err := c.borrow(ctx, false); err != nil {
+		return err
+	}
 	if err := c.inner.Ping(ctx); err != nil {
 		return err
 	}
@@ -485,9 +561,14 @@ func (c *conn) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (c *conn) ResetSession(ctx context.Context) error { return c.inner.ResetSession(ctx) }
+func (c *conn) ResetSession(ctx context.Context) error {
+	if c.inner == nil {
+		return nil
+	}
+	return c.inner.ResetSession(ctx)
+}
 
-func (c *conn) IsValid() bool { return !c.inner.Conn().IsClosed() }
+func (c *conn) IsValid() bool { return c.inner == nil || !c.inner.Conn().IsClosed() }
 
 // CheckNamedValue passes every argument to pgx unchanged, as pgx's own driver does, except
 // a bool: SQLite stores it as 1 or 0 and the store's flags are BIGINT columns, so it binds
@@ -497,7 +578,7 @@ func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
 		nv.Value = sqliteBool(b)
 		return nil
 	}
-	return c.inner.CheckNamedValue(nv)
+	return nil // pgx takes every other value as it is (stdlib.Conn.CheckNamedValue)
 }
 
 type sqliteBool bool

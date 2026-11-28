@@ -191,6 +191,11 @@ func (s *Store) HoldFences(ctx context.Context, fences []Fence) (context.Context
 	if err != nil {
 		return nil, nil, err
 	}
+	// A set nested under another schema's session takes no slot: its holder already has one,
+	// and waiting on slots its own ancestors hold would deadlock.
+	if _, nested := ctx.Value(heldFencesKey{}).(heldFences); nested {
+		slots = make(chan struct{}, 1)
+	}
 	var conn *sql.Conn
 	select {
 	case slots <- struct{}{}:

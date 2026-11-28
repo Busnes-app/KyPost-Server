@@ -136,6 +136,15 @@ func TestFenceExclusiveAgainstShared(t *testing.T) {
 func TestFenceWriterNotStarvedByReaders(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	a, b := twoReplicas(t)
+	// Seven sessions wait at once: two replicas' worth, in one process.
+	if _, err := fenceSlots(); err != nil {
+		t.Fatal(err)
+	}
+	fencePools.Lock()
+	slots := fencePools.slots
+	fencePools.slots = make(chan struct{}, 8)
+	fencePools.Unlock()
+	t.Cleanup(func() { fencePools.Lock(); fencePools.slots = slots; fencePools.Unlock() })
 	name := vol.FenceNativeDomains
 	r1in, r1leave, r1done := hold(a, []Fence{{Name: name, Shared: true}})
 	<-r1in
