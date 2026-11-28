@@ -257,7 +257,7 @@ func Run(args []string) error {
 			return err
 		}
 		var unplace func()
-		objects, unplace, err = useObjectBodies(client, tenancyDB, staffOrg, cells, paths.StateDir)
+		objects, unplace, err = useObjectBodies(client, staffOrg, cells, paths.StateDir)
 		if err != nil {
 			return err
 		}

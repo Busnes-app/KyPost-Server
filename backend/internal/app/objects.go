@@ -38,8 +38,9 @@ var errBodyOrg = errors.New("a mailbox's bodies open only under its own org's ke
 // whose key opens only its own org. It returns the deployment's Object (every served cell, no
 // key: the purge's lists and deletes) and its release. The hook is per process: the first
 // caller installs it and the last release removes it, so a daemon's short-lived receiving
-// runtime never uninstalls the api's.
-func useObjectBodies(client *s3.Client, db *sql.DB, staffOrg string, cells []string, stateDir string) (*vol.Object, func(), error) {
+// runtime never uninstalls the api's. The hook opens its own tenancy.db handle, closed with
+// the last release, so no caller's handle outlives its owner inside it.
+func useObjectBodies(client *s3.Client, staffOrg string, cells []string, stateDir string) (*vol.Object, func(), error) {
 	placing.Lock()
 	defer placing.Unlock()
 	if placing.n > 0 {
@@ -50,8 +51,12 @@ func useObjectBodies(client *s3.Client, db *sql.DB, staffOrg string, cells []str
 	if err != nil {
 		return nil, nil, err
 	}
+	db, err := tenancy.Open(stateDir, false)
+	if err != nil {
+		return nil, nil, err
+	}
 	mailbox.SetObjectBodies(placeBodies(client, db, staffOrg, cells, stateDir))
-	placing.n, placing.all = 1, all
+	placing.n, placing.all, placing.db = 1, all, db
 	return all, releaseObjectBodies, nil
 }
 
@@ -82,6 +87,7 @@ var placing struct {
 	sync.Mutex
 	n   int
 	all *vol.Object
+	db  *sql.DB
 }
 
 func releaseObjectBodies() {
@@ -89,6 +95,7 @@ func releaseObjectBodies() {
 	defer placing.Unlock()
 	if placing.n--; placing.n == 0 {
 		mailbox.SetObjectBodies(nil)
-		placing.all = nil
+		_ = placing.db.Close()
+		placing.all, placing.db = nil, nil
 	}
 }
