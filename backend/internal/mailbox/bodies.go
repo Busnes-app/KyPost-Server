@@ -125,7 +125,9 @@ func (s *Store) body(ctx context.Context, q rowQuerier, id int64, raw []byte, li
 	var sum []byte
 	err := q.QueryRowContext(ctx, "SELECT object,size,sha256 FROM bodies WHERE message_id=?", id).Scan(&object, &size, &sum)
 	if errors.Is(err, sql.ErrNoRows) {
-		return raw, nil
+		// Every stored message has bytes, so an empty raw without a bodies row is a moved
+		// body expunged or replaced since raw was read: report it gone, never empty mail.
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err

@@ -344,3 +344,17 @@ func TestObjectBodyRowMismatchRefused(t *testing.T) {
 		}
 	}
 }
+
+// A body expunged between reading raw and its bodies row is reported gone, never empty.
+func TestObjectBodyVanishedBetweenReadsIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	objectBodiesForTest(t)
+	s := openTest(t, filepath.Join(t.TempDir(), "mailbox"), testOwner, testLimits)
+	id, err := s.Import(ctx, testReceipt("one"), bytes.NewReader(largeRaw("vanishing")))
+	must(t, err)
+	_, err = s.db.Exec("DELETE FROM bodies WHERE message_id=?", id) // what a concurrent expunge leaves
+	must(t, err)
+	if got, err := s.Raw(ctx, "INBOX", id); !errors.Is(err, ErrNotFound) || got != nil {
+		t.Fatalf("read after the body vanished: %q %v", got, err)
+	}
+}
