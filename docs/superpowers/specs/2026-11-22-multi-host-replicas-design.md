@@ -6,7 +6,9 @@ recommendation and are redesigned here: self-hosted single-tenant installs get m
 opt-in migration ("Self-hosted multi-host"), and multi mode runs in several regions
 ("Regions"). The rest are approved as recommended ("Open questions").
 Revised 2026-11-23 with the owner's object-storage decision, which overturns open question 2 for
-message bodies ("Object storage for message bodies", MH11).
+message bodies ("Object storage for message bodies", MH11). Amended 2026-11-27 ("MH11 object
+storage, amended"): MH11 is now a K PR 7 prerequisite, with its configuration, key layout and
+proofs settled.
 
 **Owner decision, 2026-11-22: multi-tenant needs multi-server.** A multi-tenant install
 (`KYPOST_TENANCY=multi`) must run as several replicas on several hosts. Today R ("Replicas on one
@@ -46,8 +48,9 @@ targets in a migrated install. Org, region and receiving-tier rules stay multi-o
   Nothing is left for a second host to see or lock. Two new tables go in a new store, `volumes.db`
   (they started in `tenancy.db`; see "Self-hosted multi-host").
   `documents` holds the JSON and YAML stores keyed by their root-relative path, so each store
-  keeps its own format and rules. `accounts` holds `users.json` as one row per account. No object
-  storage and no new dependency are added.
+  keeps its own format and rules. `accounts` holds `users.json` as one row per account. The
+  documents add no object storage and no new dependency. Message bodies over a threshold are
+  the one exception: in multi mode they go to object storage (MH11, owner decision 2026-11-23).
 - **Locks give liveness; revisions give safety.** Every document write is a compare-and-swap on
   the document's revision inside one transaction, so a lost lock can cause a retry but never a lost
   update. The cross-store fences (the domain fence, the directory fence, the settings lock and the
@@ -70,8 +73,8 @@ targets in a migrated install. Org, region and receiving-tier rules stay multi-o
   cell. Only routing crosses regions (MH9, MH10).
 - **Every hop is encrypted** in multi mode and in a migrated install (OQ4 as answered; "Encryption
   in transit").
-- **K PR 7 must not accept `multi` until multi-host works.** This note's PRs MH1–MH7 and MH9 come
-  before it, as do RX PRs 1–5 (per-org staff step-up, the other new gate, merged in #703). K's
+- **K PR 7 must not accept `multi` until multi-host works.** This note's PRs MH1–MH7, MH9 and
+  MH11 (object storage, amended 2026-11-27) come before it, as do RX PRs 1–5 (per-org staff step-up, the other new gate, merged in #703). K's
   "Phased build plan" holds the full gate.
 
 ## What binds a replica to one host today
@@ -1120,8 +1123,9 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
 
 11. **MH11: object storage for message bodies (multi only).** `vol.Object`, the `bodies` side
     table and its usage triggers, one body loader for every `raw` read, the orphan sweep, the
-    purge's prefix delete and check, `body_tombstones` and the late delete, and the start refusal for missing or wrong credentials. Not
-    a K PR 7 prerequisite: launch runs with bodies in PostgreSQL if MH11 is not ready.
+    purge's prefix delete and check, `body_tombstones` and the late delete, and the start refusal for missing or wrong credentials. **A K
+    PR 7 prerequisite** (owner decision of 2026-11-23: no volume fallback; amended 2026-11-27,
+    "MH11 object storage, amended", which overrides this item where they differ).
     Tests: a body over the threshold lands in the bucket sealed and reads back; under it stays in
     `raw`; `usage` is equal either way; a conditional put that loses a race is refused; a tampered,
     missing or other-org object fails the read, never returns empty; a body copied to another
@@ -2049,3 +2053,134 @@ The two MH9 rows left by "MH9 cells as built".
   - `TestCrossCellRemoteFile`: `held`, and the file's refusals.
 - **Not here:** masked allocation under a code (K PR 7), assigning codes (owner), and object
   storage (MH11). Multi startup stays refused in release builds.
+
+## MH11 object storage, amended (2026-11-27)
+
+Owner decision of 2026-11-23 (ky-launch#4): multi-tenant mode keeps primary content in
+S3-compatible object storage only, with no volume fallback, so a hosted install refuses to start
+without it. For KyPost that is attachments and large message bodies. This section settles what
+"Object storage for message bodies" and MH9's prefix left open, and it overrides them where they
+differ. Defaults taken here, not by the owner, are marked *default*. Line references are to
+`origin/main` `1dd88999`.
+
+**What moves, and the threshold.** The unit stays a whole `raw`, attachments inside it
+(`messages` rows, Drafts and Sent included). A body of **128 KiB or more** goes to the bucket;
+a smaller one stays in `messages.raw`. *Default:* 128 KiB, the earlier placeholder, kept as a
+constant until K open question 8's capacity run measures it. Below it, a list, search or sync
+never makes an object read per message; above it are the attachments, which carry most of the
+bytes. `outbox.ciphertext`, `ingress.db` `deliveries.raw` and every `documents` row stay in
+PostgreSQL, as the table above says.
+
+**Writers and readers.** Four statements write a body: `append` (`mailbox/store.go:457`), the
+Sent copy (`mailbox/outbox.go:506`), the incoming-encryption replacement
+(`mailbox/incoming_encryption.go:163`) and re-encryption (`mailbox/reencrypt.go:152`). The last
+one **updates** `raw` in place, so the earlier claim that `raw` is only ever set to NULL was
+wrong. For a moved body, re-encryption writes a new object, points the same `bodies` row at it
+and tombstones the old object in one transaction. Every read of a body (`Store.Raw`,
+`rawWithin`, the three incoming-encryption reads, re-encryption's read) goes through one loader.
+Every `length(raw)` that means a message's size (`List`, the usage recount at
+`mailbox/store.go:261` and `mailbox/outbox.go:580`) adds the `bodies` size.
+
+**Key layout and scoping.** `cells/<home_region>/bodies/<org>/<mailbox>/<object>`, as MH9 set,
+where `<object>` is 32 lowercase hex digits (128 random bits). The `bodies` row stores only
+`<object>`. The full key is always built from the store's own cell, org and mailbox, never read
+from a row or a request, so no row can name another org's or another mailbox's object. A scope
+whose cell is not one of `KY_CELLS` is refused before any request (`ErrCell`), on top of MH9's
+orgs-poll rule. The seam is `vol.Object`, the third `vol.Vol`: write at revision 0 is
+`PutIfAbsent` (`If-None-Match: *`), any other revision is refused, read returns revision 1,
+remove deletes every version of the key, and `RemoveAll` deletes every version under a
+slash-terminated prefix.
+
+**Encryption at rest.** Each object is sealed before upload with the org's data key, the
+`doc_keys` row "Per-org encryption at rest" already defines (wrapped under the provisioned
+`documents.key`). AES-256-GCM with a random nonce, binary (`version || nonce || ciphertext ||
+tag`, 29 bytes of overhead), associated data `["kypost:body:1", <full key>]`. The bucket holds
+only ciphertext. An object copied to another key, mailbox, org or cell fails to open, and so
+does a tampered or truncated one. The loader also checks the stored size and SHA-256, and a
+missing, short or failing body is an error, never an empty message. A data key is created only
+under the owner guard, as for documents.
+
+**Write order and crash safety.**
+1. Seal and `PutIfAbsent` the object, outside any database transaction, so a slow upload holds
+   no mailbox lock.
+2. In the message's own transaction: insert the `messages` row with `raw` empty and its `bodies`
+   row, whose triggers count the size.
+3. Commit, then acknowledge: receiving's `250`, the API's answer, the Sent copy's ledger.
+
+A crash before step 1 finishes leaves nothing. A crash between 1 and 3 leaves an unnamed object
+and no acknowledged mail. A refused commit (duplicate, quota, conflict) deletes the object at
+once, and a crash before that delete leaves the same unnamed object. The orphan sweep below
+removes it. No order lets a committed row name an object that was never written: the row
+commits only after `PutIfAbsent` returned success.
+
+**GC.** An expunge never deletes the object. It deletes the `bodies` row and writes
+`body_tombstones(object, at)` in the same transaction. The elected `api-sweepers` worker lists
+each mailbox's prefix and deletes:
+- an object whose tombstone is older than the body retention;
+- an unnamed object (no `bodies` row, no tombstone) once the body retention has passed since it
+  was first seen unnamed (`body_orphans(object, seen_at)`, dropped when a row names it again).
+
+*Default:* body retention 30 days, until K open question 7 fixes the capsule retention. It must
+be at least the capsule retention, so that any capsule within retention, restored in any order,
+names only objects that still exist. The clocks are the database's, never the provider's
+`LastModified`, which the shared client documents as untrusted for age.
+
+**Purge and erasure.** K's purge step 3 (`api/tenancy_purge.go` `purgeStorage`) deletes, for
+each snapshot mailbox and every served cell, every version under
+`cells/<cell>/bodies/<org>/<mailbox>/`, and an org purge then empties `cells/<cell>/bodies/<org>/`.
+These are immediate, not late. The final check (`purgeLeft`) lists those prefixes and fails the
+purge on any object left. A member erasure (Delete everything, a member-scoped purge) runs the
+same mailbox step. Deleting the org's `doc_keys` row also leaves any missed object unreadable.
+Copies the provider keeps elsewhere (replication, the backup copy) follow the operator's
+provider policy. The shared client cannot erase them, and this note claims no such erasure.
+
+**Backup and restore.** The `bodies`, `body_tombstones` and `body_orphans` tables are in every
+`mailbox.db` schema, SQLite and PostgreSQL alike. The capsule copies require both catalogs to
+match exactly (`dbbackend/copy.go` `matchTables`), so a multi-only table would make every
+multi export fail. Single-tenant installs gain three empty tables and never write a row. A capsule
+holds the references and the tombstones, never object bytes. The bucket's own backup copy is
+for losing the bucket. A restore within the body retention finds every body because deletes
+are late, and the sweeper starts again from the restored tables.
+
+**Quota.** The `bodies` triggers add and subtract `size`, the plaintext length, in
+`usage.payload_bytes`, so a moved body counts the same bytes it counted in `raw`. The mailbox
+quota, the org pool report (K "Quotas", "Org storage pool as built") and the incoming-mail
+over-quota rule (7 days' grace up to max(10 %, 2 GB) over, then `452 4.2.2` for 3 days, then
+`552 5.2.2`) read the same numbers. Sealing overhead, tombstoned objects waiting for the sweep
+and the provider's backup copy are not counted.
+
+**Configuration**, following KyDrive's `KYDRIVE_S3_*` and KyMessages' `KY_ATTACHMENTS_S3_*`:
+
+| Variable | Meaning |
+|---|---|
+| `KYPOST_S3_ENDPOINT` | `https://host[:port]`, path-style bucket addressing, certificate verified |
+| `KYPOST_S3_BUCKET` | The cell's bucket |
+| `KYPOST_S3_REGION` | Signing region, default `us-east-1` |
+| `KYPOST_S3_ACCESS_KEY` | Access key ID |
+| `KYPOST_S3_SECRET_KEY` or `KYPOST_S3_SECRET_KEY_FILE` | The secret, inline or from a file. Two sources that differ are refused. |
+
+The client is ky-primitives `s3`, which the module already pins (v0.12.0), so there is no new
+dependency and no copy of the signing code. Single mode refuses any `KYPOST_S3_*` variable, so a
+single install cannot half-configure object storage. Multi mode refuses a start (`CheckEnv`,
+K2) without the endpoint, bucket, access key and secret, and no refusal echoes a value. The
+endpoint, bucket and region are shared replica settings, joining the fingerprint only when set,
+so a single-tenant record stays byte for byte. At a multi start, a probe writes, reads and deletes
+`cells/<cell>/probe/<random>` for each served cell, so a wrong key or a provider that ignores
+`If-None-Match` refuses the start. Credentials are never logged, never in a capsule and never in
+an error.
+
+**Release gate.** MH11 is a K PR 7 prerequisite. Release builds keep refusing `multi`.
+
+**Tests MH11 must have**, each failing with its safety line reverted, against SeaweedFS in CI
+and locally, on SQLite and PostgreSQL where the store runs on both:
+- a body over the threshold is sealed in the bucket (no plaintext byte run in the object) and reads
+  back; one under it stays in `raw`; `usage` is equal either way;
+- another org's, mailbox's or cell's object never opens: copied ciphertext fails, and a scope
+  outside `KY_CELLS` is refused before any request;
+- a lost conditional-put race is refused;
+- a crash between `PutIfAbsent` and the commit loses no acknowledged mail and leaves an orphan
+  that the sweep deletes only after the retention;
+- an expunge tombstones, and the sweep keeps the object until the retention passes;
+- the purge empties the mailbox and org prefixes, and its final check fails on a left object;
+- re-encryption of a moved body leaves a new object and tombstones the old one;
+- the single-tenant upgrade test is unchanged, and single mode refuses `KYPOST_S3_*`.
