@@ -108,6 +108,15 @@ func elect(ctx context.Context, d runDeps, role string, work func(context.Contex
 	return wg.Wait
 }
 
+// electMailRuntime elects the mail-runtime role only with native mail on: off, the role has
+// no work, and an owner that returns at once would drop and re-elect the role every retry.
+func electMailRuntime(ctx context.Context, d runDeps) (wait func()) {
+	if !d.nativeMail {
+		return func() {}
+	}
+	return elect(ctx, d, worker.RoleMailRuntime, func(owned context.Context) { runMailRuntime(owned, d) })
+}
+
 // runMailRuntime is the mail-runtime role: native outbox recovery and DKIM rotation. Request
 // path sends and held-send recovery stay where they are; the outbox claim fences them.
 func runMailRuntime(owned context.Context, d runDeps) {

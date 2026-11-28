@@ -984,6 +984,139 @@ Tenancy fits on top:
 - **Receiving.** R refuses Maddy on PostgreSQL (Mail, open question 3). The receiving tier spec
   (`docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) replaces it in multi mode.
 
+## Database connections (owner direction, 2026-11-28)
+
+> "We need to change how KyPost does DB connections. Almost every user is an org, so one
+> connection pool per org wastes connections, and we want to leave connections to the DBs open
+> to save time. Especially since every user will connect with a phone, which will increase
+> connections." (owner, 2026-11-28)
+
+**What fsn1 showed.** Every open store had its own pool (at most 4 connections, 1 idle for
+15 s, `dbbackend/dbbackend.go` `pool`), the catalog had one more, and each schema with fences
+had a fence pool of 32 (`state/fence.go`). The number of connections therefore grew with the
+busy accounts and orgs. On the fsn1 cell (2026-11-28) KyPost held 42 idle server sessions after
+load and filled its PgBouncer pool (40 + 10 reserve), with 22–24 clients waiting up to 10 s,
+p95 latencies of 54–70 s and 57 503s. No other app's pool waited.
+
+### The connection model
+
+1. **One pool per process.** Each KyPost process (api, daemon, receiving) opens one pgxpool
+   per database URL. Every store handle (`dbbackend.Open`, `dbbackend.Pool`), the catalog,
+   fence sessions and role and backup locks borrow from it. No pool is per org, per store or
+   per schema. Its size is `KYPOST_DATABASE_POOL_SIZE` (default 16, from 4 to 1000).
+2. **Warm.** All of the pool's connections open at start and stay open (`MinConns` = size).
+   Idle connections are never closed to make room. pgx replaces a connection after its
+   lifetime (pgxpool's default, 1 h) or after a failed health check, so a failover or DNS change is
+   still picked up.
+3. **Borrowed per statement or transaction.** A store handle is a `database/sql` facade with
+   no idle connections of its own. A statement or transaction borrows a connection and
+   returns it when it ends. Opening a store, an org or a client session costs no
+   connection. Only three things hold one longer, and each is bounded:
+   - a fence set, for its section, capped at half the pool;
+   - a role lock, one per elected role per process;
+   - a backup or pairing lock, while it is held.
+4. **A bounded wait.** A borrow that finds no free connection within 10 s fails with
+   `database: no connection free in the pool` (`dbbackend.ErrPoolWait`), and the request
+   answers 503, as a full PgBouncer pool would. It never waits without bound.
+
+### Clients never pin database connections
+
+KyPost's clients hold no database connection between requests:
+
+- Phones, browsers, sync clients and CardDAV use plain HTTP request and response. KyPost has
+  no IMAP server, no websockets and no server-sent events (checked at `origin/main`
+  `2887cea1`: no `Hijack`, `http.Flusher` or websocket use in `internal/`).
+- Native push goes out through the push relay. App Pull is an HTTP request.
+- Each request borrows per statement, as above. A thousand connected phones therefore cost
+  the pool nothing while they are idle.
+
+**Rule for anything new.** A long-lived client protocol (IMAP IDLE, JMAP push, websockets,
+SSE) must never hold a database connection, or `LISTEN`, per client or per org. Change
+notifications fan out in process from **one** listener per process: one dedicated `LISTEN`
+connection, counted in the sizing below, with the process's waiting clients subscribed in
+memory. Until such a protocol exists, no listener is built (YAGNI).
+
+### Tenant isolation on a shared connection
+
+Org data is not in one schema per org. Each store (a user's or mailbox's `state.db`,
+`mailbox.db`, ...) is its own `kypost_f_<hash>` schema (`dbbackend.SchemaName`). The
+install-wide stores (`tenancy.db`, the root `state.db`, `native-authority.db`, `ingress.db`)
+carry `org_id` or reach it through a parent, as "Isolation" above describes. A shared
+connection must therefore never run a statement in the schema of an earlier borrower.
+Schema-qualifying every statement would touch every store's SQL. Instead, the scope moves
+with the borrow:
+
+- **On every borrow** (`pgdialect` `connector.Connect`), one round trip sets the
+  connection's `search_path` to the store's schema then `public`, and its
+  `default_transaction_read_only` to the store's mode. It then reads back the effective
+  `search_path`, `current_schema()` and read-only setting. If `current_schema()` is not the
+  store's schema, the borrow is refused: `ErrSchemaGone` for a missing schema (it never falls
+  through to `public`), `ErrScope` otherwise. The connection is closed, not reused.
+- **On every release**, pgxpool's `AfterRelease` runs, off the caller's goroutine:
+  `pg_advisory_unlock_all(); RESET ALL; UNLISTEN *; CLOSE ALL; DISCARD TEMP`. This drops
+  everything a borrower left behind: the scope, the read-only default, a fence's
+  `lock_timeout`, any session advisory lock, listener, cursor or temp table. A connection on
+  which the reset fails, or one returned inside a transaction, is destroyed, never pooled.
+- **Fail closed.** Between borrows a connection's `search_path` is empty (`""`, the startup
+  value that `RESET ALL` restores). A statement on a connection nobody scoped finds no table
+  and fails. A database URL that sets `search_path` is refused.
+- **The writer lock** stays per schema. Its key derives from the schema's `search_path`
+  exactly as before (`pgdialect.LockKeys`), and a writer still rechecks `current_schema()`
+  after taking it, so a store purged mid-session refuses.
+- **Cached statements.** pgx caches prepared statements per connection by SQL text, and
+  every org runs the same text. PostgreSQL (9.3 and later) re-plans a cached statement when
+  `search_path` has changed since it was planned, and refuses one whose result type changed
+  ("cached plan must not change result type"). A cached statement therefore never reads the
+  previous schema. The race test below runs identical text for both orgs.
+- **What stays outside the scope.** Statements that name a schema explicitly: the catalog
+  (`kypost_catalog.*`), purge, and the whole-database copies of migrate-to-postgres and
+  restore. These are staff and offline paths, and none takes a schema name from a request.
+
+**Proof (PR 2):**
+
+- `TestSharedConnectionIsolatesOrgs` runs a pool of one connection. Two orgs' stores
+  confirm that they share it (the same `pg_backend_pid()`), then interleave 150 rounds of
+  writes and reads, inside and outside transactions, with identical statement text. No read
+  may see the other org's rows, and each schema must end with exactly its own.
+- A mutation that scopes each physical connection only once (dropping the per-borrow scope
+  and the reset) must fail it.
+- `TestUnscopedConnectionFailsClosed` checks two things. A raw borrow shows `search_path`
+  `""` and cannot read a store's table. A handle on a missing schema is refused with
+  `ErrSchemaGone`.
+
+### Sizing for a CX23 db-a
+
+PgBouncer runs in **session** mode, so each KyPost-side pooled connection is one server
+connection while it is open. Warm pools keep them open all the time.
+
+```
+KyPost   = replicas × processes per replica × KYPOST_DATABASE_POOL_SIZE   (+1 per process with a listener)
+total    = KyPost + Σ other apps' pools (their PgBouncer pool_size + reserve_pool)
+         + superuser_reserved_connections + reserve for admin, backups and migrations
+require  total ≤ max_connections (300 on the CX23 db-a)
+```
+
+- Role, fence, backup and pairing sessions are part of `KYPOST_DATABASE_POOL_SIZE`, not on
+  top of it.
+- PgBouncer's pool for KyPost (`pool_size`, or `max_db_connections`) must be at least the
+  KyPost figure, or warm connections queue in PgBouncer.
+
+Worked example for fsn1:
+
+- **KyPost:** 2 replicas, if each runs an api and a daemon process, at the default 16,
+  is 2 × 2 × 16 = **64**.
+- **The other six apps:** at 25 + 5 reserve each they hold 180.
+- **Reserve:** 3 superuser connections plus 30 for admin, backups and migrations.
+- **Total:** 64 + 180 + 33 = **277**, under 300.
+
+The fsn1 kit's 40 + 10 for each of 7 apps is 350, already over `max_connections` (fsn1 report,
+finding 2). It must drop to per-app sizes such as these. A larger cell raises
+`max_connections` (if the server has the memory) or lowers the pools. It
+never moves PgBouncer to transaction mode, which breaks session advisory locks.
+
+**Unproven until PR 2's load rerun:** that 16 per process carries the fsn1 load without
+`ErrPoolWait`. The 42 idle sessions fsn1 saw were held, not in use.
+
 ## Downstream contract, point by point (T "Tokens and suite contracts")
 
 | # | T requires | KyPost multi mode | Proof |

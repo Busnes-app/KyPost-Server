@@ -982,6 +982,10 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
      question 5's connection budget must add up to 32 connections per process from MH4 on, when
      fences are first used. `docs/RUNNING.md` is
      unchanged until then.
+     **Superseded (owner direction, 2026-11-28):** per-schema fence pools and per-store pools
+     are gone. Fence sessions borrow from the process's one shared pool, capped at half of it,
+     so the starvation above still cannot happen. See the tenancy spec, "Database
+     connections".
    - **The bounded wait** covers the whole set: 10 s (`fenceWait`), enforced by the context and by
      a session `lock_timeout`. A lock timeout (`55P03`) and a deadlock that PostgreSQL detects
      (`40P01`) are reported as `ErrFenceWait` too. The error names only the kind.
@@ -1276,6 +1280,9 @@ Verification is recorded at the implementation PR head; no full-check or release
    in session mode, never transaction pooling (`state/coordination.go:166-167`), with
    `max_connections` sized by R's budget formula (`docs/RUNNING.md:450-459`) times the hosts of
    one cell, plus MH1's 32 fence sessions per process.
+   *Amended 2026-11-28:* the budget is now one shared pool per process
+   (`KYPOST_DATABASE_POOL_SIZE`). Fences, roles and locks are inside it, and the sizing formula
+   for the CX23 db-a (`max_connections=300`) is in the tenancy spec, "Database connections".
 6. **Which per-replica meters to share.** *Approved as recommended (2026-11-22):* the five "shared
    window" rows (nine meters), MH6.
 7. **One table per store instead of `documents`?** *Approved as recommended (2026-11-22):* one
