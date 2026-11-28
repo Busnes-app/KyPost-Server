@@ -307,7 +307,13 @@ func probe(owned context.Context, conn *sql.Conn, cancel context.CancelCauseFunc
 		select {
 		case err = <-res:
 		case <-ping.Done():
-			err = ping.Err()
+			if owned.Err() == nil {
+				cancel(fmt.Errorf("%w: %v", ErrOwnershipLost, ping.Err()))
+			}
+			// The ping still holds conn, and a failed ping closes it: returning (or freeing
+			// busy) now would let the release unlock a closing conn, which panics in
+			// database/sql. Ownership has already ended; only the release waits.
+			err = <-res
 		}
 		stop()
 		if busy != nil {
