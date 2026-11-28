@@ -17,7 +17,8 @@ if [ -n "$bad_curves" ]; then
   fail=1
 fi
 
-bad_godebug=$(git grep -n -i 'tlsmlkem' -- . ':!*.md' ':!scripts/check-pqc-tls.sh' || true)
+# The only exception turns the hybrid on (tlsmlkem=1) for a binary built with it off, marked pqc-tls:allow.
+bad_godebug=$(git grep -n -i 'tlsmlkem' -- . ':!*.md' ':!scripts/check-pqc-tls.sh' | awk '!(/tlsmlkem=1([^0-9]|$)/ && /pqc-tls:allow/ && !/tlsmlkem=[^1]/)' || true)
 if [ -n "$bad_godebug" ]; then
   echo "::error::tlsmlkem GODEBUG override found outside docs:" >&2
   printf '%s\n' "$bad_godebug" >&2

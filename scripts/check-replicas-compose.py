@@ -245,4 +245,5 @@ assert mx["read_only"] and mx["cap_drop"] == ["ALL"] and mx["init"] and mx["user
 assert mx["environment"]["KYPOST_RECEIVING_REMOTE"] == "/kypost/mx/remote.json" and mx["environment"]["KYPOST_TENANCY"] == "multi"
 assert not any(k in mx["environment"] for k in ("KYPOST_DATABASE_URL", "KYPOST_NATIVE_MAIL", "KYPOST_RECEIVING_RSPAMD")), "an MX host is given state or a scanner"
 assert [(p["host_ip"], p["published"], p["target"]) for p in mx["ports"]] == [(mx_env["KYPOST_SMTP_BIND"], "25", 2525)], mx["ports"]
+assert mx["mem_limit"] == mx["memswap_limit"] == str(768 << 20), "an MX host is not held to its measured memory, without swap"
 print("PASS hosted: the MX host holds nothing, mounts read-only, and forwards to the replicas")
