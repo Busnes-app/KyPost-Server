@@ -31,13 +31,17 @@ func Cell() string {
 	return "t" + hex.EncodeToString(b)
 }
 
-// Client is the fixture's client. It skips the test when KY_TEST_S3_ENDPOINT is unset and
-// refuses anything but a loopback HTTP fixture.
+// Client is the fixture's client. It skips the test when KY_TEST_S3_ENDPOINT is unset (fails
+// it in CI, which always starts the fixture) and refuses anything but a loopback HTTP fixture.
 func Client(t testing.TB) *s3.Client {
 	t.Helper()
 	endpoint := os.Getenv("KY_TEST_S3_ENDPOINT")
 	if endpoint == "" {
-		t.Skip("needs KY_TEST_S3_ENDPOINT, KY_TEST_S3_BUCKET, KY_TEST_S3_ACCESS_KEY and KY_TEST_S3_SECRET_KEY")
+		const need = "needs KY_TEST_S3_ENDPOINT, KY_TEST_S3_BUCKET, KY_TEST_S3_ACCESS_KEY and KY_TEST_S3_SECRET_KEY"
+		if os.Getenv("CI") != "" {
+			t.Fatal(need + " (CI must start scripts/ci-start-s3.sh)")
+		}
+		t.Skip(need)
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "http" || !net.ParseIP(u.Hostname()).IsLoopback() {

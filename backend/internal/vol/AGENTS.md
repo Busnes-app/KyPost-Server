@@ -34,7 +34,7 @@ Use the existing seam for a document adapter. Keep wire parsing and product poli
 
 - `TestDocumentReferencesAndGuardedRemoval` covers shared references, missing/foreign-owner dependencies, stale reference snapshots, deletion/recreation and unchanged body on refusal. `TestMissingReferenceCreatesNoBodyOrOrgKey` proves failed dependency validation creates neither ciphertext nor a wrapped data key. Contacts/API tests exercise the actual photo sweep and publication paths; sealed table restore retains the reference and its bytes.
 
-`Object` tests need `KY_TEST_S3_*` (the SeaweedFS fixture, `scripts/ci-start-s3.sh`) and skip without it; `TestObjectProbeRefusesUnconditionalProvider` runs anywhere. `go test -race -p 2 -count=1 ./internal/vol` exercises files and, with `KYPOST_TEST_DATABASE_URL`, CAS/ABA, copied-ciphertext refusal, concurrent key creation, photo accounting/admission, marker moves and the table cap. API `TestCrossOrgMatrixTableDocuments` and `TestDocumentContentionAnswers503WithoutCreatingContact` exercise the boundary through handlers.
+`Object` tests need `KY_TEST_S3_*` (the SeaweedFS fixture, `scripts/ci-start-s3.sh`) and skip without it (fail, with `CI` set); `TestObjectProbeRefusesUnconditionalProvider` runs anywhere. `go test -race -p 2 -count=1 ./internal/vol` exercises files and, with `KYPOST_TEST_DATABASE_URL`, CAS/ABA, copied-ciphertext refusal, concurrent key creation, photo accounting/admission, marker moves and the table cap. API `TestCrossOrgMatrixTableDocuments` and `TestDocumentContentionAnswers503WithoutCreatingContact` exercise the boundary through handlers.
 
 ## Child DOX Index
 
