@@ -83,3 +83,23 @@ func TestObjectStorage(t *testing.T) {
 		t.Fatal("a world-readable secret file was accepted")
 	}
 }
+
+// KYPOST_S3_PREFIX is the first segment of every object key, so apps can share a bucket.
+// Unset is "kypost"; a set value must be one segment.
+func TestObjectPrefix(t *testing.T) {
+	t.Setenv("KYPOST_S3_PREFIX", "") // restored after the test
+	os.Unsetenv("KYPOST_S3_PREFIX")
+	if app, err := ObjectPrefix(); err != nil || app != "kypost" {
+		t.Fatalf("default: %q %v", app, err)
+	}
+	t.Setenv("KYPOST_S3_PREFIX", "post-eu")
+	if app, err := ObjectPrefix(); err != nil || app != "post-eu" {
+		t.Fatalf("set: %q %v", app, err)
+	}
+	for _, bad := range []string{"", "/kypost", "kypost/", "ky/post", "..", "ky..post", "KyPost"} {
+		t.Setenv("KYPOST_S3_PREFIX", bad)
+		if _, err := ObjectPrefix(); err == nil || !strings.Contains(err.Error(), "KYPOST_S3_PREFIX") {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+}

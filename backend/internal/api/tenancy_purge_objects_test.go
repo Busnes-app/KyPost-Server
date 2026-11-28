@@ -26,9 +26,9 @@ func TestOrgPurgeDeletesObjectBodies(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		key := vol.BodyPrefix(cell, org, mailbox...) + id
+		key := vol.BodyPrefix(vol.DefaultAppPrefix, cell, org, mailbox...) + id
 		if len(mailbox) == 0 {
-			key = vol.BodyPrefix(cell, org, "gone-mailbox") + id
+			key = vol.BodyPrefix(vol.DefaultAppPrefix, cell, org, "gone-mailbox") + id
 		}
 		if _, err := px.srv.objects.Write(ctx, key, []byte("sealed body"), 0); err != nil {
 			t.Fatal(err)
@@ -59,11 +59,11 @@ func TestOrgPurgeDeletesObjectBodies(t *testing.T) {
 	}
 	px.assertPurged(t)
 	for _, cell := range cells {
-		if keys, err := px.srv.objects.List(ctx, vol.BodyPrefix(cell, orgA)); err != nil || len(keys) != 0 {
+		if keys, err := px.srv.objects.List(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA)); err != nil || len(keys) != 0 {
 			t.Fatalf("cell %s keeps org A's objects: %v %v", cell, keys, err)
 		}
 	}
-	if keys, err := px.srv.objects.List(ctx, vol.BodyPrefix(cells[0], orgB, px.b.ID)); err != nil || len(keys) != 1 || keys[0] != keepB {
+	if keys, err := px.srv.objects.List(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, cells[0], orgB, px.b.ID)); err != nil || len(keys) != 1 || keys[0] != keepB {
 		t.Fatal("org B's object was touched:", keys, err)
 	}
 }

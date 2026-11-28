@@ -55,7 +55,7 @@ func (s *Store) placeBodies() error {
 	if objects == nil {
 		return errors.New("mailbox object storage is not configured")
 	}
-	s.objects, s.bodyPrefix = objects, vol.BodyPrefix(scope.Cell, scope.Org, s.owner.Mailbox)
+	s.objects, s.bodyPrefix = objects, objects.BodyPrefix(scope.Cell, scope.Org, s.owner.Mailbox)
 	return nil
 }
 

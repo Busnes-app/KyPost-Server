@@ -7,12 +7,13 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/applysetup"
 	"github.com/Busnes-app/ky-primitives/s3"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 )
 
 // S3Vars configure the multi-mode bucket for message bodies
 // (docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md, "MH11 object storage,
 // amended"), as KyDrive's KYDRIVE_S3_*.
-var S3Vars = []string{"KYPOST_S3_ENDPOINT", "KYPOST_S3_BUCKET", "KYPOST_S3_REGION", "KYPOST_S3_ACCESS_KEY", "KYPOST_S3_SECRET_KEY", "KYPOST_S3_SECRET_KEY_FILE"}
+var S3Vars = []string{"KYPOST_S3_ENDPOINT", "KYPOST_S3_BUCKET", "KYPOST_S3_REGION", "KYPOST_S3_ACCESS_KEY", "KYPOST_S3_SECRET_KEY", "KYPOST_S3_SECRET_KEY_FILE", "KYPOST_S3_PREFIX"}
 
 func s3Set() bool {
 	for _, k := range S3Vars {
@@ -47,4 +48,17 @@ func ObjectStorage() (*s3.Client, error) {
 		return nil, errors.New("KYPOST_S3_ENDPOINT must be an https URL without credentials, query or fragment, and KYPOST_S3_BUCKET a valid bucket name")
 	}
 	return c, nil
+}
+
+// ObjectPrefix reads KYPOST_S3_PREFIX, the first segment of every object key, so the suite's
+// apps can share a bucket. Unset means "kypost"; a set value, even empty, must be valid.
+func ObjectPrefix() (string, error) {
+	app, set := os.LookupEnv("KYPOST_S3_PREFIX")
+	if !set {
+		return vol.DefaultAppPrefix, nil
+	}
+	if !vol.ValidAppPrefix(app) {
+		return "", errors.New("KYPOST_S3_PREFIX must be one key segment: lowercase letters, digits, '.', '_' or '-', no slash and no '..'")
+	}
+	return app, nil
 }

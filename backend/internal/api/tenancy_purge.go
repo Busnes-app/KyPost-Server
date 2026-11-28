@@ -421,10 +421,10 @@ func (s *Server) objectPrefixes(scope tenancy.PurgeScope, snap tenancy.PurgeSnap
 	var prefixes []string
 	for _, cell := range s.cells {
 		for _, mailbox := range snap.Mailboxes {
-			prefixes = append(prefixes, vol.BodyPrefix(cell, scope.Org, mailbox))
+			prefixes = append(prefixes, s.objects.BodyPrefix(cell, scope.Org, mailbox))
 		}
 		if scope.Subject == "" {
-			prefixes = append(prefixes, vol.BodyPrefix(cell, scope.Org))
+			prefixes = append(prefixes, s.objects.BodyPrefix(cell, scope.Org))
 		}
 	}
 	return prefixes

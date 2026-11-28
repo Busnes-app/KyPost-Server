@@ -40,7 +40,7 @@ type Quotas struct {
 }
 
 // Org is one cached org. HomeRegion is its cell (KyIdentity tenancy spec, Cells, C1), one of
-// this deployment's; MH11's object keys start with it ("cells/<home_region>/").
+// this deployment's; MH11's object keys start with it ("<app>/cells/<home_region>/").
 type Org struct {
 	Known      bool
 	Status     string

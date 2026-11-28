@@ -31,7 +31,7 @@ func TestBodySweepVisitsEveryMailbox(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		orphans[mb] = vol.BodyPrefix(cell, orgA, mb) + id
+		orphans[mb] = vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA, mb) + id
 		if _, err := objects.Write(ctx, orphans[mb], []byte("never named"), 0); err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +64,7 @@ func TestBodySweepVisitsEveryMailbox(t *testing.T) {
 		t.Fatalf("second pass deleted %d, want %d", n, len(orphans))
 	}
 	for mb, key := range orphans {
-		if keys, err := objects.List(ctx, vol.BodyPrefix(cell, orgA, mb)); err != nil || len(keys) != 0 {
+		if keys, err := objects.List(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA, mb)); err != nil || len(keys) != 0 {
 			t.Fatalf("mailbox %s keeps %v (%s): %v", mb, keys, key, err)
 		}
 	}

@@ -21,7 +21,11 @@ func probeObjectStorage(cells []string) error {
 	if err != nil {
 		return err
 	}
-	o, err := vol.NewObject(c, cells, nil)
+	app, err := config.ObjectPrefix()
+	if err != nil {
+		return err
+	}
+	o, err := vol.NewObject(c, app, cells, nil)
 	if err != nil {
 		return err
 	}
@@ -46,17 +50,21 @@ func useObjectBodies(client *s3.Client, db *sql.DB, staffOrg string, cells []str
 		placing.n++
 		return placing.all, releaseObjectBodies, nil
 	}
-	all, err := vol.NewObject(client, cells, nil)
+	app, err := config.ObjectPrefix()
 	if err != nil {
 		return nil, nil, err
 	}
-	mailbox.SetObjectBodies(placeBodies(client, db, staffOrg, cells, stateDir))
+	all, err := vol.NewObject(client, app, cells, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	mailbox.SetObjectBodies(placeBodies(client, app, db, staffOrg, cells, stateDir))
 	placing.n, placing.all = 1, all
 	return all, releaseObjectBodies, nil
 }
 
 // placeBodies is the mailbox placement useObjectBodies installs.
-func placeBodies(client *s3.Client, db *sql.DB, staffOrg string, cells []string, stateDir string) func(mailbox.Owner) (*vol.Object, mailbox.BodyScope, error) {
+func placeBodies(client *s3.Client, app string, db *sql.DB, staffOrg string, cells []string, stateDir string) func(mailbox.Owner) (*vol.Object, mailbox.BodyScope, error) {
 	return func(owner mailbox.Owner) (*vol.Object, mailbox.BodyScope, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -68,7 +76,7 @@ func placeBodies(client *s3.Client, db *sql.DB, staffOrg string, cells []string,
 		if err != nil {
 			return nil, mailbox.BodyScope{}, err
 		}
-		o, err := vol.NewObject(client, []string{cell}, func(ctx context.Context, keyOrg string) ([]byte, error) {
+		o, err := vol.NewObject(client, app, []string{cell}, func(ctx context.Context, keyOrg string) ([]byte, error) {
 			if keyOrg != org {
 				return nil, errBodyOrg
 			}

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -19,11 +20,13 @@ import (
 
 // Object keeps message bodies in an S3-compatible bucket, multi mode only
 // (docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md, "MH11 object storage,
-// amended"). Keys are cells/<cell>/bodies/<org>/<mailbox>/<object>. Each object is sealed with
+// amended"). Keys are <app>/cells/<cell>/bodies/<org>/<mailbox>/<object>, where app is the
+// per-app prefix (KYPOST_S3_PREFIX), so the suite's apps can share a bucket. Each object is sealed with
 // its org's data key, bound to its full key, so the bucket holds no plaintext and a copied
 // object never opens. Objects are written once: revision 0 creates, nothing overwrites.
 type Object struct {
 	c     *s3.Client
+	app   string
 	cells []string
 	key   func(context.Context, string) ([]byte, error)
 }
@@ -41,13 +44,25 @@ var (
 	errObject    = errors.New("vol: object authentication failed")
 )
 
-// NewObject opens bodies over client for cells. key returns an org's 32-byte data key; with
-// none, only the unsealed start probe works.
-func NewObject(client *s3.Client, cells []string, key func(context.Context, string) ([]byte, error)) (*Object, error) {
-	if client == nil || len(cells) == 0 {
-		return nil, errors.New("vol: object storage needs a client and cells")
+// DefaultAppPrefix is KyPost's first object-key segment (KYPOST_S3_PREFIX).
+const DefaultAppPrefix = "kypost"
+
+// appPrefix is one key segment, so no app's prefix can sit inside another app's keys.
+var appPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+// ValidAppPrefix reports whether app is a per-app key prefix: one nonempty segment, no slash
+// and no "..". Every key, list and purge stays under "<app>/".
+func ValidAppPrefix(app string) bool {
+	return appPrefix.MatchString(app) && !strings.Contains(app, "..")
+}
+
+// NewObject opens bodies over client for cells, under the app prefix. key returns an org's
+// 32-byte data key; with none, only the unsealed start probe works.
+func NewObject(client *s3.Client, app string, cells []string, key func(context.Context, string) ([]byte, error)) (*Object, error) {
+	if client == nil || len(cells) == 0 || !ValidAppPrefix(app) {
+		return nil, errors.New("vol: object storage needs a client, cells and a valid app prefix")
 	}
-	return &Object{c: client, cells: slices.Clone(cells), key: key}, nil
+	return &Object{c: client, app: app, cells: slices.Clone(cells), key: key}, nil
 }
 
 // NewObjectID is 128 random bits as 32 lowercase hex digits.
@@ -60,8 +75,13 @@ func NewObjectID() (string, error) {
 }
 
 // BodyPrefix is the slash-terminated prefix of a cell's org, or of one mailbox in it.
-func BodyPrefix(cell, org string, mailbox ...string) string {
-	return "cells/" + cell + "/bodies/" + org + "/" + strings.Join(append(mailbox, ""), "/")
+func (o *Object) BodyPrefix(cell, org string, mailbox ...string) string {
+	return BodyPrefix(o.app, cell, org, mailbox...)
+}
+
+// BodyPrefix is the same prefix under an explicit app prefix.
+func BodyPrefix(app, cell, org string, mailbox ...string) string {
+	return app + "/cells/" + cell + "/bodies/" + org + "/" + strings.Join(append(mailbox, ""), "/")
 }
 
 // scope checks a key's shape and cell and returns its org. Nothing is sent before it.
@@ -71,18 +91,18 @@ func (o *Object) scope(path string) (string, error) {
 	}
 	p := strings.Split(path, "/")
 	switch {
-	case len(p) == 6 && p[0] == "cells" && p[2] == "bodies":
-	case len(p) == 4 && p[0] == "cells" && p[2] == "probe":
+	case len(p) == 7 && p[0] == o.app && p[1] == "cells" && p[3] == "bodies":
+	case len(p) == 5 && p[0] == o.app && p[1] == "cells" && p[3] == "probe":
 	default:
 		return "", ErrPath
 	}
-	if !slices.Contains(o.cells, p[1]) {
+	if !slices.Contains(o.cells, p[2]) {
 		return "", ErrCell
 	}
-	if p[2] == "probe" {
+	if p[3] == "probe" {
 		return "", nil
 	}
-	return p[3], nil
+	return p[4], nil
 }
 
 func (o *Object) aead(ctx context.Context, org string) (cipher.AEAD, error) {
@@ -209,7 +229,7 @@ func (o *Object) RemoveAll(ctx context.Context, prefix string) error {
 	return o.c.DeletePrefix(ctx, prefix)
 }
 
-// checkPrefix admits cells/<cell>/bodies/<org>/ and cells/<cell>/bodies/<org>/<mailbox>/.
+// checkPrefix admits <app>/cells/<cell>/bodies/<org>/ and .../<org>/<mailbox>/ only.
 func (o *Object) checkPrefix(prefix string) error {
 	trimmed, ok := strings.CutSuffix(prefix, "/")
 	if !ok {
@@ -219,10 +239,10 @@ func (o *Object) checkPrefix(prefix string) error {
 		return err
 	}
 	p := strings.Split(trimmed, "/")
-	if (len(p) != 4 && len(p) != 5) || p[0] != "cells" || p[2] != "bodies" {
+	if (len(p) != 5 && len(p) != 6) || p[0] != o.app || p[1] != "cells" || p[3] != "bodies" {
 		return ErrPath
 	}
-	if !slices.Contains(o.cells, p[1]) {
+	if !slices.Contains(o.cells, p[2]) {
 		return ErrCell
 	}
 	return nil
@@ -236,7 +256,7 @@ func (o *Object) Probe(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		path := "cells/" + cell + "/probe/" + id
+		path := o.app + "/cells/" + cell + "/probe/" + id
 		if _, err := o.Write(ctx, path, []byte(id), 0); err != nil {
 			return fmt.Errorf("object storage probe write: %w", err)
 		}
