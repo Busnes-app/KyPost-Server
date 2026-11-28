@@ -173,7 +173,7 @@ func (s *Server) purgePass(ctx context.Context, scope tenancy.PurgeScope, now ti
 	steps := []func() error{
 		func() error { return s.purgeBlock(ctx, snap) },
 		func() error { return s.purgeReceiving(ctx, snap) },
-		func() error { return s.purgeStorage(ctx, snap) },
+		func() error { return s.purgeStorage(ctx, scope, snap) },
 		func() error { return s.purgeLedger(ctx, scope, snap, key, gone) },
 		func() error { return s.purgeRoot(ctx, snap) },
 	}
@@ -294,7 +294,7 @@ func purgeDirs(configDir, stateDir string, users, mailboxes []string) ([]string,
 }
 
 // Step 3: storage, then the users' pickup records.
-func (s *Server) purgeStorage(ctx context.Context, snap tenancy.PurgeSnapshot) error {
+func (s *Server) purgeStorage(ctx context.Context, scope tenancy.PurgeScope, snap tenancy.PurgeSnapshot) error {
 	// Removing accounts first closes the same-database owner guard. A paused D
 	// writer cannot recreate a document or org key after the following deletes.
 	if users.TableMode(s.configDir) {
@@ -305,6 +305,12 @@ func (s *Server) purgeStorage(ctx context.Context, snap tenancy.PurgeSnapshot) e
 
 	if err := PurgeStorage(ctx, s.configDir, s.stateDir, snap.Users, snap.Mailboxes); err != nil {
 		return err
+	}
+	// Immediate, every version: a purge is not an expunge's late delete (MH11).
+	for _, prefix := range s.objectPrefixes(scope, snap) {
+		if err := s.objects.RemoveAll(ctx, prefix); err != nil {
+			return err
+		}
 	}
 	if err := volumes.PurgeDocuments(ctx, s.stateDir, snap.Users); err != nil {
 		return err
@@ -404,7 +410,25 @@ func (s *Server) purgeRoot(ctx context.Context, snap tenancy.PurgeSnapshot) erro
 
 // purgeChecks names the final check's parts; tenancy.PurgeCoverage maps every org-owned and
 // derived store of the classification to one of them.
-var purgeChecks = []string{"users.json", "user_orgs", "root-state", "directories", "schemas", "pickup", "ingress", "ledger", "documents", "doc_keys"}
+var purgeChecks = []string{"users.json", "user_orgs", "root-state", "directories", "schemas", "pickup", "ingress", "ledger", "documents", "doc_keys", "objects"}
+
+// objectPrefixes are the snapshot's message-body prefixes in every served cell: each
+// mailbox's, and the org's own for an org purge. None without object storage.
+func (s *Server) objectPrefixes(scope tenancy.PurgeScope, snap tenancy.PurgeSnapshot) []string {
+	if s.objects == nil {
+		return nil
+	}
+	var prefixes []string
+	for _, cell := range s.cells {
+		for _, mailbox := range snap.Mailboxes {
+			prefixes = append(prefixes, vol.BodyPrefix(cell, scope.Org, mailbox))
+		}
+		if scope.Subject == "" {
+			prefixes = append(prefixes, vol.BodyPrefix(cell, scope.Org))
+		}
+	}
+	return prefixes
+}
 
 // purgeLeft is the final check: what of the snapshot each part still finds.
 func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone func(string) (bool, error), scopes ...tenancy.PurgeScope) (map[string]int, error) {
@@ -432,6 +456,10 @@ func (s *Server) purgeLeft(ctx context.Context, snap tenancy.PurgeSnapshot, gone
 		if scope.Subject == "" {
 			n, err := volumes.KeyRows(ctx, s.stateDir, scope.Org)
 			note("doc_keys", n, err)
+		}
+		for _, prefix := range s.objectPrefixes(scope, snap) {
+			keys, err := s.objects.List(ctx, prefix)
+			note("objects", len(keys), err)
 		}
 	}
 

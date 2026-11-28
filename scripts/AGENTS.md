@@ -57,6 +57,8 @@ All files under `scripts/`.
 - `update-host.sh` must remain host-only. Do not mount `/var/run/docker.sock` into KyPost or turn the web UI into an update trigger; that would give a mail-facing process host control.
 - Do not raise `startretries` to "fix" a crash loop, and keep `crashexit` active for core programs. Only `receiving-server` may degrade to in-process checks; the actual receiver must still take the container down after persistent startup failure.
 
+- `ci-start-s3.sh`: CI only. Starts the pinned SeaweedFS S3 fixture on loopback (the same image and digest KyDrive pins, credentials in `.github/ci/seaweedfs-s3.json`, not real), creates the `kypost-ci` bucket through the S3 API, waits for a signed HeadBucket to answer 200 and exports `KY_TEST_S3_*`, which `backend/internal/vol/objecttest` reads. Tests reach it through a verified TLS proxy, because the shared ky-primitives client accepts only HTTPS. With `CI` set, a test that finds no fixture fails instead of skipping.
+
 ## Verification
 
 - `shellcheck scripts/dev/native-mail-harness.sh`. The harness itself is verified by running it end to end (`docs/DEVELOPMENT.md#native-mail-harness`); CI does not run it.

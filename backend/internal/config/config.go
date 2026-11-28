@@ -141,6 +141,10 @@ func CheckEnv() error {
 		bad = append(bad, err.Error())
 	} else if mode == TenancyMulti && !MultiTenantBuild {
 		bad = append(bad, ErrMultiTenancyUnavailable.Error())
+	} else if mode == TenancyMulti {
+		if _, err := ObjectStorage(); err != nil {
+			bad = append(bad, err.Error())
+		}
 	}
 	if len(bad) > 0 {
 		// One line: the logger escapes newlines.

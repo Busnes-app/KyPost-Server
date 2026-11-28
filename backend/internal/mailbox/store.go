@@ -114,6 +114,8 @@ type Store struct {
 	referenceGeneration string
 	postgres            bool
 	table               bool
+	objects             *vol.Object // nil in single mode: every body stays in raw
+	bodyPrefix          string
 }
 
 const schema = `
@@ -139,10 +141,27 @@ CREATE TRIGGER IF NOT EXISTS outbox_delivery_insert AFTER INSERT ON outbox_deliv
 CREATE TRIGGER IF NOT EXISTS mailbox_insert AFTER INSERT ON messages BEGIN UPDATE usage SET records=records+1,payload_bytes=payload_bytes+coalesce(length(NEW.raw),0) WHERE id=1; END;
 CREATE TRIGGER IF NOT EXISTS mailbox_raw_update AFTER UPDATE OF raw ON messages BEGIN UPDATE usage SET payload_bytes=payload_bytes-coalesce(length(OLD.raw),0)+coalesce(length(NEW.raw),0) WHERE id=1; END;
 CREATE TRIGGER IF NOT EXISTS mailbox_delete AFTER DELETE ON messages BEGIN UPDATE usage SET records=records-1,payload_bytes=payload_bytes-coalesce(length(OLD.raw),0) WHERE id=1; END;
+CREATE TABLE IF NOT EXISTS bodies (message_id INTEGER PRIMARY KEY REFERENCES messages(id), object TEXT NOT NULL UNIQUE, size INTEGER NOT NULL, sha256 BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS body_tombstones (object TEXT PRIMARY KEY, at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS body_orphans (object TEXT PRIMARY KEY, seen_at INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS body_insert AFTER INSERT ON bodies BEGIN UPDATE usage SET payload_bytes=payload_bytes+NEW.size WHERE id=1; END;
+CREATE TRIGGER IF NOT EXISTS body_update AFTER UPDATE OF size ON bodies BEGIN UPDATE usage SET payload_bytes=payload_bytes-OLD.size+NEW.size WHERE id=1; END;
+CREATE TRIGGER IF NOT EXISTS body_delete AFTER DELETE ON bodies BEGIN UPDATE usage SET payload_bytes=payload_bytes-OLD.size WHERE id=1; END;
 `
 
 func Open(dir string, owner Owner, limits Limits) (*Store, error) {
-	return open(dir, owner, limits, "", dbbackend.Postgres())
+	return placed(open(dir, owner, limits, "", dbbackend.Postgres()))
+}
+
+// placed attaches the multi start's object storage to a runtime store.
+func placed(s *Store, err error) (*Store, error) {
+	if err == nil {
+		if err = s.placeBodies(); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
+	return s, err
 }
 
 // openSQLiteStore is Open on SQLite whatever the backend: the copies' SQLite form.
@@ -160,7 +179,7 @@ func OpenExisting(dir string, owner Owner, limits Limits, source string) (*Store
 	if err != nil {
 		return nil, err
 	}
-	return open(dir, owner, limits, source, pg)
+	return placed(open(dir, owner, limits, source, pg))
 }
 
 func open(dir string, owner Owner, limits Limits, source string, pg bool) (*Store, error) {
@@ -258,7 +277,7 @@ func (s *Store) initialize() error {
 	if initialized == 0 {
 		if _, err = tx.Exec(`INSERT INTO usage SELECT 1,
  (SELECT count(*) FROM messages)+(SELECT count(*)+coalesce(sum(sent_reserved),0) FROM outbox)+(SELECT count(*) FROM outbox_deliveries),
- (SELECT coalesce(sum(length(raw)),0) FROM messages)+(SELECT coalesce(sum(length(ciphertext)+sent_bytes),0) FROM outbox)`); err != nil {
+ (SELECT coalesce(sum(length(raw)),0) FROM messages)+(SELECT coalesce(sum(size),0) FROM bodies)+(SELECT coalesce(sum(length(ciphertext)+sent_bytes),0) FROM outbox)`); err != nil {
 			return err
 		}
 	}
@@ -395,6 +414,11 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 	}
 	hash := sha256.Sum256(raw)
 	digest := hex.EncodeToString(hash[:])
+	stored, pending, err := s.stash(ctx, raw)
+	if err != nil {
+		return 0, err
+	}
+	defer s.release(ctx, pending)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -454,7 +478,7 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 		}
 	}
 	var id int64
-	if err := tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, folder, raw, digest, headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339), seen, starred, draft).Scan(&id); err != nil {
+	if err := tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, folder, stored, digest, headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339), seen, starred, draft).Scan(&id); err != nil {
 		return 0, err
 	}
 	if gateway != "" {
@@ -467,10 +491,13 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 			return 0, err
 		}
 	}
+	if err = pending.name(ctx, tx, id); err != nil {
+		return 0, err
+	}
 	if err = change(ctx, tx, id, folder, false); err != nil {
 		return 0, err
 	}
-	return id, tx.Commit()
+	return id, commitBody(tx, pending)
 }
 
 func change(ctx context.Context, tx *sql.Tx, id int64, folder string, removed bool) error {
@@ -483,7 +510,10 @@ func (s *Store) Raw(ctx context.Context, folder string, id int64) ([]byte, error
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return raw, err
+	if err != nil {
+		return nil, err
+	}
+	return s.body(ctx, s.db, id, raw, s.limits.MessageBytes)
 }
 
 // DeliveredTo lists the frozen envelope recipients of a received message: the
@@ -516,8 +546,8 @@ func (s *Store) List(ctx context.Context, folder string, before int64, limit int
 		return nil, errors.New("invalid mailbox page")
 	}
 	// Postgres types a bare ?=0 as int4, too small for a cursor past 2^31.
-	rows, err := s.db.QueryContext(ctx, pick(s.postgres, `SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?`,
-		`SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?::bigint=0 OR id<?) ORDER BY id DESC LIMIT ?`), folder, before, before, limit)
+	rows, err := s.db.QueryContext(ctx, pick(s.postgres, `SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw)+coalesce((SELECT size FROM bodies WHERE message_id=messages.id),0) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?`,
+		`SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw)+coalesce((SELECT size FROM bodies WHERE message_id=messages.id),0) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?::bigint=0 OR id<?) ORDER BY id DESC LIMIT ?`), folder, before, before, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -683,6 +713,9 @@ func (s *Store) relocate(ctx context.Context, folder string, id int64, target st
 	}
 	if target == "" {
 		_, err = tx.ExecContext(ctx, "UPDATE messages SET raw=NULL,sender='',subject='',sent_to='',cc='',bcc='',labels='[]' WHERE id=?", id)
+		if err == nil {
+			err = s.tombstone(ctx, tx, id)
+		}
 	} else {
 		var exists string
 		err = tx.QueryRowContext(ctx, "SELECT name FROM folders WHERE name=?", target).Scan(&exists)

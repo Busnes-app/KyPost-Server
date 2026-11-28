@@ -122,6 +122,10 @@ func (c *Client) ReplaceRawMessageCAS(ctx context.Context, folder string, uid in
 	if oldSize > c.store.limits.MessageBytes {
 		return 0, mailmsg.ErrMessageTooLarge
 	}
+	if oldRaw, err = c.store.body(ctx, tx, int64(uid), oldRaw, c.store.limits.MessageBytes); err != nil {
+		return 0, err
+	}
+	oldSize = int64(len(oldRaw))
 
 	oldSum := sha256.Sum256(oldRaw)
 	if !strings.EqualFold(hex.EncodeToString(oldSum[:]), strings.TrimSpace(expectedSHA256)) {
@@ -147,10 +151,19 @@ func (c *Client) ReplaceRawMessageCAS(ctx context.Context, folder string, uid in
 
 	newSum := sha256.Sum256(newRaw)
 	newDigest := hex.EncodeToString(newSum[:])
+	// A moved body gets a new object; the old one is tombstoned, never overwritten.
+	stored, pending, err := c.store.stash(ctx, newRaw)
+	if err != nil {
+		return 0, err
+	}
+	defer c.store.release(ctx, pending)
+	if err := c.store.tombstone(ctx, tx, int64(uid)); err != nil {
+		return 0, err
+	}
 	res, err := tx.ExecContext(
 		ctx,
 		"UPDATE messages SET raw=?, digest=? WHERE folder=? AND id=? AND raw IS NOT NULL",
-		newRaw, newDigest, folder, int64(uid),
+		stored, newDigest, folder, int64(uid),
 	)
 	if err != nil {
 		return 0, err
@@ -162,10 +175,13 @@ func (c *Client) ReplaceRawMessageCAS(ctx context.Context, folder string, uid in
 	if affected != 1 {
 		return 0, imapadapter.ErrMessageNotFound
 	}
+	if err := pending.name(ctx, tx, int64(uid)); err != nil {
+		return 0, err
+	}
 	if err := change(ctx, tx, int64(uid), folder, false); err != nil {
 		return 0, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commitBody(tx, pending); err != nil {
 		return 0, err
 	}
 	return uid, nil

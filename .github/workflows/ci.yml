@@ -193,6 +193,8 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
+      - name: start the S3-compatible fixture
+        run: ../scripts/ci-start-s3.sh
       - name: go test -race (api package, one shard)
         env:
           SHARD: ${{ matrix.shard }}
@@ -256,6 +258,8 @@ jobs:
           GOBIN="$RUNNER_TEMP/bin" go install github.com/restic/restic/cmd/restic@v0.18.1
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+      - name: start the S3-compatible fixture
+        run: ../scripts/ci-start-s3.sh
       - name: go test -race (one package group)
         env:
           GROUP: ${{ matrix.group }}
@@ -326,6 +330,8 @@ jobs:
           docker restart "$PG"
           timeout 60 sh -c "until docker exec $PG pg_isready -U postgres; do sleep 1; done"
           test "$(docker exec "$PG" psql -U postgres -Atc 'SHOW max_connections')" = 400
+      - name: start the S3-compatible fixture
+        run: ../scripts/ci-start-s3.sh
       - name: go test -race on Postgres
         env:
           KYPOST_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable

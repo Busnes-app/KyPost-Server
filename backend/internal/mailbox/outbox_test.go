@@ -543,3 +543,21 @@ func TestNativeOutboxKeepsUnfinishedJobsWhole(t *testing.T) {
 		})
 	}
 }
+
+// A snapshot taken before MH11 has no bodies table and still validates.
+func TestNativeOutboxSnapshotBeforeObjectBodies(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "a pre-MH11 snapshot is a SQLite file; the copy refuses a PostgreSQL schema with tables dropped")
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "mailbox")
+	s := openTest(t, dir, testOwner, testLimits)
+	must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, outboxTestJob()))
+	for _, stmt := range []string{"DROP TABLE body_orphans", "DROP TABLE body_tombstones", "DROP TABLE bodies"} {
+		_, err := s.db.Exec(stmt)
+		must(t, err)
+	}
+	must(t, s.Close())
+	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domains: []string{"example.test"}, Issuer: testOwner.Issuer, Host: "smtp.provider.test", Port: 465, Username: "operator", Password: "secret"}
+	if has, err := ValidateOutboundSnapshot(ctx, snapshotFile(t, filepath.Join(dir, "mailbox.db")), outboxMaster, relay); err != nil || !has {
+		t.Fatalf("pre-MH11 snapshot refused: %v %v", has, err)
+	}
+}

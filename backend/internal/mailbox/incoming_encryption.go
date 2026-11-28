@@ -75,6 +75,9 @@ func (c *Client) PrepareIncoming(ctx context.Context, uid int, _ bool) (imapadap
 	if size > c.store.limits.MessageBytes {
 		return imapadapter.IncomingSource{}, mailmsg.ErrMessageTooLarge
 	}
+	if raw, err = c.store.body(ctx, tx, int64(uid), raw, c.store.limits.MessageBytes); err != nil {
+		return imapadapter.IncomingSource{}, err
+	}
 	date, err := time.Parse(time.RFC3339, at)
 	if err != nil {
 		return imapadapter.IncomingSource{}, errors.New("native source date invalid; original preserved")
@@ -147,6 +150,10 @@ func (c *Client) ReplaceIncoming(ctx context.Context, source imapadapter.Incomin
 	if size > c.store.limits.MessageBytes {
 		return 0, mailmsg.ErrMessageTooLarge
 	}
+	if raw, err = c.store.body(ctx, tx, int64(source.UID), raw, c.store.limits.MessageBytes); err != nil {
+		return 0, err
+	}
+	size = int64(len(raw))
 	if hashIncoming(raw) != source.Hash {
 		return 0, errors.New("native original changed; encryption paused without deleting mail")
 	}
@@ -159,15 +166,26 @@ func (c *Client) ReplaceIncoming(ctx context.Context, source imapadapter.Incomin
 	}
 	// Copy current flags/date, not the stale prepare snapshot. SQL retains labels
 	// verbatim; native metadata has no plaintext body index to copy.
+	stored, pending, err := c.store.stash(ctx, encrypted)
+	if err != nil {
+		return 0, err
+	}
+	defer c.store.release(ctx, pending)
 	var replacement int64
-	if err = tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels) SELECT 'INBOX',?,?,?,?,?,?,?,at_utc,seen,starred,draft,labels FROM messages WHERE id=? RETURNING id`, encrypted, hashIncoming(encrypted), headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), source.UID).Scan(&replacement); err != nil {
+	if err = tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels) SELECT 'INBOX',?,?,?,?,?,?,?,at_utc,seen,starred,draft,labels FROM messages WHERE id=? RETURNING id`, stored, hashIncoming(encrypted), headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), source.UID).Scan(&replacement); err != nil {
 		return 0, err
 	}
 	id = int(replacement)
 	if id <= 0 || int64(id) != replacement {
 		return 0, errors.New("native replacement ID exceeds client range; original preserved")
 	}
+	if err = pending.name(ctx, tx, replacement); err != nil {
+		return 0, err
+	}
 	if _, err = tx.ExecContext(ctx, "UPDATE messages SET raw=NULL,sender='',subject='',sent_to='',cc='',bcc='',labels='[]' WHERE id=?", source.UID); err != nil {
+		return 0, err
+	}
+	if err = c.store.tombstone(ctx, tx, int64(source.UID)); err != nil {
 		return 0, err
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO incoming_replacements VALUES(?,?,?,?,?)", source.UID, marker, source.Hash, hashIncoming(encrypted), id); err != nil {
@@ -179,7 +197,7 @@ func (c *Client) ReplaceIncoming(ctx context.Context, source imapadapter.Incomin
 	if err = change(ctx, tx, replacement, "INBOX", false); err != nil {
 		return 0, err
 	}
-	return id, tx.Commit()
+	return id, commitBody(tx, pending)
 }
 
 func (c *Client) verifyIncomingTx(ctx context.Context, tx *sql.Tx, source imapadapter.IncomingSource, uid int, marker string, encrypted []byte) (string, error) {
@@ -192,6 +210,11 @@ func (c *Client) verifyIncomingTx(ctx context.Context, tx *sql.Tx, source imapad
 	}
 	if err != nil {
 		return "", err
+	}
+	if size <= c.store.limits.MessageBytes {
+		if raw, err = c.store.body(ctx, tx, int64(uid), raw, c.store.limits.MessageBytes); err != nil {
+			return "", err
+		}
 	}
 	if size > c.store.limits.MessageBytes || !bytes.Equal(raw, encrypted) {
 		return "", errors.New("native encrypted copy differs; action paused without modifying mail")

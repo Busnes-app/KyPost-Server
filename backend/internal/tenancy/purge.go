@@ -411,6 +411,7 @@ var PurgeCoverage = map[string]string{
 	"mailbox.incoming_replacements": "directories", "mailbox.imported": "directories", "mailbox.receipts": "directories",
 	"mailbox.usage": "directories", "mailbox.changes": "directories", "mailbox.outbox": "directories",
 	"mailbox.outbox_deliveries": "directories", "mailbox.outbox_independent": "directories",
+	"mailbox.bodies": "directories", "mailbox.body_tombstones": "directories", "mailbox.body_orphans": "directories",
 	"ingress.routes": "ingress", "ingress.bindings": "ingress",
 	"tenancy.import_leases": "ingress", "tenancy.retired_bindings": "ingress", "volumes.documents": "documents", "volumes.doc_keys": "doc_keys", "volumes.accounts": "users.json",
 	"native-authority.directory": "ledger", "native-authority.directory_primary_emails": "ledger",

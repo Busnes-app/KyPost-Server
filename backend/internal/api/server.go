@@ -48,6 +48,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/suitepair"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/vol"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
 )
 
@@ -320,9 +321,11 @@ type Server struct {
 	// tenancy is the multi-tenant side store, staffOrg its staff org (tenancy design K3,
 	// K7) and cells the KyIdentity home regions it serves (KY_CELLS, MH9). nil in single
 	// mode, where nothing parses or checks org_id.
-	tenancy   *sql.DB
-	staffOrg  string
-	cells     []string
+	tenancy  *sql.DB
+	staffOrg string
+	cells    []string
+	// objects holds the cells' message bodies (MH11); nil in single mode.
+	objects   *vol.Object
 	kycal     *kycalendar.Client
 	kydrive   *kydrive.Client
 	kymessage *suitepair.Client

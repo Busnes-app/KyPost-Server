@@ -2184,3 +2184,56 @@ and locally, on SQLite and PostgreSQL where the store runs on both:
 - the purge empties the mailbox and org prefixes, and its final check fails on a left object;
 - re-encryption of a moved body leaves a new object and tombstones the old one;
 - the single-tenant upgrade test is unchanged, and single mode refuses `KYPOST_S3_*`.
+
+## MH11 object storage as built (2026-11-27)
+
+Built from the amendment above, on its defaults (threshold 128 KiB, body retention 30 days).
+
+- **`vol.Object`** (`vol/object.go`), the third `vol.Vol`, over ky-primitives `s3` (v0.12.0, no
+  new dependency). It checks a key's shape and cell before any request (`ErrPath`, `ErrCell`).
+  Write is `PutIfAbsent` at revision 0 only, and a lost race is `ErrStale`. Bodies are sealed
+  with AES-256-GCM (`NewGCMWithRandomNonce`, a version byte, 29 bytes of overhead) under the
+  org key the caller supplies, with associated data naming the full key. `Remove` and
+  `RemoveAll` use `DeleteAllVersions` and `DeletePrefix`. `Probe` writes, re-creates (which
+  must be refused), reads and deletes `cells/<cell>/probe/<id>` in every cell.
+- **Mailbox** (`mailbox/bodies.go`). The `objectBodies` hook places each store opened by `Open` or
+  `OpenExisting` (never the capsule copies' SQLite form); a store it cannot place refuses to
+  open. The four writers stash the body and name it in the row's transaction. `append` stashes
+  before its transaction. The Sent copy, the incoming-encryption replacement and
+  re-encryption stash inside theirs, because their body is read there, so the mailbox writer
+  waits on that upload. A row that never committed deletes its object at once. After `Commit`
+  is attempted the object is left to the sweep, because a failed commit's outcome is unknown.
+  The reads go through `Store.body`, which checks the row's size and SHA-256 too. `List` and
+  both usage recounts add `bodies.size`. The `bodies`, `body_tombstones` and `body_orphans`
+  tables, with their usage triggers, are in both schemas.
+- **Purge** (`api/tenancy_purge.go`). Step 3 empties each snapshot mailbox's prefix, and for an
+  org purge the org's prefix, in every served cell. The final check gains `objects`.
+- **Configuration and start.** `config.ObjectStorage` reads `KYPOST_S3_*` (secret file through
+  `applysetup.Secret`). `Tenancy` refuses any of them in single mode. `CheckEnv` refuses a
+  multi start without them. A multi start probes the bucket after the relay-code check
+  (`app/objects.go`). The `KYPOST_S3_*` settings join `replica.MultiShared`.
+- **Not built here: K PR 7's multi wiring.** At a multi start it must set the
+  `objectBodies` hook (exporting an installer with its caller), with each mailbox's cell and org from `tenancy` and the org's
+  `doc_keys` data key, created under the owner guard as for documents. It must also set
+  `Server.objects` and run `SweepBodies` for each mailbox on the elected `api-sweepers`
+  worker. Until then nothing in a release installs object storage. Release builds keep
+  refusing `multi`. The kye2e harness, pinned at #744, will need `KYPOST_S3_*` and a bucket
+  when it is repinned past this PR.
+- **Tests**, against SeaweedFS 4.52 (`scripts/ci-start-s3.sh`, the image KyDrive pins), in the
+  SQLite and PostgreSQL CI legs:
+  - `vol`: `TestObjectSealsBodies`, `TestObjectRefusesCopiedOrTamperedCiphertext`,
+    `TestObjectRefusesOtherCells`, `TestObjectWriteOnce`, `TestObjectRemoveAll`,
+    `TestObjectProbe` and `TestObjectProbeRefusesUnconditionalProvider`.
+  - `mailbox`: `TestObjectBodies`, `TestObjectBodyCrashBeforeCommit`,
+    `TestObjectBodyWriteFailureCommitsNothing`, `TestObjectBodyRefusalReleasesObject`,
+    `TestObjectBodyExpungeLateDelete`, `TestObjectBodyCrossOrgRefused`,
+    `TestObjectBodyOtherCellRefused`, `TestObjectBodyReencrypt` and
+    `TestObjectBodyRowMismatchRefused`.
+  - `api`: `TestOrgPurgeDeletesObjectBodies`.
+  - `config`: `TestSingleRefusesObjectStorage` and `TestObjectStorage`.
+  - `app`: `TestRunRefusesMultiWithoutObjectStorage`.
+
+  Each safety line was reverted once, and its test failed. 17 mutations, 17 killed.
+- **Not tested:** a versioned bucket (the SeaweedFS fixture is unversioned; ky-primitives' own
+  integration test covers version erasure), and a restore drill with real capsules. The late
+  delete and the restored `body_orphans` table are what such a drill would exercise.

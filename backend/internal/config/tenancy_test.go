@@ -48,6 +48,7 @@ func TestCheckEnvRefusesMulti(t *testing.T) {
 	t.Setenv("KYPOST_TENANCY", "multi")
 	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d")
+	setS3(t)
 	if err := CheckEnv(); taggedBuild && err != nil || !taggedBuild && (err == nil || !strings.Contains(err.Error(), ErrMultiTenancyUnavailable.Error())) {
 		t.Fatalf("multi, test build %v: %v", taggedBuild, err)
 	}
@@ -59,6 +60,7 @@ func TestCheckEnvRefusesMulti(t *testing.T) {
 		t.Setenv("KYPOST_TENANCY", v)
 		t.Setenv("KYPOST_STAFF_ORG_ID", "")
 		t.Setenv("KY_CELLS", "")
+		clearS3(t)
 		if err := CheckEnv(); err != nil {
 			t.Fatalf("%q: %v", v, err)
 		}

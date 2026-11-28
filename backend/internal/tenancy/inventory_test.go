@@ -46,6 +46,7 @@ var tableClass = map[string]map[string]string{
 		"labels": derived, "messages": derived, "incoming_replacements": derived, "imported": derived,
 		"receipts": derived, "usage": derived, "changes": derived,
 		"outbox": derived, "outbox_deliveries": derived, "outbox_independent": derived,
+		"bodies": derived, "body_tombstones": derived, "body_orphans": derived,
 	},
 	"ingress": {
 		"routes": derived, "bindings": derived,

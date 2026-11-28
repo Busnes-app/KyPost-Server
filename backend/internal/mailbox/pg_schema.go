@@ -49,6 +49,18 @@ CREATE OR REPLACE TRIGGER mailbox_raw_update AFTER UPDATE OF raw ON messages FOR
 CREATE OR REPLACE FUNCTION mailbox_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
  UPDATE usage SET records=records-1,payload_bytes=payload_bytes-coalesce(length(OLD.raw),0) WHERE id=1; RETURN NULL; END $$;
 CREATE OR REPLACE TRIGGER mailbox_delete AFTER DELETE ON messages FOR EACH ROW EXECUTE FUNCTION mailbox_delete();
+CREATE TABLE IF NOT EXISTS bodies (message_id BIGINT PRIMARY KEY REFERENCES messages(id), object TEXT NOT NULL UNIQUE, size BIGINT NOT NULL, sha256 BYTEA NOT NULL);
+CREATE TABLE IF NOT EXISTS body_tombstones (object TEXT PRIMARY KEY, at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS body_orphans (object TEXT PRIMARY KEY, seen_at BIGINT NOT NULL);
+CREATE OR REPLACE FUNCTION body_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ UPDATE usage SET payload_bytes=payload_bytes+NEW.size WHERE id=1; RETURN NULL; END $$;
+CREATE OR REPLACE TRIGGER body_insert AFTER INSERT ON bodies FOR EACH ROW EXECUTE FUNCTION body_insert();
+CREATE OR REPLACE FUNCTION body_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ UPDATE usage SET payload_bytes=payload_bytes-OLD.size+NEW.size WHERE id=1; RETURN NULL; END $$;
+CREATE OR REPLACE TRIGGER body_update AFTER UPDATE OF size ON bodies FOR EACH ROW EXECUTE FUNCTION body_update();
+CREATE OR REPLACE FUNCTION body_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ UPDATE usage SET payload_bytes=payload_bytes-OLD.size WHERE id=1; RETURN NULL; END $$;
+CREATE OR REPLACE TRIGGER body_delete AFTER DELETE ON bodies FOR EACH ROW EXECUTE FUNCTION body_delete();
 `
 
 // Kind is the catalog kind of a mailbox.db.
