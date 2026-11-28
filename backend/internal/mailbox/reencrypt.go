@@ -155,8 +155,6 @@ func (c *Client) ReplaceRawMessageCAS(ctx context.Context, folder string, uid in
 	if err != nil {
 		return 0, err
 	}
-	newSum := sha256.Sum256(newRaw)
-	newDigest := hex.EncodeToString(newSum[:])
 	// A moved body gets a new object; the old one is tombstoned, never overwritten.
 	stored, pending, err := c.store.stash(ctx, newRaw)
 	if err != nil {
@@ -168,8 +166,10 @@ func (c *Client) ReplaceRawMessageCAS(ctx context.Context, folder string, uid in
 	}
 	res, err := tx.ExecContext(
 		ctx,
-		"UPDATE messages SET raw=?, digest=?, subject=? WHERE folder=? AND id=? AND raw IS NOT NULL",
-		stored, newDigest, headers.Get("Subject"), folder, int64(uid),
+		// digest stays the received bytes' hash, so a later import of the same file
+		// still matches the replaced copy.
+		"UPDATE messages SET raw=?, subject=? WHERE folder=? AND id=? AND raw IS NOT NULL",
+		stored, headers.Get("Subject"), folder, int64(uid),
 	)
 	if err != nil {
 		return 0, err
@@ -199,14 +199,15 @@ type Ref struct {
 	ID     int64
 }
 
-// MessagesAfter lists up to limit live messages with an ID above after, in ID order,
-// across every folder: a cursor over it survives moves, which keep the ID.
+// MessagesAfter lists up to limit live received or imported messages with an ID above
+// after, in ID order, across every folder: a cursor over it survives moves, which keep
+// the ID. Drafts and Sent copies (neither receipt nor import) are never listed.
 func (c *Client) MessagesAfter(ctx context.Context, after int64, limit int) ([]Ref, error) {
 	defer runtime.KeepAlive(c)
 	if err := c.checkAccess(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := c.store.db.QueryContext(ctx, "SELECT folder,id FROM messages WHERE raw IS NOT NULL AND id>? ORDER BY id LIMIT ?", after, limit)
+	rows, err := c.store.db.QueryContext(ctx, "SELECT folder,id FROM messages WHERE raw IS NOT NULL AND id>? AND (id IN (SELECT message_id FROM receipts) OR id IN (SELECT message_id FROM imported)) ORDER BY id LIMIT ?", after, limit)
 	if err != nil {
 		return nil, err
 	}

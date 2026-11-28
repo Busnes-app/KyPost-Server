@@ -111,6 +111,12 @@ type backlogSealer interface {
 	Scrub(context.Context)
 }
 
+// backlogCache is the mail cache surface the sweep scrubs.
+type backlogCache interface {
+	OmitBodies() error
+	Remove(mailbox string, uid int) error
+}
+
 type backlogCursor struct {
 	Source string `json:"source"`
 	After  int64  `json:"after"`
@@ -120,7 +126,7 @@ type backlogCursor struct {
 // owner had no usable key) once the owner has one: up to backlogBatch messages a tick,
 // in ID order, resuming from a cursor bound to the mailbox's source. Idempotent: mail
 // already encrypted is skipped, and each replacement is compare-and-swap on the bytes.
-func (p *Poller) sealBacklog(ctx context.Context, uc userCtx, cache interface{ OmitBodies() error }) error {
+func (p *Poller) sealBacklog(ctx context.Context, uc userCtx, cache backlogCache) error {
 	mail, ok := uc.mail.(backlogSealer)
 	if !ok || uc.mailbox == "" || (p.globalStore != nil && p.globalStore.IncomingEncryptionOff()) {
 		return nil
@@ -152,8 +158,9 @@ func (p *Poller) sealBacklog(ctx context.Context, uc userCtx, cache interface{ O
 	for _, ref := range refs {
 		raw, err := mail.GetRawMessage(ctx, ref.Folder, int(ref.ID))
 		if errors.Is(err, imapadapter.ErrMessageNotFound) {
-			cur.After = ref.ID // gone or moved since listed; a move keeps its ID
-			continue
+			// Moved (same ID, new folder) or deleted since listed: keep the cursor so the
+			// next tick re-lists it; a deleted one is simply not listed again.
+			break
 		}
 		if err != nil {
 			return err
@@ -182,6 +189,12 @@ func (p *Poller) sealBacklog(ctx context.Context, uc userCtx, cache interface{ O
 				return saveBacklog(doc, cur) // changed under us: retry it next tick
 			case err != nil:
 				return err
+			default:
+				// Drop the cached entry, in whichever folder's window it sits: it holds
+				// the plaintext subject. The next sync re-adds it from the sealed row.
+				if err := cache.Remove("", int(ref.ID)); err != nil {
+					return err
+				}
 			}
 		}
 		cur.After = ref.ID

@@ -8,7 +8,9 @@ Native mail (KyPost's own mailboxes) is encrypted to the owner's key before it i
 stored, for every account with a usable key, with no opt-out; the administrator can
 turn it off. Plaintext exists only in the receiving buffer, which zeroes it after
 import (SQLite; not on PostgreSQL). Mail for an account without a key is stored as
-received and swept once a key exists. Encrypted users lose server-side body search,
+received and swept once a key exists: the sweep replaces the stored bytes and the
+subject column and drops the message's cached subject. Until the sweep reaches a
+message, and in backups taken earlier, that mail stays plaintext. Encrypted users lose server-side body search,
 previews, body caching and KyCalendar invitation forwarding for new mail.
 
 For an external IMAP account, incoming encryption is per-user and requires a

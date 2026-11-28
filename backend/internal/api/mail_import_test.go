@@ -471,22 +471,6 @@ func (o *onRead) Read(p []byte) (int, error) {
 	return o.Reader.Read(p)
 }
 
-type onImport struct {
-	mailImporter
-	before, after func()
-}
-
-func (o *onImport) ImportMessage(ctx context.Context, folder string, raw []byte, meta mailbox.ImportMeta) error {
-	if o.before != nil {
-		o.before()
-	}
-	err := o.mailImporter.ImportMessage(ctx, folder, raw, meta)
-	if o.after != nil {
-		o.after()
-	}
-	return err
-}
-
 // blocking stores nothing and waits for cancellation.
 type blocking struct{}
 

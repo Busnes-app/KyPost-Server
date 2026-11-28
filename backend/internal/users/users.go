@@ -846,7 +846,8 @@ func WithMailboxOwners(ctx context.Context, owners map[string]User) context.Cont
 
 // MailboxOwner is the owner WithMailboxOwners carried for mailboxID.
 func MailboxOwner(ctx context.Context, mailboxID string) (User, bool) {
-	u, ok := ctx.Value(mailboxOwnersKey{}).(map[string]User)[mailboxID]
+	owners, _ := ctx.Value(mailboxOwnersKey{}).(map[string]User)
+	u, ok := owners[mailboxID]
 	return u, ok
 }
 

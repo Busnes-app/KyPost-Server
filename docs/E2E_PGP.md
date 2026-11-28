@@ -389,10 +389,15 @@ with no user opt-out. The administrator's Encrypt incoming mail policy defaults 
   stored as it arrived. Nothing is refused or lost. Once the account has a usable
   key, the daemon's backlog sweep (`Poller.sealBacklog`) encrypts that mail in
   place in every folder, up to 100 messages per mailbox each tick, resuming from a
-  cursor bound to the mailbox's source. It is idempotent: sealed mail is skipped,
-  and each replacement is a compare-and-swap on the stored bytes. `mailbox.db`
-  also runs with `secure_delete`, and the sweep checkpoints and truncates its WAL.
-  Earlier backups keep whatever plaintext they hold.
+  cursor bound to the mailbox's source. Only received and imported mail is swept;
+  drafts and Sent copies are left as they are. A message moved or deleted while a
+  tick runs ends that tick without advancing the cursor, so it is never skipped.
+  It is idempotent: sealed mail is skipped, and each replacement is a
+  compare-and-swap on the stored bytes that keeps the row's received-bytes digest.
+  Each sealed message's mail-cache entry, which holds its plaintext subject, is
+  dropped; cache bodies were already off. `mailbox.db` also runs with
+  `secure_delete`, and the sweep checkpoints and truncates its WAL. Earlier
+  backups keep whatever plaintext they hold.
 - **Extra mailboxes.** An extra native mailbox is sealed to its owner's key. The
   owner is the mailbox's only member: KyPost has no multi-member shared mailboxes
   ([NATIVE_ADDRESSING_V2.md](NATIVE_ADDRESSING_V2.md)). When they exist, each

@@ -190,3 +190,79 @@ func TestSealBacklogPolicyOff(t *testing.T) {
 		t.Fatal("swept with the policy off")
 	}
 }
+
+// movingMail moves message id to Archive between the sweep's listing and its read.
+type movingMail struct {
+	*mailbox.Client
+	store *mailbox.Store
+	id    int64
+	moved bool
+}
+
+func (m *movingMail) GetRawMessage(ctx context.Context, folder string, id int) ([]byte, error) {
+	if int64(id) == m.id && !m.moved {
+		m.moved = true
+		if err := m.store.Move(ctx, folder, m.id, "Archive"); err != nil {
+			return nil, err
+		}
+	}
+	return m.Client.GetRawMessage(ctx, folder, id)
+}
+
+// The sweep seals received and imported mail only, keeps the import digest so the same
+// file is not imported twice, drops the plaintext subject from the cache, and does not
+// skip a message moved between listing and reading.
+func TestSealBacklogScope(t *testing.T) {
+	p, uc, _ := incomingPollerForTest(t)
+	ctx := context.Background()
+	store, err := mailbox.Open(filepath.Join(t.TempDir(), "mailbox"), mailbox.Owner{Issuer: "https://identity.example.test", Subject: uc.id, Mailbox: uc.id}, mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 8 << 20, Records: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	client, err := mailbox.NewClient(store, "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	received, err := store.Import(ctx, mailbox.Receipt{Gateway: "maddy", Delivery: "m", Sender: "bob@example.com", Recipients: []mailbox.Recipient{{Address: "alice@example.com", Generation: 1}}}, bytes.NewReader(bytes.Replace(sealRaw, []byte("10:00"), []byte("11:00"), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ImportMessage(ctx, "Archive", sealRaw, mailbox.ImportMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	draft, err := store.Append(ctx, "Drafts", bytes.NewReader(sealRaw), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cacheDir := t.TempDir()
+	cache, err := mailcache.New(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Upsert("INBOX", []mailcache.Entry{{UID: int(received), MessageID: "1", Subject: sealMarker, Sender: "bob@example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	uc.mailbox, uc.primary = uc.id, uc.store
+	uc.mail = &movingMail{Client: client, store: store, id: received}
+	for range 2 {
+		if err := p.sealBacklog(ctx, uc, cache); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if raw, err := client.GetRawMessage(ctx, "Archive", int(received)); err != nil || !isSealed(raw) {
+		t.Fatalf("moved message skipped by the sweep: %v", err)
+	}
+	if raw, _ := client.GetRawMessage(ctx, "Drafts", int(draft)); !bytes.Equal(raw, sealRaw) {
+		t.Fatal("the sweep rewrote a draft")
+	}
+	if err := client.ImportMessage(ctx, "Archive", sealRaw, mailbox.ImportMeta{}); !errors.Is(err, mailbox.ErrDuplicate) {
+		t.Fatalf("re-import after the sweep: %v, want a duplicate", err)
+	}
+	if refs, _ := client.MessagesAfter(ctx, 0, 10); len(refs) != 2 {
+		t.Fatalf("re-import after the sweep made a duplicate: %d messages", len(refs))
+	}
+	if b, err := os.ReadFile(filepath.Join(cacheDir, "mailcache.json")); err != nil || bytes.Contains(b, []byte(sealMarker)) {
+		t.Fatalf("plaintext subject left in the mail cache: %v", err)
+	}
+}

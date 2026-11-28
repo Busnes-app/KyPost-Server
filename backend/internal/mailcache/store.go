@@ -825,8 +825,8 @@ func (s *Store) attemptOmitBodies() error {
 	return s.persistLocked()
 }
 
-// Remove drops a replaced UID from every limit window of mailbox and retains
-// its removal for delta clients.
+// Remove drops a replaced UID from every limit window of mailbox (every window
+// when mailbox is "") and retains its removal for delta clients.
 func (s *Store) Remove(mailbox string, uid int) error {
 	return vol.Retry(func() error { return s.attemptRemove(mailbox, uid) })
 }
@@ -844,7 +844,7 @@ func (s *Store) attemptRemove(mailbox string, uid int) error {
 	}
 	changed := false
 	for key, win := range s.mailboxes {
-		if win == nil || windowMailbox(key) != mailbox {
+		if win == nil || (mailbox != "" && windowMailbox(key) != mailbox) {
 			continue
 		}
 		for i, e := range win.Entries {
