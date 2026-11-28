@@ -137,8 +137,9 @@ func TestUnscopedConnectionFailsClosed(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO org_rows (org, n) VALUES ('a', 1)`); err != nil {
 		t.Fatal(err)
 	}
+	raw0 := current().url
 	mu.Lock()
-	p := pools[current().url]
+	p := pools[raw0]
 	mu.Unlock()
 	raw, err := p.Acquire(ctx)
 	if err != nil {
