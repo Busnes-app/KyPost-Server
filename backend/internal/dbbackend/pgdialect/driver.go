@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -34,16 +35,10 @@ func init() { sql.Register("kypg", Driver{}) }
 // every statement, and the writer lock.
 type Driver struct{}
 
-func (Driver) Open(name string) (driver.Conn, error) {
-	c, err := Driver{}.OpenConnector(name)
-	if err != nil {
-		return nil, err
-	}
-	return c.Connect(context.Background())
-}
-
-func (Driver) OpenConnector(name string) (driver.Connector, error) {
-	return NewConnector(name, false, "")
+// Open refuses sql.Open("kypg", ...): stores borrow from the process's pool (NewPool,
+// NewConnector), never from connections of their own.
+func (Driver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("kypg: open a store through dbbackend")
 }
 
 // ErrBadURL is returned for a database URL pgx cannot parse. It never repeats the URL,
@@ -90,40 +85,83 @@ func Describe(rawURL string) string {
 	return cfg.Host + "/" + cfg.Database
 }
 
-// NewConnector opens connections for one pool. A readOnly pool runs its transactions
-// READ ONLY at REPEATABLE READ, a snapshot as a SQLite read transaction is, and never
-// takes the writer lock. requiredSchema is empty for catalog/administrative pools;
-// a store writer verifies its schema after locking, preventing public fallback after purge.
-func NewConnector(rawURL string, readOnly bool, requiredSchema string) (driver.Connector, error) {
-	return newConnector(rawURL, readOnly, false, requiredSchema)
+// Unscoped is the search_path a pooled connection has between borrows: no schema, so a
+// statement on a connection nobody scoped finds no table and fails.
+const Unscoped = `""`
+
+// ErrPoolWait is a borrow that found no free connection within PoolWait.
+var ErrPoolWait = errors.New("database: no connection free in the pool")
+
+// PoolWait bounds a borrow, as PgBouncer's query_wait_timeout would. A variable so tests can
+// shorten it.
+var PoolWait = 10 * time.Second
+
+// resetSQL runs as a connection returns to the pool, off the caller's goroutine: it drops
+// every session lock, setting (scope, read-only, lock_timeout), listener, cursor and temp
+// table the borrower left. A connection it fails on is closed, never reused.
+const resetSQL = `SELECT pg_advisory_unlock_all(); RESET ALL; UNLISTEN *; CLOSE ALL; DISCARD TEMP`
+
+// NewPool is a process's one pool of server connections: size connections at most, every one
+// opened at start and kept open (warm) when warm is set. Connections start Unscoped, and every
+// release resets them (resetSQL). Each borrow scopes its connection (NewConnector).
+func NewPool(rawURL string, size int, warm bool) (*pgxpool.Pool, error) {
+	cfg, err := Config(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if _, set := cfg.RuntimeParams["search_path"]; set {
+		return nil, errors.New("the database URL must not set search_path")
+	}
+	cfg.RuntimeParams["search_path"] = Unscoped
+	pc, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, err
+	}
+	pc.ConnConfig = cfg
+	pc.MaxConns = int32(size)
+	if warm {
+		pc.MinConns = int32(size)
+	}
+	pc.AfterConnect = func(_ context.Context, c *pgx.Conn) error {
+		c.TypeMap().RegisterType(&pgtype.Type{Name: "timestamptz", OID: pgtype.TimestamptzOID, Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC}})
+		return nil
+	}
+	pc.AfterRelease = func(c *pgx.Conn) bool {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, err := c.Exec(ctx, resetSQL)
+		return err == nil
+	}
+	return pgxpool.NewWithConfig(context.Background(), pc)
+}
+
+// NewConnector borrows from pool for one store. A readOnly store runs its transactions
+// READ ONLY at REPEATABLE READ, a snapshot as a SQLite read transaction is, and never takes
+// the writer lock. schema is the store's schema; "" is the catalog and whole-database work,
+// scoped to public. Every borrow is scoped to schema and checked (scope).
+func NewConnector(pool *pgxpool.Pool, readOnly bool, schema string) driver.Connector {
+	return newConnector(pool, readOnly, false, schema)
 }
 
 // NewRowWriterConnector is for volumes.db accounts only. Account transactions
 // lock changed rows and use SERIALIZABLE for set invariants; they must not hold
 // the document writer lock while preparing a mailbox or recording a journal.
-func NewRowWriterConnector(rawURL string) (driver.Connector, error) {
-	return newConnector(rawURL, false, true, "")
+func NewRowWriterConnector(pool *pgxpool.Pool, schema string) driver.Connector {
+	return newConnector(pool, false, true, schema)
 }
 
-func newConnector(rawURL string, readOnly, rowWrites bool, requiredSchema string) (driver.Connector, error) {
-	cfg, err := Config(rawURL)
-	if err != nil {
-		return nil, err
+func newConnector(pool *pgxpool.Pool, readOnly, rowWrites bool, schema string) driver.Connector {
+	writer, _ := LockKeys(SearchPath(schema))
+	return &connector{base: stdlib.GetPoolConnector(pool), readOnly: readOnly, lockKey: writer, rowWrites: rowWrites, schema: schema}
+}
+
+// SearchPath is a store schema's search_path: the schema, then public (citext). The
+// catalog's ("") is public.
+func SearchPath(schema string) string {
+	if schema == "" {
+		return ""
 	}
-	if readOnly {
-		cfg.RuntimeParams["default_transaction_read_only"] = "on"
-		// Its own sessions are read-only by the line above; what matters is that it reads
-		// the primary the writes go to, never a lagging standby.
-		if cfg.ValidateConnect != nil {
-			cfg.ValidateConnect = pgconn.ValidateConnectTargetSessionAttrsPrimary
-		}
-	}
-	writer, _ := LockKeys(cfg.RuntimeParams["search_path"])
-	base := stdlib.GetConnector(*cfg, stdlib.OptionAfterConnect(func(_ context.Context, c *pgx.Conn) error {
-		c.TypeMap().RegisterType(&pgtype.Type{Name: "timestamptz", OID: pgtype.TimestamptzOID, Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC}})
-		return nil
-	}))
-	return &connector{base: base, readOnly: readOnly, lockKey: writer, rowWrites: rowWrites, requiredSchema: requiredSchema}, nil
+	return schema + ",public"
 }
 
 // LockKeys returns the writer lock key and the migration lock key for a search_path: the
@@ -139,19 +177,72 @@ func LockKeys(schema string) (writer, migration int64) {
 }
 
 type connector struct {
-	base           driver.Connector
-	readOnly       bool
-	lockKey        int64
-	rowWrites      bool
-	requiredSchema string
+	base      driver.Connector
+	readOnly  bool
+	lockKey   int64
+	rowWrites bool
+	schema    string
 }
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
-	inner, err := c.base.Connect(ctx)
+	wait, cancel := context.WithTimeout(ctx, PoolWait)
+	defer cancel()
+	inner, err := c.base.Connect(wait)
 	if err != nil {
+		if wait.Err() != nil && ctx.Err() == nil {
+			return nil, ErrPoolWait
+		}
 		return nil, err
 	}
-	return &conn{inner: inner.(*stdlib.Conn), readOnly: c.readOnly, lockKey: c.lockKey, rowWrites: c.rowWrites, requiredSchema: c.requiredSchema}, nil
+	sc := inner.(*stdlib.Conn)
+	if err := scope(ctx, sc.Conn(), c.schema, c.readOnly); err != nil {
+		_ = sc.Conn().Close(ctx) // never reused: the pool destroys a closed connection
+		_ = sc.Close()
+		return nil, err
+	}
+	return &conn{inner: sc, readOnly: c.readOnly, lockKey: c.lockKey, rowWrites: c.rowWrites, requiredSchema: c.schema}, nil
+}
+
+// ErrScope is a borrowed connection whose scope is not the store's after scoping.
+var ErrScope = errors.New("database: a pooled connection is not scoped to its store")
+
+// scope sets a borrowed connection's search_path and read-only default for one store, in
+// one round trip, and checks them: the effective schema must be the store's, so a missing
+// schema cannot fall through to public. The release reset clears both.
+func scope(ctx context.Context, c *pgx.Conn, schema string, readOnly bool) error {
+	path, ro := SearchPath(schema), "off"
+	if path == "" {
+		path = "public"
+	}
+	if readOnly {
+		ro = "on"
+	}
+	var b pgx.Batch
+	b.Queue(`SELECT set_config('search_path', $1, false), set_config('default_transaction_read_only', $2, false)`, path, ro)
+	b.Queue(`SELECT current_setting('search_path'), COALESCE(current_schema(), ''), current_setting('default_transaction_read_only')`)
+	r := c.SendBatch(ctx, &b)
+	var p1, r1, p2, cur, r2 string
+	err := r.QueryRow().Scan(&p1, &r1)
+	if err == nil {
+		err = r.QueryRow().Scan(&p2, &cur, &r2)
+	}
+	if cerr := r.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	want := schema
+	if want == "" {
+		want = "public"
+	}
+	if p2 != path || r2 != ro || cur != want {
+		if schema != "" && cur != schema && p2 == path {
+			return ErrSchemaGone
+		}
+		return ErrScope
+	}
+	return nil
 }
 
 // A row-writer handle must not pass vol.NewTable's schema-writer driver check.

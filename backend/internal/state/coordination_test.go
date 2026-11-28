@@ -401,12 +401,13 @@ func relayedStore(t *testing.T, dir string) (*Store, *pgtest.Relay) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := pgdialect.NewConnector(dbbackend.WithSearchPath(relay.URL(t, raw), schema), false, schema)
+	p, err := pgdialect.NewPool(relay.URL(t, raw), 4, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := sql.OpenDB(c)
-	t.Cleanup(func() { _ = db.Close() })
+	db := sql.OpenDB(pgdialect.NewConnector(p, false, schema))
+	db.SetMaxIdleConns(0)
+	t.Cleanup(func() { _ = db.Close(); p.Close() })
 	return &Store{baseDir: dir, db: db}, relay
 }
 

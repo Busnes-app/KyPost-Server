@@ -32,18 +32,16 @@ type Fence struct {
 // settings fence after the domains and before the directory.
 var fenceOrder = []string{"org", "settings", "native-domains", "sso", "sso-lifecycle", "mailbox", "quota", "backup-operation"}
 
-// fencePools holds one pool of fence sessions per schema, shared by every Store in the
-// process. A held fence keeps its connection for the whole section, so the store's own small
-// pool would let fenced requests starve every other query, their own included.
-// maxFenceSessions caps what one process holds per schema (provisional until the capacity
-// measurement); a set that cannot get a session within fenceWait is ErrFenceWait. Only a
-// successful open is kept, and a pool is never closed: it keeps no idle connection.
+// fencePools holds one handle for fence sessions per schema, shared by every Store in the
+// process. A held fence keeps its connection, borrowed from the process's shared pool, for
+// the whole section, so fence sessions may take at most half of that pool: fenced requests
+// cannot starve every other query, their own included. A set that cannot get a session
+// within fenceWait is ErrFenceWait. Only a successful open is kept, and a handle is never
+// closed: it keeps no idle connection.
 var fencePools struct {
 	sync.Mutex
 	bySchema map[string]*sql.DB
 }
-
-const maxFenceSessions = 32
 
 func fencePool(baseDir string) (*sql.DB, error) {
 	schema, _, err := dbbackend.SchemaName(filepath.Join(baseDir, "state.db"))
@@ -57,11 +55,15 @@ func fencePool(baseDir string) (*sql.DB, error) {
 	if db := fencePools.bySchema[key]; db != nil {
 		return db, nil
 	}
+	size, err := dbbackend.PoolSize()
+	if err != nil {
+		return nil, err
+	}
 	db, err := dbbackend.Pool(schema, false)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(maxFenceSessions)
+	db.SetMaxOpenConns(size / 2)
 	db.SetMaxIdleConns(0) // every session is discarded on release
 	if fencePools.bySchema == nil {
 		fencePools.bySchema = map[string]*sql.DB{}

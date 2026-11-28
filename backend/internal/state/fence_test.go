@@ -313,15 +313,19 @@ func TestFenceCycleEndsInABoundedWait(t *testing.T) {
 	}
 }
 
-// Fence sessions come from one capped pool per schema in the process, shared by every Store:
+// Fence sessions take at most half the process's shared pool, on every Store of a schema:
 // once it is full, another set on any Store is a bounded wait, and the store's own queries
 // still run.
 func TestFenceSessionsDoNotStarveTheStore(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	shortFenceWait(t, 500*time.Millisecond)
 	a, b := twoReplicas(t)
+	size, err := dbbackend.PoolSize()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var leaves []chan struct{}
-	for i := range maxFenceSessions {
+	for i := range size / 2 {
 		inside, leave, _ := hold(a, []Fence{{Name: vol.FenceMailbox + "m" + strings.Repeat("x", i+1)}})
 		<-inside
 		leaves = append(leaves, leave)

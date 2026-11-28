@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend/pgdialect"
@@ -126,14 +125,11 @@ func root(ctx context.Context) (*sql.DB, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if catalog == nil {
-		c, err := pgdialect.NewConnector(s.url, false, "")
+		db, err := facadeLocked(s.url, "", false, false)
 		if err != nil {
 			return nil, err
 		}
-		catalog = sql.OpenDB(c)
-		catalog.SetMaxOpenConns(4)
-		catalog.SetMaxIdleConns(1)
-		catalog.SetConnMaxIdleTime(time.Minute)
+		catalog = db
 	}
 	if ready {
 		return catalog, nil
@@ -264,12 +260,9 @@ type Options struct {
 	RowWrites bool   // volumes accounts only: explicit row locks and SERIALIZABLE invariants
 }
 
-// Open returns a pool on the schema for path. Each schema has its own writer lock, which
-// keeps SQLite's one writer per file; reads take no lock.
-//
-// ponytail: one pool per open store, at most 4 connections and 1 idle for 15 s. The
-// ceiling is max_connections on busy installs with many open stores; the upgrade path
-// is one shared pgxpool that sets search_path per checkout.
+// Open returns a handle on the schema for path. Each schema has its own writer lock, which
+// keeps SQLite's one writer per file; reads take no lock. The handle holds no connection:
+// each statement or transaction borrows one from the process's shared pool (shared.go).
 func Open(path string, o Options) (*sql.DB, error) {
 	ctx := context.Background()
 	cat, err := root(ctx)
@@ -308,40 +301,19 @@ func Open(path string, o Options) (*sql.DB, error) {
 	return pool(schema, o.ReadOnly, o.RowWrites)
 }
 
-// Pool opens a pool on an existing schema without consulting the catalog.
+// Pool opens a handle on an existing schema without consulting the catalog.
 func Pool(schema string, readOnly bool) (*sql.DB, error) {
 	return pool(schema, readOnly, false)
 }
+
 func pool(schema string, readOnly, rowWrites bool) (*sql.DB, error) {
 	s := current()
 	if s.err != nil {
 		return nil, s.err
 	}
-	c, err := pgdialect.NewConnector(WithSearchPath(s.url, schema), readOnly, schema)
-	if rowWrites {
-		c, err = pgdialect.NewRowWriterConnector(WithSearchPath(s.url, schema))
-	}
-	if err != nil {
-		return nil, err
-	}
-	db := sql.OpenDB(c)
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxIdleTime(15 * time.Second)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	return db, nil
-}
-
-// WithSearchPath sets the URL's search_path to schema, then public (citext).
-func WithSearchPath(rawURL, schema string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL // NewConnector reports it
-	}
-	q := u.Query()
-	q.Set("search_path", schema+",public")
-	u.RawQuery = q.Encode()
-	return u.String()
+	mu.Lock()
+	defer mu.Unlock()
+	return facadeLocked(s.url, schema, readOnly, rowWrites)
 }
 
 func ddlDigest(ddl string) string {
