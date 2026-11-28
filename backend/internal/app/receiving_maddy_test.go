@@ -208,7 +208,7 @@ func testNativeReceivingMaddyRuntime(t *testing.T, mode string) {
 				t.Error("no helper recorded its GODEBUG", err)
 			}
 			for _, line := range lines {
-				if line != "netdns=go,tlsmlkem=1" {
+				if line != "netdns=go,tlsmlkem=1" { // pqc-tls:allow: asserts the hybrid stays on
 					t.Errorf("a helper ran with GODEBUG %q", line)
 				}
 			}
