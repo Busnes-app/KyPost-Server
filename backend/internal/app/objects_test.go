@@ -30,8 +30,20 @@ const (
 // and returns the placement.
 func bodyPlacement(t *testing.T, client *s3.Client, cells []string, stateDir string) func(mailbox.Owner) (*vol.Object, mailbox.BodyScope, error) {
 	t.Helper()
+	bodyOrgs(t, cells, stateDir)
+	_, release, err := useObjectBodies(client, bodyStaffOrg, cells, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(release)
+	return placeBodies(client, vol.DefaultAppPrefix, placing.db, bodyStaffOrg, cells, stateDir)
+}
+
+// bodyOrgs creates stateDir's tenancy.db with the orgs bodyPlacement describes.
+func bodyOrgs(t *testing.T, cells []string, stateDir string) {
+	t.Helper()
 	ctx := context.Background()
-	db, err := tenancy.Open(t.TempDir(), true)
+	db, err := tenancy.Open(stateDir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,12 +56,36 @@ func bodyPlacement(t *testing.T, client *s3.Client, cells []string, stateDir str
 			t.Fatal(err)
 		}
 	}
-	_, release, err := useObjectBodies(client, db, bodyStaffOrg, cells, stateDir)
+}
+
+// Overlapping runtimes (the api and a receiving runtime): the first release and the close of
+// its caller's own tenancy handle leave the hook working for the one still running.
+func TestObjectBodiesOutliveAnOverlappingRelease(t *testing.T) {
+	client, err := s3.New(s3.Config{Endpoint: "https://s3.invalid", Bucket: "kypost-test", AccessKey: "k", SecretKey: "s"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(release)
-	return placeBodies(client, vol.DefaultAppPrefix, db, bodyStaffOrg, cells, stateDir)
+	cells := []string{"cell-a"}
+	stateDir := t.TempDir()
+	bodyOrgs(t, cells, stateDir)
+	own, err := tenancy.Open(stateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, first, err := useObjectBodies(client, bodyStaffOrg, cells, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, second, err := useObjectBodies(client, bodyStaffOrg, cells, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second()
+	first()
+	_ = own.Close()
+	if _, scope, err := placeBodies(client, vol.DefaultAppPrefix, placing.db, bodyStaffOrg, cells, stateDir)(bodyOwner(receivingOrgA)); err != nil || scope.Org != receivingOrgA {
+		t.Fatalf("placement after the first release: %+v %v", scope, err)
+	}
 }
 
 func bodyOwner(org string) mailbox.Owner {

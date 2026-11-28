@@ -227,7 +227,7 @@ func (r *receivingRuntime) placeBodies() error {
 	if err != nil {
 		return err
 	}
-	_, r.unplace, err = useObjectBodies(client, r.tenancy, staff, cells, r.stateDir)
+	_, r.unplace, err = useObjectBodies(client, staff, cells, r.stateDir)
 	return err
 }
 
