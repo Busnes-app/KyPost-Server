@@ -137,7 +137,7 @@ export function MailImport() {
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {mailboxes.length === 0 ? <p>Import is available for mailboxes KyPost hosts.</p> : <>
-      <p className="notice notice-warning">Imported mail is not scanned for spam, not run through your rules, and sends no notifications. Only import mail you trust. Import is unavailable while incoming encryption is on, because imported mail would be stored unencrypted.</p>
+      <p className="notice notice-warning">Imported mail is not scanned for spam, not run through your rules, and sends no notifications. Only import mail you trust. Imported mail is encrypted to your key like delivered mail, once you have one.</p>
       <fieldset className="config-card config-grid" disabled={busy || running}>
         <legend>Import from</legend>
         <label className="config-checkbox"><input type="radio" name="import-mode" checked={mode === "file"} onChange={() => setMode("file")} /><span>From a file</span></label>

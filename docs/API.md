@@ -184,7 +184,7 @@ PGP:
 
 PGP key discovery and device enrollment:
 
-- `GET|PUT /api/pgp/incoming` — caller-only incoming-encryption preference; PUT requires fresh account confirmation and enabling requires backup acknowledgment and current `expectedRevision`. Under a Required incoming policy, disabling is `409 {"code":"incoming_encryption_required"}`.
+- `GET|PUT /api/pgp/incoming` — caller-only incoming-encryption preference; PUT requires fresh account confirmation and enabling requires backup acknowledgment and current `expectedRevision`. Under a Required incoming policy, disabling is `409 {"code":"incoming_encryption_required"}`, as it is for a native account with a usable key, whose mail is sealed at import (GET reports `enabled: true, atImport: true`).
 - Encryption setup: while an account owes [first sign-in setup](E2E_PGP.md#first-sign-in-setup), mailbox routes and `/mcp` answer `403 {"error":"encryption_setup_required","message":…}` to its devices and agent tokens and to browser sessions signed in while it was owed. Native clients tell the user to finish setup on the web and stop syncing until a request succeeds.
 - `GET|PUT /api/pgp/discovery/settings`
 - `GET /api/pgp/discovery/suppressions` and `DELETE /api/pgp/discovery/suppressions/{email}`

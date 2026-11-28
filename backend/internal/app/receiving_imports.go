@@ -171,7 +171,9 @@ func (r *receivingRuntime) importObligation(ctx context.Context, holder string, 
 	if mailbox.ImportValid(d.Raw, receivingLimits.MessageBytes) != nil {
 		return true, r.holding.QuarantinePending(ctx, d.Gateway, d.ID)
 	}
-	if err := r.writeObligation(ctx, holder, d, m); err != nil {
+	if err := r.writeObligation(ctx, holder, d, m); errors.Is(err, mailbox.ErrSealTooLarge) {
+		return true, r.holding.QuarantinePending(ctx, d.Gateway, d.ID) // as importDeliveryTo does
+	} else if err != nil {
 		return true, err
 	}
 	return true, r.complete(ctx, d.Gateway, d.ID, d.Bindings)

@@ -24,6 +24,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/processor"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
@@ -209,6 +210,9 @@ type receivingRuntime struct {
 	// state is the install's state.db in multi mode only: the relay domain setting and
 	// the probe budget's windows (receiving_probe.go).
 	state *state.Store
+	// policy is state.db read-only, for the incoming encryption policy; nil (unreadable)
+	// counts as the default, required.
+	policy *state.Store
 }
 
 func (r *receivingRuntime) close() error {
@@ -218,6 +222,9 @@ func (r *receivingRuntime) close() error {
 	}
 	if r.state != nil {
 		err = errors.Join(err, r.state.Close())
+	}
+	if r.policy != nil {
+		err = errors.Join(err, r.policy.Close())
 	}
 	return err
 }
@@ -511,6 +518,11 @@ func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRunti
 		}
 		r.senders = ingress.TableSenders(r.tenancy)
 	}
+	if st, err := state.OpenReadOnly(r.stateDir); err == nil {
+		r.policy = st
+	}
+	// Every import below seals mail for owners with a usable key before it is stored.
+	mailbox.SetSeal(processor.IncomingSeal(r.accounts, r.stateDir, r.policy))
 	return r, nil
 }
 
@@ -958,6 +970,14 @@ func (r *receivingRuntime) importDeliveryTo(ctx context.Context, id, folder stri
 		return ingress.ErrRoute
 	}
 	err = r.importFrozen(ctx, d, folder)
+	// Too large to store encrypted: keep it in the buffer, quarantined, never store it in
+	// plaintext. An administrator discards it, or releases it once the limit allows.
+	if errors.Is(err, mailbox.ErrSealTooLarge) && d.State == "pending" {
+		if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
+			return err
+		}
+		return ingress.ErrRoute
+	}
 	if err != nil && d.State == "pending" && !errors.Is(err, ingress.ErrRoute) && !errors.Is(err, sso.ErrNativeRestoreHold) {
 		if stale := r.quarantineRetired(ctx, d); stale != nil {
 			return stale

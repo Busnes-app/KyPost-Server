@@ -128,3 +128,15 @@ func receivingFreeSpace(dir string, required uint64) error {
 	}
 	return nil
 }
+
+// scrub folds the WAL into the file and truncates it after a payload is archived, so
+// with secure_delete the plaintext bytes are zeroed in ingress.db and gone from the WAL.
+// Best effort: a busy reader or missing headroom leaves it for the next scrub, and a
+// failure never undoes the committed archive. Postgres has no equivalent (dead tuples
+// stay until VACUUM reuses them; E2E_PGP.md says so).
+func (s *Store) scrub(ctx context.Context) {
+	if s.postgres || s.checkpointHeadroom() != nil {
+		return
+	}
+	_, _ = s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+}

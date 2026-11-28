@@ -187,3 +187,15 @@ func (s backupSettingsTx) Delete(k string) error {
 	_, err := s.tx.Exec("DELETE FROM meta WHERE key = ?", k)
 	return err
 }
+
+// EncryptionPolicySetting is the meta key of Admin → Server → Security's encryption
+// policy, JSON {"key":..., "incoming":...} written by the api.
+const EncryptionPolicySetting = "encryption_policy"
+
+// IncomingEncryptionOff reports whether the administrator turned incoming encryption
+// off. A missing or unreadable policy is the default, required: never off.
+func (s *Store) IncomingEncryptionOff() bool {
+	raw, err := s.Setting(EncryptionPolicySetting)
+	var p struct{ Key, Incoming string }
+	return err == nil && json.Unmarshal([]byte(raw), &p) == nil && p.Incoming == "off" && (p.Key == "required" || p.Key == "optional")
+}
