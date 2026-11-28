@@ -81,7 +81,7 @@ func TestMigrateLegacySingleUserDataTableMode(t *testing.T) {
 	}
 }
 
-// K PR 7: newAPIServer wires UseTenancy when d.tenancy is set (StoragePoolCheck enforces
+// Multi-tenant runtime wiring: newAPIServer wires UseTenancy when d.tenancy is set (StoragePoolCheck enforces
 // org grants and exempts the staff org) and leaves single-tenant mode a no-op when nil.
 func TestNewAPIServerTenancyAndOrgPoolCheck(t *testing.T) {
 	d := newGracefulShutdownTestDeps(t)

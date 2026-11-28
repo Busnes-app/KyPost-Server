@@ -7,7 +7,7 @@ opt-in migration ("Self-hosted multi-host"), and multi mode runs in several regi
 ("Regions"). The rest are approved as recommended ("Open questions").
 Revised 2026-11-23 with the owner's object-storage decision, which overturns open question 2 for
 message bodies ("Object storage for message bodies", MH11). Amended 2026-11-27 ("MH11 object
-storage, amended"): MH11 is now a K PR 7 prerequisite, with its configuration, key layout and
+storage, amended"): MH11 is now a prerequisite of K's multi-tenant runtime wiring, with its configuration, key layout and
 proofs settled.
 
 **Owner decision, 2026-11-22: multi-tenant needs multi-server.** A multi-tenant install
@@ -73,9 +73,9 @@ targets in a migrated install. Org, region and receiving-tier rules stay multi-o
   cell. Only routing crosses regions (MH9, MH10).
 - **Every hop is encrypted** in multi mode and in a migrated install (OQ4 as answered; "Encryption
   in transit").
-- **K PR 7 must not accept `multi` until multi-host works.** This note's PRs MH1–MH7, MH9 and
+- **No build may accept `multi` until multi-host works.** This note's PRs MH1–MH7, MH9 and
   MH11 (object storage, amended 2026-11-27) come before it, as do RX PRs 1–5 (per-org staff step-up, the other new gate, merged in #703). K's
-  "Phased build plan" holds the full gate.
+  "The hosted launch gate" holds what is left.
 
 ## What binds a replica to one host today
 
@@ -192,7 +192,7 @@ The file names are the ones `TestEveryStoreIsClassified` lists (`tenancy/invento
 | `receiving.conf` | `api/native_recovery_handlers.go:393` | P | absent on replicas (unverified) | In multi mode an MX host renders its own profile from the replica's `config` answer (RX PR 2 as built, "`config`"), on the MX host's own disk. Whether a multi replica still writes `receiving.conf` is unverified. It is not on the per-host pattern list, so the startup assertion and the volume-free test both fail if a replica writes it. The fix is then to stop writing it in multi mode. |
 | `quota-<mailbox>` | `app/receiving.go:63` | D | fence (lock only, no data) | See the lock table above. |
 | `sender-blocks.json`, `sender-evidence.json`, `sender-evidence.damaged.json` | `ingress/blocks.go`, `ingress/autoblocks.go` | – | absent (already PG tables) | RX PR 3 |
-| Per-user `config.yaml` (settings, signatures, masked records) | `config/config.go:414-416` | D | `documents` | M D8 moves the masked records into their own table in hosted mode (K PR 7). The rest of the settings become one document per user. |
+| Per-user `config.yaml` (settings, signatures, masked records) | `config/config.go:414-416` | D | `documents` | M D8 moves the masked records into their own table in hosted mode (K, "The hosted launch gate"). The rest of the settings become one document per user. |
 | Per-user `imap-config.json` | `config/config.go:407` | – | absent | K6: there is no external-IMAP source in multi mode. |
 | Per-user `tuning.md` | `config/config.go:411` | D | `documents` | |
 | Per-user `carddav-auth.json`, `carddav-client.json` | `api/server_userscope.go:246-255` | D | `documents` | `carddav-auth.json` is re-read on every use (`docs/RUNNING.md:286`). That becomes one indexed row read. |
@@ -293,7 +293,7 @@ documents(root TEXT, path TEXT, owner TEXT, revision BIGINT, body BYTEA, updated
   can be lost. The purge's final check also lists `documents WHERE owner IN` the snapshot, and an
   empty list is required before the purge is done. The guard needs the `accounts` table, so it
   ships in MH3. Between MH2 and MH3, only the final check guards this. That is safe, because
-  multi mode cannot start before MH7 (K PR 7's gate), and MH8's migration needs MH1–MH7.
+  multi mode cannot start before MH7 (K's launch gate), and MH8's migration needs MH1–MH7.
 - **Expired rows.** The elected `api-sweepers` worker already sweeps expired pickup links
   (`docs/RUNNING.md:280`, "pickup and contact sweeps"). In multi mode it deletes their rows.
 - **Backups.** `tenancy.db` joins the backup set in K PR 6 (K "PR 1 as built"), and MH2 adds
@@ -531,7 +531,7 @@ Multi-host does not change the arithmetic, but hosted mode makes N larger and th
 **Rule for per-org quotas** (K "Replicas", "Per-replica meters"): a per-org quota reads PostgreSQL
 only. As built, it reads `send_ledger` (`sendPerHour`, `recipientsPerDay`), the ledger and mailbox
 counts (`mailboxes`), and mailbox usage (`mailboxBytes`, `storageBytes`) (K "PR 5 as built",
-"Quotas"). M's masked quotas (K PR 7) and the per-org import and export lease (MH6) must do the
+"Quotas"). M's masked quotas (K, "The hosted launch gate") and the per-org import and export lease (MH6) must do the
 same. `TestOrgQuotas` gains a two-replica variant on the PostgreSQL job that runs the same caps
 through two servers sharing one database and asserts the total.
 
@@ -677,8 +677,8 @@ section is B.
   region. Its addresses carry their region:
   - M D3's relay local part is `adjective.animal.` plus 6 random base32 characters. In multi
     mode a seventh character, placed right after `adjective.animal.` and before the 6, is the cell's code from a fixed table (base32, so at most
-    32 regions). The 6 random characters stay, so the guessing space is unchanged. K PR 7
-    builds D3 with this from the first hosted masked address, so no address lacks a region.
+    32 regions). The 6 random characters stay, so the guessing space is unchanged. K's runtime wiring
+    builds D3 with this from the first hosted masked address (K, "Multi-tenant runtime wiring as built"), so no address lacks a region.
   - A cell allocates only under its own code, so two cells never allocate one address, and each
     cell's tombstones cover only its own code.
   - The MX helper reads the code and forwards `bind` and `accept` to that cell's receiving
@@ -755,7 +755,7 @@ its residency zone. What leaves:
   without that row keeps its files, its `flock`s, `ErrHost`, the volume IDs and lazy key
   creation. It never creates `volumes.db` or `tenancy.db` (K PR 1).
 - **Multi installs: none exist.** Startup refuses `multi` (K PR 1 as built, "K2's other
-  prerequisites") and keeps refusing it until K PR 7. The amendment below moves that to after MH7
+  prerequisites") and release builds keep refusing it (K, "The hosted launch gate"). The amendment below moves that to after MH7
   and MH9. A multi install starts empty (K2), on PostgreSQL, with `documents` and `accounts` from
   its first start. There is nothing to convert. Test installs built before MH7 are recreated.
 
@@ -1086,22 +1086,21 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
      temporary roots and calls `replica.Start` with its own `BootID` (the field is injectable,
      `replica/topology.go:45`). It runs `TestTwoReplicasSeeOneSuspension`, a
      sign-in on A followed by a request on B, and a fence and role handover when A is killed.
-   The **container** two-host harness needs a startable multi mode, so it is K PR 7's: two
+   The **container** two-host harness needs a startable multi mode, so it is in K's "The hosted launch gate": two
    containers with separate volumes and different kernels' boot IDs.
 8. **MH8: self-hosted multi-host.** `migrate-volumes-to-postgres` and `migrate-volumes-to-files`
    ("Self-hosted multi-host"), the inventory targets for the rows multi mode lacks, the refusal
    without a KyRecovery pin, the completion mark and the orphaned-store refusal at start, a
    restore dropping a `volumes.db` its capsule lacks, and the operator guide in `docs/RUNNING.md` (a new "Replicas on
-   several hosts (self-hosted)" section) and `replica/AGENTS.md`. Needs MH1–MH7. It is not a gate
-   for K PR 7.
+   several hosts (self-hosted)" section) and `replica/AGENTS.md`. Needs MH1–MH7. It is not a launch gate.
    Tests: the list under "Proof that an un-migrated install is untouched", plus a container run of
    a migrated install as two containers with separate volumes on one database. A single install
-   can start, so this harness does not wait for K PR 7.
+   can start, so this harness does not wait for the launch gate.
 9. **MH9: cells.** `KYPOST_REGION` recorded in `meta` with K1's record and refused in single
    mode; the `orgs` poller serving only the cell's own orgs and keeping other regions' orgs as foreign ID and region only; sync events for a foreign org permanently
    refused without a write; the region code table that names each cell's masked relay character;
-   and the disaster-recovery runbook. MH9 does not allocate masked addresses: K PR 7 builds D3
-   and uses this table, so MH9 merges before K PR 7 with no circular dependency. Needs T's `region` field on orgs and on suite
+   and the disaster-recovery runbook. MH9 does not allocate masked addresses: K's runtime wiring builds D3
+   and uses this table, so MH9 merged first with no circular dependency. Needs T's `region` field on orgs and on suite
    email domains.
    Tests:
    - a replica with another region, or none, refused; single mode refusing `KYPOST_REGION`;
@@ -1111,11 +1110,11 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
      written;
    - a sync event for a not-yet-cached org refused as temporary, then accepted after the poll;
    - the code table: one code per region, each a single base32 character, no two regions sharing
-     one (masked allocation under the cell's code is K PR 7's test);
+     one (masked allocation under the cell's code is the runtime wiring's test, `TestMaskedCreateUsesTheOrgsCellCode`);
    - the upgrade test unchanged.
 10. **MH10: cross-region relay routing.** The MX helper's endpoint list per region code, gateway
     enrolment per cell, and an unknown code sent to the MX host's own cell. Needed before a second
-    region opens, not before K PR 7.
+    region opens (built, #752).
     Tests: an address of cell B received at cell A's MX host lands in B; one message to
     recipients in A and B lands in both before `250`, and a failure in B answers `451`; an
     unknown code is refused and counted like an unknown address; a cell that does not pin the MX
@@ -1123,8 +1122,7 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
 
 11. **MH11: object storage for message bodies (multi only).** `vol.Object`, the `bodies` side
     table and its usage triggers, one body loader for every `raw` read, the orphan sweep, the
-    purge's prefix delete and check, `body_tombstones` and the late delete, and the start refusal for missing or wrong credentials. **A K
-    PR 7 prerequisite** (owner decision of 2026-11-23: no volume fallback; amended 2026-11-27,
+    purge's prefix delete and check, `body_tombstones` and the late delete, and the start refusal for missing or wrong credentials. **A prerequisite of K's runtime wiring** (owner decision of 2026-11-23: no volume fallback; amended 2026-11-27,
     "MH11 object storage, amended", which overrides this item where they differ).
     Tests: a body over the threshold lands in the bucket sealed and reads back; under it stays in
     `raw`; `usage` is equal either way; a conditional put that loses a race is refused; a tampered,
@@ -1144,12 +1142,12 @@ practice. MH8 (self-hosted migration), MH9 (cells) and MH10 (cross-region relay 
 - RX PR 4 is built (#694). Its purge fence is the quota lock and a re-read of the org under it,
   as this note assumed. That is safe on one host, and multi mode cannot start yet. MH4 adds the
   catalog tombstone and moves RX's lease to database time. Both must land before multi starts
-  (K PR 7's gate).
+  (K's launch gate).
 - RX PR 5's hosted profile and MH7's multi-host profile are one Compose profile. Whichever lands
   second extends the first.
-- **K PR 7 accepts `multi` only after MH1–MH7, MH9 and RX PRs 1–5,** and per-org staff step-up,
-  which has merged (#703; K "PR 4 as built", owner answer 5). K's "Phased build plan" is the
-  full list. MH9 must come first because
+- **No build accepts `multi` before MH1–MH7, MH9 and RX PRs 1–5,** and per-org staff step-up,
+  which has merged (#703; K "PR 4 as built", owner answer 5). K's "The hosted launch gate" is
+  what is left. MH9 must come first because
   the region record and the masked region character must exist from the first multi start. It also adds MH7's prerequisites
   to its K2 checks (PostgreSQL, `sslmode=verify-full` on a non-loopback host, a provisioned
   `SECRET_DIR`).
@@ -1192,7 +1190,7 @@ Verification is recorded at the implementation PR head; no full-check or release
 
 | Attacker or fault | Goal or effect | Defence |
 |---|---|---|
-| Network attacker between a replica host and PostgreSQL | Read or change every org's data in transit | Today's Compose URL uses `sslmode=disable` on one Docker network (`docs/RUNNING.md:313`), and the code sets no TLS mode of its own (unverified beyond a search of `dbbackend` and `config`). Multi mode refuses a database URL whose `sslmode` is not `verify-full` unless the host is loopback (MH7, and K PR 7's K2 check). |
+| Network attacker between a replica host and PostgreSQL | Read or change every org's data in transit | Today's Compose URL uses `sslmode=disable` on one Docker network (`docs/RUNNING.md:313`), and the code sets no TLS mode of its own (unverified beyond a search of `dbbackend` and `config`). Multi mode refuses a database URL whose `sslmode` is not `verify-full` unless the host is loopback (MH7, and the multi start's K2 check). |
 | A rogue or misconfigured host joining | Serve with other keys, settings or mode | Joining needs the database credentials. Then K1's tenancy record, R's settings fingerprint and MH5's key-set digest each refuse a mismatch before anything listens. |
 | Anyone holding a database copy, a dump or a capsule's `volumes.db`, without `SECRET_DIR` | Read members' contacts and other per-user documents | Every D row's body is sealed under its org's data key, and the data keys are wrapped under `documents.key` (Per-org encryption at rest). Bookkeeping columns stay readable: paths, owners and revisions. |
 | A compromised replica host | Read every org | Unchanged in kind: any replica holds every key and the database, today and in multi mode (K residual risks). More hosts mean more such machines. Keys are mounted read-only from the secret store, so a host compromise cannot plant a new key for the others to accept. |
@@ -1279,7 +1277,7 @@ Verification is recorded at the implementation PR head; no full-check or release
 6. **Which per-replica meters to share.** *Approved as recommended (2026-11-22):* the five "shared
    window" rows (nine meters), MH6.
 7. **One table per store instead of `documents`?** *Approved as recommended (2026-11-22):* one
-   `documents` table, except `users.json` (MH3) and M's masked records (K PR 7).
+   `documents` table, except `users.json` (MH3) and M's masked records (K, "The hosted launch gate").
 8. **Region.** *Overturned (2026-11-22): multi-region is required.* The recommendation was one
    region. Redesigned as cells, one home region per org ("Regions"): every fence and CAS stays in
    one region, and only routing crosses regions. New PRs MH9 and MH10.
@@ -1848,7 +1846,7 @@ holder took over write nothing) and `TestCreateAutoRecordsOneProbeAcrossHandles`
 
 ## MH7 start checks and transport as built (2026-11-25)
 
-Startup still refuses `multi` (K PR 7), and no migration selects table mode yet (MH8), so
+Release builds still refuse `multi` (K, "The hosted launch gate"), and no migration selects table mode yet (MH8), so
 these checks run only in tests. Single mode keeps every check, file and refusal byte for
 byte. Paths are under `backend/internal/`.
 
@@ -1876,7 +1874,7 @@ byte. Paths are under `backend/internal/`.
     single install only, since bootstrap refuses multi.
 
   Each of these must move or be refused before multi starts. That is MH4 or MH8 work, and
-  K PR 7's gate.
+  K's launch gate.
 - **The volume-free test.** `api.TestTableModeWritesNothingOnTheHostsDisk` (PostgreSQL) mounts
   table documents on the cross-org fixture and runs every org-bound route's cases:
   contacts, groups, rules, settings, masked addresses, send-as, PGP, devices, agent tokens
@@ -1969,8 +1967,8 @@ deployment serves a list of them, `KY_CELLS`, instead of one `KYPOST_REGION`. Wh
   object storage yet: MH11 builds `vol.Object` with this layout, from `tenancy.Org.HomeRegion`.
 - **Not built here.** The masked relay region code table and the disaster-recovery runbook
   (built next: "MH9 region codes and recovery as built"), MH10's routing, and
-  wiring `Server.cells` from `KY_CELLS` at a multi start, which K PR 7 does with the rest of the
-  multi wiring (`Server.tenancy` and `staffOrg` are test-only until then).
+  wiring `Server.cells` from `KY_CELLS` at a multi start, which K's runtime wiring does with the
+  rest (`Server.UseTenancy`; K, "Multi-tenant runtime wiring as built").
 - **Tests.** `config` `TestCells`; `replica` `TestCellsAreSharedOnlyWhenSet`,
   `TestReplicaWithOtherCellsRefused` (PostgreSQL); `tenancy` `TestForeignOrg`; `api`
   `TestCellsServeOnlyTheirOwnOrgs`: two in-process hosts, one per cell, poll one KyIdentity, and
@@ -1993,16 +1991,16 @@ The two MH9 rows left by "MH9 cells as built".
   - **A multi start needs a code for every cell in `KY_CELLS`.** `app.Run` checks it
     (`tenancy.CheckRelayCodes`) right after `CheckEnv`, before any store opens, so a release build
     still refuses with the gate's message first (`check-release-image.sh`). In the test build
-    `TestRunRefusesMultiTenancy` expects `ErrNoRelayCode`. K PR 7 therefore never allocates a relay
-    address without a code.
+    `TestRunRefusesMultiTenancy` expects `ErrNoRelayCode`. Masked allocation therefore never makes a relay
+    address without a code (`maskedRelayCode` refuses one too).
   - **The reverse lookup** (code to cell, with an unknown code going to the MX host's own cell) is
     MH10's: `tenancy.RelayCell` ("MH10 cross-region relay routing as built").
 - **No cell has a code yet: owner decision.** No production cell is configured or documented. The
   only cells anywhere are the e2e suite's `e2e-1` and `e2e-2` (KyCalendar
   `e2e/suite/compose/compose.yml`) and spec examples. Until the owner names the launch cells and
-  their codes, every multi start refuses, `kye2e` test builds included. The suite's KyPost rows
-  wait for K PR 7 anyway. Whether the e2e cells take two of the 32 codes permanently is part of
-  that decision.
+  their codes, every release multi start refuses. The suite's e2e cells have throwaway test
+  codes in kye2e builds only (owner, 2026-11-28: `7` and `6`, `tenancy/relaycodes_kye2e.go`),
+  never in the live table; they take none of the 32 permanently.
 - **Runbook.** `docs/CELL-RECOVERY.md`: region-code rules and opening a cell, and regional disaster
   recovery under "Failover and split brain between regions" option 2, with capsules as the floor.
   The order is fixed: record the loss window, fence the old cell, promote, check the promoted
@@ -2012,7 +2010,7 @@ The two MH9 rows left by "MH9 cells as built".
     containers. A PostgreSQL 18 primary and a `pg_basebackup -R` standby, and a single-mode KyPost
     server that writes its record. Then fence, promote and check the record. The same keys start;
     another `totp-secret.key` is refused. The old primary is rebuilt as a standby.
-  - The multi-mode start (step 6 with `KY_CELLS`) is unproven until K PR 7.
+  - The multi-mode start (step 6 with `KY_CELLS`) is unproven until a build may start multi (K, "The hosted launch gate").
 
 ## MH10 cross-region relay routing as built (2026-11-26)
 
@@ -2051,7 +2049,7 @@ The two MH9 rows left by "MH9 cells as built".
     is never contacted.
   - `TestCrossCellRelayUnpinnedGatewayRefused`.
   - `TestCrossCellRemoteFile`: `held`, and the file's refusals.
-- **Not here:** masked allocation under a code (K PR 7), assigning codes (owner), and object
+- **Not here:** masked allocation under a code (K's runtime wiring, since built), assigning codes (owner), and object
   storage (MH11). Multi startup stays refused in release builds.
 
 ## MH11 object storage, amended (2026-11-27)
@@ -2169,7 +2167,7 @@ so a single-tenant record stays byte for byte. At a multi start, a probe writes,
 `If-None-Match` refuses the start. Credentials are never logged, never in a capsule and never in
 an error.
 
-**Release gate.** MH11 is a K PR 7 prerequisite. Release builds keep refusing `multi`.
+**Release gate.** MH11 is a prerequisite of K's runtime wiring. Release builds keep refusing `multi`.
 
 **Tests MH11 must have**, each failing with its safety line reverted, against SeaweedFS in CI
 and locally, on SQLite and PostgreSQL where the store runs on both:
@@ -2212,13 +2210,13 @@ Built from the amendment above, on its defaults (threshold 128 KiB, body retenti
   `applysetup.Secret`). `Tenancy` refuses any of them in single mode. `CheckEnv` refuses a
   multi start without them. A multi start probes the bucket after the relay-code check
   (`app/objects.go`). The `KYPOST_S3_*` settings join `replica.MultiShared`.
-- **Not built here: K PR 7's multi wiring.** At a multi start it must set the
-  `objectBodies` hook (exporting an installer with its caller), with each mailbox's cell and org from `tenancy` and the org's
-  `doc_keys` data key, created under the owner guard as for documents. It must also set
-  `Server.objects` and run `SweepBodies` for each mailbox on the elected `api-sweepers`
-  worker. Until then nothing in a release installs object storage. Release builds keep
-  refusing `multi`. The kye2e harness, pinned at #744, will need `KYPOST_S3_*` and a bucket
-  when it is repinned past this PR.
+- **Wired at a multi start** (tenancy spec, "Multi-tenant runtime wiring as built"):
+  `app.useObjectBodies` installs the hook (`mailbox.SetObjectBodies`) with each mailbox's cell
+  and org from `tenancy` and the org's `doc_keys` data key, created under the owner guard
+  (`vol.OrgKey`); `Server.UseObjects` sets `Server.objects`; `Server.StartBodySweeper` runs
+  `SweepBodies` for each mailbox on the elected `api-sweepers` worker. Release builds keep
+  refusing `multi`, so nothing in a release installs object storage. The kye2e harness, pinned
+  at #744, will need `KYPOST_S3_*` and a bucket when it is repinned past this PR.
 - **Tests**, against SeaweedFS 4.52 (`scripts/ci-start-s3.sh`, the image KyDrive pins), in the
   SQLite and PostgreSQL CI legs:
   - `vol`: `TestObjectSealsBodies`, `TestObjectRefusesCopiedOrTamperedCiphertext`,

@@ -1,6 +1,6 @@
 # KyPost tenancy: single-tenant and multi-tenant (SaaS), design
 
-Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PRs 6a and 6b are built ("PR 1 as built" to "PR 6 as built"), and so is KyPost's side of the org storage pool ("Org storage pool as built"); the rest is not. Revised the same day with the
+Date: 2026-11-20. Status: proposed design; build plan PRs 1 to 5 and PRs 6a and 6b are built ("PR 1 as built" to "PR 6 as built"), and so are KyPost's side of the org storage pool ("Org storage pool as built") and step 7's runtime wiring ("Multi-tenant runtime wiring as built"); the rest is "The hosted launch gate". Revised the same day with the
 owner's answers to open questions 1, 9 and 11, the Delete everything button, and a recommended
 receiving tier for open question 3. Revised 2026-11-21 with the owner's answers to open questions 3
 (the receiving tier gets its own spec, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`) and 4 (option (a) approved).
@@ -549,7 +549,7 @@ isolation, tenancy, reliability, security and launch prerequisites, KyPost's nex
 product priority is **self-service random per-site addresses, disable controls and
 protected replies**. Administrator-managed aliases alone do not satisfy it. This
 planning update changes no startup gate, frozen verification input or ownership.
-The hosted implementation stays in PR 7/M's existing roadmap after the required MH,
+The hosted implementation stays in step 7 ("The hosted launch gate") and M's roadmap after the required MH,
 region, receiving and mandatory object-storage gates; no separate builder is created.
 
 The suite research `zentrimail-site/docs/research/competitor-product-gaps-2026-11-23.md`
@@ -611,12 +611,12 @@ when a key is missing. Lines are at `origin/main` `e46f01c2`.
 
 | Limit | Today, and where it stays | Per-org keys in `quotas_json` | A missing key |
 |---|---|---|---|
-| Sending, per account | 60 messages an hour and 1000 recipients a day, install-wide (`config/config.go:573`), with an optional per-account override (`users.User.SendQuota`, `users/users.go:65-66`; `sendQuotaFor`, `api/send_quota.go:26`). Kept in both modes. | `memberSendPerHour`, `memberRecipientsPerDay`: the per-account limit for that org's members, in place of the install default. A per-account override set by staff still wins. Not built (PR 7). | The install default |
+| Sending, per account | 60 messages an hour and 1000 recipients a day, install-wide (`config/config.go:573`), with an optional per-account override (`users.User.SendQuota`, `users/users.go:65-66`; `sendQuotaFor`, `api/send_quota.go:26`). Kept in both modes. | `memberSendPerHour`, `memberRecipientsPerDay`: the per-account limit for that org's members, in place of the install default. A per-account override set by staff still wins. Not built (the hosted launch gate). | The install default |
 | Sending, whole org | None | `sendPerHour`, `recipientsPerDay`, summed from `send_ledger` through `user_orgs` (built in PR 5, `chargeOrgSend`, `api/tenancy_lifecycle.go:173`) | No org cap (`:179-181`) |
-| Masked creation | Per user, 100 live and 20 a day (`api/masked_addresses.go:31-37`). Kept as the single-tenant limit and the hosted default. | M D7: `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`, plus M's platform-wide circuit breaker. PR 7. | 100 and 20 per user; no org cap |
+| Masked creation | Per user, 100 live and 20 a day (`api/masked_addresses.go:31-37`). Kept as the single-tenant limit and the hosted default. | M D7: `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`, plus M's platform-wide circuit breaker. Not built (the hosted launch gate). | 100 and 20 per user; no org cap |
 | Mailbox storage | Per mailbox, the install's `KYPOST_MAILBOX_QUOTA_BYTES`, 256 MiB to 1 TiB (`config/native_mail.go:33-52`). Kept, and in multi mode it is the **ceiling**: receiving checks the mailbox's own limit first (`a.Limits`, `app/receiving.go:82`), then the org's (`:85`). That `a.Limits` always carries the install quota, which `app/app.go:159-163` reads at start, is unverified. | **The org's storage pool, from KyIdentity** (owner decision of 2026-11-23 on storage, "Quotas"): the number the customer buys. Under it, two optional safety keys stay: `mailboxBytes` per mailbox and `storageBytes`, KyPost's own share across the org, counting mail held for import (built in PR 5, `orgRoom`, `app/receiving.go:98`). Billing does not set them for a plan. No org value can raise a mailbox past the install's. That ceiling bounds one mailbox, not the pool, so a hosted install sets `KYPOST_MAILBOX_QUOTA_BYTES` to the largest single mailbox it allows, at most 1 TiB. A larger pool (Business from about 35 seats at 30 GB each) stays usable across the team's mailboxes, but no one mailbox grows past the ceiling. That is a per-mailbox safety limit the plan terms must state. | The pool has its own default ("Quotas"). A missing safety key: the install quota only. |
 | Extra mailboxes | Administrator's choice | `mailboxes` (built in PR 5, `orgMailboxRoom`, `api/tenancy_lifecycle.go:220`) | No cap |
-| Import and export | 2 at a time per process and 1 per user (`api/mail_import.go:34-35`, `api/mail_export.go:30-31`). Kept. | `transfersPerOrg`: imports and exports one org may run at once. Not built (PR 7, with the receiving tier's per-mailbox leases). | 1 per org, so one org cannot hold a server's slots |
+| Import and export | 2 at a time per process and 1 per user (`api/mail_import.go:34-35`, `api/mail_export.go:30-31`). Kept. | `transfersPerOrg`: imports and exports one org may run at once. Not built (the hosted launch gate). | 1 per org, so one org cannot hold a server's slots |
 | Seats | Not KyPost's | None: KyIdentity's `max_seats` (Plans and orgs) | — |
 | Inbound connections | Maddy per IP and install-wide (`app/receiving_config.go:184-189`) | None. Recipients are per address, not per org, and M adds a refused-recipient budget per source. | — |
 | Sender blocks | Install-wide, manual and automatic (`ingress/blocks.go:22-23`, `ingress/autoblocks.go:36-57`) | None. Platform-wide, staff only, no per-org blocks in v1 (no customer administrators). | — |
@@ -624,7 +624,7 @@ when a key is missing. Lines are at `origin/main` `e46f01c2`.
 The quota names are proposals for KyIdentity's opaque `quotas_json` (T "Entitlements"). The
 billing service sets them per plan, and staff may set them for one org. Parsing is PR 5's
 (`parseQuotas`, `tenancy/orgs.go:111`): a known key that is not a whole non-negative number reads as
-0, which refuses new mail and creations, never existing data. PR 7 adds the new keys to
+0, which refuses new mail and creations, never existing data. The hosted launch gate adds the new keys to
 `tenancy.Quotas` (`tenancy/orgs.go:33-38`) with the same rule.
 
 **Storage is pooled in every plan** (owner decision, 2026-11-23; this answers open question 13).
@@ -899,8 +899,8 @@ limits"), and names the pool, not the mailbox, as what is full.
 *Failure defaults.*
 - **No pool in an org's entry** (KyIdentity not upgraded, or a malformed value): the pool reads
   as 0, the same rule as a malformed key (`parseQuotas`). Nothing new is accepted, receiving
-  answers the temporary `452` at once with no grace, and no data is lost. The pool is a launch requirement, so K PR 7
-  must not accept `multi` until KyIdentity publishes it and KyPost's checks are built (open
+  answers the temporary `452` at once with no grace, and no data is lost. The pool is a launch requirement, so no build
+  may accept `multi` until KyIdentity publishes it and KyPost's checks are built (open
   question 15).
 - **A stale cache** keeps the last known pool and usage, as receiving keeps the last known
   status (open question 5). Other apps' growth since their last report can then overshoot the
@@ -1014,7 +1014,7 @@ Tenancy fits on top:
 ## Phased build plan
 
 Each PR ships on its own, with single-tenant behaviour unchanged. `KYPOST_TENANCY=multi` is
-refused at startup until PR 7. Until then multi-mode code runs only in tests, and in the suite
+refused at startup in every release build ("The hosted launch gate"). Multi-mode code runs only in tests, and in the suite
 end-to-end run (KyCalendar `docs/superpowers/specs/2026-11-24-multi-tenant-e2e-design.md`), which
 builds KyPost with `-tags kye2e`. Only that tag lifts the refusal ("The `kye2e` gate as built",
 below); every release build still refuses. PR 2 onward needed
@@ -1025,8 +1025,8 @@ wait, each on a KyIdentity change listed under the plan:
 - PR 6's household path needs the `export_only` claim, and KyPost admitting only the export
   routes under it (open question 4 (a), approved).
 - PR 6's restore release needs the erased-subject list.
-- PR 7 needs the mailbox address field, and also the receiving tier (open question 3, specified in
-  `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Its per-mailbox import leases are part of that tier. PR 7 also
+- Step 7 needs the mailbox address field, and also the receiving tier (open question 3, specified in
+  `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Its per-mailbox import leases are part of that tier. Step 7 also
   needs multi-host replicas, PRs MH1–MH7 of
   `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md` (amendment, 2026-11-22, below),
   and MH9, the cell record (second amendment, below). MH9 is built as KyIdentity's Cells (its
@@ -1065,13 +1065,13 @@ wait, each on a KyIdentity change listed under the plan:
    including after a restore with the same key; the Delete everything tests.
 7. **Hosted mail.** Allocation from KyIdentity's mailbox address field, limited to the suite email
    domains (Mail), M's masked changes 1–7, per-org abuse limits, and the hosted receiving tier
-   (open question 3; built as that spec's PRs 1–5, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Startup then accepts `multi`. Tests: M's hosted verification list, and a native-mail harness run
+   (open question 3; built as that spec's PRs 1–5, `docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md`). Its runtime half is built ("Multi-tenant runtime wiring as built"); startup accepts `multi` only once "The hosted launch gate" is met. Tests: M's hosted verification list, and a native-mail harness run
    (`docs/DEVELOPMENT.md`) against KyIdentity in multi mode.
 
-**Amendment, 2026-11-22 (owner decision: multi-tenant needs multi-server).** PR 7 must not
+**Amendment, 2026-11-22 (owner decision: multi-tenant needs multi-server).** No build may
 accept `multi` until multi-host works. Startup keeps refusing `multi` until **all** of MH1–MH7
 (`docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`, "Phased build plan") and RX
-PRs 1–5 have merged. Where it accepts `multi`, PR 7 adds MH's prerequisites to the K2 checks:
+PRs 1–5 have merged. Where it accepts `multi`, the start adds MH's prerequisites to the K2 checks:
 `sslmode=verify-full` for a database that is not on loopback, and a provisioned, complete
 `SECRET_DIR` (MH5). It also adds the container two-host harness, two containers with separate volumes on one database, which needs a startable multi mode. MH7 has only the in-process two-host test. MH sits against this plan as follows:
 - MH1 can start now.
@@ -1082,21 +1082,21 @@ PRs 1–5 have merged. Where it accepts `multi`, PR 7 adds MH's prerequisites to
   yet (MH inventory).
 
 **Second amendment, 2026-11-22 (owner answers to MH's open questions).**
-- **Multi-region is required.** PR 7 accepts `multi` only after MH9 as well: `KYPOST_REGION`
+- **Multi-region is required.** A start accepts `multi` only after MH9 as well: `KYPOST_REGION`
   recorded with K1's `meta` record from the first multi start, the `orgs` poller serving only
   the cell's own orgs (other regions' orgs kept as foreign ID and region only), and sync events
   for a foreign org refused permanently without a write (an org the poll has not returned yet
-  gets a temporary refusal until the next poll). PR 7
+  gets a temporary refusal until the next poll). The runtime wiring
   builds M's D3 relay local part with MH9's region character, so every hosted masked address
-  carries its region from the first one. PR 7 owns that test: masked allocation only under the cell's code, with the
+  carries its region from the first one. It owns that test (`TestMaskedCreateUsesTheOrgsCellCode`): masked allocation only under the cell's code, with the
   code outside the 6 random characters. MH10 (cross-region relay routing on the MX hosts) must
-  merge before a second region opens, not before PR 7.
+  merge before a second region opens (it has: #752).
 - **Self-hosted multi-host is opt-in.** MH8 (`migrate-volumes-to-postgres` and its reverse) is not
-  a gate for PR 7. Every MH PR from MH2 on selects its tables by table mode (multi, or a migrated
+  a gate for step 7. Every MH PR from MH2 on selects its tables by table mode (multi, or a migrated
   single install), and the single-tenant upgrade test asserts that an un-migrated install has no
   `volumes.db` and no `volume_stores` row. MH2 first moves `documents` from `tenancy.db` into
   `volumes.db`, so `tenancy.db` keeps meaning multi mode.
-- **Encryption on every hop.** PR 7's K2 checks also include every refusal in MH's "Encryption in
+- **Encryption on every hop.** The multi start's K2 checks also include every refusal in MH's "Encryption in
   transit" table, which is the authoritative list. Today that is: a plain HTTP listener off
   loopback; `sslmode=verify-full` on the database, PgBouncer and replication connections; and TLS
   to KyIdentity, the peers, KyRecovery, the push relays, Ollama and the outbound SMTP relay,
@@ -1182,8 +1182,8 @@ the first, unworkable as written. References are to the PR's own head.
   `receiving/ingress.db` (`tenancy.Empty`). An error deciding it refuses.
 - **K2's other prerequisites** (PostgreSQL, native mail, v3, an issuer) and the SQLite refusal
   are not checked in PR 1: `config.CheckEnv` and `bootstrap-admin` refuse `multi` outright, so
-  `tenancy.Check` with `multi` runs only in tests, on both backends. PR 7 adds them where it
-  accepts `multi`.
+  `tenancy.Check` with `multi` runs only in tests, on both backends. A start adds them where it
+  accepts `multi` (MH7 built them: `checkTableTransport`).
 - **The upgrade test** (`TestSingleTenantUpgradeIsByteForByte`) builds the fixture with the same
   binary (bootstrap, first start, one sign-in), then restarts it with `KYPOST_TENANCY` unset and
   `single`. It compares every file's bytes except SQLite's `-shm` index, every SQLite schema and
@@ -1501,7 +1501,7 @@ with a staff administrator provisioned from a signed staff-org event.
     (`api/sso_handlers.go:92`). `false` is saved. `sso.Store.Load`'s default of `true` for a
     missing file is unchanged. PR 2 already makes sign-in ignore the setting in multi mode.
   - The bootstrap administrator is still refused by `bootstrap-admin` refusing `multi` (PR 1).
-    PR 7 must keep it off when it accepts `multi`.
+    The test build keeps it off (`BootstrapAdmin` returns nil in multi).
   - PRs 2 and 3 already turned off SSO link and unlink and HR.
 - **Step-up is per org** (owner decision 2026-11-22, overturning this PR's first reading that
   one step-up covered any org). The action digest (`withActionDigest`) does not cover
@@ -1634,8 +1634,8 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
     `Recover` treats the refusal as a quiet skip (`:518`).
   - `NativeOutbound.Orgs` is an interface, because the `tenancy` tests import `sso`. Only the
     api sets it (`api/native_outbound.go:20`). The daemon's outbox worker and the processor's
-    out-of-office replies leave it nil, so they hold every org-bound send until PR 7 wires the
-    gate where it accepts `multi`.
+    out-of-office replies leave it nil, so they held every org-bound send until the runtime wiring set the
+    gate ("Multi-tenant runtime wiring as built").
 - **Receiving.** The status decision is `Org.Receiving` (`tenancy/orgs.go:68`), from the last
   known status whatever the cache's age, as open question 5 recommends:
   - accept for `active` and enabled;
@@ -1644,7 +1644,7 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
 
   Wiring it into `receiving bind` is RX PR 5's exit 12 (the brief keeps exit codes 12 and 13
   out of this PR). RX PR 5 built it (`orgReceives`, RX "PR 5 as built").
-- **Quotas** (`tenancy.Quotas`; masked quotas are M change 3, PR 7):
+- **Quotas** (`tenancy.Quotas`; masked quotas are M change 3, the hosted launch gate):
   - **Parsing.** A missing key keeps today's default. A known key that is not a whole
     non-negative number reads as 0, and a body that does not decode zeroes every key. 0 refuses
     new mail and creations, never existing data.
@@ -1696,11 +1696,10 @@ multi paths as PRs 2 to 4 do (`makeMultiTenant`, which now also caches orgs A an
     - the gate itself, on PostgreSQL.
 - **Not built, by phase.**
   - **Import and export, one per org at a time** (Abuse limits). It is not a `quotas_json` key,
-    and today's slots are per process. PR 7, with the receiving tier's per-mailbox leases.
-  - **Masked-address quotas** (M D7): PR 7.
+    and today's slots are per process. The hosted launch gate.
+  - **Masked-address quotas** (M D7): the hosted launch gate.
   - **`receiving bind` refusing by org status:** RX PR 5 (built).
-  - **The org gate in the daemon's outbox worker and out-of-office replies:** PR 7. Until then
-    they hold, never send.
+  - **The org gate in the daemon's outbox worker and out-of-office replies:** wired ("Multi-tenant runtime wiring as built").
   - **The admin UI's org selector:** still not built. No screen changed, so there are no
     screenshots.
   - Whether `/api/suite/orgs` lists the staff org is still unverified. The staff exemption makes
@@ -1809,9 +1808,8 @@ tests build the multi paths as PRs 2 to 5 do (`makeMultiTenant`, now through the
     be free again.
   - **The HMAC.** HMAC-SHA-256 of the lowercased address.
   - **Who consults it.** The conflict check reads the tombstones before the ledger, through
-    `LifecycleStore.Tombstoned` (`sso/lifecycle.go`). Only the test helper `useTenancy` sets that
-    hook today, so a single install never consults it. **PR 7 must set it wherever it sets
-    `Server.tenancy`**, as `useTenancy` does; without it allocation would not see tombstones. Restore qualification
+    `LifecycleStore.Tombstoned` (`sso/lifecycle.go`). `Server.UseTenancy` sets that hook (a multi start, and the test helper `useTenancy`),
+    so a single install never consults it; without it allocation would not see tombstones. Restore qualification
     asks `LifecycleStore.Purged` (`tenancy.MailboxPurged` over `purged_mailboxes`, written by
     `FinishPurge`), which `api.NewServer` sets and which answers false without `tenancy.db`. The two allocation paths are new aliases and reassignment
     (`changeNativeAddress`, `sso/native_address.go:343`) and a primary allocation
@@ -2027,9 +2025,8 @@ so only tests run any of this.
       unchanged.
   - The mailbox checks run through one process-wide hook, `mailbox.SetPoolCheck`
     (`mailbox/pool.go:30`), which `Server.StoragePoolCheck` (`api/tenancy_storage.go:115`)
-    implements. Nothing installs it outside tests, so `backend/deadcode.allow` lists it. PR 7
-    must install it wherever it sets `Server.tenancy`, in every process that writes mail, and
-    drop that entry. That joins the multi start gate.
+    implements. A multi start installs it in the api and the daemon ("Multi-tenant runtime wiring as
+    built").
   - The check reserves bytes with one conditional `UPDATE org_storage`, inside the mailbox
     transaction after replay checks. Every mailbox and replica spends the same cached
     headroom atomically. A failed write stays charged until the next report; deletions
@@ -2102,7 +2099,7 @@ so only tests run any of this.
   - Incoming encryption's replacement copies are not checked (they rewrite accepted mail).
   - The restore step that advances `org_storage.seq` past KyIdentity's stored `seq` (S "After
     a restore"). Until an operator advances it, every report answers `stale` and writes stop
-    once the grant expires. It belongs with PR 7's restore runbook.
+    once the grant expires. It belongs with the hosted launch gate's restore runbook.
   - Object storage (MH11) is a later phase.
 - **Owner questions, each with the default now in code:**
   1. A member's figure is every mailbox their account owns. An extra mailbox counts against
@@ -2159,6 +2156,70 @@ No per-message full-org or install-wide pool usage scan runs. The optional `stor
   minutes if the poll fails.
 - **Staff exemption.** The staff org is never gated by KyPost's cache (K8). Stopping staff
   access depends on KyIdentity alone: disabling the account or the staff org there.
+
+## Multi-tenant runtime wiring as built (2026-11-28)
+
+Step 7's runtime half, built (owner, 2026-11-28; the old plan name is retired). Release builds
+still refuse `multi`: only `-tags kye2e` lifts the gate ("The `kye2e` gate as built"), and
+public images never ship multi mode on (owner, 2026-11-28). Paths are under `backend/internal/`.
+
+- **Already wired at a multi start** (`app.Run` with `tenancy.db` open): `Server.UseTenancy`
+  with the staff org and `KY_CELLS` (`Server.cells`), which also sets
+  `LifecycleStore.Tombstoned` and `Purged`; `mailbox.SetPoolCheck` in the api and the daemon;
+  `Poller.SetOrgGate` (out-of-office replies) and the outbox worker's `Orgs` gate
+  (`app/native_outbound.go`). Tests: `app` `TestNewAPIServerTenancyAndOrgPoolCheck`,
+  `processor` `TestPollerSetOrgGatePassedToOOOQueueNative` (`mh7_wiring_test.go` in both).
+- **Object bodies** (multi-host spec, "MH11 object storage as built"). `app.useObjectBodies`
+  installs `mailbox.SetObjectBodies` in every multi process that opens mailboxes: `app.Run` (api,
+  daemon, all) and every multi receiving runtime (`receivingRuntime.placeBodies`), counted per
+  process so a short-lived runtime never removes the api's. Each store's placement
+  (`app.placeBodies`): the owner's `subject_orgs` org, its cell from `tenancy.OrgCell` (the
+  cached home region, which must be served; the staff org outside its region takes `cells[0]`),
+  and an `Object` of that one cell whose key opens only that org, through `vol.OrgKey`.
+  `vol.OrgKey` reads the org's `doc_keys` data key and creates a missing one only under the
+  owner guard: the account of the owner's issuer and subject, locked `FOR KEY SHARE` in the
+  creating transaction, must belong to the org, so nothing creates a key after a purge removed
+  the accounts. A subject with no org, an uncached org and an org of another cell open no store.
+- **`Server.objects`** (`Server.UseObjects`) is the deployment's `Object` over every served
+  cell, with no key: the purge's lists and deletes.
+- **The body sweep.** `Server.StartBodySweeper` runs on the elected `api-sweepers` worker,
+  hourly: `sweepBodies` opens every prepared native mailbox and runs `SweepBodies`, logging and
+  skipping one mailbox's failure.
+- **Masked relay addresses under the cell's code** (M D3, multi-host spec "Mail per region").
+  In multi mode `randomMaskedAddress` draws `adjective.animal.` plus the org's cell's code
+  (`tenancy.RelayCode`) plus 6 random base32 characters, so MH10's MX router
+  (`receivingRemote.route`) sends it to that cell. A cell with no code, or an org outside the
+  served cells, gets no address (`503`). Single mode keeps 4 digits.
+- **Relay codes: throwaway test codes until go-live** (owner, 2026-11-28). `e2e-1` is `7` and
+  `e2e-2` is `6`, in `tenancy/relaycodes_kye2e.go` only (kye2e builds), from the end of the
+  alphabet so the live allocation never collides. The live allocation goes in one place:
+  `tenancy.relayCodes` (`tenancy/relaycodes.go`), still empty, so a release multi start is
+  refused by the gate and then by `ErrNoRelayCode`.
+- **Tests:** `vol` `TestOrgKeyOwnerGuard` (cross-org, purge; PostgreSQL); `app`
+  `TestObjectBodiesPlaceEachMailboxInItsOrgsCell` (cross-org, cross-cell, staff, no org) and
+  `TestObjectBodiesEndToEnd` (PostgreSQL and SeaweedFS: sealed under
+  `cells/<cell>/bodies/<org>/<mailbox>/`, read back); `api` `TestBodySweepVisitsEveryMailbox`,
+  `TestMaskedRelayLocalPart`, `TestMaskedCreateUsesTheOrgsCellCode`; `tenancy`
+  `TestRelayCodeTableBuildGate` (both builds). Each isolation check was reverted once and its
+  test failed (the PR's evidence).
+
+### The hosted launch gate (not built)
+
+What step 7 still needs before any build may start `multi` outside the test build. Each item
+keeps its own name; none is the runtime wiring above.
+
+- **Per-member send quotas** `memberSendPerHour`, `memberRecipientsPerDay` (Quotas).
+- **`transfersPerOrg`**: one org's imports and exports at once (Abuse limits).
+- **Masked records per org** (M D8: a table with `org_id` instead of every `config.yaml`) and
+  **masked quotas** (M D7: `maskedPerUser`, `maskedPerDay`, `maskedPerOrg`, the platform-wide
+  circuit breaker), with their tests: the cross-org matrix for masked routes and the per-org
+  masked quota test.
+- **The storage report's restore runbook** (Org storage pool, "a restore").
+- **KyIdentity publishing the storage pool** (open question 15).
+- **The container two-host harness** (two containers, separate volumes, one database) and the
+  **native-mail harness run against KyIdentity in multi mode** (`docs/DEVELOPMENT.md`).
+- **Live relay codes** for the launch cells (owner; multi-host spec, "MH9 region codes").
+- **A build that may start `multi`.** Today only the kye2e test build; public images never.
 
 ## Open questions, with recommendations
 
@@ -2219,7 +2280,7 @@ No per-message full-org or install-wide pool usage scan runs. The optional `stor
 15. **An org entry with no storage pool (new, 2026-11-23).** *Default:* the pool reads as 0, so
     the org accepts nothing new and receiving answers a temporary `452` at once (Quotas). Open
     question 16's grace does not apply: a missing or malformed pool has no over-quota-since
-    date and no meaningful 110 %. K PR 7 must not accept
+    date and no meaningful 110 %. No build may accept
     `multi` before KyIdentity publishes the pool, so this happens only through a KyIdentity fault.
     The alternative, no pool cap, lets an org grow without limit during that fault.
 16. **Incoming mail while an org is over its pool (new, 2026-11-23; KyPost owns this rule).**

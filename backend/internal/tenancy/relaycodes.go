@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// relayAlphabet is RFC 4648 base32, lowercase (masked addresses spec D3), so at most 32 cells.
-const relayAlphabet = "abcdefghijklmnopqrstuvwxyz234567"
+// RelayAlphabet is RFC 4648 base32, lowercase (masked addresses spec D3), so at most 32 cells.
+const RelayAlphabet = "abcdefghijklmnopqrstuvwxyz234567"
 
 // relayCode is one cell's masked relay region code (multi-host spec, "Mail per region", MH9):
 // the character right after `adjective.animal.` in a relay-domain masked address.
@@ -17,22 +17,23 @@ type relayCode struct {
 	cell string
 }
 
-// relayCodes is the masked relay region code table. Append only: an entry, once released,
-// is never changed, removed or reused, because every address allocated under it keeps the
-// code. A closed cell keeps its entry. No cell has one yet: the owner assigns the launch
-// cells (multi-host spec, "MH9 region codes and recovery as built"), and until then no cell
-// can start multi mode.
+// relayCodes is the masked relay region code table, and the one place the live allocation
+// goes. Append only: an entry, once released, is never changed, removed or reused, because
+// every address allocated under it keeps the code. A closed cell keeps its entry. No cell has
+// one yet: the owner assigns the launch cells (multi-host spec, "MH9 region codes and
+// recovery as built"), and until then no release can start multi mode. The throwaway test
+// codes are in relaycodes_kye2e.go, never here.
 var relayCodes = []relayCode{}
 
 var cellSlug = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
 
-// checkRelayTable refuses a table with a code outside relayAlphabet, a cell that is not a
+// checkRelayTable refuses a table with a code outside RelayAlphabet, a cell that is not a
 // KyIdentity home region slug, or a code or cell listed twice.
 func checkRelayTable(table []relayCode) error {
 	codes, cells := map[byte]bool{}, map[string]bool{}
 	for _, e := range table {
 		switch {
-		case !strings.ContainsRune(relayAlphabet, rune(e.code)):
+		case !strings.ContainsRune(RelayAlphabet, rune(e.code)):
 			return fmt.Errorf("tenancy: masked relay code %q for %s is not a lowercase base32 character", e.code, e.cell)
 		case !cellSlug.MatchString(e.cell):
 			return fmt.Errorf("tenancy: masked relay code %q names %q, not a KyIdentity home region slug", e.code, e.cell)
@@ -50,7 +51,7 @@ func checkRelayTable(table []relayCode) error {
 var ErrNoRelayCode = errors.New("KY_CELLS names a cell with no masked relay region code")
 
 // CheckRelayCodes is the multi start check: the table is well formed and every cell this
-// deployment serves has a code, so K PR 7 can never allocate a relay address without one.
+// deployment serves has a code, so a masked relay address is never allocated without one.
 func CheckRelayCodes(cells []string) error {
 	return checkCellCodes(relayCodes, cells)
 }
@@ -81,4 +82,14 @@ func RelayCell(code byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// RelayCode is cell's masked relay region code, if the table has one.
+func RelayCode(cell string) (byte, bool) {
+	for _, e := range relayCodes {
+		if e.cell == cell {
+			return e.code, true
+		}
+	}
+	return 0, false
 }

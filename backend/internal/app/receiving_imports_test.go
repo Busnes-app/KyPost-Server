@@ -31,8 +31,8 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// RX PR 4: per-mailbox import obligations and leases (R8). Multi mode is refused at
-// startup until K's PR 7, so these build the runtime with tenancy.db set directly, as
+// RX PR 4: per-mailbox import obligations and leases (R8). Release builds refuse multi
+// mode at startup, so these build the runtime with tenancy.db set directly, as
 // K's own tests do. Accounts one and two are in orgs A and B.
 
 var orgRevision atomic.Int64

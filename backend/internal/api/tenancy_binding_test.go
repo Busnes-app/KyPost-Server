@@ -28,8 +28,8 @@ const (
 )
 
 // makeMultiTenant gives srv the side store a multi first start creates (PR 1's
-// tenancy.Check). Startup still refuses multi, so tests reach the multi paths here.
-// useTenancy makes s multi-tenant as PR 7's startup must: the side store, the staff org,
+// tenancy.Check). Release builds refuse multi, so tests reach the multi paths here.
+// useTenancy makes s multi-tenant as a multi start does (Server.UseTenancy): the side store, the staff org,
 // and the address tombstones every allocation consults first (K10).
 func (s *Server) useTenancy(db *sql.DB, staffOrg string) {
 	s.UseTenancy(db, staffOrg, []string{testCell})

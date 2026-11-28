@@ -202,8 +202,8 @@ assert "Replicas have no native receiving" in running and "Cloudflare and extern
 print("PASS replicas: receiving, rspamd and lan-dns overlays refuse to render with replicas, as RUNNING.md says")
 
 # The hosted receiving profile (multi-tenant): docker-compose.hosted.yml after the replica
-# chain, and docker-compose.mx.yml alone on an MX host. Rendered only; multi mode cannot
-# start until the tenancy design's PR 7.
+# chain, and docker-compose.mx.yml alone on an MX host. Rendered only; release builds refuse
+# multi mode (tenancy design, "The hosted launch gate").
 hosted_files = files + ["docker-compose.hosted.yml"]
 hosted = {"KYPOST_STAFF_ORG_ID": "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d", "KY_CELLS": "us-east-1", "KYPOST_RECEIVING_SUBNET": "10.89.2.0/24",
           "KYPOST_RECEIVING_A_IP": "10.89.2.10", "KYPOST_RECEIVING_B_IP": "10.89.2.11", "KYPOST_RECEIVING_PUBLISH_IP": "192.168.40.5"}

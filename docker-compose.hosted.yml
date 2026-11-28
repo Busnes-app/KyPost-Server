@@ -3,8 +3,8 @@
 # Design: docs/superpowers/specs/2026-11-21-hosted-receiving-tier-design.md (RX); operator
 # guide: docs/RECEIVING_SETUP.md, "Hosted receiving tier".
 #
-# NOT STARTABLE YET: every kypost-server process refuses KYPOST_TENANCY=multi until the
-# tenancy design's PR 7. The file ships so the profile can be reviewed and rendered
+# NOT STARTABLE YET: every kypost-server process refuses KYPOST_TENANCY=multi in every
+# release build (tenancy design, "The hosted launch gate"). The file ships so the profile can be reviewed and rendered
 # (`docker compose config`).
 #
 # Two receiving servers, each `receiving serve --tls` on the shared volumes and database,

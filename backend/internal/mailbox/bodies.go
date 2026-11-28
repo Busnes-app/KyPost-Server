@@ -29,10 +29,14 @@ const BodyRetention = 30 * 24 * time.Hour
 // BodyScope places a mailbox: the cell and org its objects live under.
 type BodyScope struct{ Cell, Org string }
 
-// objectBodies places each runtime store a multi start opens: K PR 7's multi wiring sets
-// it, from the org's cell and doc_keys data key. Single mode never does, so its stores keep
-// every body in raw. A mailbox it cannot place refuses to open.
+// objectBodies places each runtime store a multi process opens (SetObjectBodies, from the
+// org's cell and doc_keys data key). Single mode never sets it, so its stores keep every body
+// in raw. A mailbox it cannot place refuses to open.
 var objectBodies func(Owner) (*vol.Object, BodyScope, error)
+
+// SetObjectBodies installs place for every store opened from now on; nil removes it. Only a
+// multi process calls it, before any store opens (app.useObjectBodies).
+func SetObjectBodies(place func(Owner) (*vol.Object, BodyScope, error)) { objectBodies = place }
 
 var errBody = errors.New("mailbox body failed its size or digest check")
 

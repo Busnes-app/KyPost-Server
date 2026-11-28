@@ -526,7 +526,7 @@ func (c *receivingRemote) route(recipient string) receivingEndpoint {
 	}
 	local := strings.ToLower(recipient[:at])
 	random := local[strings.LastIndexByte(local, '.')+1:]
-	if strings.Count(local, ".") != 2 || len(random) != 7 || strings.Trim(random, "abcdefghijklmnopqrstuvwxyz234567") != "" {
+	if strings.Count(local, ".") != 2 || len(random) != 7 || strings.Trim(random, tenancy.RelayAlphabet) != "" {
 		return c.own()
 	}
 	if cell, ok := relayCellFor(random[0]); ok {

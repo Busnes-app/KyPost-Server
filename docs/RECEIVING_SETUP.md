@@ -562,7 +562,7 @@ retry, so nothing is lost.
 ### Compose profile
 
 Two files, both rendered by `scripts/check-replicas-compose.py` and neither startable until
-multi mode is (the tenancy design's PR 7):
+multi mode is (tenancy design, "The hosted launch gate"):
 
 - **Replica host:** add `docker-compose.hosted.yml` after `docker-compose.yml` and
   `docker-compose.replicas.yml`. It runs two receiving servers (`receiving-a`, `receiving-b`),
