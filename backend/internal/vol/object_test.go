@@ -25,7 +25,7 @@ func bodyKey(t *testing.T, cell, org, mailbox string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return vol.BodyPrefix(cell, org, mailbox) + id
+	return vol.BodyPrefix(vol.DefaultAppPrefix, cell, org, mailbox) + id
 }
 
 func rawObject(t *testing.T, c *s3.Client, key string) []byte {
@@ -86,9 +86,9 @@ func TestObjectRefusesCopiedOrTamperedCiphertext(t *testing.T) {
 		key   string
 		bytes []byte
 	}{
-		"other org":     {vol.BodyPrefix(cell, orgB, "mb1") + id, sealed},
-		"other mailbox": {vol.BodyPrefix(cell, orgA, "mb2") + id, sealed},
-		"other cell":    {vol.BodyPrefix(other, orgA, "mb1") + id, sealed},
+		"other org":     {vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgB, "mb1") + id, sealed},
+		"other mailbox": {vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA, "mb2") + id, sealed},
+		"other cell":    {vol.BodyPrefix(vol.DefaultAppPrefix, other, orgA, "mb1") + id, sealed},
 		"tampered":      {bodyKey(t, cell, orgA, "mb1"), tampered},
 		"truncated":     {bodyKey(t, cell, orgA, "mb1"), sealed[:len(sealed)-1]},
 	} {
@@ -116,15 +116,15 @@ func TestObjectRefusesOtherCells(t *testing.T) {
 	if err := o.Remove(ctx, foreign, 1); !errors.Is(err, vol.ErrCell) {
 		t.Fatalf("remove: %v", err)
 	}
-	if err := o.RemoveAll(ctx, vol.BodyPrefix(objecttest.Cell(), orgA)); !errors.Is(err, vol.ErrCell) {
+	if err := o.RemoveAll(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, objecttest.Cell(), orgA)); !errors.Is(err, vol.ErrCell) {
 		t.Fatalf("remove all: %v", err)
 	}
-	for _, bad := range []string{"bodies/" + orgA + "/mb1/x", "cells/" + cell + "/bodies/" + orgA + "/x", "cells/" + cell + "/other/" + orgA + "/mb1/x"} {
+	for _, bad := range []string{"bodies/" + orgA + "/mb1/x", "kypost/cells/" + cell + "/bodies/" + orgA + "/x", "kypost/cells/" + cell + "/other/" + orgA + "/mb1/x"} {
 		if _, err := o.Write(ctx, bad, []byte("x"), 0); !errors.Is(err, vol.ErrPath) {
 			t.Errorf("%s: %v", bad, err)
 		}
 	}
-	if _, err := o.List(ctx, "cells/"+cell+"/"); !errors.Is(err, vol.ErrPath) {
+	if _, err := o.List(ctx, "kypost/cells/"+cell+"/"); !errors.Is(err, vol.ErrPath) {
 		t.Fatalf("list outside an org: %v", err)
 	}
 }
@@ -175,19 +175,19 @@ func TestObjectRemoveAll(t *testing.T) {
 		}
 		return len(keys)
 	}
-	if n := count(vol.BodyPrefix(cell, orgA)); n != 3 {
+	if n := count(vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA)); n != 3 {
 		t.Fatalf("org A holds %d", n)
 	}
-	if err := o.RemoveAll(ctx, vol.BodyPrefix(cell, orgA, "mb1")); err != nil {
+	if err := o.RemoveAll(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA, "mb1")); err != nil {
 		t.Fatal(err)
 	}
-	if count(vol.BodyPrefix(cell, orgA, "mb1")) != 0 || count(vol.BodyPrefix(cell, orgA, "mb2")) != 1 {
+	if count(vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA, "mb1")) != 0 || count(vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA, "mb2")) != 1 {
 		t.Fatal("mailbox purge")
 	}
-	if err := o.RemoveAll(ctx, vol.BodyPrefix(cell, orgA)); err != nil {
+	if err := o.RemoveAll(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA)); err != nil {
 		t.Fatal(err)
 	}
-	if count(vol.BodyPrefix(cell, orgA)) != 0 || count(vol.BodyPrefix(cell, orgB)) != 1 {
+	if count(vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA)) != 0 || count(vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgB)) != 1 {
 		t.Fatal("org purge")
 	}
 }
@@ -199,7 +199,7 @@ func TestObjectProbe(t *testing.T) {
 	if err := o.Probe(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if keys, err := o.List(context.Background(), vol.BodyPrefix(cell, orgA)); err != nil || len(keys) != 0 {
+	if keys, err := o.List(context.Background(), vol.BodyPrefix(vol.DefaultAppPrefix, cell, orgA)); err != nil || len(keys) != 0 {
 		t.Fatal(keys, err)
 	}
 	t.Setenv("KY_TEST_S3_SECRET_KEY", "wrong-secret")
@@ -238,7 +238,7 @@ func ignoringProvider(t *testing.T) *s3.Client {
 
 // A provider that ignores If-None-Match fails the start probe: replicas could overwrite.
 func TestObjectProbeRefusesUnconditionalProvider(t *testing.T) {
-	o, err := vol.NewObject(ignoringProvider(t), []string{"cell-a"}, nil)
+	o, err := vol.NewObject(ignoringProvider(t), vol.DefaultAppPrefix, []string{"cell-a"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

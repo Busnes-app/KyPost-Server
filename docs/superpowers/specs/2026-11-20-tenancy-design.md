@@ -2198,7 +2198,7 @@ public images never ship multi mode on (owner, 2026-11-28). Paths are under `bac
 - **Tests:** `vol` `TestOrgKeyOwnerGuard` (cross-org, purge; PostgreSQL); `app`
   `TestObjectBodiesPlaceEachMailboxInItsOrgsCell` (cross-org, cross-cell, staff, no org) and
   `TestObjectBodiesEndToEnd` (PostgreSQL and SeaweedFS: sealed under
-  `cells/<cell>/bodies/<org>/<mailbox>/`, read back); `api` `TestBodySweepVisitsEveryMailbox`,
+  `<app>/cells/<cell>/bodies/<org>/<mailbox>/`, read back); `api` `TestBodySweepVisitsEveryMailbox`,
   `TestMaskedRelayLocalPart`, `TestMaskedCreateUsesTheOrgsCellCode`; `tenancy`
   `TestRelayCodeTableBuildGate` (both builds). Each isolation check was reverted once and its
   test failed (the PR's evidence).

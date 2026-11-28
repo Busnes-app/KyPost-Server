@@ -60,7 +60,7 @@ func Client(t testing.TB) *s3.Client {
 func New(t testing.TB, cells ...string) (*vol.Object, *s3.Client) {
 	t.Helper()
 	c := Client(t)
-	o, err := vol.NewObject(c, cells, Key)
+	o, err := vol.NewObject(c, vol.DefaultAppPrefix, cells, Key)
 	if err != nil {
 		t.Fatal(err)
 	}

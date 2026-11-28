@@ -2123,9 +2123,17 @@ be at least the capsule retention, so that any capsule within retention, restore
 names only objects that still exist. The clocks are the database's, never the provider's
 `LastModified`, which the shared client documents as untrusted for age.
 
+**App prefix (owner, 2026-11-28).** Every key starts with `<app>/`, `KYPOST_S3_PREFIX`
+(default `kypost`; one segment of lowercase letters, digits, `.`, `_` or `-`, no slash, no
+`..`; set but invalid refuses a multi start; a shared fingerprint setting). The suite's apps can
+then share one bucket per cell: `vol.Object` refuses any key or prefix outside its own `<app>/`
+(`ErrPath`), so a KyPost purge never reaches another app's objects for the same org and cell
+(`vol` `TestObjectPurgeLeavesAnotherAppsObjectsInASharedBucket`). No live multi-tenant server
+existed, so no object moved from the unprefixed layout; single mode has no object store.
+
 **Purge and erasure.** K's purge step 3 (`api/tenancy_purge.go` `purgeStorage`) deletes, for
 each snapshot mailbox and every served cell, every version under
-`cells/<cell>/bodies/<org>/<mailbox>/`, and an org purge then empties `cells/<cell>/bodies/<org>/`.
+`<app>/cells/<cell>/bodies/<org>/<mailbox>/`, and an org purge then empties `<app>/cells/<cell>/bodies/<org>/`.
 These are immediate, not late. The final check (`purgeLeft`) lists those prefixes and fails the
 purge on any object left. A member erasure (Delete everything, a member-scoped purge) runs the
 same mailbox step. Deleting the org's `doc_keys` row also leaves any missed object unreadable.
@@ -2163,7 +2171,7 @@ single install cannot half-configure object storage. Multi mode refuses a start 
 K2) without the endpoint, bucket, access key and secret, and no refusal echoes a value. The
 endpoint, bucket and region are shared replica settings, joining the fingerprint only when set,
 so a single-tenant record stays byte for byte. At a multi start, a probe writes, reads and deletes
-`cells/<cell>/probe/<random>` for each served cell, so a wrong key or a provider that ignores
+`<app>/cells/<cell>/probe/<random>` for each served cell, so a wrong key or a provider that ignores
 `If-None-Match` refuses the start. Credentials are never logged, never in a capsule and never in
 an error.
 
@@ -2193,7 +2201,7 @@ Built from the amendment above, on its defaults (threshold 128 KiB, body retenti
   with AES-256-GCM (`NewGCMWithRandomNonce`, a version byte, 29 bytes of overhead) under the
   org key the caller supplies, with associated data naming the full key. `Remove` and
   `RemoveAll` use `DeleteAllVersions` and `DeletePrefix`. `Probe` writes, re-creates (which
-  must be refused), reads and deletes `cells/<cell>/probe/<id>` in every cell.
+  must be refused), reads and deletes `<app>/cells/<cell>/probe/<id>` in every cell.
 - **Mailbox** (`mailbox/bodies.go`). The `objectBodies` hook places each store opened by `Open` or
   `OpenExisting` (never the capsule copies' SQLite form); a store it cannot place refuses to
   open. The four writers stash the body and name it in the row's transaction. `append` stashes

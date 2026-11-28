@@ -46,7 +46,7 @@ func objectBodiesForTest(t *testing.T) *bodyFixture {
 func (f *bodyFixture) keys(t *testing.T, owner Owner) []string {
 	t.Helper()
 	sc := f.scope(owner)
-	keys, err := f.o.List(context.Background(), vol.BodyPrefix(sc.Cell, sc.Org, owner.Mailbox))
+	keys, err := f.o.List(context.Background(), vol.BodyPrefix(vol.DefaultAppPrefix, sc.Cell, sc.Org, owner.Mailbox))
 	must(t, err)
 	return keys
 }
@@ -273,8 +273,8 @@ func TestObjectBodyCrossOrgRefused(t *testing.T) {
 	if got, err := bob.Raw(ctx, "INBOX", bobID); err == nil || got != nil {
 		t.Fatalf("bob read alice's object reference: %v", err)
 	}
-	sealed := f.raw(t, vol.BodyPrefix(f.cell, bodyOrg, "alice")+object)
-	_, err = f.c.Put(ctx, vol.BodyPrefix(f.cell, orgB, "bob")+object, bytes.NewReader(sealed), int64(len(sealed)))
+	sealed := f.raw(t, vol.BodyPrefix(vol.DefaultAppPrefix, f.cell, bodyOrg, "alice")+object)
+	_, err = f.c.Put(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, f.cell, orgB, "bob")+object, bytes.NewReader(sealed), int64(len(sealed)))
 	must(t, err)
 	if got, err := bob.Raw(ctx, "INBOX", bobID); err == nil || got != nil {
 		t.Fatalf("bob opened alice's copied ciphertext: %v", err)

@@ -59,7 +59,7 @@ var Shared = map[string]func(string) string{
 var MultiShared = map[string]func(string) string{"KY_CELLS": list,
 	// MH11 object storage: every replica of a cell writes one bucket with one identity.
 	"KYPOST_S3_ENDPOINT": trim, "KYPOST_S3_BUCKET": trim, "KYPOST_S3_REGION": trim, "KYPOST_S3_ACCESS_KEY": trim,
-	"KYPOST_S3_SECRET_KEY": trim, "KYPOST_S3_SECRET_KEY_FILE": trim}
+	"KYPOST_S3_SECRET_KEY": trim, "KYPOST_S3_SECRET_KEY_FILE": trim, "KYPOST_S3_PREFIX": trim}
 
 // PerHost settings may differ between replicas: listeners, logging, resources, the local
 // model service, receiving concurrency, scratch and tools, the database URL itself, test and

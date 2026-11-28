@@ -36,7 +36,7 @@ func bodyPlacement(t *testing.T, client *s3.Client, cells []string, stateDir str
 		t.Fatal(err)
 	}
 	t.Cleanup(release)
-	return placeBodies(client, placing.db, bodyStaffOrg, cells, stateDir)
+	return placeBodies(client, vol.DefaultAppPrefix, placing.db, bodyStaffOrg, cells, stateDir)
 }
 
 // bodyOrgs creates stateDir's tenancy.db with the orgs bodyPlacement describes.
@@ -83,7 +83,7 @@ func TestObjectBodiesOutliveAnOverlappingRelease(t *testing.T) {
 	defer second()
 	first()
 	_ = own.Close()
-	if _, scope, err := placeBodies(client, placing.db, bodyStaffOrg, cells, stateDir)(bodyOwner(receivingOrgA)); err != nil || scope.Org != receivingOrgA {
+	if _, scope, err := placeBodies(client, vol.DefaultAppPrefix, placing.db, bodyStaffOrg, cells, stateDir)(bodyOwner(receivingOrgA)); err != nil || scope.Org != receivingOrgA {
 		t.Fatalf("placement after the first release: %+v %v", scope, err)
 	}
 }
@@ -122,10 +122,10 @@ func TestObjectBodiesPlaceEachMailboxInItsOrgsCell(t *testing.T) {
 	}
 	ctx := context.Background()
 	// Refused before any request, so s3.invalid is never contacted.
-	if _, err := o.Write(ctx, vol.BodyPrefix("cell-a", receivingOrgB, "mb-b")+"0123", []byte("x"), 0); !errors.Is(err, errBodyOrg) {
+	if _, err := o.Write(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, "cell-a", receivingOrgB, "mb-b")+"0123", []byte("x"), 0); !errors.Is(err, errBodyOrg) {
 		t.Fatalf("org A's store sealed under org B's key: %v", err)
 	}
-	if _, err := o.Write(ctx, vol.BodyPrefix("cell-b", receivingOrgA, "mb-a")+"0123", []byte("x"), 0); !errors.Is(err, vol.ErrCell) {
+	if _, err := o.Write(ctx, vol.BodyPrefix(vol.DefaultAppPrefix, "cell-b", receivingOrgA, "mb-a")+"0123", []byte("x"), 0); !errors.Is(err, vol.ErrCell) {
 		t.Fatalf("org A's store wrote into cell B: %v", err)
 	}
 }
@@ -175,8 +175,8 @@ func TestObjectBodiesEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prefix := vol.BodyPrefix(cell, receivingOrgA, owner.Mailbox)
-	all, err := vol.NewObject(client, []string{cell}, nil)
+	prefix := vol.BodyPrefix(vol.DefaultAppPrefix, cell, receivingOrgA, owner.Mailbox)
+	all, err := vol.NewObject(client, vol.DefaultAppPrefix, []string{cell}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
