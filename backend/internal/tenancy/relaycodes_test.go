@@ -18,15 +18,15 @@ func TestRelayCodeTableIsStableAndUnique(t *testing.T) {
 		t.Fatalf("a released masked relay code was changed or removed: %v, released %v", relayCodes, releasedRelayCodes)
 	}
 	// A full table: every base32 character, one cell each.
-	full := make([]relayCode, 0, len(relayAlphabet))
-	for i := range len(relayAlphabet) {
-		full = append(full, relayCode{relayAlphabet[i], "cell-" + string(relayAlphabet[i])})
+	full := make([]relayCode, 0, len(RelayAlphabet))
+	for i := range len(RelayAlphabet) {
+		full = append(full, relayCode{RelayAlphabet[i], "cell-" + string(RelayAlphabet[i])})
 	}
 	if err := checkRelayTable(full); err != nil {
 		t.Fatalf("a full table: %v", err)
 	}
 	for i, e := range full {
-		if err := checkCellCodes(full, []string{e.cell}); err != nil || full[i].code != relayAlphabet[i] {
+		if err := checkCellCodes(full, []string{e.cell}); err != nil || full[i].code != RelayAlphabet[i] {
 			t.Fatalf("%s: %v", e.cell, err)
 		}
 	}
