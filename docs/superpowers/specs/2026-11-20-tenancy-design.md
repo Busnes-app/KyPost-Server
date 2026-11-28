@@ -1012,7 +1012,10 @@ p95 latencies of 54–70 s and 57 503s. No other app's pool waited.
    no idle connections of its own. A statement or transaction borrows a connection and
    returns it when it ends. Opening a store, an org or a client session costs no
    connection. Only three things hold one longer, and each is bounded:
-   - a fence set, for its section, capped at half the pool;
+   - a fence set, for its section. Fence sessions across every schema take at most a
+     quarter of the pool (at least 1): a fenced request borrows two more under its fence (a
+     read transaction, then a statement), so fenced requests alone cannot take every
+     connection and wait on each other for one more (`TestNativeAdmissionSharesTheDirectoryFence`);
    - a role lock, one per elected role per process;
    - a backup or pairing lock, while it is held.
 4. **A bounded wait.** A borrow that finds no free connection within 10 s fails with

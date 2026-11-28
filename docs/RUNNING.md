@@ -140,8 +140,10 @@ The directories stay: JSON settings, keys and contacts are still files in `CONFI
 
 Connections require a writable primary (`target_session_attrs=read-write` unless the URL
 sets another value), connect within 5 s, wait at most 5 s for a lock (SQLite's busy
-timeout) and end a transaction left idle for 30 s. Each open store keeps a small pool (at
-most 4 connections, 1 idle for 15 s); allow a `max_connections` of at least 100.
+timeout) and end a transaction left idle for 30 s. Each process keeps one pool of
+`KYPOST_DATABASE_POOL_SIZE` connections (default 16), opened at start and kept open, shared
+by every account, org and store; see "Connection budget" under
+[Drain and readiness](#drain-and-readiness).
 
 ### The single writer
 
@@ -529,16 +531,24 @@ drills and exports, keeps serving for 5 seconds, then gives ordinary requests 20
 running backups up to 16 minutes. A daemon gives up its role first, so another takes over
 while it drains. The Docker healthcheck still uses `/api/health`.
 
-**Connection budget.** Measured with the real binary: three idle api processes on one
-database hold 12 connections (4 each, besides the test's own). Each process has a catalog
-pool and one pool per open database (at most 4 connections each, 1 idle), plus one
-dedicated connection for its liveness lock and one for each role or backup lock it holds.
-For N replicas (an api and a daemon each) plan on at least 2 × N × (8 + 4 × the databases
-busy at once); the overlay's default `max_connections` of 400 leaves room for the default
-two replicas. **Unproven:** the peak during a backup, which opens every account's databases,
-was not measured, and no account count is claimed. With many accounts a backup could use up
-`max_connections`, and every replica's `/readyz` would then fail; raise
-`KYPOST_POSTGRES_MAX_CONNECTIONS` if `too many clients` appears.
+**Connection budget.** Each KyPost process (the api, the daemon, and the receiving
+processes when enabled) holds exactly `KYPOST_DATABASE_POOL_SIZE` server connections
+(default 16, from 4 to 1000; anything else refuses startup). It opens them at start and keeps
+them open, however many accounts, orgs or connected devices it serves. Every store borrows
+one per statement or transaction. Role, backup and pairing locks and fence sessions borrow
+from the same pool, with fence sessions capped at a quarter of it. A statement that finds no free
+connection within 10 s fails (`database: no connection free in the pool`), as a full
+PgBouncer pool would.
+
+Size the database side as `replicas × processes per replica × KYPOST_DATABASE_POOL_SIZE` for
+KyPost, plus every other app's pool, plus a reserve, and keep the total under
+`max_connections`. Use PgBouncer in session mode only, never transaction pooling: each
+KyPost connection is one server connection, and PgBouncer's pool for KyPost must be at least
+KyPost's total. Example: two replicas with an api and a daemon each, at the default 16, need
+2 × 2 × 16 = 64. The full formula and a worked example for a 300-connection server are in
+the tenancy spec (`docs/superpowers/specs/2026-11-20-tenancy-design.md`, "Database
+connections"). `TestSharedPoolBoundAndWarm` proves the bound with 20 orgs and 1,000 open
+client handles. **Unproven:** the throughput at each size under the fsn1 load.
 
 **Other proxies (not executed).** nginx and Nginx Proxy Manager have only passive health
 checks: they keep sending to a draining replica until requests fail. Use HAProxy (the

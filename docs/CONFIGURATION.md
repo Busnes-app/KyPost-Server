@@ -125,6 +125,7 @@ Notes:
 
 - `KYPOST_DATABASE_URL`: empty keeps every database in its SQLite file. A `postgres://` URL keeps them in that one Postgres database (16 or newer, UTF8, C locale), one schema per file. The URL holds the password, so prefer the file below; use `sslmode=verify-full` off the host.
 - `KYPOST_DATABASE_URL_FILE`: the path of a file holding that URL, such as a mounted Secret. Setting both refuses startup, as does an unreadable or empty file, a URL that does not parse, an older server or another locale; there is no fallback to SQLite. Setup, moving an install (`migrate-to-postgres`) and restoring are in [RUNNING.md](RUNNING.md#postgres).
+- `KYPOST_DATABASE_POOL_SIZE`: the server connections one process holds on Postgres, opened at start, kept open and shared by every account, org and store (default 16, from 4 to 1000; anything else refuses startup). Sizing is in [RUNNING.md](RUNNING.md#drain-and-readiness) under "Connection budget".
 
 ## Replicas
 

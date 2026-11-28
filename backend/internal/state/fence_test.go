@@ -136,6 +136,15 @@ func TestFenceExclusiveAgainstShared(t *testing.T) {
 func TestFenceWriterNotStarvedByReaders(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	a, b := twoReplicas(t)
+	// Seven sessions wait at once: two replicas' worth, in one process.
+	if _, err := fenceSlots(); err != nil {
+		t.Fatal(err)
+	}
+	fencePools.Lock()
+	slots := fencePools.slots
+	fencePools.slots = make(chan struct{}, 8)
+	fencePools.Unlock()
+	t.Cleanup(func() { fencePools.Lock(); fencePools.slots = slots; fencePools.Unlock() })
 	name := vol.FenceNativeDomains
 	r1in, r1leave, r1done := hold(a, []Fence{{Name: name, Shared: true}})
 	<-r1in
@@ -313,15 +322,24 @@ func TestFenceCycleEndsInABoundedWait(t *testing.T) {
 	}
 }
 
-// Fence sessions come from one capped pool per schema in the process, shared by every Store:
-// once it is full, another set on any Store is a bounded wait, and the store's own queries
-// still run.
+// Fence sessions take at most a quarter of the process's shared pool, across every schema:
+// once it is full, another set on any Store, of this schema or another org's, is a bounded
+// wait, and the store's own queries still run.
 func TestFenceSessionsDoNotStarveTheStore(t *testing.T) {
 	dbbackend.RequirePostgres(t)
 	shortFenceWait(t, 500*time.Millisecond)
 	a, b := twoReplicas(t)
+	other, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	size, err := dbbackend.PoolSize()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var leaves []chan struct{}
-	for i := range maxFenceSessions {
+	for i := range size / 4 {
 		inside, leave, _ := hold(a, []Fence{{Name: vol.FenceMailbox + "m" + strings.Repeat("x", i+1)}})
 		<-inside
 		leaves = append(leaves, leave)
@@ -331,7 +349,7 @@ func TestFenceSessionsDoNotStarveTheStore(t *testing.T) {
 			close(l)
 		}
 	}()
-	for _, s := range []*Store{a, b} {
+	for _, s := range []*Store{a, b, other} {
 		if err := s.WithFences(context.Background(), []Fence{{Name: vol.FenceSSO}}, nop); !errors.Is(err, ErrFenceWait) {
 			t.Fatalf("a set past the process's session cap: %v", err)
 		}
