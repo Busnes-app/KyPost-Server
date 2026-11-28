@@ -453,7 +453,7 @@ func runDaemon(ctx context.Context, d runDeps) error {
 		return err
 	}
 	defer func() { restart(nil); <-importDone }()
-	waitMail := elect(ctx, d, worker.RoleMailRuntime, func(owned context.Context) { runMailRuntime(owned, d) })
+	waitMail := electMailRuntime(ctx, d)
 	waitDaemon := elect(ctx, d, worker.RoleDaemon, func(owned context.Context) {
 		if err := runDaemonRole(owned, d, &backups); err != nil {
 			restart(err)
@@ -617,7 +617,7 @@ func runServer(ctx context.Context, d runDeps) error {
 
 	workCtx, cancelWork := context.WithCancel(ctx)
 	defer cancelWork()
-	waitMail := elect(workCtx, d, worker.RoleMailRuntime, func(owned context.Context) { runMailRuntime(owned, d) })
+	waitMail := electMailRuntime(workCtx, d)
 	waitSweepers := startBackgroundSweepers(workCtx, srv, d)
 	defer func() { cancelWork(); waitSweepers(); waitMail() }()
 

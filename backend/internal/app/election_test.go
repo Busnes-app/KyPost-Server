@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -21,4 +23,15 @@ func TestElectionGraceOutlivesTheProbe(t *testing.T) {
 	if o.Grace <= state.ProbeBound() {
 		t.Fatalf("election grace %v does not outlive the lock probe bound %v", o.Grace, state.ProbeBound())
 	}
+}
+
+// With native mail off the mail-runtime role has no work, so it is never elected: an owner
+// returning at once re-elected the role every few seconds (fsn1). The nil store makes an
+// election panic.
+func TestMailRuntimeNotElectedWithoutNativeMail(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	wait := electMailRuntime(ctx, runDeps{nativeMail: false})
+	<-ctx.Done()
+	wait()
 }
