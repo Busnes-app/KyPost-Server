@@ -22,7 +22,7 @@ type relayCode struct {
 // every address allocated under it keeps the code. A closed cell keeps its entry. No cell has
 // one yet: the owner assigns the launch cells (multi-host spec, "MH9 region codes and
 // recovery as built"), and until then no release can start multi mode. The throwaway test
-// codes are in relaycodes_kye2e.go, never here.
+// codes are in the package's end-to-end build file, never here.
 var relayCodes = []relayCode{}
 
 var cellSlug = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)

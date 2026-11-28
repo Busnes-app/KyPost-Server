@@ -39,7 +39,8 @@ func TestMaskedRelayLocalPart(t *testing.T) {
 		if err != nil || !relayShape.MatchString(a) {
 			t.Fatalf("relay address %q: %v", a, err)
 		}
-		seen[a[strings.LastIndexByte(a, '.')+2:strings.IndexByte(a, '@')]] = true
+		local := a[:strings.IndexByte(a, '@')]
+		seen[local[strings.LastIndexByte(local, '.')+2:]] = true
 		s, err := randomMaskedAddress("relay.test", 0)
 		if err != nil || !singleShape.MatchString(s) {
 			t.Fatalf("single-tenant address %q: %v", s, err)
