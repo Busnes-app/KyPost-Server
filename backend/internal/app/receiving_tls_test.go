@@ -33,8 +33,8 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 )
 
-// The hosted receiving transport (RX PR 2). Multi mode is refused at startup until K's
-// PR 7, so these tests record it directly, as K's own tests do.
+// The hosted receiving transport (RX PR 2). Release builds refuse multi mode at
+// startup, so these tests record it directly, as K's own tests do.
 
 const tlsStaffOrg = "6f1c2b9e-3d4a-4f5b-8c7d-0e1f2a3b4c5d"
 
@@ -51,6 +51,7 @@ func multiReceivingFixture(t *testing.T) *tlsFixture {
 	r, _ := receivingFixture(t)
 	quarantineCLI(t, r)
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	setObjectStorageEnv(t)
 	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", tlsStaffOrg)
 	t.Setenv("SECRET_DIR", t.TempDir())

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/suitedir"
@@ -29,7 +30,7 @@ var ErrNotServed = errors.New("this account's organisation is not served")
 var ErrStale = fmt.Errorf("%w: the entitlement cache is stale", ErrNotServed)
 
 // Quotas are the quotas_json keys KyPost enforces (K "Abuse limits per org"). A missing
-// key is nil: today's default applies. The masked-address keys are PR 7's (M D7).
+// key is nil: today's default applies. The masked-address keys (M D7) are the hosted launch gate's.
 type Quotas struct {
 	SendPerHour      *int64 `json:"sendPerHour"`
 	RecipientsPerDay *int64 `json:"recipientsPerDay"`
@@ -277,4 +278,28 @@ func (g *Gate) Serve(ctx context.Context, org string) error {
 		return ErrNotServed
 	}
 	return nil
+}
+
+// ErrOrgCell refuses a mailbox or address of an org this deployment cannot place: no org,
+// an org not in the cache, or one whose home region is not a served cell (MH9, C5).
+var ErrOrgCell = errors.New("tenancy: the org is not in a cell this deployment serves")
+
+// OrgCell is the cell org's data lives in: its cached home region, which must be one of
+// cells. The staff org is in every cell, so outside its own region it uses cells[0], the
+// first of the sorted KY_CELLS; a deployment's cells are fixed, as orgs never move.
+func OrgCell(ctx context.Context, db *sql.DB, org, staffOrg string, cells []string) (string, error) {
+	if org == "" || len(cells) == 0 {
+		return "", ErrOrgCell
+	}
+	o, err := LookupOrg(ctx, db, org)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case o.Known && slices.Contains(cells, o.HomeRegion):
+		return o.HomeRegion, nil
+	case org == staffOrg:
+		return cells[0], nil
+	}
+	return "", ErrOrgCell
 }

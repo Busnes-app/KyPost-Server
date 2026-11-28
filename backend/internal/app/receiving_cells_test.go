@@ -96,6 +96,7 @@ func (c *cellHost) state(t *testing.T, gateway, id string) string {
 func cellsHelper(t *testing.T) (a, b *cellHost, mxKey, mxPin string, remote func(key string)) {
 	t.Helper()
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	setObjectStorageEnv(t)
 	t.Setenv("KY_CELLS", "cell-a")
 	t.Setenv("KYPOST_STAFF_ORG_ID", tlsStaffOrg)
 	t.Setenv("PUSH_RELAY_URL", "")

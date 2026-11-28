@@ -50,7 +50,7 @@ type denyOrgGate struct{ err error }
 
 func (g denyOrgGate) Serve(context.Context, string) error { return g.err }
 
-// K PR 7: Poller.SetOrgGate wires the org gate into oooQueueNative so out-of-office
+// Multi-tenant runtime wiring: Poller.SetOrgGate wires the org gate into oooQueueNative so out-of-office
 // replies respect multi-tenant org entitlements.
 func TestPollerSetOrgGatePassedToOOOQueueNative(t *testing.T) {
 	p := &Poller{

@@ -32,7 +32,7 @@ var errOrgMailboxQuota = errors.New("this organisation has reached its mailbox q
 
 // UseTenancy enables multi-tenant enforcement on s with the open tenancy.db store,
 // the staff org ID, and the cells this replica serves (KY_CELLS). It also connects
-// the SSO lifecycle's address-tombstone and purge checks (K10, K PR 7).
+// the SSO lifecycle's address-tombstone and purge checks (K10).
 func (s *Server) UseTenancy(db *sql.DB, staffOrg string, cells []string) {
 	s.tenancy = db
 	s.staffOrg = staffOrg

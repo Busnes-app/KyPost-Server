@@ -37,7 +37,7 @@ func TestRunRefusesBadConfigInEveryMode(t *testing.T) {
 }
 
 // KYPOST_TENANCY=multi refuses every mode and bootstrap-admin before anything is written,
-// until hosted mail lands (tenancy design, build plan PR 7).
+// in every release build (tenancy design, "The hosted launch gate").
 func TestRunRefusesMultiTenancy(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("CONFIG_DIR", configDir)

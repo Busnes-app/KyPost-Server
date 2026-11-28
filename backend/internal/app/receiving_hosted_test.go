@@ -20,8 +20,8 @@ import (
 )
 
 // RX PR 5: the hosted profile's bind. K's org check (exit 12, or the unknown-address 3)
-// and the relay domain's refused-recipient budget (exit 13). Multi mode cannot start
-// until K PR 7, so these build the runtime directly, as K's tests do.
+// and the relay domain's refused-recipient budget (exit 13). Release builds refuse multi
+// mode, so these build the runtime directly, as K's tests do.
 
 const probeSource = "192.0.2.7"
 
@@ -93,6 +93,7 @@ func TestHostedBindOrgStatus(t *testing.T) {
 
 	// The staff org is never gated (K8), whatever the cache says.
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	setObjectStorageEnv(t)
 	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", receivingOrgB)
 	status(receivingOrgB, suitedir.OrgSuspended, false)
@@ -274,6 +275,7 @@ func TestHostedBindArguments(t *testing.T) {
 		t.Fatal("single-tenant bind took a source argument")
 	}
 	t.Setenv("KYPOST_TENANCY", config.TenancyMulti)
+	setObjectStorageEnv(t)
 	t.Setenv("KY_CELLS", "test-1")
 	t.Setenv("KYPOST_STAFF_ORG_ID", tlsStaffOrg)
 	if err := checkReceivingArgs(bind); err != nil {

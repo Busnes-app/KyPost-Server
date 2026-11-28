@@ -80,8 +80,8 @@ func Tenancy() (mode, staffOrg string, err error) {
 	}
 }
 
-// ErrMultiTenancyUnavailable refuses KYPOST_TENANCY=multi until hosted mail is built
-// (docs/superpowers/specs/2026-11-20-tenancy-design.md, build plan PR 7). Only the build-tagged
+// ErrMultiTenancyUnavailable refuses KYPOST_TENANCY=multi in every release build
+// (docs/superpowers/specs/2026-11-20-tenancy-design.md, "The hosted launch gate"). Only the build-tagged
 // constant MultiTenantBuild lifts it; a constant, so no environment value or -ldflags -X can.
 var ErrMultiTenancyUnavailable = errors.New("KYPOST_TENANCY=multi is not available in this release; unset it or set it to single")
 

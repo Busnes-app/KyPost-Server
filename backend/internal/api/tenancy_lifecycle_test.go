@@ -38,7 +38,7 @@ func setOrg(t *testing.T, db *sql.DB, org, status string, enabled bool, quotas s
 	if _, err := db.ExecContext(ctx, `DELETE FROM orgs WHERE id = ?`, org); err != nil {
 		t.Fatal(err)
 	}
-	if err := tenancy.ApplyOrg(ctx, db, suitedir.Org{ID: org, Status: status, Revision: rev, Enabled: enabled, Quotas: json.RawMessage(quotas)}, time.Now()); err != nil {
+	if err := tenancy.ApplyOrg(ctx, db, suitedir.Org{ID: org, Status: status, Revision: rev, Enabled: enabled, Quotas: json.RawMessage(quotas), HomeRegion: testCell}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 }

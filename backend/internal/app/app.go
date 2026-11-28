@@ -241,6 +241,7 @@ func Run(args []string) error {
 	}
 	var tenancyDB *sql.DB
 	var cells []string
+	var objects *vol.Object
 	if tenancyMode == config.TenancyMulti {
 		cells, err = config.Cells(os.Getenv("KY_CELLS"))
 		if err != nil {
@@ -251,6 +252,16 @@ func Run(args []string) error {
 			return fmt.Errorf("open tenancy store: %w", err)
 		}
 		defer func() { _ = tenancyDB.Close() }()
+		client, err := config.ObjectStorage()
+		if err != nil {
+			return err
+		}
+		var unplace func()
+		objects, unplace, err = useObjectBodies(client, staffOrg, cells, paths.StateDir)
+		if err != nil {
+			return err
+		}
+		defer unplace()
 	}
 	if !dbbackend.Postgres() {
 		// Deferred after the instance lock, so it runs first: the log is folded in while this
@@ -294,6 +305,7 @@ func Run(args []string) error {
 		tenancy:           tenancyDB,
 		staffOrg:          staffOrg,
 		cells:             cells,
+		objects:           objects,
 	}
 
 	if dbbackend.Postgres() {
@@ -355,6 +367,7 @@ type runDeps struct {
 	tenancy           *sql.DB
 	staffOrg          string
 	cells             []string
+	objects           *vol.Object // MH11 message bodies; nil in single mode
 }
 
 // defaultEmbedModelDir is where the Dockerfile installs potion-base-8M,
@@ -556,6 +569,7 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server, d runDeps) (w
 			srv.StartContactPhotoSweeper,
 			srv.StartContactsTombstoneSweeper,
 			srv.StartEnvelopeSweeper,
+			srv.StartBodySweeper,
 			srv.StartVersionMonitor,
 			srv.StartScheduledSendSweeper,
 			srv.StartAgentTokenSweeper,
@@ -654,6 +668,7 @@ func newAPIServer(d runDeps, onConfigUpdated func(config.Config)) *api.Server {
 	}
 	if d.tenancy != nil {
 		srv.UseTenancy(d.tenancy, d.staffOrg, d.cells)
+		srv.UseObjects(d.objects)
 	}
 	return srv
 }

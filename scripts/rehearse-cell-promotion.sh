@@ -2,7 +2,7 @@
 # Usage: rehearse-cell-promotion.sh <kypost image>
 # Rehearses docs/CELL-RECOVERY.md steps 1-4, the step 6 refusal and the step 7 rebuild, on
 # disposable containers only: a PostgreSQL 18 primary, a streaming standby, and a single-mode
-# KyPost server (multi mode cannot start until the tenancy design's PR 7). Push relays are
+# KyPost server (release builds refuse multi mode). Push relays are
 # empty. Everything it makes is removed on exit.
 set -euo pipefail
 image=${1:?usage: rehearse-cell-promotion.sh <kypost image>}

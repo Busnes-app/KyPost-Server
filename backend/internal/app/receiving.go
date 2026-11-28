@@ -209,9 +209,32 @@ type receivingRuntime struct {
 	// state is the install's state.db in multi mode only: the relay domain setting and
 	// the probe budget's windows (receiving_probe.go).
 	state *state.Store
+	// unplace releases the multi process's object-body placement (useObjectBodies).
+	unplace func()
+}
+
+// placeBodies puts the multi runtime's large message bodies in object storage (MH11).
+func (r *receivingRuntime) placeBodies() error {
+	_, staff, err := config.Tenancy()
+	if err != nil {
+		return err
+	}
+	cells, err := config.Cells(os.Getenv("KY_CELLS"))
+	if err != nil {
+		return err
+	}
+	client, err := config.ObjectStorage()
+	if err != nil {
+		return err
+	}
+	_, r.unplace, err = useObjectBodies(client, staff, cells, r.stateDir)
+	return err
 }
 
 func (r *receivingRuntime) close() error {
+	if r.unplace != nil {
+		r.unplace()
+	}
 	err := r.holding.Close()
 	if r.tenancy != nil {
 		err = errors.Join(err, r.tenancy.Close())
@@ -504,6 +527,9 @@ func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRunti
 		}
 		if err == nil {
 			r.state, err = state.New(r.stateDir)
+		}
+		if err == nil {
+			err = r.placeBodies()
 		}
 		if err != nil {
 			_ = r.close()

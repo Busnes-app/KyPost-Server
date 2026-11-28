@@ -4,8 +4,8 @@
 # each bind and accept over pinned TLS to the replicas; it answers 250 only after a replica
 # committed the message. Operator guide: docs/RECEIVING_SETUP.md, "Hosted receiving tier".
 #
-# NOT STARTABLE YET: the replicas refuse KYPOST_TENANCY=multi until the tenancy design's
-# PR 7, so every bind is answered 451 until then.
+# NOT STARTABLE YET: release replicas refuse KYPOST_TENANCY=multi (tenancy design, "The
+# hosted launch gate"), so every bind is answered 451 until then.
 #
 # KYPOST_MX_DIR holds, owner-only (0600, owned by uid 1000): mx.key from
 # `kypost-server receiving gateway keygen`, and remote.json naming it as

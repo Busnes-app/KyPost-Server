@@ -368,3 +368,44 @@ func (t *Table) expressions() (revision, now string) {
 	}
 	return nextRev, nowMillis
 }
+
+// errNoTable is a key asked for under a root no table is mounted on.
+var errNoTable = errors.New("vol: the documents table is not mounted")
+
+// OrgKey returns org's data key from the table mounted on root, for message bodies (MH11).
+// A missing key is created only under the owner guard: issuer and subject's account must
+// exist and belong to org, locked in the creating transaction, so a purge, which removes
+// accounts first, can never be followed by a new key.
+func OrgKey(ctx context.Context, root, issuer, subject, org string) ([]byte, error) {
+	m, _ := mounted(filepath.Join(root, "objects"), func(m *mount) bool { _, ok := m.volume.(*Table); return ok })
+	if m == nil {
+		return nil, errNoTable
+	}
+	t := m.volume.(*Table)
+	if key, err := t.dataKey(ctx, t.db, org, false); err == nil {
+		return key, nil
+	}
+	tx, err := t.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var record []byte
+	if err := tx.QueryRowContext(ctx, `SELECT record FROM accounts WHERE issuer=? AND subject=? FOR KEY SHARE`, issuer, subject).Scan(&record); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errOwner
+		}
+		return nil, err
+	}
+	var account struct {
+		Org string `json:"orgId"`
+	}
+	if json.Unmarshal(record, &account) != nil || account.Org == "" || account.Org != org {
+		return nil, errOwner
+	}
+	key, err := t.dataKey(ctx, tx, org, true)
+	if err != nil {
+		return nil, err
+	}
+	return key, tx.Commit()
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/tenancy"
 )
 
 // maskedDomainsSetting is the administrator's list of domains users may make
@@ -62,7 +63,12 @@ func randomPick(list []string) (string, error) {
 	return list[n.Int64()], nil
 }
 
-func randomMaskedAddress(domain string) (string, error) {
+// randomMaskedAddress draws a local part on domain. code 0 is today's
+// "<adjective>.<animal>.<4 digits>". In multi mode code is the org's cell's relay region code
+// (tenancy.RelayCode) and the local part is masked addresses spec D3 with it in front:
+// "<adjective>.<animal>.<code><6 base32>", so the MX host routes it to that cell (MH10) and
+// the 6 random characters keep the full guessing space.
+func randomMaskedAddress(domain string, code byte) (string, error) {
 	adjective, err := randomPick(maskedAdjectives)
 	if err != nil {
 		return "", err
@@ -71,11 +77,43 @@ func randomMaskedAddress(domain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if code != 0 {
+		tail := []byte{code}
+		for range 6 {
+			n, err := rand.Int(rand.Reader, big.NewInt(int64(len(tenancy.RelayAlphabet))))
+			if err != nil {
+				return "", err
+			}
+			tail = append(tail, tenancy.RelayAlphabet[n.Int64()])
+		}
+		return adjective + "." + animal + "." + string(tail) + "@" + domain, nil
+	}
 	n, err := rand.Int(rand.Reader, big.NewInt(9000))
 	if err != nil {
 		return "", err
 	}
 	return adjective + "." + animal + "." + strconv.FormatInt(1000+n.Int64(), 10) + "@" + domain, nil
+}
+
+// relayCode is tenancy.RelayCode; tests give it a cell's code.
+var relayCode = tenancy.RelayCode
+
+// maskedRelayCode is 0 in single mode, else the relay region code of the caller's org's cell
+// (org is AuthContext.OrgID). A cell with no code refuses creation, so no hosted address
+// lacks its region.
+func (s *Server) maskedRelayCode(ctx context.Context, org string) (byte, error) {
+	if s.tenancy == nil {
+		return 0, nil
+	}
+	cell, err := tenancy.OrgCell(ctx, s.tenancy, org, s.staffOrg, s.cells)
+	if err != nil {
+		return 0, err
+	}
+	code, ok := relayCode(cell)
+	if !ok {
+		return 0, tenancy.ErrNoRelayCode
+	}
+	return code, nil
 }
 
 // maskedDomains reads the administrator's list; only an unset one reads as
@@ -356,6 +394,12 @@ func (s *Server) handleMaskedCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "choose one of the masked address domains your administrator set", http.StatusBadRequest)
 		return
 	}
+	ac, _ := authFromContext(r)
+	code, err := s.maskedRelayCode(r.Context(), ac.OrgID)
+	if err != nil {
+		s.answerMasked(w, userID, "create_masked", err)
+		return
+	}
 	var created config.MaskedAddress
 	err = s.withMaskedSettings(userID, func(st *config.UserSettings, save func() error) error {
 		now := time.Now()
@@ -375,7 +419,7 @@ func (s *Server) handleMaskedCreate(w http.ResponseWriter, r *http.Request) {
 			return errMaskedRate
 		}
 		for range 5 {
-			address, err := randomMaskedAddress(domain)
+			address, err := randomMaskedAddress(domain, code)
 			if err != nil {
 				return err
 			}

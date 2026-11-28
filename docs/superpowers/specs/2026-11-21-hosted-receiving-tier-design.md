@@ -608,7 +608,7 @@ states they are not a capacity claim). The tier must be measured on R's one host
 ## Phased build plan
 
 Each PR ships on its own. Single-tenant stays unchanged, and every PR runs the single-tenant
-upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not part of K's PR 7.
+upgrade test. K's multi-tenant runtime wiring depends on PRs 1–5. PR 6 is a launch prerequisite, not part of that wiring.
 
 1. **Fix the replica-receiving contradiction.** The Rspamd overlay and `docs/RUNNING.md:252-254`
    must agree, as "What R's replicas allow today" shows. Either document that Cloudflare on
@@ -632,8 +632,8 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - every exit code 0–11 mapping to the same SMTP answer as on the socket, and 12 and 13 present
      only in the hosted configuration;
    - single-tenant: `--tls` refused, protocol 2 unchanged.
-   *PR 2 as built:* paths under `backend/internal/` at the PR's head. Startup still refuses
-   `multi` (K PR 7), so the tests record multi mode directly, as K's do.
+   *PR 2 as built:* paths under `backend/internal/` at the PR's head. Release builds still refuse
+   `multi` (K, "The hosted launch gate"), so the tests record multi mode directly, as K's do.
    - **Gates.** On a replica, `receiving serve --tls`, `gateway add|revoke|retire|server-pin`
      need `KYPOST_TENANCY=multi` **and** the install's multi record with the same staff org, then
      open `tenancy.db` (`receivingMultiStore`, `app/receiving_tls.go:75`). An MX host has no
@@ -732,13 +732,13 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      in `tenancy.db`. `TestReceivingMultiModeWithoutTenancyRefuses` (`:77`) covers multi mode
      without its record. `TestStaffSenderBlocksUseTenancyTables`
      (`api/tenancy_blocks_test.go:16`) does the same through the staff console's routes. In
-     production `Server.tenancy` is set only once multi mode can start (K PR 7), so today the
+     production `Server.tenancy` is set only by a multi start (K, "Multi-tenant runtime wiring as built"), which release builds refuse, so a release
      API always reads the files. `TestSingleTenantUpgradeIsByteForByte` now seeds both files and
      keeps them byte for byte. `TestEveryStoreIsClassified` has both tables (P), and the three
      sender files are absent (`-`) in multi mode.
    - **Not in PR 3.** `tenancy.db` is still outside the backup set (K PR 6; Where the new
-     tables live), so multi-mode blocks and evidence do not survive a restore yet. Multi mode
-     still cannot start (K PR 7). Cloudflare's change mark (`cfChangeMark`) still watches the
+     tables live), so multi-mode blocks and evidence do not survive a restore yet. Release builds
+     still refuse multi mode (K, "The hosted launch gate"). Cloudflare's change mark (`cfChangeMark`) still watches the
      file; Cloudflare is single-mode only by R1, and no code refuses it in multi mode yet
      (which PR adds the refusal is unverified). The staff console warning for a
      pin with 14 days or less left (open question 3) is not built: K PR 4 built no console
@@ -774,8 +774,8 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - a lease holder killed mid-batch, and a mailbox under constant load giving its lease up after
      each batch;
    - single-tenant: the daemon importer and all-or-nothing import are unchanged.
-   *PR 4 as built:* paths under `backend/internal/` at the PR's head. Startup still refuses
-   `multi` (K PR 7), so the tests set the runtime's `tenancy.db` directly, as K's do.
+   *PR 4 as built:* paths under `backend/internal/` at the PR's head. Release builds still refuse
+   `multi` (K, "The hosted launch gate"), so the tests set the runtime's `tenancy.db` directly, as K's do.
    - **Tables** (`tenancy/tenancy.go:67-68`, PostgreSQL `:105-106`; functions in
      `tenancy/imports.go`). `import_leases(mailbox PK, holder, lease_until)` and
      `retired_bindings(gateway, id, mailbox, at)`, primary key `(gateway, id, mailbox)`. Both are
@@ -866,8 +866,8 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    answering `451 4.2.1` and a deleted one answering `550 5.1.1`, probing beyond the budget
    answering `450` for live and unknown relay addresses alike, primary domains never budgeted, and
    M's hosted verification list.
-   *PR 5 as built:* paths under `backend/internal/` at the PR's head. Startup still refuses
-   `multi` (K PR 7), so the tests build the multi runtime directly, as K's do
+   *PR 5 as built:* paths under `backend/internal/` at the PR's head. Release builds still refuse
+   `multi` (K, "The hosted launch gate"), so the tests build the multi runtime directly, as K's do
    (`multiRuntime`, `app/receiving_org_test.go:26`, sets `tenancy.db` and `state.db`).
    - **Org check** (`orgReceives`, `app/receiving_probe.go:38`, called after the assignment at
      `app/receiving.go:630`). It applies K PR 5's `tenancy.Org.Receiving` to the owner's
@@ -908,7 +908,7 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
      - A window that cannot be read or written is exit 1. Primary domains never read or write
        one.
    - **Compose.** One profile in two files. `scripts/check-replicas-compose.py` validates both
-     with `docker compose config`. Neither can start until K PR 7.
+     with `docker compose config`. Neither can start in a release build (K, "The hosted launch gate").
      - `docker-compose.hosted.yml` goes after the replica chain. It adds `receiving-a` and
        `receiving-b`: `receiving serve --tls` on the shared volumes and database, read-only,
        unprivileged and with no capabilities, published only on `KYPOST_RECEIVING_PUBLISH_IP`.
@@ -961,9 +961,10 @@ upgrade test. K's PR 7 depends on PRs 1–5. PR 6 is a launch prerequisite, not 
    - **M's hosted verification list.**
      - Built here: unknown, paused and deleted masked addresses are refused alike on the relay
        domain, and counted alike.
-     - Not here, because they are M changes 1–3 and 5 in K PR 7: the cross-org matrix for masked
-       routes, the per-org masked quota test, and the native-mail harness run with KyIdentity in
-       multi mode (which needs a startable multi mode).
+     - Not here: M change 1 is built (K, "Multi-tenant runtime wiring as built") and change 5
+       by K PR 4's `withPlatformAdmin`. M changes 2 and 3 with their tests (the cross-org matrix
+       for masked routes, the per-org masked quota test) and the native-mail harness run with
+       KyIdentity in multi mode are in K's "The hosted launch gate".
      - Tombstone survival across org deletion is K PR 6's (`TestOrgPurgeRunsAgainAfterARestore`).
    - **Not run in PR 5:** a real Maddy run of the hosted profile, Maddy restarting under load
      in the MX image, and a container start of either file.

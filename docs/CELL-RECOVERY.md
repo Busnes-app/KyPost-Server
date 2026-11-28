@@ -4,9 +4,9 @@ Operator runbook for a hosted, multi-tenant KyPost deployment that serves one or
 KyIdentity cells (`KY_CELLS`). The design is `docs/superpowers/specs/2026-11-22-multi-host-replicas-design.md`
 ("Regions", "Failover and split brain between regions", "MH9 region codes and recovery as built").
 
-**Status.** Multi-tenant startup is refused in every release build (tenancy design, build plan
-PR 7). The PostgreSQL steps below were rehearsed on disposable containers; the steps that start
-KyPost in multi mode cannot run until PR 7 and are marked *unproven*. Self-hosted installs have
+**Status.** Multi-tenant startup is refused in every release build (tenancy design, "The
+hosted launch gate"). The PostgreSQL steps below were rehearsed on disposable containers; the
+steps that start KyPost in multi mode cannot run in a release build and are marked *unproven*. Self-hosted installs have
 no cells and need nothing here: their recovery is [RESTORE.md](RESTORE.md).
 
 ## What a cell is
@@ -123,7 +123,7 @@ dig +short MX example-cell-domain.test
 dig +short mail.us-east-2.example.test
 ```
 
-### 6. Start the cell in the new region (*unproven until PR 7*)
+### 6. Start the cell in the new region (*unproven: release builds refuse multi*)
 
 Start the replicas and receiving servers with:
 

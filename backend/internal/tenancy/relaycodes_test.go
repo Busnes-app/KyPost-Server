@@ -18,15 +18,15 @@ func TestRelayCodeTableIsStableAndUnique(t *testing.T) {
 		t.Fatalf("a released masked relay code was changed or removed: %v, released %v", relayCodes, releasedRelayCodes)
 	}
 	// A full table: every base32 character, one cell each.
-	full := make([]relayCode, 0, len(relayAlphabet))
-	for i := range len(relayAlphabet) {
-		full = append(full, relayCode{relayAlphabet[i], "cell-" + string(relayAlphabet[i])})
+	full := make([]relayCode, 0, len(RelayAlphabet))
+	for i := range len(RelayAlphabet) {
+		full = append(full, relayCode{RelayAlphabet[i], "cell-" + string(RelayAlphabet[i])})
 	}
 	if err := checkRelayTable(full); err != nil {
 		t.Fatalf("a full table: %v", err)
 	}
 	for i, e := range full {
-		if err := checkCellCodes(full, []string{e.cell}); err != nil || full[i].code != relayAlphabet[i] {
+		if err := checkCellCodes(full, []string{e.cell}); err != nil || full[i].code != RelayAlphabet[i] {
 			t.Fatalf("%s: %v", e.cell, err)
 		}
 	}
@@ -75,11 +75,14 @@ func TestRelayCodeTableBuildGate(t *testing.T) {
 		if err := CheckRelayCodes([]string{"e2e-1", "e2e-2"}); err != nil {
 			t.Fatalf("tagged build CheckRelayCodes(e2e-1, e2e-2): %v", err)
 		}
-		if cell, ok := RelayCell('a'); !ok || cell != "e2e-1" {
-			t.Fatalf("tagged build RelayCell('a') = (%q, %v), want (\"e2e-1\", true)", cell, ok)
+		if cell, ok := RelayCell('7'); !ok || cell != "e2e-1" {
+			t.Fatalf("tagged build RelayCell('7') = (%q, %v), want (\"e2e-1\", true)", cell, ok)
 		}
-		if cell, ok := RelayCell('b'); !ok || cell != "e2e-2" {
-			t.Fatalf("tagged build RelayCell('b') = (%q, %v), want (\"e2e-2\", true)", cell, ok)
+		if cell, ok := RelayCell('6'); !ok || cell != "e2e-2" {
+			t.Fatalf("tagged build RelayCell('6') = (%q, %v), want (\"e2e-2\", true)", cell, ok)
+		}
+		if code, ok := RelayCode("e2e-2"); !ok || code != '6' {
+			t.Fatalf("tagged build RelayCode(e2e-2) = (%q, %v), want '6'", code, ok)
 		}
 		if err := CheckRelayCodes([]string{"unassigned-1"}); !errors.Is(err, ErrNoRelayCode) {
 			t.Fatalf("tagged build unassigned cell: %v, want ErrNoRelayCode", err)
@@ -92,7 +95,10 @@ func TestRelayCodeTableBuildGate(t *testing.T) {
 	if err := CheckRelayCodes([]string{"e2e-1"}); !errors.Is(err, ErrNoRelayCode) {
 		t.Fatalf("release build CheckRelayCodes(e2e-1): %v, want ErrNoRelayCode", err)
 	}
-	if cell, ok := RelayCell('a'); ok || cell != "" {
-		t.Fatalf("release build RelayCell('a') = (%q, %v), want (\"\", false)", cell, ok)
+	if code, ok := RelayCode("e2e-1"); ok || code != 0 {
+		t.Fatalf("release build RelayCode(e2e-1) = (%q, %v), want none", code, ok)
+	}
+	if cell, ok := RelayCell('7'); ok || cell != "" {
+		t.Fatalf("release build RelayCell('7') = (%q, %v), want (\"\", false)", cell, ok)
 	}
 }
